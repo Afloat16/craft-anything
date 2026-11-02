@@ -907,6 +907,7 @@ Gaps found while using the app for real projects.
 Owner: maintainers · Status: in progress
 Keep a build that works at hand: pin it, and open it from the sidebar whatever the builder does
 to the project next. Pins are the engine's (tools), kept in the project's `pinned/` folder.
+- [ ] Keep runtime assets in obj folders when pinning or copying a project, while excluding recognised compiler intermediates (#274). — claimed: Afloat16, branch bugfix/r2.10-pin-obj-assets-20261102
 - [x] Pin a build as a frozen copy (the default: the app's files and the program, without what
       a build makes again, in `pinned/<n>/`, with its size shown first) or as a live pin that runs
       the project's app as it is; open, stop, rename and remove pins; one copy runs per folder
