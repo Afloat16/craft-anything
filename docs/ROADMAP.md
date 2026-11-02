@@ -140,8 +140,7 @@ No `deny.toml` exists. The survey found no GPL, AGPL or SSPL crates, and only MP
 - [x] Add a check to `cargo xtask layers` that fails on `std::process::Command` outside `platform`
 
 ### R0.5 Small correctness items from the survey
-Owner: open · Status: in progress (small correctness fixes)
-- [ ] Class-usage search includes the component class of multidimensional object arrays (#325). — claimed: Afloat16, branch bugfix/r0.5-java-array-references-20261102
+Owner: open · Status: done (branch chore/r0.5-cleanups)
 - [x] Decode Objective-C chained pointer offsets past file-empty PAGEZERO mappings (#296).
 - [x] Recognise root-relative macOS bundles and nested XPC services in Apple app graphs (#282).
 - [x] Checked arithmetic on file offsets in `elf.rs`: `va_to_off` adds a segment's file offset to an
@@ -166,6 +165,7 @@ Owner: open · Status: in progress (small correctness fixes)
       entry that starts past the end of the file is now skipped
 - [x] `cargo xtask layers` also scans `apps/`
 - [x] Engines in `KNOWN` without a `ToolPaths` override (tshark, objdump, rizin, java)
+- [x] Class-usage search includes the component class of multidimensional object arrays (#325).
 - [x] Missing `database` icon for SQLite in the UI (`kind_icon`)
 - [x] Deduplicate the five private `fn spec(` helpers in the tool modules
 - [x] rustfmt drift on main (11 files)
