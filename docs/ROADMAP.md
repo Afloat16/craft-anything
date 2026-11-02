@@ -140,7 +140,8 @@ No `deny.toml` exists. The survey found no GPL, AGPL or SSPL crates, and only MP
 - [x] Add a check to `cargo xtask layers` that fails on `std::process::Command` outside `platform`
 
 ### R0.5 Small correctness items from the survey
-Owner: open · Status: done (branch chore/r0.5-cleanups)
+Owner: open · Status: in progress (small correctness fixes)
+- [ ] Read extended SquashFS directory offsets correctly (#338). — claimed: Afloat16, branch bugfix/r0.5-squashfs-extended-directory-20261102
 - [x] Decode Objective-C chained pointer offsets past file-empty PAGEZERO mappings (#296).
 - [x] Recognise root-relative macOS bundles and nested XPC services in Apple app graphs (#282).
 - [x] Checked arithmetic on file offsets in `elf.rs`: `va_to_off` adds a segment's file offset to an
