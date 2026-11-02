@@ -140,8 +140,7 @@ No `deny.toml` exists. The survey found no GPL, AGPL or SSPL crates, and only MP
 - [x] Add a check to `cargo xtask layers` that fails on `std::process::Command` outside `platform`
 
 ### R0.5 Small correctness items from the survey
-Owner: open · Status: in progress (small correctness fixes)
-- [ ] Read extended SquashFS directory offsets correctly (#338). — claimed: Afloat16, branch bugfix/r0.5-squashfs-extended-directory-20261102
+Owner: open · Status: done (branch chore/r0.5-cleanups)
 - [x] Decode Objective-C chained pointer offsets past file-empty PAGEZERO mappings (#296).
 - [x] Recognise root-relative macOS bundles and nested XPC services in Apple app graphs (#282).
 - [x] Checked arithmetic on file offsets in `elf.rs`: `va_to_off` adds a segment's file offset to an
@@ -171,6 +170,7 @@ Owner: open · Status: in progress (small correctness fixes)
 - [x] rustfmt drift on main (11 files)
 - [x] Checked arithmetic on file offsets in `fsread/extfs.rs`: an inode offset near `usize::MAX`
       overflows `o + 128` (two sites), found by a lint scan of `crates/formats` (#42)
+- [x] Read extended SquashFS directory offsets correctly (#338). — claimed: Afloat16, branch bugfix/r0.5-squashfs-extended-directory-20261102
 - [x] `macho.rs` `method_list`: `list + 8 + i * entsize` adds to a pointer read from the file, so a
       segment that ends at `u64::MAX` overflowed it (found by a lint scan; now reproduced by a
       regression test, and the entry addresses are checked)
