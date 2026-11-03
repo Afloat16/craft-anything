@@ -81,10 +81,10 @@ impl TurnFailure {
         })
     }
 
-    /// A process killed by a signal was interrupted. A numeric exit without a protocol error
-    /// says nothing about whether another attempt can work.
+    /// Without a protocol error, a process may have crashed or lost its connection. Signals
+    /// and nonzero exits keep the same bounded retry policy; a successful exit never opts in.
     pub(crate) fn process_exit(code: Option<i32>) -> Self {
-        Self::new(if code.is_none() { FailureKind::Transient } else { FailureKind::Unknown })
+        Self::new(if code == Some(0) { FailureKind::Unknown } else { FailureKind::Transient })
     }
 }
 
@@ -163,7 +163,10 @@ mod tests {
         assert_eq!(retry_after("Rate limit reached. Retry after 2 minutes"), Some(120));
         assert_eq!(retry_after("try again in 500ms"), Some(1));
         assert_eq!(retry_after("Retry in 45 seconds"), Some(45));
-        assert!(!TurnFailure::process_exit(Some(1)).retryable());
+        for code in [None, Some(1), Some(2), Some(255)] {
+            assert!(TurnFailure::process_exit(code).retryable());
+        }
+        assert!(!TurnFailure::process_exit(Some(0)).retryable());
         assert_eq!(retry_after("retry after 3 h"), Some(MAX_RETRY_WAIT));
         for text in ["retry after NaN", "retry after inf", "retry after -1s", "invalid command", "please retry in a moment", "retry in ."] {
             assert_eq!(retry_after(text), None);

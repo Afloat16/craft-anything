@@ -558,7 +558,7 @@ mod typed_retries {
             }
             script.turns.push_back(Err(ToolError::new(ErrorCode::OverLimit, "服务限流").with_details(json!({"status":429,"retry_after_secs":3}))));
             script.turns.push_back(turn(vec![Block::Text { text: "Built the notes app".into() }], StopReason::EndTurn));
-            let slot = ModelSlot { name: "Scripted".into(), model: Box::new(script), local: false, effort: None, max_turns: 10 };
+            let slot = ModelSlot { name: "Scripted".into(), model: Box::new(script), local: false, effort: None, max_turns: 10, context_tokens: 0 };
             let enabled = std::collections::BTreeSet::from([craft_anything_engine::Toolset::Core, craft_anything_engine::Toolset::Build]);
             let mut api = ApiConversation::start_with(Arc::new(EngineHost(worker.engine.clone())), vec![slot], LoopConfig::default(), enabled).unwrap();
             let mut waits = Vec::new();
@@ -636,6 +636,60 @@ mod typed_retries {
 
     #[cfg(unix)]
     #[test]
+    fn a_plain_nonzero_cli_exit_resumes_its_saved_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(dir.path(), "x", "Build a thing", TargetRef::None).unwrap();
+        let mut worker = check_worker(&ws, false);
+        let (tx, rx) = std::sync::mpsc::channel();
+        worker.tx = tx;
+        let mut cli = executable_cli(
+            &ws,
+            "claude-code",
+            concat!(
+                "#!/bin/sh\ncat >> prompts\nprintf '\\n' >> prompts\nprintf 'attempt\\n' >> attempts\n",
+                "case \" $* \" in *\" --resume interrupted-session \"*)\n",
+                "printf '%s\\n' '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Built after the interruption\"}]}}'\n",
+                "printf '%s\\n' '{\"type\":\"result\",\"is_error\":false,\"result\":\"Built after the interruption\"}'\nexit 0;; esac\n",
+                "printf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"interrupted-session\"}'\nexit 1\n"
+            ),
+        );
+        let mut waits = Vec::new();
+        let result = worker.turn_with_wait(&mut ws, &mut cli, "Make a notes app", None, |_, seconds| {
+            waits.push(seconds);
+            Ok(())
+        });
+        assert_eq!(std::fs::read_to_string(ws.root.join("attempts")).unwrap(), "attempt\nattempt\n", "a plain nonzero exit must resume the reported session");
+        assert_eq!(result.unwrap(), "Built after the interruption");
+        assert_eq!(waits, [30]);
+        assert_eq!(std::fs::read_to_string(ws.root.join("prompts")).unwrap(), format!("Make a notes app\n{}\n", crate::failure::CONTINUE_TURN));
+        assert_eq!(cli.session_id().as_deref(), Some("interrupted-session"));
+        assert!(cli.last_failure().is_none(), "successful recovery clears the process failure");
+        assert!(!cli.is_busy());
+        assert_eq!(rx.try_iter().filter(|e| matches!(e, RunEvent::Agent(AgentEvent::TurnDone { .. }))).count(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn typed_cli_setup_errors_take_precedence_over_a_nonzero_exit() {
+        for (code, kind) in
+            [("authentication_failed", FailureKind::Authentication), ("billing_error", FailureKind::Billing), ("model_not_found", FailureKind::Configuration)]
+        {
+            let dir = tempfile::tempdir().unwrap();
+            let mut ws = Workspace::create(dir.path(), "x", "Build a thing", TargetRef::None).unwrap();
+            let mut worker = check_worker(&ws, false);
+            let error = json!({"type":"assistant","error":code,"message":{"content":[{"type":"text","text":"Please retry in 1s."}]}});
+            let script = format!("#!/bin/sh\ncat >/dev/null\nprintf 'attempt\\n' >> attempts\nprintf '%s\\n' '{error}'\nexit 1\n");
+            let mut cli = executable_cli(&ws, "claude-code", &script);
+            let result = worker.turn_with_wait(&mut ws, &mut cli, "Make a notes app", None, |_, _| panic!("typed setup failures must not retry"));
+            assert!(result.is_err(), "{kind:?}");
+            assert_eq!(cli.last_failure().unwrap().kind, kind);
+            assert_eq!(std::fs::read_to_string(ws.root.join("attempts")).unwrap(), "attempt\n");
+            assert!(!cli.is_busy());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn opencode_retries_a_typed_rate_limit_with_its_whole_original_request() {
         let dir = tempfile::tempdir().unwrap();
         let mut ws = Workspace::create(dir.path(), "x", "Build a thing", TargetRef::None).unwrap();
@@ -673,7 +727,7 @@ mod typed_retries {
 
     #[cfg(unix)]
     #[test]
-    fn an_old_opencode_without_json_output_stops_with_its_flag_error() {
+    fn an_untyped_opencode_exit_keeps_its_error_and_the_three_retry_cap() {
         let dir = tempfile::tempdir().unwrap();
         let mut ws = Workspace::create(dir.path(), "x", "Build a thing", TargetRef::None).unwrap();
         let mut worker = check_worker(&ws, false);
@@ -682,12 +736,18 @@ mod typed_retries {
             "opencode",
             "#!/bin/sh\nif [ \"$2\" = '--help' ]; then printf 'old help\\n'; exit 0; fi\nprintf 'attempt\\n' >> attempts\nprintf 'Unknown option: --format. Please retry in 1s.\\n' >&2\nexit 2\n",
         );
-        let error =
-            worker.turn_with_wait(&mut ws, &mut cli, "Make a notes app", None, |_, _| panic!("an unsupported flag cannot succeed on retry")).unwrap_err();
+        let mut waits = Vec::new();
+        let error = worker
+            .turn_with_wait(&mut ws, &mut cli, "Make a notes app", None, |_, seconds| {
+                waits.push(seconds);
+                Ok(())
+            })
+            .unwrap_err();
         assert!(error.message.contains("Unknown option"), "{error:?}");
-        assert_eq!(cli.last_failure().unwrap().kind, FailureKind::Unknown);
+        assert_eq!(cli.last_failure().unwrap().kind, FailureKind::Transient);
         assert!(!cli.is_busy());
-        assert_eq!(std::fs::read_to_string(ws.root.join("attempts")).unwrap(), "attempt\n");
+        assert_eq!(waits, [2, 2, 2], "the display wait hint affects only the delay after a retryable exit");
+        assert_eq!(std::fs::read_to_string(ws.root.join("attempts")).unwrap(), "attempt\nattempt\nattempt\nattempt\n");
     }
 }
 
@@ -946,7 +1006,7 @@ fn an_api_backend_builds_with_the_build_tools() {
         ]),
         seen: Arc::default(),
     };
-    let slot = ModelSlot { name: "Scripted".into(), model: Box::new(script), local: false, effort: None, max_turns: 10 };
+    let slot = ModelSlot { name: "Scripted".into(), model: Box::new(script), local: false, effort: None, max_turns: 10, context_tokens: 0 };
     let enabled = std::collections::BTreeSet::from([craft_anything_engine::Toolset::Core, craft_anything_engine::Toolset::Build]);
     let mut api = ApiConversation::start_with(Arc::new(EngineHost(engine)), vec![slot], LoopConfig::default(), enabled).unwrap();
     let reply = w.turn(&mut ws, &mut api, "Build it.", None).unwrap();
@@ -2211,7 +2271,7 @@ fn a_missing_session_with_nothing_to_start_from_is_said_plainly() {
         usage: None,
         self_check: None,
     };
-    let e = w.turn(&mut ws, &mut agent, "Carry on.", None).unwrap_err();
+    let e = w.turn_with_wait(&mut ws, &mut agent, "Carry on.", None, |_, _| panic!("a missing session without a fresh start must not be retried")).unwrap_err();
     assert!(e.message.contains("isn't on this computer"), "{e:?}");
     assert!(ws.manifest.agent_session.is_none());
 }
