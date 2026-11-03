@@ -476,6 +476,12 @@ Owner: open · Status: in progress
 
 ---
 
+### R3.13 Web inspection correctness
+Owner: open · Status: in progress
+- [ ] Match HTML raw-text closing tags on a name boundary so lookalikes do not truncate scripts. — claimed: Afloat16, branch bugfix/r3.13-html-end-tags-20261103
+
+---
+
 ## M4 Release
 
 ### R4.1 A macOS CLI that opens
