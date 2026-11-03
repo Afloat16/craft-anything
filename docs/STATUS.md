@@ -86,6 +86,8 @@ metadata, directory indexes and a real firmware extraction were not newly checke
 
 ## Known limits
 
+- Aider is left out of automatic coding-agent recommendations because there is no non-interactive
+  adapter for it yet. Existing manually configured generic commands are unchanged.
 - Locks: every mutex but the browser viewer's goes through `platform::sync`. A deadlock on one thread or across
   threads is broken when it forms, with an error and a report in `logs/`; a watchdog looks every 5 s; a holder
   that isn't a labelled job is reported after 2 minutes and waited on for 15 at most. Tools are labelled, so they
