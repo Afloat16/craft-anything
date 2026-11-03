@@ -194,8 +194,8 @@ been run live.
       STATUS.md which models it worked with. Do this first: it shows which of the lines below matter
 - [ ] An assistant turn with no text sends `content: null` (`openai.rs`), which likely causes #403's
       `invalid message content type: <nil>`: send an empty string
-- [ ] Understand a tool call a model writes as JSON in its text (#417). The fallback protocol reads
-      only `Action:` and `Action Input:` lines, so anything else ends the turn with nothing done — claimed: Afloat16, branch bugfix/r5.4-json-text-tool-calls-20261103
+- [x] Understand a tool call a model writes as JSON in its text (#417). The fallback protocol reads
+      only `Action:` and `Action Input:` lines, so anything else ends the turn with nothing done
 - [ ] Accept a tool argument of a near type, such as a list for a string, or answer so the model
       can correct it (#498)
 - [ ] Find how each local server is told its context size and set it, or stop with a plain message

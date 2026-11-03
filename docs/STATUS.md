@@ -84,6 +84,17 @@ Synthetic images cover an extended root, a nested extended directory with a nonz
 and both together; the results are compared with the existing basic-directory fixture. Compressed
 metadata, directory indexes and a real firmware extraction were not newly checked for this fix.
 
+### Tool calls written as JSON
+
+The text fallback accepts complete bare or fenced JSON calls with `name` and `arguments`
+(`parameters` also accepted), including a `function` wrapper and JSON-encoded arguments.
+Automatic recovery also handles these responses when native tool calling was offered. A call
+must name a tool offered in that turn; ordinary JSON answers and JSON examples surrounded by
+prose are left as text. Native calls are kept once; text-call recovery skips truncated or refused replies.
+Checked with parser fixtures, HTTP/SSE stand-ins exercising real engine tool execution in both
+protocols, and non-action, stop-reason and duplicate-call controls. No live local-model build
+was run; other text-call formats remain unsupported.
+
 ## Known limits
 
 - Locks: every mutex but the browser viewer's goes through `platform::sync`. A deadlock on one thread or across

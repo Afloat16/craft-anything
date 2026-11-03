@@ -38,7 +38,7 @@ pub struct OpenAi {
     pub extra_headers: Vec<(&'static str, String)>,
     /// Use the ReAct text protocol instead of function tools.
     pub react: bool,
-    /// Switch to ReAct automatically when the server rejects tools.
+    /// Recover JSON text calls automatically, and switch to ReAct when the server rejects tools.
     pub auto_react: bool,
 }
 
@@ -126,8 +126,8 @@ impl OpenAi {
         })?;
         stop.check()?;
         let mut r = st.finish(&self.model)?;
-        if self.react {
-            react_postprocess(&mut r);
+        if self.react || self.auto_react {
+            react_postprocess(&mut r, req.tools, self.react);
         }
         Ok(r)
     }
@@ -333,8 +333,15 @@ pub enum ReactStep {
     Text(String),
 }
 
-/// Parse the model's text according to the ReAct protocol.
+/// Parse a ReAct step, accepting a complete JSON call as an alternative.
 pub fn parse_react(text: &str) -> ReactStep {
+    if let Some(step) = json_action(text) {
+        return step;
+    }
+    // A JSON answer or a code example is not a ReAct instruction embedded in its strings.
+    if text.trim_start().starts_with(['{', '[']) || text.trim_start().starts_with("```") {
+        return ReactStep::Text(text.trim().to_string());
+    }
     if let Some(pos) = text.find("Final Answer:") {
         return ReactStep::Final(text.get(pos + "Final Answer:".len()..).unwrap_or_default().trim().to_string());
     }
@@ -350,6 +357,45 @@ pub fn parse_react(text: &str) -> ReactStep {
         None => json!({}),
     };
     if tool.is_empty() { ReactStep::Text(text.trim().to_string()) } else { ReactStep::Action { tool, input } }
+}
+
+/// Accept a complete call, not a JSON object quoted somewhere in an explanation.
+fn json_action(text: &str) -> Option<ReactStep> {
+    let text = text.trim();
+    let raw = if let Some(fenced) = text.strip_prefix("```") {
+        let (language, body) = fenced.split_once('\n')?;
+        if !matches!(language.trim(), "" | "json") {
+            return None;
+        }
+        body.strip_suffix("```")?.trim()
+    } else {
+        text
+    };
+    let value: Value = serde_json::from_str(raw).ok()?;
+    let envelope = value.as_object()?;
+    if envelope.contains_key("function")
+        && (envelope.keys().any(|key| !matches!(key.as_str(), "function" | "type" | "id"))
+            || envelope.get("type").is_some_and(|kind| kind.as_str() != Some("function")))
+    {
+        return None;
+    }
+    let function = value.get("function").unwrap_or(&value);
+    let fields = function.as_object()?;
+    if fields.keys().any(|key| !matches!(key.as_str(), "name" | "arguments" | "parameters"))
+        || fields.contains_key("arguments") == fields.contains_key("parameters")
+    {
+        return None;
+    }
+    let tool = function.get("name")?.as_str()?.trim();
+    if tool.is_empty() {
+        return None;
+    }
+    let arguments = function.get("arguments").or_else(|| function.get("parameters"))?;
+    let input: Value = match arguments.as_str() {
+        Some(encoded) => serde_json::from_str(encoded).ok()?,
+        None => arguments.clone(),
+    };
+    input.is_object().then(|| ReactStep::Action { tool: tool.to_string(), input })
 }
 
 /// The first balanced `{…}` in `s`, parsed.
@@ -385,14 +431,22 @@ fn extract_json_object(s: &str) -> Option<Value> {
 
 static REACT_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Turn ReAct text into neutral tool-use blocks.
-fn react_postprocess(r: &mut TurnResult) {
+/// Recover complete text calls as neutral tool-use blocks.
+fn react_postprocess(r: &mut TurnResult, tools: &[ToolDef], react: bool) {
+    if !matches!(r.stop, StopReason::EndTurn | StopReason::ToolUse) || !r.message.tool_uses().is_empty() {
+        return;
+    }
     let text = r.message.text();
-    if let ReactStep::Action { tool, input } = parse_react(&text) {
+    let json_call = json_action(&text);
+    let from_json = json_call.is_some();
+    let step = json_call.or_else(|| react.then(|| parse_react(&text)));
+    if let Some(ReactStep::Action { tool, input }) = step
+        && (!from_json || tools.iter().any(|definition| definition.name == tool))
+    {
         let n = REACT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         r.message.blocks.push(Block::ToolUse { id: format!("react_{n}"), name: tool, input });
         r.stop = StopReason::ToolUse;
-    } else {
+    } else if react {
         r.stop = StopReason::EndTurn;
     }
 }
@@ -401,6 +455,40 @@ fn react_postprocess(r: &mut TurnResult) {
 mod tests {
     use super::*;
     use crate::model::Effort;
+
+    #[test]
+    fn json_text_calls_and_non_calls() {
+        for text in [
+            r#"{"name":"look","arguments":{"path":"app"}}"#,
+            r#"{"name":"look","parameters":{"path":"app"}}"#,
+            r#"{"name":"look","arguments":"{\"path\":\"app\"}"}"#,
+            r#"{"type":"function","function":{"name":"look","arguments":{"path":"app"}}}"#,
+            "```json\n{\"name\":\"look\",\"arguments\":{\"path\":\"app\"}}\n```",
+            "```\n{\"name\":\"look\",\"arguments\":{\"path\":\"app\"}}\n```",
+        ] {
+            assert_eq!(parse_react(text), ReactStep::Action { tool: "look".into(), input: json!({"path": "app"}) }, "{text}");
+        }
+        for text in [
+            r#"{"name":"look","arguments":{"path":"app"}"#,
+            r#"{"name":"look","arguments":"not JSON"}"#,
+            r#"{"name":"look","arguments":["app"]}"#,
+            r#"{"name":"look"}"#,
+            r#"{"name":"look","arguments":{},"description":"This is an example"}"#,
+            r#"{"name":"look","arguments":{},"parameters":{"path":"different"}}"#,
+            r#"{"type":"example","function":{"name":"look","arguments":{}}}"#,
+            r#"{"name":"","arguments":{}}"#,
+            r#"{"answer":"Action: look\nAction Input: {}"}"#,
+            r#"[{"name":"look","arguments":{}}]"#,
+            r#"For example, use {"name":"look","arguments":{}}."#,
+            "```json\n{\"name\":\"look\",\"arguments\":{}}\n```\nThis is an example.",
+        ] {
+            assert!(matches!(parse_react(text), ReactStep::Text(_)), "{text}");
+        }
+        assert_eq!(
+            parse_react(r#"{"name":"look","arguments":{"text":"Final Answer: is a label"}}"#),
+            ReactStep::Action { tool: "look".into(), input: json!({"text":"Final Answer: is a label"}) }
+        );
+    }
 
     #[test]
     fn react_parsing() {
