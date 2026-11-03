@@ -1068,6 +1068,117 @@ mod picking_up_a_build {
     }
 
     #[test]
+    fn scan_io_errors_skip_only_the_guard_and_cancellation_is_never_skipped() {
+        for fail_scan_first in [false, true] {
+            let b = bench();
+            let ws = worked_on(&b);
+            let worker = check_worker(&ws, false);
+            let mut progress = BuildProgress::default();
+            progress.before_turn(ws.app_fingerprint(&CancelToken::default()).unwrap());
+            progress.unchanged_turns = 2;
+            progress.save(&ws.root).unwrap();
+            let mut available = true;
+            if fail_scan_first {
+                // A deterministic read_dir I/O failure, including when tests run as root.
+                std::fs::remove_dir(ws.app_dir()).unwrap();
+                std::fs::write(ws.app_dir(), "the app directory is temporarily unavailable").unwrap();
+                assert!(worker.progress_fingerprint(&ws, &mut progress, &mut available).unwrap().is_none());
+                assert!(!available);
+                assert_eq!(progress, BuildProgress::default());
+                assert_eq!(BuildProgress::load(&ws.root).unwrap(), progress);
+                std::fs::remove_file(ws.app_dir()).unwrap();
+                std::fs::create_dir(ws.app_dir()).unwrap();
+                assert!(
+                    worker.progress_fingerprint(&ws, &mut progress, &mut available).unwrap().is_none(),
+                    "a recovered directory does not resume comparisons within the same run"
+                );
+            }
+            let before = progress.clone();
+            worker.stop.cancel();
+            assert_eq!(worker.progress_fingerprint(&ws, &mut progress, &mut available).unwrap_err().code, ErrorCode::Cancelled);
+            assert_eq!(progress, before, "cancellation does not erase a known comparison");
+            assert_eq!(BuildProgress::load(&ws.root).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn a_skipped_scan_does_not_hide_the_builders_own_failure() {
+        let b = bench();
+        let ws = worked_on(&b);
+        let nested = (0..65).fold(ws.app_dir().join("nested"), |p, _| p.join("d"));
+        std::fs::create_dir_all(nested).unwrap();
+        let agent = b._dir.path().join("agent.sh");
+        let script = std::fs::read_to_string(&agent).unwrap();
+        std::fs::write(&agent, script.replace("echo Done.", "echo 'fixture sign in needed' >&2\nexit 1")).unwrap();
+        let (ok, feed) = try_it(&b, &ws);
+        assert!(!ok);
+        assert_eq!(prompts_given(&b), 1, "the unavailable scan does not block or repeat the builder");
+        assert!(feed.iter().any(|i| matches!(i, feed::FeedItem::Error { message, .. } if message.contains("fixture sign in needed"))), "{feed:?}");
+        let saved = Workspace::open(&ws.root).unwrap();
+        assert!(!saved.manifest.awaiting_check, "a failed turn has not finished its build");
+        assert!(saved.manifest.checks.is_empty(), "the failed builder is not described as a successful check");
+    }
+
+    #[test]
+    fn scan_limits_do_not_block_builds_or_keep_a_stale_stall_count() {
+        for only_check in [false, true] {
+            let b = bench();
+            let mut ws = worked_on(&b);
+            let mut progress = BuildProgress::default();
+            progress.before_turn(ws.app_fingerprint(&CancelToken::default()).unwrap());
+            progress.unchanged_turns = 2;
+            progress.save(&ws.root).unwrap();
+            ws.manifest.awaiting_check = only_check;
+            ws.save().unwrap();
+            let nested = (0..65).fold(ws.app_dir().join("nested"), |p, _| p.join("d"));
+            std::fs::create_dir_all(&nested).unwrap();
+            assert_eq!(ws.app_fingerprint(&CancelToken::default()).unwrap_err().code, ErrorCode::OverLimit);
+            std::fs::write(ws.root.join("reject-build"), "once").unwrap();
+            let (ok, feed) = try_it(&b, &ws);
+            assert!(ok, "a scan limit must not fail the build (only_check={only_check}): {feed:?}");
+            assert_eq!(prompts_given(&b), if only_check { 1 } else { 2 });
+            assert_eq!(BuildProgress::load(&ws.root).unwrap(), BuildProgress::default(), "an unknown comparison breaks the saved streak");
+            let notices = feed
+                .iter()
+                .filter_map(|i| match i {
+                    feed::FeedItem::Work { notes, .. } => Some(notes.iter().filter(|n| n.contains("without the unchanged-turn limit")).count()),
+                    _ => None,
+                })
+                .sum::<usize>();
+            assert_eq!(notices, 1, "one notice explains that this run skipped the unavailable guard");
+            assert_eq!(Workspace::open(&ws.root).unwrap().manifest.status, Status::Ready);
+            std::fs::remove_dir_all(ws.app_dir().join("nested")).unwrap();
+            assert!(try_it(&b, &ws).0);
+            assert_eq!(BuildProgress::load(&ws.root).unwrap().unchanged_turns, 1, "the next readable run starts a new comparison");
+        }
+    }
+
+    #[test]
+    fn a_post_turn_scan_limit_keeps_the_finished_turn_for_check_only_recovery() {
+        let b = bench();
+        let ws = worked_on(&b);
+        std::fs::write(ws.app_dir().join("check-fails"), "2").unwrap();
+        let nested = (0..65).fold(ws.app_dir().join("nested"), |p, _| p.join("d"));
+        let agent = b._dir.path().join("agent.sh");
+        let script = std::fs::read_to_string(&agent).unwrap();
+        std::fs::write(&agent, format!("{script}\nmkdir -p '{}'\n", nested.display())).unwrap();
+        let (ok, feed) = try_it(&b, &ws);
+        assert!(!ok, "the original check failure still stops the run");
+        let saved = Workspace::open(&ws.root).unwrap();
+        assert!(saved.manifest.awaiting_check, "the successful builder turn is saved before an unavailable scan");
+        assert_eq!(saved.manifest.last_reply, "Done.");
+        assert_eq!(prompts_given(&b), 1);
+        assert_eq!(BuildProgress::load(&ws.root).unwrap(), BuildProgress::default());
+        assert!(
+            feed.iter().any(|i| matches!(i, feed::FeedItem::Error { message, .. } if message.contains("The build is finished, but it couldn't be checked"))),
+            "{feed:?}"
+        );
+        assert!(try_it(&b, &saved).0, "Try again can finish the checks while the scan is still unavailable");
+        assert_eq!(prompts_given(&b), 1, "the completed builder turn is not repeated");
+        assert!(!Workspace::open(&ws.root).unwrap().manifest.awaiting_check);
+    }
+
+    #[test]
     fn an_api_builder_has_the_same_two_unchanged_turn_limit() {
         use crate::agent::tests::{Scripted, turn};
         use crate::agent::{ApiConversation, EngineHost, LoopConfig, ModelSlot};

@@ -41,7 +41,7 @@ workspace clippy, layers, fmt and the secret scan of all history were clean. Chi
 
 ### Build progress across runs
 
-A build stops after two consecutive completed builder turns leave the app's files unchanged.
+When app files can be compared, a build stops after two consecutive completed builder turns leave them unchanged.
 The versioned `inbox/build-progress.json` record keeps that count when the project is reopened or
 Try again is pressed. File contents and executable permissions decide progress, so rewriting
 identical bytes does not reset it. An actual app edit or a new nonempty request starts another
@@ -50,6 +50,12 @@ Empty notes and plain Try again keep the saved count. Dependency/build caches,
 git metadata and Craft's own records, including checks in a project edited in place, do not count.
 Symlinks are recorded without following their targets. A successful check may still finish the
 second unchanged turn, and a run waiting only for checks does not start the builder again.
+Sockets, pipes and devices contribute their names and types without opening their contents.
+If a scan cannot finish because of limits, permissions or changing files, the feed says why the
+unchanged-turn limit is skipped for that run. The saved fingerprint and count are cleared so a
+later readable run starts a fresh comparison. Checks and the existing round limit still apply.
+Cancellation still stops the run; completed builder replies are saved as awaiting checks before
+the post-turn scan. Broken or newer progress records and record-write failures remain errors.
 
 Scripted API turns and executable CLI stand-ins cover the stop, persistence, fresh requests and
 check recovery. This change has not been verified with a paid model or a live provider. Copying a

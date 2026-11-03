@@ -585,6 +585,7 @@ impl Worker {
         opts: &RunOptions,
     ) -> Result<String, ToolError> {
         let mut progress = BuildProgress::load(&ws.root)?;
+        let mut progress_available = true;
         // Try again has no message. Only an explicit new request starts another attempt on
         // unchanged files; restarting the app or resuming a paused run keeps the saved count.
         if opts.message.as_deref().is_some_and(|m| !m.trim().is_empty()) {
@@ -688,11 +689,13 @@ impl Worker {
         loop {
             if !std::mem::take(&mut only_check) {
                 progress = BuildProgress::load(&ws.root)?;
-                progress.before_turn(ws.app_fingerprint(&self.stop)?);
-                if progress.stalled() {
-                    return Err(no_build_progress(ws));
+                if let Some(fingerprint) = self.progress_fingerprint(ws, &mut progress, &mut progress_available)? {
+                    progress.before_turn(fingerprint);
+                    if progress.stalled() {
+                        return Err(no_build_progress(ws));
+                    }
+                    progress.save(&ws.root)?;
                 }
-                progress.save(&ws.root)?;
                 let doing = match (round, carrying_on) {
                     (0, false) => "Building the first version…",
                     (0, true) => "Carrying on with the build…",
@@ -706,11 +709,6 @@ impl Worker {
                     self.keep_session(ws, a.as_ref());
                 }
                 let reply = reply?;
-                // A hook may have delivered a new request within this turn and reset the
-                // saved count. This completed turn is its first turn, not part of the old one.
-                progress = BuildProgress::load(&ws.root)?;
-                progress.after_turn(ws.app_fingerprint(&self.stop)?);
-                progress.save(&ws.root)?;
                 if !reply.trim().is_empty() {
                     ws.manifest.last_reply = reply.trim().to_string();
                 }
@@ -724,6 +722,14 @@ impl Worker {
                 }
                 ws.manifest.awaiting_check = true;
                 ws.save()?;
+                // Keep the finished turn before scanning: a cancellation during the scan
+                // must not make Try again repeat work that only needs its checks.
+                // A hook may also have reset the saved count for a new request in this turn.
+                progress = BuildProgress::load(&ws.root)?;
+                if let Some(fingerprint) = self.progress_fingerprint(ws, &mut progress, &mut progress_available)? {
+                    progress.after_turn(fingerprint);
+                    progress.save(&ws.root)?;
+                }
                 // What the person added while the agent worked goes in before anything else.
                 if let Some(p) = self.added(ws) {
                     progress.reset();
@@ -753,13 +759,15 @@ impl Worker {
                 continue;
             }
             let not_good = checks.iter().find(|c| !c.good(opts.good_enough));
-            if not_good.is_some() && progress.stalled() {
+            if not_good.is_some() && progress_available && progress.stalled() {
                 // A check-only resume skipped the builder's before-turn scan. A real edit
                 // while the project was closed (or during this check) still starts an attempt.
-                progress.before_turn(ws.app_fingerprint(&self.stop)?);
-                progress.save(&ws.root)?;
-                if progress.stalled() {
-                    return Err(no_build_progress(ws));
+                if let Some(fingerprint) = self.progress_fingerprint(ws, &mut progress, &mut progress_available)? {
+                    progress.before_turn(fingerprint);
+                    progress.save(&ws.root)?;
+                    if progress.stalled() {
+                        return Err(no_build_progress(ws));
+                    }
                 }
             }
             let Some(check) = not_good else { break };
@@ -796,6 +804,29 @@ impl Worker {
         ws.set_status(Status::Ready, summary.clone())?;
         self.emit(RunEvent::Step { step: Step::Done, text: summary.clone() });
         Ok(summary)
+    }
+
+    /// File scanning is an optional guard, not a prerequisite for building or checking. Once
+    /// it is unavailable, skip it for this run and start a new comparison on the next run.
+    fn progress_fingerprint(&self, ws: &Workspace, progress: &mut BuildProgress, available: &mut bool) -> Result<Option<String>, ToolError> {
+        self.stop.check()?;
+        if !*available {
+            return Ok(None);
+        }
+        match ws.app_fingerprint(&self.stop) {
+            Ok(fingerprint) => Ok(Some(fingerprint)),
+            Err(e) if e.code == ErrorCode::Cancelled => Err(e),
+            Err(e) => {
+                *available = false;
+                progress.invalidate();
+                // Record errors remain errors: never overwrite a broken or newer record.
+                progress.save(&ws.root)?;
+                self.emit(RunEvent::Agent(AgentEvent::Status {
+                    text: format!("Build progress couldn't be checked ({}). Continuing without the unchanged-turn limit for this run.", e.message),
+                }));
+                Ok(None)
+            }
+        }
     }
 
     /// One builder turn. Its session is kept even when the turn fails, so nothing is lost; a turn

@@ -96,6 +96,13 @@ impl BuildProgress {
         self.unchanged_turns = 0;
     }
 
+    /// An unavailable scan breaks the comparison streak. A later readable run needs a new
+    /// baseline, not a comparison with files from before the unobserved turns.
+    pub fn invalidate(&mut self) {
+        self.fingerprint = None;
+        self.reset();
+    }
+
     /// An edit made between turns or while the project was closed is progress too.
     pub fn before_turn(&mut self, fingerprint: String) {
         if self.fingerprint.as_deref() != Some(fingerprint.as_str()) {
@@ -197,10 +204,33 @@ fn fingerprint_tree(
             hash.update(b"file\0");
             hash.update(file_fingerprint(&path, stop)?);
         } else {
-            return Err(ToolError::unsupported(format!("Can't check build progress for the special file {}.", path.display())));
+            // A dev server can leave sockets or pipes beside its source. Their contents are
+            // not comparable (and opening a FIFO can block); only their name and type count.
+            hash.update(special_type(kind));
         }
     }
     Ok(())
+}
+
+fn special_type(kind: std::fs::FileType) -> &'static [u8] {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+        if kind.is_socket() {
+            return b"socket\0";
+        }
+        if kind.is_fifo() {
+            return b"fifo\0";
+        }
+        if kind.is_char_device() {
+            return b"character-device\0";
+        }
+        if kind.is_block_device() {
+            return b"block-device\0";
+        }
+    }
+    let _ = kind;
+    b"special\0"
 }
 
 fn file_fingerprint(path: &Path, stop: &CancelToken) -> Result<[u8; 32], ToolError> {
@@ -454,6 +484,28 @@ mod tests {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/schemas/build-progress.schema.json");
         let saved = std::fs::read_to_string(path).unwrap_or_default();
         assert_eq!(saved.replace("\r\n", "\n"), build_progress_schema());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn special_files_contribute_their_name_and_type_without_reading_them() {
+        use std::os::unix::net::UnixListener;
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "Socket", "An app with a dev server", TargetRef::None).unwrap();
+        std::fs::create_dir_all(ws.app_dir()).unwrap();
+        let path = ws.app_dir().join("server.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let socket = fingerprint(&ws);
+        assert_eq!(fingerprint(&ws), socket, "an idle socket is stable and is not read");
+        drop(listener);
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, "").unwrap();
+        assert_ne!(fingerprint(&ws), socket, "a regular file at the same name has a different type");
+        std::fs::remove_file(&path).unwrap();
+        let _listener = UnixListener::bind(&path).unwrap();
+        assert_eq!(fingerprint(&ws), socket, "recreating the same endpoint is not source progress");
+        std::fs::write(ws.app_dir().join("main.txt"), "new source").unwrap();
+        assert_ne!(fingerprint(&ws), socket, "regular app changes still count beside a socket");
     }
 
     #[cfg(unix)]
