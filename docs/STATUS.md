@@ -8,7 +8,7 @@ workspace clippy, layers, fmt and the secret scan of all history were clean. Chi
 
 | Area | State | Verified by |
 |---|---|---|
-| Builder discovery smoke fixture | The missing-builder smoke fixture controls discovery state and supplies a synthetic result. | All original warning, modal, action and build-availability assertions are retained. Source inspection only; automated validation has not yet run for this change. |
+| Conversation width | Agent paragraphs, inline code and fenced code stay within the message column, including glossary terms followed by long file links (#523) | UI regression checks painted text and subsequent answers against the composer bounds in Project and Ask at 1920 × 1032 and 1280 × 820; Unicode/formatted glossary hover check |
 | Settings saved on exit | Pending app settings merge the session's latest AI table when its guard is available. A busy session defers non-AI edits in `config.pending.toml` without waiting for the tool; startup recovers them with the latest committed AI table | Isolated child-process regression exercises idle and busy exit saves, a late AI commit, startup recovery and pending non-AI edits; engine tests cover sidecar migrations and damaged/newer files. No live desktop shutdown was exercised |
 | SQLite payload limits | Capped records retain column positions, disclose partial TEXT and BLOB values, omit incomplete BLOB hashes, and report partial coverage with read notes | Hand-built overflow-page regressions for five oversized records (including WITHOUT ROWID in declaration order) and two controls; table and index engine coverage and limitation regressions |
 | SQLite added columns | Short records include missing trailing fields using literal column defaults, or NULL when absent; unsupported default expressions produce NULL with a row note. Stored fields and records longer than the schema retain their values. Defaults are filled before restoring rowid aliases | Nine hand-built parser regressions and an engine tool test cover added-column defaults, rewritten records and short records with a rowid alias, including a missing alias field |
@@ -48,6 +48,7 @@ workspace clippy, layers, fmt and the secret scan of all history were clean. Chi
 | CLI | Every tool, `--deep` or `--clean-room` for one run (never saved), `rebuild` (including `--continue-in`, and `--resume` to carry on a stopped build), `mcp --inbox`, `ai`, `setup`, `doctor`, `report` | CLI integration tests |
 | SQLite database files (`db_sqlite_show`) | A rowid alias column (`INTEGER PRIMARY KEY`, including the table-constraint form) shows the rowid; `DESC`, non-`INTEGER` and composite keys keep their stored values | Hand-built fixtures; generated files compared with the official SQLite library |
 | SQLite WITHOUT ROWID tables | Read from the index b-tree, interior records and overflow included; rows in primary-key order, values in declaration order, `rowid` null | Hand-built fixtures; generated files compared with the official SQLite library |
+| Builder discovery smoke fixture | The missing-builder smoke fixture controls discovery state and supplies a synthetic result. | All original warning, modal, action and build-availability assertions are retained. Source inspection only; automated validation has not yet run for this change. |
 
 ### Builder retry policy
 
