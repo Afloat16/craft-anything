@@ -625,6 +625,8 @@ Owner: open · Status: in progress
       PAX sizes across other metadata records; CRC cpio checks member data; source maps decode
       percent-escaped data URLs and report indexed-map columns in the generated file
       (#606–#615, by Afloat16)
+- [ ] Decode SQLite schema and row text using the declared UTF-8 or UTF-16 byte order.
+      — claimed: Afloat16, branch bugfix/r3.12-sqlite-text-encoding-20261103b
 
 ### R3.13 Web inspection correctness
 Owner: open · Status: in progress
