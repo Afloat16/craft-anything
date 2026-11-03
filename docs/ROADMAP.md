@@ -165,7 +165,7 @@ only when it's green and a maintainer has fully reviewed it, code as well as wor
 ### R5.3 A builder that can't make progress stops
 Owner: open · Status: todo
 Every round spends the person's money or quota. One that can't do anything shouldn't start.
-- [ ] Preserve the interrupted request when an agent cannot restore its session: ACP starts a new
+- [x] Preserve the interrupted request when an agent cannot restore its session: ACP starts a new
       session, or a registered CLI adapter falls back to Plain (#552 review).
       — claimed: Afloat16, branch bugfix/r5.3-interrupted-request-recovery-20261103
 - [ ] A build stops and says why after two builder turns in a row that changed nothing in `app/`,

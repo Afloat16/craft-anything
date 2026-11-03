@@ -61,7 +61,11 @@ Claude assistant error codes, HTTP status/provider errors and ACP authentication
 their typed meanings. A later generic result does not erase a more specific error.
 
 API retries continue the existing history without inserting the user's message again or replaying
-completed tools. Stateless CLI retries receive the whole original request. OpenCode now uses
+completed tools. Stateless CLI retries receive the whole original request, including when required-flag
+verification falls back to Plain. ACP retries keep the original request until session recovery finishes:
+a successfully loaded session receives a continuation, while failed or unsupported loading starts a new
+session with the original request. Local stand-in processes check both recovery paths and their
+successful-resume controls. OpenCode now uses
 `run --format json`: its API error status and retry flag decide retryability while text, tools and
 usage still reach the feed. Missing or invalid step costs keep the turn's cost unknown; explicit
 zero remains a known cost. A CLI that fails with only a numeric exit also uses bounded retries;
