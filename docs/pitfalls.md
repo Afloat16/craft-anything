@@ -569,3 +569,10 @@ malformed suffixes and non-call JSON examples whose strings contain protocol mar
 the selected row each frame, so the wheel's scroll was pulled back to it at once and the list
 kept jumping to the top (#584). Scroll something into view on the frame it changed (a key, a new
 query), never as a standing request.
+
+**A per-probe walk repeated expensive work on the same bytes.** CRC cpio verification was bounded
+inside one archive, but a firmware scan could rediscover overlapping, trailerless archives and
+sum the same payload repeatedly. Count checksum byte visits across the whole scan, poll its
+cancellation callback inside long sums, and distinguish skipped verification from a mismatch.
+Test overlapping candidates with correct checksums and a complete nested archive so a structural
+trailer cannot turn unchecked data into a high-confidence result.

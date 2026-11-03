@@ -289,3 +289,16 @@ If the turn fails or is cancelled after consuming a note, its reset is saved bef
 so reopening keeps the new request's full allowance. The original failure or cancellation remains
 the result; a reset that cannot be saved is reported separately and never overwrites a broken
 or newer record. Scripted turns cover both outcomes, blank notes and unreadable records.
+
+## CPIO checksum work during firmware scans
+
+CRC cpio member checksum fields require eight ASCII hexadecimal digits. Firmware scans share a
+checksum byte allowance equal to the input length across all candidates, including overlapping
+archives. Sums poll cancellation every 64 KiB; cancelling a sum stops the scan without publishing
+that unfinished archive probe. The standalone cpio parser still checks complete member data.
+
+When the allowance runs out, the scan reports skipped checksum verification separately from a
+checksum mismatch. Region details retain the structural trailer flag, disclose visited checksum
+bytes and skipped verification, and use medium confidence for skipped CRC checks. Empty members
+need no byte allowance; newc and odc behavior is unchanged. Synthetic regressions cover these
+boundaries and cancellation; no real firmware corpus or throughput benchmark was used.
