@@ -250,6 +250,11 @@ edit, right before committing.
 
 ## Design
 
+**A probe count that did not bound the bytes read.** Each overlapping CRC cpio candidate could
+sum almost the same remaining firmware input. A per-signature probe limit still allowed that
+work thousands of times. Share a byte-work allowance across candidates, check cancellation inside
+large sums, and report checks skipped by the allowance without discarding the inventory.
+
 **An early error without a terminal event.** Model validation returned after reporting an error,
 but headless chat waits for `TurnDone`, not just an idle worker. Preflight failures and cancellation
 must finish the event sequence too; regression tests check both the error/status and the terminal event.

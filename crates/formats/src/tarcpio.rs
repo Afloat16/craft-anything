@@ -272,9 +272,53 @@ fn mode_kind(mode: u32) -> MemberKind {
     }
 }
 
+/// One checksum-work allowance, shared by overlapping firmware candidates.
+pub(crate) struct CpioChecksums<'a> {
+    remaining: usize,
+    stop: &'a dyn Fn() -> bool,
+    pub(crate) exhausted: bool,
+    pub(crate) cancelled: bool,
+}
+
+impl<'a> CpioChecksums<'a> {
+    pub(crate) fn new(bytes: usize, stop: &'a dyn Fn() -> bool) -> Self {
+        Self { remaining: bytes, stop, exhausted: false, cancelled: false }
+    }
+
+    fn sum(&mut self, body: &[u8]) -> Option<u32> {
+        let mut sum = 0u32;
+        for chunk in body.chunks(64 * 1024) {
+            if (self.stop)() {
+                self.cancelled = true;
+                return None;
+            }
+            if self.exhausted {
+                return None;
+            }
+            let take = chunk.len().min(self.remaining);
+            for &byte in chunk.get(..take).unwrap_or_default() {
+                sum = sum.wrapping_add(u32::from(byte));
+            }
+            self.remaining -= take;
+            if take < chunk.len() {
+                self.exhausted = true;
+                return None;
+            }
+        }
+        Some(sum)
+    }
+}
+
 /// Walk a cpio archive (newc `070701`, crc `070702`, odc `070707`). `None` when the first header
 /// is not one of these.
 pub fn cpio(data: &[u8], max_members: usize) -> Option<Listing> {
+    let stop = || false;
+    // A single walk visits disjoint member contents, so one input length covers every checksum.
+    cpio_with_checksums(data, max_members, &mut CpioChecksums::new(data.len(), &stop))
+}
+
+/// The firmware scanner shares its allowance and cancellation callback across candidate walks.
+pub(crate) fn cpio_with_checksums(data: &[u8], max_members: usize, checksums: &mut CpioChecksums<'_>) -> Option<Listing> {
     let r = Reader::new(data);
     let format = match r.slice(0, 6)? {
         b"070701" => "cpio-newc",
@@ -284,6 +328,7 @@ pub fn cpio(data: &[u8], max_members: usize) -> Option<Listing> {
     };
     let odc = format == "cpio-odc";
     let mut out = Listing { format, ..Listing::default() };
+    let mut checksum_skipped = false;
     let mut pos = 0usize;
     let align = |v: usize| if odc { Some(v) } else { v.checked_add(3).map(|x| x & !3) };
     loop {
@@ -341,12 +386,19 @@ pub fn cpio(data: &[u8], max_members: usize) -> Option<Listing> {
             break;
         }
         if format == "cpio-crc" {
-            match h.get(102..110).and_then(hex_field).and_then(|n| u32::try_from(n).ok()) {
+            match h.get(102..110).filter(|field| field.iter().all(u8::is_ascii_hexdigit)).and_then(hex_field).and_then(|n| u32::try_from(n).ok()) {
                 Some(expected) => {
                     if let Some(body) = r.slice(data_off, size) {
-                        let actual = body.iter().fold(0u32, |sum, &byte| sum.wrapping_add(u32::from(byte)));
-                        if actual != expected {
-                            out.warnings.push(format!("{name}: data checksum mismatch (stored {expected:08x}, computed {actual:08x})"));
+                        match checksums.sum(body) {
+                            Some(actual) if actual != expected => {
+                                out.warnings.push(format!("{name}: data checksum mismatch (stored {expected:08x}, computed {actual:08x})"));
+                            }
+                            None if checksums.cancelled => out.warnings.push(format!("{name}: checksum validation cancelled")),
+                            None if !checksum_skipped => {
+                                out.warnings.push(format!("{name}: checksum validation skipped (scan byte budget spent)"));
+                                checksum_skipped = true;
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -354,6 +406,10 @@ pub fn cpio(data: &[u8], max_members: usize) -> Option<Listing> {
             }
         }
         out.members.push(Member { name, kind, size: filesize, data_offset: data_off as u64, link_target, mode });
+        if checksums.cancelled {
+            out.length = next.min(data.len()) as u64;
+            break;
+        }
         if next > data.len() {
             out.warnings.push("archive ends early (no trailer)".into());
             out.length = data.len() as u64;

@@ -276,7 +276,8 @@ impl Region {
     }
 }
 
-/// Scan limits.
+/// Scan limits. CPIO checksums additionally share at most one input length of byte visits,
+/// capped at 256 MiB, across all candidates.
 #[derive(Debug, Clone)]
 pub struct ScanOptions {
     pub max_regions: usize,
@@ -311,6 +312,7 @@ struct Scanner<'a> {
     probes: BTreeMap<&'static str, usize>,
     opts: &'a ScanOptions,
     inflate_left: u64,
+    checksums: crate::tarcpio::CpioChecksums<'a>,
     exhausted: Vec<&'static str>,
 }
 
@@ -791,7 +793,7 @@ impl<'a> Scanner<'a> {
         if !matches!(self.r.u8(i + 5)?, b'1' | b'2' | b'7') || !self.probe("cpio") {
             return None;
         }
-        let l = crate::tarcpio::cpio(self.data.get(i..)?, 1_000_000)?;
+        let l = crate::tarcpio::cpio_with_checksums(self.data.get(i..)?, 1_000_000, &mut self.checksums)?;
         if l.members.is_empty() && !l.complete {
             return None;
         }
@@ -1499,11 +1501,20 @@ impl<'a> Scanner<'a> {
     }
 }
 
-/// Scan `data` for recognised regions. `stop` is polled every MiB; when it returns true the scan
-/// ends early with `cancelled` set. A region with a confirmed length hides its interior from the
+/// Scan `data` for recognised regions. `stop` is polled every MiB and every 64 KiB of cpio
+/// checksum data; when it returns true the scan ends early with `cancelled` set.
+/// A region with a confirmed length hides its interior from the
 /// scan (nested content is found by scanning the region again after extraction).
 pub fn scan(data: &[u8], opts: &ScanOptions, stop: &dyn Fn() -> bool) -> ScanResult {
-    let mut s = Scanner { data, r: Reader::new(data), probes: BTreeMap::new(), opts, inflate_left: opts.inflate_budget, exhausted: Vec::new() };
+    let mut s = Scanner {
+        data,
+        r: Reader::new(data),
+        probes: BTreeMap::new(),
+        opts,
+        inflate_left: opts.inflate_budget,
+        checksums: crate::tarcpio::CpioChecksums::new(data.len().min(256 << 20), stop),
+        exhausted: Vec::new(),
+    };
     let mut out = ScanResult::default();
     let mut skip_until = 0usize;
     let mut i = 0usize;
@@ -1513,6 +1524,9 @@ pub fn scan(data: &[u8], opts: &ScanOptions, stop: &dyn Fn() -> bool) -> ScanRes
             break;
         }
         let found = s.try_backref(i).filter(|r| r.offset as usize >= skip_until).or_else(|| s.try_at(i));
+        if s.checksums.cancelled {
+            out.cancelled = true;
+        }
         if let Some(r) = found {
             if out.regions.len() >= opts.max_regions {
                 out.truncated = true;
@@ -1531,12 +1545,18 @@ pub fn scan(data: &[u8], opts: &ScanOptions, stop: &dyn Fn() -> bool) -> ScanRes
             }
             out.regions.push(r);
         }
+        if out.cancelled {
+            break;
+        }
         i = if skip_until > i { skip_until } else { i + 1 };
     }
     out.regions.sort_by_key(|r| r.offset);
     out.probes_exhausted = s.exhausted;
     if !out.probes_exhausted.is_empty() {
         out.warnings.push(format!("probe budget spent for: {} (later candidates were not checked)", out.probes_exhausted.join(", ")));
+    }
+    if s.checksums.exhausted {
+        out.warnings.push("cpio checksum byte budget spent (some member checksums were not checked)".into());
     }
     out
 }

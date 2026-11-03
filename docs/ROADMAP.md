@@ -540,6 +540,10 @@ Owner: open · Status: in progress
       PAX sizes across other metadata records; CRC cpio checks member data; source maps decode
       percent-escaped data URLs and report indexed-map columns in the generated file
       (#606–#615, by Afloat16)
+- [x] Reject non-hexadecimal CRC cpio checksum fields. Firmware candidates share one bounded
+      checksum-byte allowance and poll cancellation within large payloads; skipped validations
+      are reported without dropping member inventory (review follow-up for #615 after #652)
+      — claimed: Afloat16, branch bugfix/r3.12-cpio-checksum-validation-budget-20261103
 
 ### R3.13 Web inspection correctness
 Owner: open · Status: in progress
