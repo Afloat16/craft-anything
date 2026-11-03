@@ -476,6 +476,12 @@ Owner: open · Status: in progress
 
 ---
 
+### R3.13 Web inspection correctness
+Owner: open · Status: in progress
+- [ ] Recognise only complete valid calendar dates when grouping HAR API paths. — claimed: Afloat16, branch bugfix/r3.13-har-date-paths-20261103
+
+---
+
 ## M4 Release
 
 ### R4.1 A macOS CLI that opens
