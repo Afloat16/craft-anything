@@ -86,9 +86,20 @@ mod tests {
         let port = l.local_addr().unwrap().port();
         let h = std::thread::spawn(move || {
             let (mut s, _) = l.accept().unwrap();
+            s.set_write_timeout(Some(Duration::from_secs(3))).unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
             let mut buf = [0u8; 4096];
-            let n = s.read(&mut buf).unwrap();
-            let req = String::from_utf8_lossy(&buf[..n]).lines().next().unwrap_or("").to_string();
+            let mut head = Vec::new();
+            while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                let left = deadline.saturating_duration_since(std::time::Instant::now());
+                assert!(!left.is_zero(), "the fixture request did not complete in time");
+                s.set_read_timeout(Some(left)).unwrap();
+                let n = s.read(&mut buf).unwrap();
+                assert_ne!(n, 0, "the request ended before its headers were complete");
+                head.extend_from_slice(&buf[..n]);
+                assert!(head.len() <= 16 * 1024, "the fixture request exceeded its header limit");
+            }
+            let req = String::from_utf8_lossy(&head).lines().next().unwrap_or("").to_string();
             write!(s, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
             req
         });
@@ -111,8 +122,7 @@ mod tests {
         h.join().unwrap();
         assert_eq!(v["file"], "C:\\a\\app.exe");
         assert_eq!(v["bits"], 64);
-        // Nothing listening: a closed port.
-        let free = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        assert!(probe(free).is_none());
+        // Port zero cannot be reassigned to another fixture's listener.
+        assert!(probe(0).is_none());
     }
 }
