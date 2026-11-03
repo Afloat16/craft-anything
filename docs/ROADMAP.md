@@ -625,6 +625,8 @@ Owner: open · Status: in progress
       PAX sizes across other metadata records; CRC cpio checks member data; source maps decode
       percent-escaped data URLs and report indexed-map columns in the generated file
       (#606–#615, by Afloat16)
+- [ ] Read valid ROMFS root directories named dot without treating the root as a skippable child entry.
+      — claimed: Afloat16, branch bugfix/r3.12-romfs-root-directory-20261103b
 
 ### R3.13 Web inspection correctness
 Owner: open · Status: in progress
