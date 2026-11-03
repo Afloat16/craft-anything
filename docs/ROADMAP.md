@@ -197,7 +197,7 @@ been run live.
 - [ ] Understand a tool call a model writes as JSON in its text (#417). The fallback protocol reads
       only `Action:` and `Action Input:` lines, so anything else ends the turn with nothing done
 - [ ] Accept a tool argument of a near type, such as a list for a string, or answer so the model
-      can correct it (#498)
+      can correct it (#498) — claimed: Afloat16, branch bugfix/r5.4-actionable-tool-arguments-20261103
 - [ ] Find how each local server is told its context size and set it, or stop with a plain message
       when the prompt won't fit. We assume 24k and send no `num_ctx`, which an OpenAI-style endpoint
       may ignore anyway; LM Studio refused a 12.6k prompt on its 8k default (#73)
