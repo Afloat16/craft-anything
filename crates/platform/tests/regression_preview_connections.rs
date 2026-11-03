@@ -23,7 +23,19 @@ fn regression_preview_limits_connections_and_releases_listener() {
     drop(srv);
     assert!(stopping.elapsed() < Duration::from_secs(2), "refusal cleanup must not grow with the number of excess clients");
     assert!(TcpStream::connect(("127.0.0.1", port)).is_err(), "the listener is gone when drop returns");
-    drop(excess);
+    for stream in excess {
+        stream.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        let mut response = Vec::new();
+        if let Err(error) = (&stream).take(1024).read_to_end(&mut response) {
+            // Closing the listener may reset connections still in its accept backlog.
+            assert_eq!(error.kind(), std::io::ErrorKind::ConnectionReset, "excess connection did not close: {error}");
+        }
+        assert!(response.len() < 1024, "excess response reached the read limit before closure");
+        assert!(
+            response.is_empty() || response.as_slice() == b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            "unexpected excess-connection response: {response:?}"
+        );
+    }
     drop(held);
 }
 
