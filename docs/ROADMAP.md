@@ -625,7 +625,7 @@ Owner: open · Status: in progress
       PAX sizes across other metadata records; CRC cpio checks member data; source maps decode
       percent-escaped data URLs and report indexed-map columns in the generated file
       (#606–#615, by Afloat16)
-- [ ] Bound TLS metadata decoding by record, handshake and extension lengths.
+- [x] Bound TLS metadata decoding by record, handshake and extension lengths.
       — claimed: Afloat16, branch bugfix/r3.12-tls-declared-bounds-20261103b
 
 ### R3.13 Web inspection correctness
