@@ -648,6 +648,7 @@ Owner: open · Status: in progress
 - [x] Bound and cancel CRC cpio verification across firmware probes, and reject non-hex checksum
       fields — claimed: Afloat16, branch bugfix/r3.12-bound-cpio-crc-scans-20261103
 - [x] Reject invalid invocation count and reserved operand bytes before reporting Java call instructions.
+      Reference searches preserve partial coverage when instruction decoding stops early.
       — claimed: Afloat16, branch bugfix/r3.12-java-invoke-operands-20261103b
 
 ### R3.13 Web inspection correctness
