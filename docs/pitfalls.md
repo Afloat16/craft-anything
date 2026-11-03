@@ -239,6 +239,12 @@ edit, right before committing.
 
 ## Design
 
+**A candidate cap discarded a real dependency.** The esbuild module reader kept the first 4096
+resolved zero-argument calls, then filtered for known wrappers; ordinary local calls could fill
+the buffer before a real dependency appeared. Discover wrapper bindings first and count only
+recognised dependencies against their limit. Keep the buffer bounded, and test unrelated calls,
+forward declarations and more actual dependencies than the limit permits.
+
 **Reading literals and skipping the rest.** The Electron window reader skipped a spread inside
 `webPreferences`, so a window whose preferences came partly from another object was reported as
 "contextIsolation is not set; the default applies", which nobody had checked until a live run on

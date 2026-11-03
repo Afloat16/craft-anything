@@ -81,6 +81,8 @@ Owner: open · Status: done (branch chore/r0.5-cleanups)
 - [x] Missing `database` icon for SQLite in the UI (`kind_icon`)
 - [x] Deduplicate the five private `fn spec(` helpers in the tool modules
 - [x] Keep dependencies between recognised esbuild wrappers after identifier minification (#270).
+      Follow-up to #438: only recognised wrapper calls count toward the 4096 dependency
+      budget; public regressions cover unrelated calls, forward declarations, arrows and the cap.
 - [x] rustfmt drift on main (11 files)
 - [x] Checked arithmetic on file offsets in `fsread/extfs.rs`: an inode offset near `usize::MAX`
       overflows `o + 128` (two sites), found by a lint scan of `crates/formats` (#42)
