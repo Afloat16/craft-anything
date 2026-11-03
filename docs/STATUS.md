@@ -127,12 +127,6 @@ not been rechecked for this change; Windows runtime validation remains on the ro
 
 The full workspace gates (`cargo xtask ci`) passed in [hosted CI for #541](https://github.com/storytold/craft-anything/actions/runs/41584228995).
 
-### Keep extracted string offsets inside the address space
-
-String extraction omits starting addresses that exceed the 64-bit address space instead of panicking or
-wrapping. Synthetic ASCII and UTF-16LE cases cover overflow and ordinary addresses; no live executable
-analysis was used.
-
 ## Known limits
 
 - Locks: every mutex but the browser viewer's goes through `platform::sync`. A deadlock on one thread or across
@@ -192,3 +186,9 @@ analysis was used.
 ## Next
 
 See [ROADMAP.md](ROADMAP.md) for the ordered plan.
+
+## Keep extracted string offsets inside the address space
+
+String extraction omits starting addresses that exceed the 64-bit address space instead of panicking or
+wrapping. Synthetic ASCII and UTF-16LE cases cover overflow and ordinary addresses; no live executable
+analysis was used.
