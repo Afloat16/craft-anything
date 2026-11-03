@@ -476,6 +476,12 @@ Owner: open · Status: in progress
 
 ---
 
+### R3.13 Web inspection correctness
+Owner: open · Status: in progress
+- [ ] Measure base64-decoded HAR body bytes without expanding invalid UTF-8 into replacement characters. — claimed: Afloat16, branch bugfix/r3.13-har-body-bytes-20261103
+
+---
+
 ## M4 Release
 
 ### R4.1 A macOS CLI that opens
