@@ -53,7 +53,9 @@ replacing it with a tool-use stop. The conversation can therefore reject those c
 running a tool, including calls whose arguments happen to be valid JSON. A normal `stop`
 with tool calls still works for servers that omit `tool_calls` as the finish reason.
 Checked with streamed-call fixtures and HTTP/SSE stand-ins through the real conversation
-and engine loop. No live provider or local-model build was run for this correction.
+and engine loop. The affected crate's 220 tests and Clippy checks passed locally; [hosted CI](https://github.com/storytold/craft-anything/actions/runs/41585561684)
+also passed for the implementation in PR #544. This correction concerns reported finish reasons;
+handling of a missing finish reason is unchanged. No live provider or local-model build was run.
 
 ### Linux Unreal setup
 
