@@ -76,8 +76,9 @@ pub enum RunEvent {
     Step { step: Step, text: String },
     /// Something from the coding agent (text, tool calls, errors).
     Agent(AgentEvent),
-    /// A note the person added while it worked, now read by the agent (as the feed shows it).
-    Note(String),
+    /// A note the person added while it worked, now read by the agent (as the feed shows it),
+    /// with the pictures attached to it (their copies in the project).
+    Note { shown: String, pictures: Vec<PathBuf> },
     /// A question or approval waiting for the person.
     Ask(Request),
     /// A check finished.
@@ -125,6 +126,9 @@ pub struct RunOptions {
     /// How the person's message is shown in the project's feed (it can differ from `message`,
     /// which carries attachment paths). `None` adds nothing to the feed.
     pub shown: Option<String>,
+    /// The pictures attached to `shown` (their copies in the project), so the feed keeps them
+    /// with the message for Up to bring back.
+    pub shown_pictures: Vec<PathBuf>,
     /// Pick up a build whose last run stopped part-way (paused, the app closed, the computer
     /// stopped): Study isn't repeated when it was done, and an agent with a saved session is
     /// told to carry on rather than given the brief again. A run with no message on a project
@@ -149,6 +153,7 @@ impl Default for RunOptions {
             backend: None,
             message: None,
             shown: None,
+            shown_pictures: Vec::new(),
             continuing: false,
             max_rounds: 6,
             good_enough: 90.0,
@@ -169,6 +174,8 @@ pub struct Note {
     pub text: String,
     /// How it appears in the project's feed.
     pub shown: String,
+    /// The pictures attached to it (their copies in the project), for the feed's history.
+    pub pictures: Vec<PathBuf>,
 }
 
 /// A running (or finished) rebuild.
@@ -226,7 +233,7 @@ impl RebuildRun {
         // The project's conversation: the run keeps it in the folder as it goes.
         let feed = Arc::new(Mutex::new(feed::FeedLog::open(&ws)));
         if let Some(shown) = opts.shown.clone() {
-            feed.lock().unwrap_or_else(PoisonError::into_inner).push(feed::FeedItem::User(shown));
+            feed.lock().unwrap_or_else(PoisonError::into_inner).push(feed::FeedItem::User(feed::UserItem::new(shown, opts.shown_pictures.clone())));
         }
         let ctx = Worker {
             wake: opts.wake.clone(),
@@ -243,6 +250,7 @@ impl RebuildRun {
             decompiled: false,
             usage: Some(UsageClock { root: root.clone(), since: Instant::now() }),
             self_check: None,
+            reset_progress_after_notes: false,
         };
         let r2 = running.clone();
         std::thread::Builder::new()
@@ -280,15 +288,16 @@ impl RebuildRun {
     }
 
     /// Add something while it works; the agent reads it at its next step, and only then does it
-    /// join the feed (as `shown`). Returns its id, to take it back with `unsend` until then.
-    pub fn add_note(&self, text: String, shown: String) -> u64 {
+    /// join the feed (as `shown`, with `pictures`). Returns its id, to take it back with `unsend`
+    /// until then.
+    pub fn add_note(&self, text: String, shown: String, pictures: Vec<PathBuf>) -> u64 {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
         // Also left for an agent that takes notes at its next step; without it, after the turn.
         if let Err(e) = notes::hand_over(&notes::notes_dir(self.inbox.dir()), id, &text) {
             log::warn!("A note waits for the builder's turn to end: {}", e.message);
         }
-        self.notes.lock().unwrap_or_else(PoisonError::into_inner).push(Note { id, text, shown });
+        self.notes.lock().unwrap_or_else(PoisonError::into_inner).push(Note { id, text, shown, pictures });
         id
     }
 
@@ -422,6 +431,8 @@ struct Worker {
     usage: Option<UsageClock>,
     /// The kind and bar the builder's own checks (`rebuild_check`) are judged by, once known.
     self_check: Option<(Arc<dyn kinds::TargetKind>, f64)>,
+    /// A hook consumed a new request; persist its reset only after the builder finishes.
+    reset_progress_after_notes: bool,
 }
 
 /// The project a run records its usage in, and when it last did.
@@ -506,7 +517,7 @@ impl Worker {
             return None;
         }
         for n in &notes {
-            self.emit(RunEvent::Note(n.shown.clone()));
+            self.emit(RunEvent::Note { shown: n.shown.clone(), pictures: n.pictures.clone() });
         }
         // A cancelled step can't be reported, but the notes go in either way.
         let _ = self.step(ws, Step::Build, Status::Building, "Reading what you added…");
@@ -728,8 +739,13 @@ impl Worker {
                 ws.save()?;
                 // Keep the finished turn before scanning: a cancellation during the scan
                 // must not make Try again repeat work that only needs its checks.
-                // A hook may also have reset the saved count for a new request in this turn.
+                // A consumed note starts another attempt, but its record I/O must not
+                // interrupt a live builder or enter the provider retry path.
                 progress = BuildProgress::load(&ws.root)?;
+                if std::mem::take(&mut self.reset_progress_after_notes) {
+                    progress.reset();
+                    progress.save(&ws.root)?;
+                }
                 if let Some(fingerprint) = self.progress_fingerprint(ws, &mut progress, &mut progress_available, &mut fingerprints)? {
                     progress.after_turn(fingerprint);
                     progress.save(&ws.root)?;
@@ -914,11 +930,29 @@ impl Worker {
 
     /// `fresh`: what to send instead when the agent's saved session turns out not to be on this
     /// computer.
-    fn turn(&mut self, ws: &mut Workspace, agent: &mut dyn Conversation, prompt: &str, mut fresh: Option<String>) -> Result<String, ToolError> {
+    fn turn(&mut self, ws: &mut Workspace, agent: &mut dyn Conversation, prompt: &str, fresh: Option<String>) -> Result<String, ToolError> {
+        self.turn_with_wait(ws, agent, prompt, fresh, |stop, seconds| {
+            for _ in 0..seconds {
+                stop.check()?;
+                std::thread::sleep(Duration::from_secs(1));
+            }
+            stop.check()
+        })
+    }
+
+    fn turn_with_wait(
+        &mut self,
+        ws: &mut Workspace,
+        agent: &mut dyn Conversation,
+        prompt: &str,
+        mut fresh: Option<String>,
+        mut wait_for: impl FnMut(&CancelToken, u64) -> Result<(), ToolError>,
+    ) -> Result<String, ToolError> {
         let mut prompt = prompt.to_string();
         let mut tries = 0u64;
+        let mut retry = false;
         loop {
-            let result = self.converse(ws, agent, &prompt);
+            let result = self.converse_turn(ws, agent, &prompt, retry);
             let lost = result.is_err() && agent.session_lost();
             if lost {
                 // The id is for a session this computer doesn't have: never ask for it again.
@@ -937,30 +971,31 @@ impl Worker {
                         "The builder's earlier conversation isn't on this computer. Starting a new one from what the project already has…",
                     )?;
                     prompt = f;
+                    retry = false;
                 }
-                Err(e) if e.code != ErrorCode::Cancelled && tries < 3 && agent.session_id().is_some() && worth_retrying(&e.message) => {
+                // A missing session can only start fresh above, never resume. Only backend
+                // Error events become ProgramFailed here; a simultaneous backend failure must
+                // not make an inbox or workspace write failure retryable.
+                Err(e) if !lost && e.code == ErrorCode::ProgramFailed && tries < 3 && agent.last_failure().is_some_and(crate::TurnFailure::retryable) => {
                     tries += 1;
                     let why = e.message.chars().take(160).collect::<String>();
-                    // A service that says how long to wait is waited for; otherwise a dropped
-                    // connection or a busy service gets a moment, longer each time.
-                    let wait = match retry_after(&e.message) {
+                    // Typed status decides whether to retry. A display-only wait remains a
+                    // compatibility hint, and never overrides a structured provider delay.
+                    let delay = agent.last_failure().and_then(|f| f.retry_after_secs).or_else(|| crate::failure::retry_after(&e.message));
+                    let seconds = match delay {
                         Some(secs) => {
                             let note = format!("The AI service is busy or its rate limit was reached, and asked to wait {secs} s. Trying again then…");
                             self.step(ws, Step::Build, Status::Building, &note)?;
-                            secs + 1
+                            secs.saturating_add(1).min(crate::failure::MAX_RETRY_WAIT)
                         }
                         None => {
                             self.step(ws, Step::Build, Status::Building, &format!("The builder stopped ({why}). Picking up where it left off…"))?;
                             30 * tries
                         }
                     };
-                    for _ in 0..wait {
-                        self.stop.check()?;
-                        std::thread::sleep(Duration::from_secs(1));
-                    }
-                    prompt = format!(
-                        "Your last turn was cut off ({why}). Carry on from where you stopped: look at what's already in app/ and your checklist, then finish the task."
-                    );
+                    wait_for(&self.stop, seconds)?;
+                    self.stop.check()?;
+                    retry = true;
                 }
                 r => return r,
             }
@@ -970,7 +1005,15 @@ impl Worker {
     /// Send one message and pump the agent until its turn ends, relaying events and inbox
     /// requests. Returns the agent's reply text.
     fn converse(&mut self, ws: &mut Workspace, agent: &mut dyn Conversation, text: &str) -> Result<String, ToolError> {
-        agent.send(text);
+        self.converse_turn(ws, agent, text, false)
+    }
+
+    fn converse_turn(&mut self, ws: &mut Workspace, agent: &mut dyn Conversation, text: &str, retry: bool) -> Result<String, ToolError> {
+        if retry {
+            agent.retry(text);
+        } else {
+            agent.send(text);
+        }
         let mut reply = String::new();
         let mut failed = None;
         loop {
@@ -1005,7 +1048,7 @@ impl Worker {
                     self.emit(RunEvent::Agent(e));
                 }
                 if done {
-                    self.relay_read_notes(ws)?;
+                    self.relay_read_notes(ws);
                     self.stop.check()?;
                     // An agent-level error (sign-in, crash, limits) ends the run: checking a
                     // build that never happened would only mislead.
@@ -1016,7 +1059,7 @@ impl Worker {
                 }
             }
             self.relay_inbox();
-            self.relay_read_notes(ws)?;
+            self.relay_read_notes(ws);
             self.answer_self_checks(ws)?;
             if self.usage.as_ref().is_some_and(|c| c.since.elapsed() >= USAGE_FLUSH) {
                 self.record_usage(None);
@@ -1027,7 +1070,7 @@ impl Worker {
 
     /// Notes the builder took at a step of this turn (its hook claimed them): they join the feed
     /// now and aren't sent again after the turn.
-    fn relay_read_notes(&self, ws: &Workspace) -> Result<(), ToolError> {
+    fn relay_read_notes(&mut self, ws: &Workspace) {
         let dir = notes::notes_dir(&ws.inbox_dir());
         let read: Vec<Note> = {
             let mut notes = self.notes.lock().unwrap_or_else(PoisonError::into_inner);
@@ -1038,14 +1081,9 @@ impl Worker {
         let new_request = read.iter().any(|n| !n.text.trim().is_empty());
         for n in read {
             notes::forget(&dir, n.id);
-            self.emit(RunEvent::Note(n.shown));
+            self.emit(RunEvent::Note { shown: n.shown, pictures: n.pictures });
         }
-        if new_request {
-            let mut progress = BuildProgress::load(&ws.root)?;
-            progress.reset();
-            progress.save(&ws.root)?;
-        }
-        Ok(())
+        self.reset_progress_after_notes |= new_request;
     }
 
     fn relay_inbox(&mut self) {
@@ -1106,37 +1144,4 @@ pub fn builder_backend(cfg: &crate::AiConfig, named: Option<&str>) -> Result<cra
         ToolError::new(ErrorCode::BadSettings, "Building needs a coding agent (such as Claude Code) or an AI backend with an API key.")
             .with_remediation("Install a coding agent or add an API key in Settings → AI, then try again.")
     })
-}
-
-/// Whether a failed builder turn is worth resuming, rather than needing the person (sign-in,
-/// credit, a missing, broken or too old install).
-fn worth_retrying(message: &str) -> bool {
-    let m = message.to_ascii_lowercase();
-    !["sign in", "log in", "login", "logged in", "auth", "credit", "billing", "usage limit", "not installed", "install ", crate::cli_agents::TOO_OLD_FOR_MODEL]
-        .iter()
-        .any(|k| m.contains(k))
-}
-
-/// The longest wait a service's "retry in …" is followed for.
-const MAX_RETRY_WAIT: u64 = 15 * 60;
-
-/// How long a busy or rate-limited service asked to wait ("Please retry in 19.05s", "retry after
-/// 2 minutes"), in whole seconds rounded up and at most [`MAX_RETRY_WAIT`] (#142).
-fn retry_after(message: &str) -> Option<u64> {
-    let m = message.to_ascii_lowercase();
-    let at = ["retry in ", "retry after ", "try again in "].iter().find_map(|p| m.find(p).map(|i| i + p.len()))?;
-    let rest = m.get(at..)?;
-    let number: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
-    let value: f64 = number.parse().ok()?;
-    let unit = rest.get(number.len()..).unwrap_or_default().trim_start();
-    let seconds = if unit.starts_with("ms") || unit.starts_with("millisecond") {
-        value / 1000.0
-    } else if unit.starts_with("min") || (unit.starts_with('m') && !unit.starts_with("ms")) {
-        value * 60.0
-    } else if unit.starts_with('h') {
-        value * 3600.0
-    } else {
-        value
-    };
-    Some((seconds.ceil().max(1.0) as u64).min(MAX_RETRY_WAIT))
 }
