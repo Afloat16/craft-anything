@@ -593,6 +593,9 @@ Gaps found while using the app for real projects.
       through "Choose a folder…" under Make's Start, on a screen that asks what to recreate
       — claimed: xerenon, branch feature/r2.9-work-on-my-project; PR #686
 
+- [ ] Keep the builder-availability smoke regression independent of live agent discovery.
+      — claimed: Afloat16, branch test/r2.9-builder-discovery-fixture-20261104
+
 ### R2.10 Pinned builds
 Owner: maintainers · Status: in progress
 Keep a build that works at hand: pin it, and open it from the sidebar whatever the builder does
