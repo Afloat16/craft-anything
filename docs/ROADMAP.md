@@ -625,8 +625,9 @@ Owner: open · Status: in progress
       PAX sizes across other metadata records; CRC cpio checks member data; source maps decode
       percent-escaped data URLs and report indexed-map columns in the generated file
       (#606–#615, by Afloat16)
-- [ ] Do not replace out-of-file physical ext blocks with zeroes or report those files completely recovered.
+- [x] Do not replace out-of-file mapped ext data blocks with zeroes or report those files completely recovered.
       — claimed: Afloat16, branch bugfix/r3.12-ext-missing-blocks-20261103b
+- [ ] Report missing ext indirect or extent-tree metadata instead of treating unresolved mappings as sparse holes.
 
 ### R3.13 Web inspection correctness
 Owner: open · Status: in progress
