@@ -448,6 +448,7 @@ impl AgentLoop {
         let after = (context::estimate_tokens(&self.history) as f64 * scale) as u64;
         self.last_input = 0;
         self.host.journal("context", json!({"action": "trim", "blocks": trimmed, "tokens_before": size, "tokens_after": after, "budget": budget}));
+        // Divide before multiplying so a large configured budget cannot overflow.
         if trimmed > 0 && after <= budget / 4 * 3 + budget % 4 * 3 / 4 {
             return None;
         }

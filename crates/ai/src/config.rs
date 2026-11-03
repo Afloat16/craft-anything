@@ -285,11 +285,12 @@ mod tests {
         let options = BackendOptions { context_tokens: Some(8192), ..Default::default() };
         assert_eq!(options.context_budget(true), 8192);
         assert_eq!(options.context_budget(false), 8192);
+        let table = |value: &str| {
+            toml::from_str(&format!("[[backends]]\nname = 'Local'\nkind = 'openai_compatible'\nmodel = 'model'\ncontext_tokens = {value}\n")).unwrap()
+        };
+        assert_eq!(AiConfig::from_table(&table("8192")).unwrap().backends[0].options.context_tokens, Some(8192));
         for invalid in ["-1", "\"8192\""] {
-            let mut settings = Settings::default();
-            settings.ai =
-                toml::from_str(&format!("[[backends]]\nname = 'Local'\nkind = 'openai_compatible'\nmodel = 'model'\ncontext_tokens = {invalid}\n")).unwrap();
-            assert_eq!(AiConfig::from_table(&settings.ai).unwrap_err().code, ErrorCode::BadSettings);
+            assert_eq!(AiConfig::from_table(&table(invalid)).unwrap_err().code, ErrorCode::BadSettings);
         }
     }
 
