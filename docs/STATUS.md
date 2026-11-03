@@ -127,12 +127,6 @@ not been rechecked for this change; Windows runtime validation remains on the ro
 
 The full workspace gates (`cargo xtask ci`) passed in [hosted CI for #541](https://github.com/storytold/craft-anything/actions/runs/41584228995).
 
-### Keep binary plist objects inside their declared data area
-
-Binary plist objects must start after the header and finish before the offset table. Synthetic malformed
-payloads and header references are refused, while exact-boundary and compound fixtures retain their values; no
-new macOS corpus was used.
-
 ## Known limits
 
 - Locks: every mutex but the browser viewer's goes through `platform::sync`. A deadlock on one thread or across
@@ -192,3 +186,9 @@ new macOS corpus was used.
 ## Next
 
 See [ROADMAP.md](ROADMAP.md) for the ordered plan.
+
+## Keep binary plist objects inside their declared data area
+
+Binary plist objects must start after the header and finish before the offset table. Synthetic malformed
+payloads and header references are refused, while exact-boundary and compound fixtures retain their values; no
+new macOS corpus was used.
