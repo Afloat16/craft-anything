@@ -96,6 +96,8 @@ already-finished helper releases promptly. The immediate-exit case fails with th
 asynchronous cleanup. The intermittent Windows report and Windows/macOS sleep inhibition have
 not been rechecked for this change; Windows runtime validation remains on the roadmap.
 
+The full workspace gates (`cargo xtask ci`) passed in [hosted CI for #541](https://github.com/storytold/craft-anything/actions/runs/41584228995).
+
 ## Known limits
 
 - Locks: every mutex but the browser viewer's goes through `platform::sync`. A deadlock on one thread or across

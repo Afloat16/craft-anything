@@ -415,7 +415,7 @@ Gaps found while using the app for real projects.
       ends, so a long `cargo build` is one quiet line until then. Watching the agent's child
       processes from outside could say what's running and for how long
 - [x] Release the keep-awake helper before a rebuild reports `Finished`, waiting up to five seconds
-      for its supervised cleanup and logging a timeout. Real subprocess stand-ins checked on Linux
+      for its supervised cleanup and logging a timeout. Real subprocess stand-ins checked on Linux (#541)
       — claimed: Afloat16, branch bugfix/r2.9-keep-awake-cleanup-20261103
 - [ ] Recheck keep-awake cleanup with a real Windows CLI `rebuild`: the helper once outlived it by
       more than 9 minutes and held the caller's output pipe; not reproduced in 8 more runs. The
