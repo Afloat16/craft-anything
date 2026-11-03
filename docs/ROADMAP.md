@@ -476,6 +476,12 @@ Owner: open · Status: in progress
 
 ---
 
+### R3.12 File parser correctness
+Owner: open · Status: in progress
+- [ ] Reject unsupported binary plist integer, UID and extended-length widths instead of truncating them. — claimed: Afloat16, branch bugfix/r3.12-plist-marker-widths-20261103
+
+---
+
 ## M4 Release
 
 ### R4.1 A macOS CLI that opens
