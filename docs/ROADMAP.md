@@ -625,7 +625,7 @@ Owner: open · Status: in progress
       PAX sizes across other metadata records; CRC cpio checks member data; source maps decode
       percent-escaped data URLs and report indexed-map columns in the generated file
       (#606–#615, by Afloat16)
-- [ ] Validate PYZ module ranges against their containing archive before listing or extracting data.
+- [x] Validate PYZ module ranges against their containing archive before listing or extracting data.
       — claimed: Afloat16, branch bugfix/r3.12-pyz-module-bounds-20261103b
 
 ### R3.13 Web inspection correctness
