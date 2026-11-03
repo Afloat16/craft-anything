@@ -1,17 +1,18 @@
 {
   "repository": "storytold/craft-anything",
   "author": "Afloat16",
-  "observedAt": "2026-11-03 18:40:36 UTC",
-  "prMetadataObservedAt": "2026-11-03 18:36:36 UTC",
-  "status": "work_in_progress",
+  "observedAt": "2026-11-03 18:50:59 UTC",
+  "status": "original_batch_27_accepted_3_ready",
   "baseline": "f5d1f275a597b434b4bc36d3af27f64bc0fd2773",
   "counts": {
-    "total": 30,
-    "merged": 0,
-    "success": 24,
-    "failure": 1,
-    "inProgress": 5,
-    "mergeable": 30
+    "improvements": 30,
+    "acceptedInMain": 27,
+    "originalPrsMergedDirectly": 0,
+    "originalPrsClosedAfterIntegration": 27,
+    "openOriginalPrs": 3,
+    "currentHeadCiSuccess": 29,
+    "currentHeadCiFailure": 1,
+    "ciInProgress": 0
   },
   "entries": [
     {
@@ -23,10 +24,10 @@
       "branch": "bugfix/r3.12-dex-signed-leb128-20261103b",
       "originalImplementation": "c6f256518b2e16c91087211665beab4a78df3e96",
       "currentHead": "26b1ab7978c0eeb7baa258bfe839ff13fef2dbd0",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "clean",
+      "mergeable": null,
+      "mergeableState": "unknown",
       "ci": {
         "run": 41692721275,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692721275",
@@ -67,7 +68,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 2,
@@ -78,10 +83,10 @@
       "branch": "bugfix/r3.12-modified-utf8-validation-20261103b",
       "originalImplementation": "7defc6c3583946aa1072ddb209734f2f25817c6b",
       "currentHead": "14e95f3e7365aa266edc33c527b525949b9ae493",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "clean",
+      "mergeable": null,
+      "mergeableState": "unknown",
       "ci": {
         "run": 41692739762,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692739762",
@@ -136,7 +141,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 3,
@@ -147,10 +156,10 @@
       "branch": "bugfix/r3.12-java-wide-opcodes-20261103b",
       "originalImplementation": "206c2804e54ad8639965203c6a16cff2732f3c8c",
       "currentHead": "ad488410ebc9dc745aaea510f5ffd84ee47789ca",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "clean",
+      "mergeable": null,
+      "mergeableState": "unknown",
       "ci": {
         "run": 41692753004,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692753004",
@@ -191,7 +200,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 4,
@@ -202,10 +215,10 @@
       "branch": "bugfix/r3.12-java-invoke-operands-20261103b",
       "originalImplementation": "63e3af8dbad23f0885590d3b7d7912440acf1d68",
       "currentHead": "5a073e46febddc75e169e83c90a7c1cdd1437527",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "clean",
+      "mergeable": null,
+      "mergeableState": "unknown",
       "ci": {
         "run": 41692767850,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692767850",
@@ -246,7 +259,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 5,
@@ -257,10 +274,10 @@
       "branch": "bugfix/r3.12-dex-invoke-registers-20261103b",
       "originalImplementation": "6da3b104817744d3baefad1a01413db6d3df2930",
       "currentHead": "390df5f83642d4aa9b7964b709079e2c411c5c58",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "clean",
+      "mergeable": null,
+      "mergeableState": "unknown",
       "ci": {
         "run": 41692778074,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692778074",
@@ -301,7 +318,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 6,
@@ -312,10 +333,10 @@
       "branch": "bugfix/r3.12-dex-array-widths-20261103b",
       "originalImplementation": "e4802ee7713eff91eb9a6e27a0459c0383f63761",
       "currentHead": "7d5f4770cab5f30dee6c24fd745c35428256ae17",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "clean",
+      "mergeable": null,
+      "mergeableState": "unknown",
       "ci": {
         "run": 41692792746,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692792746",
@@ -356,7 +377,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 7,
@@ -367,10 +392,10 @@
       "branch": "bugfix/r3.12-sqlite-text-encoding-20261103b",
       "originalImplementation": "be78da063a6ebac4e8f399d8ef7da793981ec95b",
       "currentHead": "9c49f69a9032be69896d45419328fdac850eece6",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "clean",
+      "mergeable": null,
+      "mergeableState": "unknown",
       "ci": {
         "run": 41692801601,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692801601",
@@ -411,7 +436,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 8,
@@ -422,10 +451,10 @@
       "branch": "bugfix/r3.12-sqlite-page-boundaries-20261103b",
       "originalImplementation": "1d2a3b0f812bc0cac6414d278142ad82a13b5bd7",
       "currentHead": "b5b47a5d3d4bd39d8b396dce5d7779199091689a",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "clean",
+      "mergeable": null,
+      "mergeableState": "unknown",
       "ci": {
         "run": 41692814058,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692814058",
@@ -466,7 +495,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 9,
@@ -477,10 +510,10 @@
       "branch": "bugfix/r3.12-sqlite-overflow-cycles-20261103b",
       "originalImplementation": "bc1482115787d4fa0172c2901ac16c1479724dcb",
       "currentHead": "97b03a6f9022a688daabc91dea259f153dad87cc",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "clean",
+      "mergeable": null,
+      "mergeableState": "unknown",
       "ci": {
         "run": 41692830030,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692830030",
@@ -521,7 +554,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 10,
@@ -532,10 +569,10 @@
       "branch": "bugfix/r3.12-android-string-pool-bounds-20261103b",
       "originalImplementation": "4c00f0e3dca3fac29d95b85f53620ceed323ebe7",
       "currentHead": "cddf8441b395105fbb452c9d060250dfb8cf448b",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "clean",
+      "mergeable": null,
+      "mergeableState": "unknown",
       "ci": {
         "run": 41692842389,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692842389",
@@ -576,7 +613,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 11,
@@ -587,10 +628,10 @@
       "branch": "bugfix/r3.12-zip-stored-cap-20261103b",
       "originalImplementation": "77e235402385fe77f436a107db8bc6123e494571",
       "currentHead": "1e593fbe41ad275ab2f0f0709f4bd44e034ce962",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "clean",
+      "mergeable": null,
+      "mergeableState": "unknown",
       "ci": {
         "run": 41692159741,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692159741",
@@ -631,7 +672,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 12,
@@ -642,10 +687,10 @@
       "branch": "bugfix/r3.12-zip-decoded-size-20261103b",
       "originalImplementation": "fc6b69da397429a80715f8e4b9f6c2d3580301ee",
       "currentHead": "e9db1bad36cd6b70e6835fdce465573824765efa",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "clean",
+      "mergeable": null,
+      "mergeableState": "unknown",
       "ci": {
         "run": 41692181984,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692181984",
@@ -686,7 +731,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 13,
@@ -697,10 +746,10 @@
       "branch": "bugfix/r3.12-zip64-extra-boundaries-20261103b",
       "originalImplementation": "9aecbbae5e80a50a0cc4e4652cf9d42595430ad3",
       "currentHead": "aa701bdf34486de20ddaf5cc951df8b4ee017586",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "clean",
+      "mergeable": null,
+      "mergeableState": "unknown",
       "ci": {
         "run": 41692195763,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692195763",
@@ -741,7 +790,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 14,
@@ -752,10 +805,10 @@
       "branch": "bugfix/r3.12-asar-header-bounds-20261103b",
       "originalImplementation": "e0010694cbf37bdd894a9528a309d7a258bcd66a",
       "currentHead": "0b9f5d7c8b3799d087f23ca03ca1c6fee1b54f88",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "clean",
+      "mergeable": null,
+      "mergeableState": "unknown",
       "ci": {
         "run": 41692289599,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692289599",
@@ -796,7 +849,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 15,
@@ -807,10 +864,10 @@
       "branch": "bugfix/r3.12-romfs-root-directory-20261103b",
       "originalImplementation": "d2b4ec71bf85888c47930c222963db2c0418d831",
       "currentHead": "2bef9409336d42f1a0f764848670dfd6b69fdb87",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "clean",
+      "mergeable": null,
+      "mergeableState": "unknown",
       "ci": {
         "run": 41692309447,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692309447",
@@ -851,7 +908,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 16,
@@ -862,10 +923,10 @@
       "branch": "bugfix/r3.12-cramfs-block-lengths-20261103b",
       "originalImplementation": "49b87d98ff18f2a01411c083e9d8a379afc9943d",
       "currentHead": "8328b4e549330a09b4eb787857089a5263d0966d",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "clean",
+      "mergeable": null,
+      "mergeableState": "unknown",
       "ci": {
         "run": 41692327401,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692327401",
@@ -906,7 +967,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 17,
@@ -917,10 +982,10 @@
       "branch": "bugfix/r3.12-ext-sparse-indirect-20261103b",
       "originalImplementation": "dc86da3e15d599217c8662c90d48487ed66e0f77",
       "currentHead": "13d210d63b21c1edf93d7b02d3a2f15adde544e3",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "unstable",
+      "mergeable": null,
+      "mergeableState": "unknown",
       "ci": {
         "run": 41692378272,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692378272",
@@ -961,7 +1026,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 18,
@@ -972,10 +1041,10 @@
       "branch": "bugfix/r3.12-ext-missing-blocks-20261103b",
       "originalImplementation": "59b9f2ea006993970fe5a27cab99d94442927577",
       "currentHead": "178d789785ffbba3dc7bbce71a1547fb2e904544",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "clean",
+      "mergeable": null,
+      "mergeableState": "unknown",
       "ci": {
         "run": 41692394230,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692394230",
@@ -1016,7 +1085,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 19,
@@ -1027,10 +1100,10 @@
       "branch": "bugfix/r3.12-pyz-module-bounds-20261103b",
       "originalImplementation": "caefe67e5102f34483352944ce160f8a9a25e704",
       "currentHead": "8612a9c73d08d3273589679e079d293c8c3d17d8",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "clean",
+      "mergeable": null,
+      "mergeableState": "unknown",
       "ci": {
         "run": 41692411966,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692411966",
@@ -1071,7 +1144,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 20,
@@ -1082,10 +1159,10 @@
       "branch": "bugfix/r3.12-jffs2-unrecovered-size-20261103b",
       "originalImplementation": "077050320b0dc5a7a5fc0ef9d72655185f5848a0",
       "currentHead": "1e4d6f36353d2da27f0f13f0957d9c8205b7809c",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "clean",
+      "mergeable": null,
+      "mergeableState": "unknown",
       "ci": {
         "run": 41692427030,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692427030",
@@ -1126,7 +1203,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 21,
@@ -1137,10 +1218,10 @@
       "branch": "bugfix/r3.12-jsonc-comment-only-20261103b",
       "originalImplementation": "35da589f43453bd1322f823f0f03fdec608510fb",
       "currentHead": "8af65ca72d40c5284d15cf96e1ecc29ab41ca9cc",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "unstable",
+      "mergeable": false,
+      "mergeableState": "dirty",
       "ci": {
         "run": 41693676646,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41693676646",
@@ -1181,7 +1262,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 22,
@@ -1192,16 +1277,16 @@
       "branch": "bugfix/r3.12-jsonc-duplicate-removal-20261103b",
       "originalImplementation": "a4ce5ea4cca6c56cee7bf860751ea7a3fd775736",
       "currentHead": "7a32fc5486c96358ae52a6f5494ca4f7b0244300",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "unstable",
+      "mergeable": false,
+      "mergeableState": "dirty",
       "ci": {
         "run": 41693809704,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41693809704",
         "head": "7a32fc5486c96358ae52a6f5494ca4f7b0244300",
-        "status": "in_progress",
-        "conclusion": null,
+        "status": "completed",
+        "conclusion": "success",
         "headMatches": true
       },
       "integrationPr": 722,
@@ -1236,7 +1321,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 23,
@@ -1247,10 +1336,10 @@
       "branch": "bugfix/r3.12-udp-length-bounds-20261103b",
       "originalImplementation": "11f4e9ea85375e06204e98fac55bab9261602f61",
       "currentHead": "2f6533961eaeecfd8ca94337ffedd681a39b6acc",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "unstable",
+      "mergeable": false,
+      "mergeableState": "dirty",
       "ci": {
         "run": 41693826718,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41693826718",
@@ -1291,7 +1380,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 24,
@@ -1302,10 +1395,10 @@
       "branch": "bugfix/r3.12-tcp-header-bounds-20261103b",
       "originalImplementation": "d9a65e6f4d2db3dc288bb6cf3b2808bf74323d8d",
       "currentHead": "83487ac2fe99f0bc9dfab5230366bb6e7fd5e30d",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "unstable",
+      "mergeable": false,
+      "mergeableState": "dirty",
       "ci": {
         "run": 41693841558,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41693841558",
@@ -1346,7 +1439,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 25,
@@ -1357,16 +1454,16 @@
       "branch": "bugfix/r3.12-tcp-dns-framing-20261103b",
       "originalImplementation": "8cbfa44cd91470b0b1bfb27ac3d1c1e89a145fbe",
       "currentHead": "67f0cfb73ae21e2e8a9aff0bec5280792d967680",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "unstable",
+      "mergeable": false,
+      "mergeableState": "dirty",
       "ci": {
         "run": 41693932774,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41693932774",
         "head": "67f0cfb73ae21e2e8a9aff0bec5280792d967680",
-        "status": "in_progress",
-        "conclusion": null,
+        "status": "completed",
+        "conclusion": "success",
         "headMatches": true
       },
       "integrationPr": 722,
@@ -1401,7 +1498,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 26,
@@ -1412,16 +1513,16 @@
       "branch": "bugfix/r3.12-pcapng-block-framing-20261103b",
       "originalImplementation": "533d404ff9234db41e15f11ac63c49c931326f02",
       "currentHead": "d9ffd0cd0fd4467b042de22c9755dc665830610f",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "unstable",
+      "mergeable": false,
+      "mergeableState": "dirty",
       "ci": {
         "run": 41693917149,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41693917149",
         "head": "d9ffd0cd0fd4467b042de22c9755dc665830610f",
-        "status": "in_progress",
-        "conclusion": null,
+        "status": "completed",
+        "conclusion": "success",
         "headMatches": true
       },
       "integrationPr": 722,
@@ -1456,7 +1557,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 27,
@@ -1467,16 +1572,16 @@
       "branch": "bugfix/r3.12-tls-declared-bounds-20261103b",
       "originalImplementation": "b0decf6f3187770147f9f921a2b4f4656a280641",
       "currentHead": "a3f8763f4aa84cdeeba2dd0a05b1230b388dd241",
-      "state": "open",
+      "state": "closed",
       "merged": false,
-      "mergeable": true,
-      "mergeableState": "unstable",
+      "mergeable": false,
+      "mergeableState": "dirty",
       "ci": {
         "run": 41693905229,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41693905229",
         "head": "a3f8763f4aa84cdeeba2dd0a05b1230b388dd241",
-        "status": "in_progress",
-        "conclusion": null,
+        "status": "completed",
+        "conclusion": "success",
         "headMatches": true
       },
       "integrationPr": 722,
@@ -1511,7 +1616,11 @@
           "additions": 2,
           "deletions": 1
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": true,
+      "acceptancePath": "squash merge of #722",
+      "mainMergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a"
     },
     {
       "number": 28,
@@ -1525,7 +1634,7 @@
       "state": "open",
       "merged": false,
       "mergeable": true,
-      "mergeableState": "unstable",
+      "mergeableState": "clean",
       "ci": {
         "run": 41693894074,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41693894074",
@@ -1566,7 +1675,11 @@
           "additions": 1,
           "deletions": 0
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": false,
+      "acceptancePath": "awaiting maintainer merge",
+      "mainMergeCommit": null
     },
     {
       "number": 29,
@@ -1580,13 +1693,13 @@
       "state": "open",
       "merged": false,
       "mergeable": true,
-      "mergeableState": "unstable",
+      "mergeableState": "clean",
       "ci": {
         "run": 41693880980,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41693880980",
         "head": "f6c86482cab1d888aacc8f932591585a7fd80a61",
-        "status": "in_progress",
-        "conclusion": null,
+        "status": "completed",
+        "conclusion": "success",
         "headMatches": true
       },
       "integrationPr": null,
@@ -1621,7 +1734,11 @@
           "additions": 1,
           "deletions": 0
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": false,
+      "acceptancePath": "awaiting maintainer merge",
+      "mainMergeCommit": null
     },
     {
       "number": 30,
@@ -1635,7 +1752,7 @@
       "state": "open",
       "merged": false,
       "mergeable": true,
-      "mergeableState": "unstable",
+      "mergeableState": "clean",
       "ci": {
         "run": 41693868110,
         "url": "https://github.com/storytold/craft-anything/actions/runs/41693868110",
@@ -1676,20 +1793,193 @@
           "additions": 1,
           "deletions": 0
         }
-      ]
+      ],
+      "mergedAt": null,
+      "acceptedInMain": false,
+      "acceptancePath": "awaiting maintainer merge",
+      "mainMergeCommit": null
     }
   ],
   "integration": {
     "number": 722,
     "url": "https://github.com/storytold/craft-anything/pull/722",
     "head": "cf860e3566cfc15aeef327687daf05a5e2c728d5",
-    "state": "open",
-    "merged": false,
+    "state": "closed",
+    "merged": true,
     "ci": {
-      "id": 41693727323,
+      "run": 41693727323,
       "head": "cf860e3566cfc15aeef327687daf05a5e2c728d5",
       "status": "completed",
-      "conclusion": "success"
+      "conclusion": "success",
+      "url": "https://github.com/storytold/craft-anything/actions/runs/41693727323",
+      "newRegressionTargets": 27,
+      "newRegressionPassed": 103,
+      "newRegressionFailed": 0,
+      "newRegressionIgnored": 0,
+      "targets": [
+        {
+          "name": "tests/android_string_pool_bounds.rs",
+          "passed": 7,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/asar_header_bounds.rs",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/cramfs_block_lengths.rs",
+          "passed": 5,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/dex_array_widths.rs",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/dex_invoke_registers.rs",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/dex_signed_leb128.rs",
+          "passed": 4,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/ext_missing_blocks.rs",
+          "passed": 2,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/ext_sparse_indirect.rs",
+          "passed": 2,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/java_invoke_operands.rs",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/java_wide_opcodes.rs",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/jffs2_unrecovered_size.rs",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/modified_utf8_validation.rs",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/pyz_module_bounds.rs",
+          "passed": 2,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/regression_jsonc_comment_only.rs",
+          "passed": 2,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/regression_jsonc_duplicate_removal.rs",
+          "passed": 5,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/regression_pcapng_framing.rs",
+          "passed": 4,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/regression_tcp_dns_framing.rs",
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/regression_tcp_header_length.rs",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/regression_tls_bounds.rs",
+          "passed": 10,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/regression_udp_length.rs",
+          "passed": 4,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/romfs_root_directory.rs",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/sqlite_overflow_cycles.rs",
+          "passed": 4,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/sqlite_page_boundaries.rs",
+          "passed": 7,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/sqlite_text_encoding.rs",
+          "passed": 4,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/zip64_extra_boundaries.rs",
+          "passed": 4,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/zip_decoded_size.rs",
+          "passed": 2,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "name": "tests/zip_stored_cap.rs",
+          "passed": 2,
+          "failed": 0,
+          "ignored": 0
+        }
+      ]
     },
     "originalAuthorCount": 27,
     "commits": [
@@ -1869,39 +2159,149 @@
         "path": "crates/formats/src/axml.rs",
         "url": "https://github.com/storytold/craft-anything/pull/722#discussion_r4458905639",
         "resolved": false,
-        "status": "verified_fix_in_preparation"
+        "status": "fix_committed_in_followup"
       },
       {
         "id": "PRRT_kwDOVeM_1M6zRqWj",
         "path": "crates/formats/src/dex.rs",
         "url": "https://github.com/storytold/craft-anything/pull/722#discussion_r4458905653",
         "resolved": false,
-        "status": "verified_fix_in_preparation"
+        "status": "fix_committed_in_followup"
       },
       {
         "id": "PRRT_kwDOVeM_1M6zRqWt",
         "path": "crates/formats/src/fsread/extfs.rs",
         "url": "https://github.com/storytold/craft-anything/pull/722#discussion_r4458905664",
         "resolved": false,
-        "status": "verified_fix_in_preparation"
+        "status": "fix_committed_in_followup"
       }
-    ]
+    ],
+    "mergedAt": "2026-11-03T18:43:07Z",
+    "mergedBy": "bflatastic",
+    "mergeCommit": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a",
+    "mergeStrategy": "squash",
+    "mainCoauthor": {
+      "name": "Afloat",
+      "email": "132809511+Afloat16@users.noreply.github.com",
+      "login": "Afloat16"
+    },
+    "replayedCommitsReachableFromMain": false
   },
   "reviewBundle": {
-    "branch": "bugfix/r3.12-parser-review-followups-20261104",
-    "head": "76d42791d18c40f252573ee5be502158c12cd42d",
-    "status": "claim_published_implementation_in_preparation"
+    "branch": "bugfix/r3.12-parser-review-followups-main-20261104",
+    "head": "fc5c886aa1626b2e7b130964c3b56bccb7b9aaac",
+    "base": "b9ca099903aeef5d4b33a7e83e8e7062ab94c65a",
+    "baseRef": "main",
+    "commits": [
+      {
+        "kind": "claim",
+        "sha": "e675a02d3d89dca912f7b9940724c02db972d758"
+      },
+      {
+        "kind": "java",
+        "sha": "63b8e1668e1080f0d5d3de1150c37b4898c1731a"
+      },
+      {
+        "kind": "dex",
+        "sha": "0872d3d0811b5dbcbd45b8264debe7f71b2a5c9e"
+      },
+      {
+        "kind": "axml",
+        "sha": "c81e91ab17fabe2e77ff7cfb26ad5aefb484005a"
+      },
+      {
+        "kind": "ext",
+        "sha": "fc5c886aa1626b2e7b130964c3b56bccb7b9aaac"
+      }
+    ],
+    "files": [
+      {
+        "path": "crates/engine/src/tools/java_tools.rs",
+        "sha": "af2f690c362a37d02a4bbdf2935d27a434d90624",
+        "additions": 4,
+        "deletions": 1
+      },
+      {
+        "path": "crates/formats/src/axml.rs",
+        "sha": "73d9fd356b9c635de6db4b4ff3af3dcda6b3febb",
+        "additions": 11,
+        "deletions": 4
+      },
+      {
+        "path": "crates/formats/src/dex.rs",
+        "sha": "6b23d2e789919ce5bd2a3d69b01493fcdb0aec7b",
+        "additions": 4,
+        "deletions": 4
+      },
+      {
+        "path": "crates/formats/src/fsread/extfs.rs",
+        "sha": "bb3f23a9b31d480ad26eb5235e342f937ef0f65f",
+        "additions": 28,
+        "deletions": 25
+      },
+      {
+        "path": "crates/formats/src/java_class.rs",
+        "sha": "e0ccdbfd918aa1e8de9a61008d8286f11139c3c8",
+        "additions": 5,
+        "deletions": 3
+      },
+      {
+        "path": "crates/formats/tests/android_string_pool_bounds.rs",
+        "sha": "94c2e47778deed056e075d438a44cf4e3b8d434c",
+        "additions": 76,
+        "deletions": 0
+      },
+      {
+        "path": "crates/formats/tests/dex_signed_leb128.rs",
+        "sha": "699a17e71a21cf4fc4b152082830f0c2e72caabc",
+        "additions": 65,
+        "deletions": 23
+      },
+      {
+        "path": "crates/formats/tests/ext_indirect_metadata.rs",
+        "sha": "0bf4c02a55af144c57f54e301ee82591960256fb",
+        "additions": 142,
+        "deletions": 0
+      },
+      {
+        "path": "crates/formats/tests/java_invoke_operands.rs",
+        "sha": "c0b7c22e6210c33f705456d0e9aa52836fe7adb4",
+        "additions": 39,
+        "deletions": 0
+      },
+      {
+        "path": "docs/ROADMAP.md",
+        "sha": "d67bbb9c58d645607db6cb9578105bdefc971463",
+        "additions": 7,
+        "deletions": 0
+      },
+      {
+        "path": "docs/STATUS.md",
+        "sha": "5f1a5ee6d88a79fdacbb8f46bb26e4db741d2307",
+        "additions": 1,
+        "deletions": 0
+      }
+    ],
+    "title": "Address the parser review findings from #722 (R3.12)",
+    "body": "**Roadmap item:** R3.12 — follow-ups to merged #722.\n\n**What changed:**\n\n- Java reference searches keep earlier hits, scan other methods and report partial coverage after decoder rejection.\n- DEX signed LEB128 accepts signed 32-bit values in at most five bytes, including valid padding.\n- Legacy AAPT UTF-8 lengths recover within the string region, with the existing output cap.\n- Missing classic ext indirect metadata produces an unrecovered file; true sparse ranges and EOF boundaries remain intact.\n\n**Verified:**\n\nIndependent source and fixture review; the diff against main b9ca099 contains nine source/test files and ROADMAP/STATUS. The four regression targets contain 34 tests. The original Java fix passed full CI: https://github.com/storytold/craft-anything/actions/runs/41688827573.\n\n**Not verified:**\n\nThis new combined revision still awaits formatting, Clippy, tests and repository gates. Fork validation draft: https://github.com/Afloat16/craft-anything/pull/2.\n\n- [ ] Formatting, Clippy, tests, layers, locks, secrets and shared WASM checks.\n- [ ] Complete ROADMAP validation after CI passes; STATUS records the pending result.\n- [x] Original implementation; no other project's code, scripts or wording copied.",
+    "prefilledUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-parser-review-followups-main-20261104?quick_pull=1&title=Address+the+parser+review+findings+from+%23722+%28R3.12%29&body=%2A%2ARoadmap+item%3A%2A%2A+R3.12+%E2%80%94+follow-ups+to+merged+%23722.%0A%0A%2A%2AWhat+changed%3A%2A%2A%0A%0A-+Java+reference+searches+keep+earlier+hits%2C+scan+other+methods+and+report+partial+coverage+after+decoder+rejection.%0A-+DEX+signed+LEB128+accepts+signed+32-bit+values+in+at+most+five+bytes%2C+including+valid+padding.%0A-+Legacy+AAPT+UTF-8+lengths+recover+within+the+string+region%2C+with+the+existing+output+cap.%0A-+Missing+classic+ext+indirect+metadata+produces+an+unrecovered+file%3B+true+sparse+ranges+and+EOF+boundaries+remain+intact.%0A%0A%2A%2AVerified%3A%2A%2A%0A%0AIndependent+source+and+fixture+review%3B+the+diff+against+main+b9ca099+contains+nine+source%2Ftest+files+and+ROADMAP%2FSTATUS.+The+four+regression+targets+contain+34+tests.+The+original+Java+fix+passed+full+CI%3A+https%3A%2F%2Fgithub.com%2Fstorytold%2Fcraft-anything%2Factions%2Fruns%2F41688827573.%0A%0A%2A%2ANot+verified%3A%2A%2A%0A%0AThis+new+combined+revision+still+awaits+formatting%2C+Clippy%2C+tests+and+repository+gates.+Fork+validation+draft%3A+https%3A%2F%2Fgithub.com%2FAfloat16%2Fcraft-anything%2Fpull%2F2.%0A%0A-+%5B+%5D+Formatting%2C+Clippy%2C+tests%2C+layers%2C+locks%2C+secrets+and+shared+WASM+checks.%0A-+%5B+%5D+Complete+ROADMAP+validation+after+CI+passes%3B+STATUS+records+the+pending+result.%0A-+%5Bx%5D+Original+implementation%3B+no+other+project%27s+code%2C+scripts+or+wording+copied.",
+    "upstreamPr": null,
+    "validationPr": "https://github.com/Afloat16/craft-anything/pull/2",
+    "validationStatus": "no_workflow_run_observed",
+    "validationObservedAt": "2026-11-03 18:51:56 UTC",
+    "affectedRegressionTests": 34,
+    "staticReview": "Each of the DEX, AXML and ext changes was independently reviewed; the Java patch was verified against the original passing fix.",
+    "scopeLimits": [
+      "Classic ext indirect blocks only; extent-tree metadata handling is unchanged.",
+      "Nonzero triple-indirect data remains unsupported and is explicitly unrecovered.",
+      "The current DEX public helper return type remains i64; input is restricted to DEX signed 32-bit encodings."
+    ]
   },
   "javaFollowup": {
-    "key": "java",
-    "branch": "bugfix/r3.12-java-reference-completeness-20261104",
-    "base": "cf860e3566cfc15aeef327687daf05a5e2c728d5",
-    "baseRef": "bugfix/r3.12-format-parsers-2",
-    "head": "b79eb422efc6fdefa638b5c6579479a3371a3071",
-    "title": "Preserve partial Java reference coverage in the combined parsers (R3.12)",
-    "body": "**Roadmap item:** R3.12 — retain incomplete reference-scan coverage after decoder rejection.\n\n**What changed:**\n\nFollow-up to #692 for the combined parser branch in #722. Propagate decoder completeness, keep references already found, continue later methods, and report partial tool coverage. Carry the two class-reference regressions alongside the existing three invocation tests. The modified UTF-8 changes from #690 are preserved.\n\n**Verified:**\n\nThe original fix e7cd6da passed full CI: https://github.com/storytold/craft-anything/actions/runs/41688827573. The replay diff contains exactly the same three code/test changes, plus ROADMAP and STATUS updates.\n\n**Not verified:**\n\nThis combined revision has not executed CI. Its validation remains pending.\n\n- [ ] Formatting, Clippy, tests, layers, locks and secrets on this combined revision.\n- [ ] Complete the ROADMAP validation item after CI passes; STATUS records the scope.\n- [x] Original implementation; no other project's code, scripts or wording copied.",
-    "url": "https://github.com/storytold/craft-anything/compare/bugfix/r3.12-format-parsers-2...Afloat16:bugfix/r3.12-java-reference-completeness-20261104?quick_pull=1&title=Preserve+partial+Java+reference+coverage+in+the+combined+parsers+%28R3.12%29&body=%2A%2ARoadmap+item%3A%2A%2A+R3.12+%E2%80%94+retain+incomplete+reference-scan+coverage+after+decoder+rejection.%0A%0A%2A%2AWhat+changed%3A%2A%2A%0A%0AFollow-up+to+%23692+for+the+combined+parser+branch+in+%23722.+Propagate+decoder+completeness%2C+keep+references+already+found%2C+continue+later+methods%2C+and+report+partial+tool+coverage.+Carry+the+two+class-reference+regressions+alongside+the+existing+three+invocation+tests.+The+modified+UTF-8+changes+from+%23690+are+preserved.%0A%0A%2A%2AVerified%3A%2A%2A%0A%0AThe+original+fix+e7cd6da+passed+full+CI%3A+https%3A%2F%2Fgithub.com%2Fstorytold%2Fcraft-anything%2Factions%2Fruns%2F41688827573.+The+replay+diff+contains+exactly+the+same+three+code%2Ftest+changes%2C+plus+ROADMAP+and+STATUS+updates.%0A%0A%2A%2ANot+verified%3A%2A%2A%0A%0AThis+combined+revision+has+not+executed+CI.+Its+validation+remains+pending.%0A%0A-+%5B+%5D+Formatting%2C+Clippy%2C+tests%2C+layers%2C+locks+and+secrets+on+this+combined+revision.%0A-+%5B+%5D+Complete+the+ROADMAP+validation+item+after+CI+passes%3B+STATUS+records+the+scope.%0A-+%5Bx%5D+Original+implementation%3B+no+other+project%27s+code%2C+scripts+or+wording+copied.",
-    "commitUrl": "https://github.com/Afloat16/craft-anything/commit/b79eb422efc6fdefa638b5c6579479a3371a3071"
+    "supersededBy": "bugfix/r3.12-parser-review-followups-main-20261104",
+    "originalFix": "e7cd6da59d2858dc9ab5e9fba1fcd2ceaaea434f",
+    "originalPassingRun": 41688827573,
+    "note": "The earlier Java-only prepared link targets the now-merged #722 branch. Use reviewBundle.prefilledUrl for the complete follow-up against main."
   },
   "supportFixes": [
     {
@@ -1970,7 +2370,26 @@
     "upstreamPush": false,
     "upstreamPrMetadataUpdate": "403 Resource not accessible by integration",
     "upstreamActionsRerun": "403 Resource not accessible by integration",
-    "forkGitWrites": "available"
+    "forkGitWrites": "available",
+    "forkPullRequestCreation": "available; validation draft Afloat16/craft-anything#2 created",
+    "upstreamMerge": "unavailable; linked account has pull only on upstream"
   },
-  "validationLimits": "No local execution environment. New follow-up revisions have not run Rust tests, rustfmt or Clippy. CI successes are tied to the exact recorded heads."
+  "validationLimits": "No local execution environment. The new combined follow-up has no observed Actions run; it is not claimed to have passed formatting, Clippy or tests. Completed original CI and accepted #722 CI are tied to their exact heads.",
+  "integrationChecks": {
+    "sqlite": "Original three patches reconstructed and matched the combined source exactly, including as_chunks and formatting.",
+    "zip": "Three patches reconstructed; combined source matched exactly.",
+    "ext": "Two original patches reconstructed; combined source matched exactly.",
+    "jsonc": "Two patches reconstructed; combined source matched exactly.",
+    "packets": "Five patches reconstructed; combined source matched exactly.",
+    "regressionBlobs": "All 27 original added regression files matched the combined PR. Java's two later reference-level regressions are included separately in the follow-up."
+  },
+  "failureNotes": [
+    {
+      "pr": 705,
+      "run": 41692378272,
+      "status": "historical_original_branch_failure",
+      "test": "with_nothing_to_build_with_start_offers_what_was_found_instead_of_a_dead_end",
+      "note": "Shared UI fixture failure. The accepted #722 integration run passed this test; the original PR is closed after its change was accepted."
+    }
+  ]
 }
