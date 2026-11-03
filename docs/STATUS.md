@@ -86,6 +86,9 @@ metadata, directory indexes and a real firmware extraction were not newly checke
 
 ## Known limits
 
+- Windows program discovery also searches Antigravity's `agy/bin` under `LOCALAPPDATA`,
+  including redirected profiles, after the person's PATH. Filesystem fixtures cover the
+  redirected location and duplicate-path handling; a live Windows installation was not used.
 - Locks: every mutex but the browser viewer's goes through `platform::sync`. A deadlock on one thread or across
   threads is broken when it forms, with an error and a report in `logs/`; a watchdog looks every 5 s; a holder
   that isn't a labelled job is reported after 2 minutes and waited on for 15 at most. Tools are labelled, so they
