@@ -190,4 +190,7 @@ See [ROADMAP.md](ROADMAP.md) for the ordered plan.
 ## Stream large preview files without loading them into memory
 
 Static preview streams a file body and answers HEAD from file metadata. An 8 MiB loopback compatibility test
-checks exact GET bytes and bodyless HEAD length; peak memory and throughput were not benchmarked.
+checks exact GET bytes and bodyless HEAD length. A controlled reader and partially accepting writer also
+require body output before more than 32 KiB of source data is consumed ahead of it, stop at the declared
+length, and reject any source read for HEAD. Whole-file buffering fails these deterministic checks;
+peak memory and throughput were not benchmarked.

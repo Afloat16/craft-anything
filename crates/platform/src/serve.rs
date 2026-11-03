@@ -147,21 +147,22 @@ fn handle(mut stream: TcpStream, root: &Path) -> std::io::Result<()> {
         let len = file.metadata().ok()?.len();
         Some((p, file, len))
     }) {
-        Some((p, file, len)) => {
-            let head = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
-                content_type(&p),
-                len
-            );
-            stream.write_all(head.as_bytes())?;
-            if method == "GET" {
-                std::io::copy(&mut file.take(len), &mut stream)?;
-            }
-            Ok(())
-        }
+        Some((p, file, len)) => send_file(&mut stream, file, len, content_type(&p), method == "GET"),
         None => stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: 9\r\nConnection: close\r\n\r\nNot found"),
     }
 }
+
+fn send_file(stream: &mut impl Write, file: impl Read, len: u64, mime: &str, include_body: bool) -> std::io::Result<()> {
+    let head = format!("HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {len}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n");
+    stream.write_all(head.as_bytes())?;
+    if include_body {
+        std::io::copy(&mut file.take(len), stream)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod stream_tests;
 
 #[cfg(test)]
 mod tests {
