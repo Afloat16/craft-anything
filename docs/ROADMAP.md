@@ -476,6 +476,12 @@ Owner: open · Status: in progress
 
 ---
 
+### R3.13 Web inspection correctness
+Owner: open · Status: in progress
+- [ ] Merge HAR outline alternatives without nested one_of groups or duplicate alternatives. — claimed: Afloat16, branch bugfix/r3.13-har-outline-unions-20261103
+
+---
+
 ## M4 Release
 
 ### R4.1 A macOS CLI that opens
