@@ -466,7 +466,7 @@ Owner: open · Status: in progress
       recording
 - [x] Stand-in backend: retain 304 samples without a usable cached body for diagnostics, skip them
       during replay, and report `cached_body_unavailable` when the best matching group has no
-      usable answer. Build results count them; cached bodies still answer as 200
+      usable answer. Build results count them; cached bodies still answer as 200 (#543)
       — claimed: Afloat16, branch bugfix/r3.11-standin-empty-304-20261103
 - [ ] Godot format 4 and IL2CPP metadata 38 and 39 are header-only; read their tables once a real
       file can be checked
