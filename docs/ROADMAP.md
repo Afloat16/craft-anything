@@ -476,6 +476,12 @@ Owner: open · Status: in progress
 
 ---
 
+### R3.12 File parser correctness
+Owner: open · Status: in progress
+- [ ] Confine binary plist object bodies and references to the object area before the offset table. — claimed: Afloat16, branch bugfix/r3.12-plist-object-bounds-20261103
+
+---
+
 ## M4 Release
 
 ### R4.1 A macOS CLI that opens
