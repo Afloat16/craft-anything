@@ -202,7 +202,7 @@ been run live.
       when the prompt won't fit. We assume 24k and send no `num_ctx`, which an OpenAI-style endpoint
       may ignore anyway; LM Studio refused a 12.6k prompt on its 8k default (#73)
 - [x] A per-backend context budget in `[[ai.backends]]` (`LoopConfig::context_tokens` exists), for
-      services whose real window differs from 150k (#374)
+      services whose real window differs from 150k (#374) — implementation: `6bd94b84828ec89b805cb8a246f557d0a778c037`
 - [ ] Find LM Studio on another port (#73)
 - [ ] See why Bionic or LM Studio can't be picked (#140)
 
