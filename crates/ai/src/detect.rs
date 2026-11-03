@@ -55,13 +55,16 @@ pub fn port_open(base_url: &str, timeout: Duration) -> bool {
     addrs.iter().any(|a| TcpStream::connect_timeout(a, timeout).is_ok())
 }
 
-/// Words in the names of models that turn text into numbers, rank or transcribe, and can't chat:
-/// an embedding model listed first was used for every message and each one failed (#127).
-const NOT_CHAT: &[&str] = &["embed", "minilm", "bge-", "rerank", "whisper", "tts"];
+/// Task tokens and known model families that turn text into numbers, rank or transcribe.
+/// Match the model name, not its publisher: `matts/llama-3-instruct` can chat (#127).
+const NOT_CHAT: &[&str] = &["embed", "embedding", "embeddings", "embeddinggemma", "minilm", "bge", "rerank", "reranker", "whisper", "tts", "xtts"];
 
 /// The first model a server lists that can chat. A specialised model isn't a chat fallback.
 pub(crate) fn chat_model(models: &[String]) -> Option<String> {
-    let chats = |m: &&String| !NOT_CHAT.iter().any(|w| m.to_ascii_lowercase().contains(w));
+    let chats = |m: &&String| {
+        let name = m.rsplit('/').next().unwrap_or(m).to_ascii_lowercase();
+        !name.split(|c: char| !c.is_ascii_alphanumeric()).any(|token| NOT_CHAT.contains(&token))
+    };
     models.iter().find(chats).cloned()
 }
 
@@ -293,6 +296,18 @@ mod tests {
         ] {
             let url = crate::tests::serve("200 OK", body);
             assert!(probe_local("Local server", &url).is_none(), "{body} has no chat model");
+        }
+    }
+
+    #[test]
+    fn task_markers_do_not_match_publishers_or_unrelated_words() {
+        for model in ["matts/llama-3-instruct", "embedding-author/qwen-2.5-instruct", "embedded-chat", "whisper/gemma-3"] {
+            assert_eq!(chat_model(&[model.into()]).as_deref(), Some(model));
+        }
+        let url = crate::tests::serve("200 OK", r#"{"object":"list","data":[{"id":"matts/llama-3-instruct"}]}"#);
+        assert_eq!(probe_local("Local", &url).unwrap().suggestion.model, "matts/llama-3-instruct");
+        for model in ["vendor/text-embedding-3-small", "nomic-embed-text:latest", "BAAI/bge-m3", "vendor/embeddinggemma-300m", "XTTS-v2"] {
+            assert!(chat_model(&[model.into()]).is_none(), "{model}");
         }
     }
 
