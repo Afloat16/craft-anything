@@ -127,11 +127,6 @@ not been rechecked for this change; Windows runtime validation remains on the ro
 
 The full workspace gates (`cargo xtask ci`) passed in [hosted CI for #541](https://github.com/storytold/craft-anything/actions/runs/41584228995).
 
-### Keep custom HTML tag names out of the script inventory
-
-The HTML inventory recognises complete tag names before treating them as scripts or resource tags. Synthetic
-public-API regressions cover custom names and ordinary built-in tags.
-
 ## Known limits
 
 - Locks: every mutex but the browser viewer's goes through `platform::sync`. A deadlock on one thread or across
@@ -191,3 +186,8 @@ public-API regressions cover custom names and ordinary built-in tags.
 ## Next
 
 See [ROADMAP.md](ROADMAP.md) for the ordered plan.
+
+## Keep custom HTML tag names out of the script inventory
+
+The HTML inventory recognises complete tag names before treating them as scripts or resource tags. Synthetic
+public-API regressions cover custom names and ordinary built-in tags.
