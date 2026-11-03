@@ -476,6 +476,12 @@ Owner: open · Status: in progress
 
 ---
 
+### R3.12 File parser correctness
+Owner: open · Status: in progress
+- [ ] Decode percent-encoded inline source-map data before JSON or base64 decoding. — claimed: Afloat16, branch bugfix/r3.12-sourcemap-data-urls-20261103
+
+---
+
 ## M4 Release
 
 ### R4.1 A macOS CLI that opens
