@@ -499,6 +499,66 @@ fn native_tool_stop_reasons_are_respected_before_execution() {
     }
 }
 
+fn assert_unexecuted_native_tool_calls_are_paired(finish: &str) {
+    let first = chat_sse(&[
+        json!({"choices":[{"delta":{"content":"Stopped before executing.","tool_calls":[
+            {"index":0,"id":"call_a","type":"function","function":{"name":"core_session_show","arguments":"{}"}},
+            {"index":1,"id":"call_b","type":"function","function":{"name":"core_session_show","arguments":"{}"}}
+        ]}}]}),
+        json!({"choices":[{"delta":{},"finish_reason":finish}]}),
+    ]);
+    let last = chat_sse(&[json!({"choices":[{"delta":{"content":"Done."},"finish_reason":"stop"}]})]);
+    let (url, seen) = mock(vec![(200, "text/event-stream", first), (200, "text/event-stream", last)]);
+    let (h, _dir) = hub();
+    add(&h, "GPT", BackendKind::Openai, &url, Some("sk-test"));
+    let mut conversation = h.start(Some("GPT"), false).unwrap();
+    let mut events = run(&mut conversation, "status?");
+    if finish != "pause_turn" {
+        assert_eq!(seen.lock().unwrap().len(), 1, "{finish} must wait for the next user turn");
+        events.extend(run(&mut conversation, "Continue when ready."));
+    }
+    assert!(
+        !events.iter().any(|event| matches!(event, AgentEvent::ToolStarted { .. } | AgentEvent::ToolFinished { .. } | AgentEvent::ConsentNeeded { .. })),
+        "stopped calls must not run or ask for consent: {events:?}"
+    );
+    assert!(!events.iter().any(|event| matches!(event, AgentEvent::Error { .. })), "{events:?}");
+    assert!(events.iter().any(|event| matches!(event, AgentEvent::TextDelta { text } if text == "Done.")), "{events:?}");
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2, "{finish}: one stopped response and one continuation");
+    let messages = seen[1].body["messages"].as_array().unwrap();
+    let call_at = messages.iter().position(|message| message["tool_calls"].is_array()).unwrap();
+    assert_eq!(messages[call_at]["tool_calls"].as_array().unwrap().len(), 2);
+    assert_eq!(messages[call_at]["content"], "Stopped before executing.");
+    for (offset, id) in ["call_a", "call_b"].into_iter().enumerate() {
+        let result = messages.get(call_at + offset + 1);
+        assert_eq!(result.and_then(|message| message["role"].as_str()), Some("tool"), "{finish}: each retained call needs a result: {messages:?}");
+        let result = result.unwrap();
+        assert_eq!(result["tool_call_id"], id);
+        assert!(result["content"].as_str().unwrap().starts_with("Not run:"), "{result:?}");
+    }
+    if finish == "pause_turn" {
+        assert_eq!(messages.last().unwrap()["tool_call_id"], "call_b", "a pause continues without another user request");
+    } else {
+        assert_eq!(messages.last().unwrap()["role"], "user");
+        assert_eq!(messages.last().unwrap()["content"], "Continue when ready.");
+    }
+}
+
+#[test]
+fn paused_native_tool_calls_keep_history_paired() {
+    assert_unexecuted_native_tool_calls_are_paired("pause_turn");
+}
+
+#[test]
+fn sequence_stopped_native_tool_calls_keep_history_paired() {
+    assert_unexecuted_native_tool_calls_are_paired("stop_sequence");
+}
+
+#[test]
+fn provider_stopped_native_tool_calls_keep_history_paired() {
+    assert_unexecuted_native_tool_calls_are_paired("provider_stop");
+}
+
 #[test]
 fn local_server_without_tools_falls_back_to_react() {
     let t1 = chat_sse(&[json!({"choices":[{"delta":{"content":"Thought: check\nAction: core_session_show\nAction Input: {}"},"finish_reason":"stop"}]})]);

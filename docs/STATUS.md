@@ -52,10 +52,15 @@ Native OpenAI-compatible tool calls retain a reported output limit or refusal in
 replacing it with a tool-use stop. The conversation can therefore reject those calls before
 running a tool, including calls whose arguments happen to be valid JSON. A normal `stop`
 with tool calls still works for servers that omit `tool_calls` as the finish reason.
+Calls retained after a pause or another terminal stop get matching non-execution results,
+so subsequent requests keep valid tool-call history. A pause continues the same turn;
+terminal stops wait for the next user message.
 Checked with streamed-call fixtures and HTTP/SSE stand-ins through the real conversation
-and engine loop. The affected crate's 220 tests and Clippy checks passed locally; [hosted CI](https://github.com/storytold/craft-anything/actions/runs/41585561684)
-also passed for the implementation in PR #544. This correction concerns reported finish reasons;
-handling of a missing finish reason is unchanged. No live provider or local-model build was run.
+and engine loop. Three history-pairing regressions fail without the follow-up and pass with
+it. The affected crate's 223 tests and Clippy checks passed locally. The initial stop-reason
+correction also passed [hosted CI](https://github.com/storytold/craft-anything/actions/runs/41587580930)
+in PR #544. This correction concerns reported finish reasons; handling of a missing finish
+reason is unchanged. No live provider or local-model build was run.
 
 ### Linux Unreal setup
 
