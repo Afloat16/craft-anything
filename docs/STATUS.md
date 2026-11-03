@@ -191,3 +191,6 @@ See [ROADMAP.md](ROADMAP.md) for the ordered plan.
 
 HAR URL filtering recognises credential names after one percent-decoding pass and removes their values. Public
 report regressions cover encoded names, malformed escapes and ordinary query-value controls.
+Replay applies the same current query scrubbing to saved v1 stand-in samples before exact matching, so older
+recordings still select the requested query variant. Regressions cover distinct recorded responses, already
+scrubbed and ordinary queries, and the existing path fallback when no query matches.

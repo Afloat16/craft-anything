@@ -404,6 +404,11 @@ broke, and "Basic Membership" lost a word. It also tested whole tokens, so a sec
 after `ref=` passed. Test a scrubber on what must survive as well as what must go, and on each
 kind of content it can receive.
 
+**Stricter scrubbing compared with an older recording.** Decoding credential query names changed the incoming
+request but left saved v1 stand-in queries untouched. Exact matching then missed and replay could choose another
+query variant's answer. Apply the current scrubber to both sides of a persisted comparison, and test an older
+recording with distinct answers rather than rebuilding every fixture with the new code.
+
 **A strict tool that sent an AI off to write its own.** `game_pak_extract` refused an output
 whose folder didn't exist and took one file per call; the extractor model hit that twice, then
 wrote its own pak reader in Python for a large archive. Tools an AI drives make what they

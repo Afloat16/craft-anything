@@ -490,7 +490,7 @@ Owner: open · Status: in progress
 
 ### R3.13 Web inspection correctness
 Owner: open · Status: in progress
-- [x] Recognise percent-encoded credential parameter names before retaining HAR query values. — claimed: Afloat16, branch bugfix/r3.13-har-encoded-keys-20261103
+- [x] Recognise percent-encoded credential parameter names before retaining HAR query values; normalize saved v1 stand-in queries before exact replay matching. — claimed: Afloat16, branch bugfix/r3.13-har-encoded-keys-20261103
 
 ---
 
