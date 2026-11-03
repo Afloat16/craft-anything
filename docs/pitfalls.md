@@ -1,5 +1,10 @@
 # Pitfalls
 
+**A discarded query bypassed request-target validation.** Decoding only the file path did not reject
+malformed percent escapes in the query, so an invalid HTTP target could still receive a preview file.
+Validate escape syntax across the complete target before separating the query; do not decode query bytes
+or decode escaped percent signs twice. Exercise rejected and valid targets through both GET and HEAD.
+
 Mistakes made while building this project, what they cost, and the rule that prevents each one.
 Read this before your first change; add to it when you make a new mistake worth not repeating.
 Keep entries short: what happened, then the rule.

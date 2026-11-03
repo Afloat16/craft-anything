@@ -104,3 +104,22 @@ fn regression_incomplete_head_hits_deadline_without_client_eof() {
     assert!(!response.contains("private-preview-content"));
     assert!(started.elapsed() >= Duration::from_secs(5), "do not confuse a read slice with the whole-head deadline");
 }
+
+#[test]
+fn regression_request_targets_validate_query_percent_escapes() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("index.html"), "private-preview-content").unwrap();
+    let srv = serve_dir(dir.path()).unwrap();
+    for method in ["GET", "HEAD"] {
+        for target in ["/index.html?value=%", "/index.html?value=%A", "/index.html?value=%GG", "/index.html?%GG=value", "/index.html?value=%2G"] {
+            let response = request(srv.port, &format!("{method} {target} HTTP/1.1\r\nHost: localhost\r\n\r\n"));
+            assert!(response.starts_with("HTTP/1.1 400"), "{method} {target}: {response:?}");
+            assert!(!response.contains("private-preview-content"));
+        }
+        for target in ["/index.html?value=%25GG", "/index.html?value=%252", "/index.html?value=%FF", "/%69ndex.html?value=%c3%a9&keep=%2F"] {
+            let response = request(srv.port, &format!("{method} {target} HTTP/1.1\r\nHost: localhost\r\n\r\n"));
+            assert!(response.starts_with("HTTP/1.1 200"), "{method} {target}: {response:?}");
+            assert_eq!(response.contains("private-preview-content"), method == "GET", "{method} {target}: {response:?}");
+        }
+    }
+}

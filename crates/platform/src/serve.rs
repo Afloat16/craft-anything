@@ -163,6 +163,16 @@ fn valid_header(line: &str) -> bool {
     })
 }
 
+fn valid_percent_escapes(target: &str) -> bool {
+    let mut bytes = target.bytes();
+    while let Some(b) = bytes.next() {
+        if b == b'%' && (!bytes.next().is_some_and(|b| b.is_ascii_hexdigit()) || !bytes.next().is_some_and(|b| b.is_ascii_hexdigit())) {
+            return false;
+        }
+    }
+    true
+}
+
 fn valid_host(value: &str) -> bool {
     let value = value.trim_matches([' ', '\t']);
     let name_byte = |b: u8| b.is_ascii_alphanumeric() || b"-._~!$&'()*+,;=".contains(&b);
@@ -228,6 +238,7 @@ fn handle(mut stream: TcpStream, root: &Path) -> std::io::Result<()> {
         || !target.starts_with('/')
         || target.contains('#')
         || target.bytes().any(|b| b.is_ascii_control())
+        || !valid_percent_escapes(target)
         || !headers_valid
         || (version == "HTTP/1.1" && !host_seen)
     {
