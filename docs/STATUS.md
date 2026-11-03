@@ -127,12 +127,6 @@ not been rechecked for this change; Windows runtime validation remains on the ro
 
 The full workspace gates (`cargo xtask ci`) passed in [hosted CI for #541](https://github.com/storytold/craft-anything/actions/runs/41584228995).
 
-### Decode percent escapes in inline source map data URLs
-
-Inline source-map data URLs decode percent escapes before JSON or base64 interpretation. Synthetic map lookup
-covers Unicode sources and encoded content, with controls for raw data and malformed escapes; no browser or
-live bundle restoration was run.
-
 ## Known limits
 
 - Locks: every mutex but the browser viewer's goes through `platform::sync`. A deadlock on one thread or across
@@ -192,3 +186,9 @@ live bundle restoration was run.
 ## Next
 
 See [ROADMAP.md](ROADMAP.md) for the ordered plan.
+
+## Decode percent escapes in inline source map data URLs
+
+Inline source-map data URLs decode percent escapes before JSON or base64 interpretation. Synthetic map lookup
+covers Unicode sources and encoded content, with controls for raw data and malformed escapes; no browser or
+live bundle restoration was run.
