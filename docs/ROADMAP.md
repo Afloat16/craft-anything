@@ -364,7 +364,7 @@ Owner: open · Status: in progress
       writes it (no code for it was found; maybe the file picker)
 - [ ] Windows: look in `%LOCALAPPDATA%\agy\bin` too (#62)
 - [x] "Claude Code on <ssh host>" is offered for any SSH host, whether or not it has Claude Code
-      (#62) — claimed: Afloat16, branch bugfix/r2.2-verify-remote-agent-20261103
+      (#62): keep aliases in manual setup, not automatic suggestions — claimed: Afloat16, branch bugfix/r2.2-verify-remote-agent-20261103
 - [ ] Gemini CLI's sign-in reportedly refuses individuals now (#400): check, and stop recommending
       it in the builder setup dialog if so
 
