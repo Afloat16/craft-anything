@@ -86,6 +86,9 @@ metadata, directory indexes and a real firmware extraction were not newly checke
 
 ## Known limits
 
+- Local-server detection leaves out a server whose advertised models are all recognised as
+  embedding, ranking, transcription or speech models. A server with an empty model list is still
+  offered so a model can be loaded. Detection uses model names; unknown model capabilities remain unknown.
 - Locks: every mutex but the browser viewer's goes through `platform::sync`. A deadlock on one thread or across
   threads is broken when it forms, with an error and a report in `logs/`; a watchdog looks every 5 s; a holder
   that isn't a labelled job is reported after 2 minutes and waited on for 15 at most. Tools are labelled, so they

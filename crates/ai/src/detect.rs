@@ -59,10 +59,10 @@ pub fn port_open(base_url: &str, timeout: Duration) -> bool {
 /// an embedding model listed first was used for every message and each one failed (#127).
 const NOT_CHAT: &[&str] = &["embed", "minilm", "bge-", "rerank", "whisper", "tts"];
 
-/// The first model a server lists that can chat (else its first, so something is chosen).
+/// The first model a server lists that can chat. A specialised model isn't a chat fallback.
 pub(crate) fn chat_model(models: &[String]) -> Option<String> {
     let chats = |m: &&String| !NOT_CHAT.iter().any(|w| m.to_ascii_lowercase().contains(w));
-    models.iter().find(chats).or(models.first()).cloned()
+    models.iter().find(chats).cloned()
 }
 
 /// One local server: connect, then list models.
@@ -78,7 +78,11 @@ pub fn probe_local(label: &str, base: &str) -> Option<Detected> {
         // No answer in time: it may still be loading a model.
         Err(_) => Vec::new(),
     };
-    let model = chat_model(&models).unwrap_or_default();
+    let model = match chat_model(&models) {
+        Some(model) => model,
+        None if models.is_empty() => String::new(),
+        None => return None,
+    };
     let reason = match models.len() {
         0 => format!("Found {label} running at {base}"),
         1 => format!("Found {label} running with 1 model"),
@@ -272,10 +276,24 @@ mod tests {
         let names = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(chat_model(&names(&["nomic-embed-text:latest", "llama3.2:3b"])).as_deref(), Some("llama3.2:3b"));
         assert_eq!(chat_model(&names(&["mxbai-embed-large", "all-MiniLM-L6-v2", "qwen3:8b"])).as_deref(), Some("qwen3:8b"));
-        assert_eq!(chat_model(&names(&["nomic-embed-text"])).as_deref(), Some("nomic-embed-text"), "something is chosen");
+        assert_eq!(chat_model(&names(&["nomic-embed-text"])), None, "an embedding model cannot answer a chat request");
         assert_eq!(chat_model(&[]), None);
         let url = crate::tests::serve("200 OK", r#"{"object":"list","data":[{"id":"nomic-embed-text:latest"},{"id":"gemma3:4b"}]}"#);
         assert_eq!(probe_local("Ollama", &url).unwrap().suggestion.model, "gemma3:4b");
+    }
+
+    #[test]
+    fn specialised_only_servers_are_not_offered_for_chat() {
+        for body in [
+            r#"{"object":"list","data":[{"id":"nomic-embed-text"}]}"#,
+            r#"{"object":"list","data":[{"id":"bge-reranker-v2"}]}"#,
+            r#"{"object":"list","data":[{"id":"whisper-large"}]}"#,
+            r#"{"object":"list","data":[{"id":"tts-1"}]}"#,
+            r#"{"object":"list","data":[{"id":"all-MiniLM-L6-v2"}]}"#,
+        ] {
+            let url = crate::tests::serve("200 OK", body);
+            assert!(probe_local("Local server", &url).is_none(), "{body} has no chat model");
+        }
     }
 
     /// #83: a server set up in OpenCode (here LM Studio on another port) is offered; hosted
