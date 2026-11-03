@@ -196,3 +196,4 @@ when that refusal capacity is full, further connections close immediately. Each 
 Request reads share an absolute five-second deadline while retaining the 16 KiB cap; file responses keep
 their existing write timeout. Loopback fixtures propagate response-read errors and cover saturation,
 refusal queue overflow, capacity recovery, bounded shutdown, trickled input and ordinary GET responses.
+Header reads require an LF or CRLF blank line; reaching EOF or the cap before it never serves a file.

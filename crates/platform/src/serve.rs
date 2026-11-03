@@ -159,7 +159,13 @@ fn request_line(stream: &TcpStream) -> std::io::Result<String> {
     let mut line = String::new();
     reader.read_line(&mut line)?;
     let mut h = String::new();
-    while reader.read_line(&mut h)? > 2 {
+    loop {
+        if reader.read_line(&mut h)? == 0 {
+            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "Preview request headers ended before the terminator"));
+        }
+        if matches!(h.as_str(), "\n" | "\r\n") {
+            break;
+        }
         h.clear();
     }
     Ok(line)
