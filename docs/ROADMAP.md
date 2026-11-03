@@ -196,9 +196,8 @@ been run live.
       `invalid message content type: <nil>`: send an empty string
 - [ ] Understand a tool call a model writes as JSON in its text (#417). The fallback protocol reads
       only `Action:` and `Action Input:` lines, so anything else ends the turn with nothing done
-- [ ] Preserve `length` and `content_filter` stop reasons on native tool-call streams; a parsed
+- [x] Preserve `length` and `content_filter` stop reasons on native tool-call streams; a parsed
       call must not override truncation or refusal and execute tools
-      — claimed: Afloat16, branch bugfix/r5.4-native-tool-stop-reasons-20261103
 - [ ] Accept a tool argument of a near type, such as a list for a string, or answer so the model
       can correct it (#498)
 - [ ] Find how each local server is told its context size and set it, or stop with a plain message

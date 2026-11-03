@@ -461,6 +461,45 @@ fn openai_streaming_tool_loop() {
 }
 
 #[test]
+fn native_tool_stop_reasons_are_respected_before_execution() {
+    for (finish, run_tool) in [("length", false), ("content_filter", false), ("stop", true), ("tool_calls", true)] {
+        let first = chat_sse(&[
+            json!({"choices":[{"delta":{"tool_calls":[{
+                "index":0,"id":"call_a","type":"function","function":{"name":"core_session_show","arguments":"{}"}
+            }]}}]}),
+            json!({"choices":[{"delta":{},"finish_reason":finish}]}),
+        ]);
+        let mut responses = vec![(200, "text/event-stream", first)];
+        if finish != "content_filter" {
+            let last = chat_sse(&[json!({"choices":[{"delta":{"content":"Done."},"finish_reason":"stop"}]})]);
+            responses.push((200, "text/event-stream", last));
+        }
+        let (url, seen) = mock(responses);
+        let (h, _dir) = hub();
+        add(&h, "GPT", BackendKind::Openai, &url, Some("sk-test"));
+        let mut conversation = h.start(Some("GPT"), false).unwrap();
+        let events = run(&mut conversation, "status?");
+        let started = events.iter().filter(|event| matches!(event, AgentEvent::ToolStarted { .. })).count();
+        let completed = events.iter().filter(|event| matches!(event, AgentEvent::ToolFinished { tool, ok: true, .. } if tool == "core_session_show")).count();
+        assert_eq!(started, usize::from(run_tool), "finish_reason={finish}: {events:?}");
+        assert_eq!(completed, usize::from(run_tool), "finish_reason={finish}: {events:?}");
+        let seen = seen.lock().unwrap();
+        if finish == "content_filter" {
+            assert_eq!(seen.len(), 1, "a refused turn must not request a continuation");
+            assert!(events.iter().any(|event| matches!(event, AgentEvent::Error { message, .. } if message.contains("declined"))));
+        } else {
+            assert_eq!(seen.len(), 2);
+            let messages = seen[1].body["messages"].as_array().unwrap();
+            let result = messages.last().unwrap();
+            assert_eq!(result["role"], "tool");
+            assert_eq!(result["tool_call_id"], "call_a");
+            assert_eq!(result["content"].as_str().unwrap().starts_with("Not run: the reply hit the output limit"), finish == "length");
+            assert!(events.iter().any(|event| matches!(event, AgentEvent::TextDelta { text } if text == "Done.")));
+        }
+    }
+}
+
+#[test]
 fn local_server_without_tools_falls_back_to_react() {
     let t1 = chat_sse(&[json!({"choices":[{"delta":{"content":"Thought: check\nAction: core_session_show\nAction Input: {}"},"finish_reason":"stop"}]})]);
     let t2 = chat_sse(&[json!({"choices":[{"delta":{"content":"Final Answer: nothing is open"},"finish_reason":"stop"}]})]);

@@ -46,6 +46,15 @@ bytes. Reading or unpacking preserves those bytes. Synthetic graphs cover UTF-16
 surrogate pair), Latin1 and binary members across both supported module-record and offsets-block
 sizes. A freshly compiled Bun program and the CLI/MCP transport were not run for this correction.
 
+### Native tool-call stop reasons
+
+Native OpenAI-compatible tool calls retain a reported output limit or refusal instead of
+replacing it with a tool-use stop. The conversation can therefore reject those calls before
+running a tool, including calls whose arguments happen to be valid JSON. A normal `stop`
+with tool calls still works for servers that omit `tool_calls` as the finish reason.
+Checked with streamed-call fixtures and HTTP/SSE stand-ins through the real conversation
+and engine loop. No live provider or local-model build was run for this correction.
+
 ### Linux Unreal setup
 
 Unreal installations registered in `~/.config/Epic/UnrealEngine/Install.ini` are found on Linux.
