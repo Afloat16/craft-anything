@@ -1,34 +1,34 @@
 # Thirty contribution follow-ups
 
-Snapshot: **2026-11-03 18:30:26 UTC** / **2026-11-04 02:30:26 UTC+08:00**.
+Snapshot: **2026-11-03 18:35:31 UTC** / **2026-11-04 02:35:31 UTC+08:00**.
 
 All thirty changes have upstream pull requests. The links below replace the earlier creation links. Each listed head includes main at `f5d1f275a597b434b4bc36d3af27f64bc0fd2773` through a normal merge. GitHub reports all thirty as mergeable, and no unresolved inline review threads were found at this snapshot.
 
-Current CI at these exact heads: **5 successful, 1 failed, 24 in progress**. Earlier successful runs are listed separately and do not cover the final main synchronization.
+Current CI at these exact heads: **19 successful, 1 failed, 10 in progress**. Earlier successful runs are listed separately and do not cover the final main synchronization.
 
 ## Current pull requests
 
 | Item | Pull request | Change | Current head | Current CI |
 |---|---|---|---|---|
-| 1 | [#688](https://github.com/storytold/craft-anything/pull/688) | Reject signed LEB128 values outside the 64-bit range | [`26b1ab79`](https://github.com/Afloat16/craft-anything/commit/26b1ab7978c0eeb7baa258bfe839ff13fef2dbd0) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692721275) |
-| 2 | [#690](https://github.com/storytold/craft-anything/pull/690) | Preserve valid text around damaged modified UTF-8 | [`14e95f3e`](https://github.com/Afloat16/craft-anything/commit/14e95f3e7365aa266edc33c527b525949b9ae493) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692739762) |
-| 3 | [#691](https://github.com/storytold/craft-anything/pull/691) | Reject invalid widened Java instructions | [`ad488410`](https://github.com/Afloat16/craft-anything/commit/ad488410ebc9dc745aaea510f5ffd84ee47789ca) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692753004) |
-| 4 | [#692](https://github.com/storytold/craft-anything/pull/692) | Validate Java invocation operands before decoding calls | [`5a073e46`](https://github.com/Afloat16/craft-anything/commit/5a073e46febddc75e169e83c90a7c1cdd1437527) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692767850) |
-| 5 | [#693](https://github.com/storytold/craft-anything/pull/693) | Reject impossible DEX invocation register lists | [`390df5f8`](https://github.com/Afloat16/craft-anything/commit/390df5f83642d4aa9b7964b709079e2c411c5c58) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692778074) |
-| 6 | [#694](https://github.com/storytold/craft-anything/pull/694) | Reject invalid DEX array payload element widths | [`7d5f4770`](https://github.com/Afloat16/craft-anything/commit/7d5f4770cab5f30dee6c24fd745c35428256ae17) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692792746) |
-| 7 | [#695](https://github.com/storytold/craft-anything/pull/695) | Read SQLite text using the database encoding | [`9c49f69a`](https://github.com/Afloat16/craft-anything/commit/9c49f69a9032be69896d45419328fdac850eece6) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692801601) |
-| 8 | [#696](https://github.com/storytold/craft-anything/pull/696) | Keep SQLite cell reads within their page | [`b5b47a5d`](https://github.com/Afloat16/craft-anything/commit/b5b47a5d3d4bd39d8b396dce5d7779199091689a) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692814058) |
-| 9 | [#697](https://github.com/storytold/craft-anything/pull/697) | Stop repeated SQLite overflow pages from fabricating data | [`97b03a6f`](https://github.com/Afloat16/craft-anything/commit/97b03a6f9022a688daabc91dea259f153dad87cc) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692830030) |
-| 10 | [#698](https://github.com/storytold/craft-anything/pull/698) | Keep Android string pools within declared chunks | [`cddf8441`](https://github.com/Afloat16/craft-anything/commit/cddf8441b395105fbb452c9d060250dfb8cf448b) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692842389) |
+| 1 | [#688](https://github.com/storytold/craft-anything/pull/688) | Reject signed LEB128 values outside the 64-bit range | [`26b1ab79`](https://github.com/Afloat16/craft-anything/commit/26b1ab7978c0eeb7baa258bfe839ff13fef2dbd0) | [success](https://github.com/storytold/craft-anything/actions/runs/41692721275) |
+| 2 | [#690](https://github.com/storytold/craft-anything/pull/690) | Preserve valid text around damaged modified UTF-8 | [`14e95f3e`](https://github.com/Afloat16/craft-anything/commit/14e95f3e7365aa266edc33c527b525949b9ae493) | [success](https://github.com/storytold/craft-anything/actions/runs/41692739762) |
+| 3 | [#691](https://github.com/storytold/craft-anything/pull/691) | Reject invalid widened Java instructions | [`ad488410`](https://github.com/Afloat16/craft-anything/commit/ad488410ebc9dc745aaea510f5ffd84ee47789ca) | [success](https://github.com/storytold/craft-anything/actions/runs/41692753004) |
+| 4 | [#692](https://github.com/storytold/craft-anything/pull/692) | Validate Java invocation operands before decoding calls | [`5a073e46`](https://github.com/Afloat16/craft-anything/commit/5a073e46febddc75e169e83c90a7c1cdd1437527) | [success](https://github.com/storytold/craft-anything/actions/runs/41692767850) |
+| 5 | [#693](https://github.com/storytold/craft-anything/pull/693) | Reject impossible DEX invocation register lists | [`390df5f8`](https://github.com/Afloat16/craft-anything/commit/390df5f83642d4aa9b7964b709079e2c411c5c58) | [success](https://github.com/storytold/craft-anything/actions/runs/41692778074) |
+| 6 | [#694](https://github.com/storytold/craft-anything/pull/694) | Reject invalid DEX array payload element widths | [`7d5f4770`](https://github.com/Afloat16/craft-anything/commit/7d5f4770cab5f30dee6c24fd745c35428256ae17) | [success](https://github.com/storytold/craft-anything/actions/runs/41692792746) |
+| 7 | [#695](https://github.com/storytold/craft-anything/pull/695) | Read SQLite text using the database encoding | [`9c49f69a`](https://github.com/Afloat16/craft-anything/commit/9c49f69a9032be69896d45419328fdac850eece6) | [success](https://github.com/storytold/craft-anything/actions/runs/41692801601) |
+| 8 | [#696](https://github.com/storytold/craft-anything/pull/696) | Keep SQLite cell reads within their page | [`b5b47a5d`](https://github.com/Afloat16/craft-anything/commit/b5b47a5d3d4bd39d8b396dce5d7779199091689a) | [success](https://github.com/storytold/craft-anything/actions/runs/41692814058) |
+| 9 | [#697](https://github.com/storytold/craft-anything/pull/697) | Stop repeated SQLite overflow pages from fabricating data | [`97b03a6f`](https://github.com/Afloat16/craft-anything/commit/97b03a6f9022a688daabc91dea259f153dad87cc) | [success](https://github.com/storytold/craft-anything/actions/runs/41692830030) |
+| 10 | [#698](https://github.com/storytold/craft-anything/pull/698) | Keep Android string pools within declared chunks | [`cddf8441`](https://github.com/Afloat16/craft-anything/commit/cddf8441b395105fbb452c9d060250dfb8cf448b) | [success](https://github.com/storytold/craft-anything/actions/runs/41692842389) |
 | 11 | [#699](https://github.com/storytold/craft-anything/pull/699) | Apply ZIP output limits to stored entries | [`1e593fbe`](https://github.com/Afloat16/craft-anything/commit/1e593fbe41ad275ab2f0f0709f4bd44e034ce962) | [success](https://github.com/storytold/craft-anything/actions/runs/41692159741) |
-| 12 | [#700](https://github.com/storytold/craft-anything/pull/700) | Check ZIP member sizes after decompression | [`e9db1bad`](https://github.com/Afloat16/craft-anything/commit/e9db1bad36cd6b70e6835fdce465573824765efa) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692181984) |
+| 12 | [#700](https://github.com/storytold/craft-anything/pull/700) | Check ZIP member sizes after decompression | [`e9db1bad`](https://github.com/Afloat16/craft-anything/commit/e9db1bad36cd6b70e6835fdce465573824765efa) | [success](https://github.com/storytold/craft-anything/actions/runs/41692181984) |
 | 13 | [#701](https://github.com/storytold/craft-anything/pull/701) | Keep ZIP64 values within their extra field | [`aa701bdf`](https://github.com/Afloat16/craft-anything/commit/aa701bdf34486de20ddaf5cc951df8b4ee017586) | [success](https://github.com/storytold/craft-anything/actions/runs/41692195763) |
-| 14 | [#702](https://github.com/storytold/craft-anything/pull/702) | Validate ASAR header framing | [`0b9f5d7c`](https://github.com/Afloat16/craft-anything/commit/0b9f5d7c8b3799d087f23ca03ca1c6fee1b54f88) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692289599) |
+| 14 | [#702](https://github.com/storytold/craft-anything/pull/702) | Validate ASAR header framing | [`0b9f5d7c`](https://github.com/Afloat16/craft-anything/commit/0b9f5d7c8b3799d087f23ca03ca1c6fee1b54f88) | [success](https://github.com/storytold/craft-anything/actions/runs/41692289599) |
 | 15 | [#703](https://github.com/storytold/craft-anything/pull/703) | Traverse ROMFS dot and empty root directories | [`2bef9409`](https://github.com/Afloat16/craft-anything/commit/2bef9409336d42f1a0f764848670dfd6b69fdb87) | [success](https://github.com/storytold/craft-anything/actions/runs/41692309447) |
 | 16 | [#704](https://github.com/storytold/craft-anything/pull/704) | Report incomplete cramfs block output | [`8328b4e5`](https://github.com/Afloat16/craft-anything/commit/8328b4e549330a09b4eb787857089a5263d0966d) | [success](https://github.com/storytold/craft-anything/actions/runs/41692327401) |
 | 17 | [#705](https://github.com/storytold/craft-anything/pull/705) | Preserve sparse ext positions across indirect levels | [`13d210d6`](https://github.com/Afloat16/craft-anything/commit/13d210d63b21c1edf93d7b02d3a2f15adde544e3) | [failure](https://github.com/storytold/craft-anything/actions/runs/41692378272) |
-| 18 | [#706](https://github.com/storytold/craft-anything/pull/706) | Distinguish missing ext data from sparse holes | [`178d7897`](https://github.com/Afloat16/craft-anything/commit/178d789785ffbba3dc7bbce71a1547fb2e904544) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692394230) |
-| 19 | [#707](https://github.com/storytold/craft-anything/pull/707) | Keep PyInstaller modules within their PYZ archive | [`8612a9c7`](https://github.com/Afloat16/craft-anything/commit/8612a9c73d08d3273589679e079d293c8c3d17d8) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692411966) |
+| 18 | [#706](https://github.com/storytold/craft-anything/pull/706) | Distinguish missing ext data from sparse holes | [`178d7897`](https://github.com/Afloat16/craft-anything/commit/178d789785ffbba3dc7bbce71a1547fb2e904544) | [success](https://github.com/storytold/craft-anything/actions/runs/41692394230) |
+| 19 | [#707](https://github.com/storytold/craft-anything/pull/707) | Keep PyInstaller modules within their PYZ archive | [`8612a9c7`](https://github.com/Afloat16/craft-anything/commit/8612a9c73d08d3273589679e079d293c8c3d17d8) | [success](https://github.com/storytold/craft-anything/actions/runs/41692411966) |
 | 20 | [#708](https://github.com/storytold/craft-anything/pull/708) | Preserve JFFS2 sizes when recovery budgets are exhausted | [`1e4d6f36`](https://github.com/Afloat16/craft-anything/commit/1e4d6f36353d2da27f0f13f0957d9c8205b7809c) | [success](https://github.com/storytold/craft-anything/actions/runs/41692427030) |
 | 21 | [#709](https://github.com/storytold/craft-anything/pull/709) | Keep comments when adding the first JSON configuration value | [`8af65ca7`](https://github.com/Afloat16/craft-anything/commit/8af65ca72d40c5284d15cf96e1ecc29ab41ca9cc) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41693676646) |
 | 22 | [#710](https://github.com/storytold/craft-anything/pull/710) | Remove every duplicate JSON configuration key | [`7a32fc54`](https://github.com/Afloat16/craft-anything/commit/7a32fc5486c96358ae52a6f5494ca4f7b0244300) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41693809704) |
@@ -99,7 +99,7 @@ Reject invalid sign extension in the tenth byte so malformed exception counts ca
 
 Scope: the current signed 64-bit LEB128 helper; broader DEX 32-bit operand rules are unchanged.
 
-**Current head:** [`26b1ab7978c0eeb7baa258bfe839ff13fef2dbd0`](https://github.com/Afloat16/craft-anything/commit/26b1ab7978c0eeb7baa258bfe839ff13fef2dbd0). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692721275).
+**Current head:** [`26b1ab7978c0eeb7baa258bfe839ff13fef2dbd0`](https://github.com/Afloat16/craft-anything/commit/26b1ab7978c0eeb7baa258bfe839ff13fef2dbd0). **Current CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41692721275).
 
 **Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687513072) at `47dd4c4b7edee5fbec50cf7f47343779623677fd`.
 
@@ -111,7 +111,7 @@ Validate continuation and overlong encodings in the shared DEX/Java decoder whil
 
 **Regression coverage:** Malformed encodings and valid surrounding text controls.
 
-**Current head:** [`14e95f3e7365aa266edc33c527b525949b9ae493`](https://github.com/Afloat16/craft-anything/commit/14e95f3e7365aa266edc33c527b525949b9ae493). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692739762).
+**Current head:** [`14e95f3e7365aa266edc33c527b525949b9ae493`](https://github.com/Afloat16/craft-anything/commit/14e95f3e7365aa266edc33c527b525949b9ae493). **Current CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41692739762).
 
 **Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687531781) at `47c038446f08c8d58f8baa830f513eed17e7458c`.
 
@@ -123,7 +123,7 @@ Allow wide only for the defined load, store, ret and iinc instructions so malfor
 
 **Regression coverage:** Allowed widened operations and invalid opcode regressions.
 
-**Current head:** [`ad488410ebc9dc745aaea510f5ffd84ee47789ca`](https://github.com/Afloat16/craft-anything/commit/ad488410ebc9dc745aaea510f5ffd84ee47789ca). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692753004).
+**Current head:** [`ad488410ebc9dc745aaea510f5ffd84ee47789ca`](https://github.com/Afloat16/craft-anything/commit/ad488410ebc9dc745aaea510f5ffd84ee47789ca). **Current CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41692753004).
 
 **Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687543272) at `a0e0cb8cd3ea69a10f586cb0119cea527f3d0f5a`.
 
@@ -135,7 +135,7 @@ Require a nonzero invokeinterface count and zero reserved operand bytes before a
 
 **Regression coverage:** Invalid counts, reserved bytes and valid invocation controls. Two class-level regressions cover all four malformed invocation operands, earlier references and later methods.
 
-**Current head:** [`5a073e46febddc75e169e83c90a7c1cdd1437527`](https://github.com/Afloat16/craft-anything/commit/5a073e46febddc75e169e83c90a7c1cdd1437527). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692767850).
+**Current head:** [`5a073e46febddc75e169e83c90a7c1cdd1437527`](https://github.com/Afloat16/craft-anything/commit/5a073e46febddc75e169e83c90a7c1cdd1437527). **Current CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41692767850).
 
 **Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41688827573) at `e7cd6da59d2858dc9ab5e9fba1fcd2ceaaea434f`.
 
@@ -147,7 +147,7 @@ Reject fixed invocation lists larger than five registers and range operands exte
 
 **Regression coverage:** Oversized fixed lists, overflowing ranges and valid boundaries.
 
-**Current head:** [`390df5f83642d4aa9b7964b709079e2c411c5c58`](https://github.com/Afloat16/craft-anything/commit/390df5f83642d4aa9b7964b709079e2c411c5c58). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692778074).
+**Current head:** [`390df5f83642d4aa9b7964b709079e2c411c5c58`](https://github.com/Afloat16/craft-anything/commit/390df5f83642d4aa9b7964b709079e2c411c5c58). **Current CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41692778074).
 
 **Previous-head CI:** [failure](https://github.com/storytold/craft-anything/actions/runs/41687565823) at `b00334a40f08ef932eb4543338d017db84da5ea4`.
 
@@ -159,7 +159,7 @@ Accept only 1, 2, 4 or 8 byte array elements, rejecting unsupported and zero wid
 
 **Regression coverage:** Invalid element widths, large counts and valid width controls.
 
-**Current head:** [`7d5f4770cab5f30dee6c24fd745c35428256ae17`](https://github.com/Afloat16/craft-anything/commit/7d5f4770cab5f30dee6c24fd745c35428256ae17). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692792746).
+**Current head:** [`7d5f4770cab5f30dee6c24fd745c35428256ae17`](https://github.com/Afloat16/craft-anything/commit/7d5f4770cab5f30dee6c24fd745c35428256ae17). **Current CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41692792746).
 
 **Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687573832) at `c3b33665568d369f3a0e94f0eb054d15a7ef4eed`.
 
@@ -171,7 +171,7 @@ Use the database text encoding for schema and row text so UTF-16 databases are d
 
 **Regression coverage:** UTF-8, UTF-16LE and UTF-16BE schema and row fixtures.
 
-**Current head:** [`9c49f69a9032be69896d45419328fdac850eece6`](https://github.com/Afloat16/craft-anything/commit/9c49f69a9032be69896d45419328fdac850eece6). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692801601).
+**Current head:** [`9c49f69a9032be69896d45419328fdac850eece6`](https://github.com/Afloat16/craft-anything/commit/9c49f69a9032be69896d45419328fdac850eece6). **Current CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41692801601).
 
 **Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41689288428) at `8357dced53cb153764d503c8cee312499d457919`.
 
@@ -183,7 +183,7 @@ Constrain cell headers, pointer arrays and payload reads to the current usable p
 
 **Regression coverage:** Malformed page pointers and truncated page-local data.
 
-**Current head:** [`b5b47a5d3d4bd39d8b396dce5d7779199091689a`](https://github.com/Afloat16/craft-anything/commit/b5b47a5d3d4bd39d8b396dce5d7779199091689a). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692814058).
+**Current head:** [`b5b47a5d3d4bd39d8b396dce5d7779199091689a`](https://github.com/Afloat16/craft-anything/commit/b5b47a5d3d4bd39d8b396dce5d7779199091689a). **Current CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41692814058).
 
 **Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687598373) at `bccf303604b895a4dde98079977c4468c3a1064a`.
 
@@ -195,7 +195,7 @@ Track visited overflow pages and stop repeated pages while retaining only the ac
 
 **Regression coverage:** Repeated-page and cyclic overflow-chain regressions.
 
-**Current head:** [`97b03a6f9022a688daabc91dea259f153dad87cc`](https://github.com/Afloat16/craft-anything/commit/97b03a6f9022a688daabc91dea259f153dad87cc). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692830030).
+**Current head:** [`97b03a6f9022a688daabc91dea259f153dad87cc`](https://github.com/Afloat16/craft-anything/commit/97b03a6f9022a688daabc91dea259f153dad87cc). **Current CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41692830030).
 
 **Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687609537) at `06e4b5075189afdc48cbcdac4707869ea3d833dc`.
 
@@ -207,7 +207,7 @@ Validate chunk framing, offsets, string/style regions and terminators before dec
 
 **Regression coverage:** Out-of-chunk offsets, malformed regions and termination checks.
 
-**Current head:** [`cddf8441b395105fbb452c9d060250dfb8cf448b`](https://github.com/Afloat16/craft-anything/commit/cddf8441b395105fbb452c9d060250dfb8cf448b). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692842389).
+**Current head:** [`cddf8441b395105fbb452c9d060250dfb8cf448b`](https://github.com/Afloat16/craft-anything/commit/cddf8441b395105fbb452c9d060250dfb8cf448b). **Current CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41692842389).
 
 **Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687681072) at `788fcd9f4e5e7dfab0f0cc4ddecc96713c017d56`.
 
@@ -231,7 +231,7 @@ Compare the decoded member size with the advertised uncompressed size before ret
 
 **Regression coverage:** Decoded-size mismatches and valid member controls.
 
-**Current head:** [`e9db1bad36cd6b70e6835fdce465573824765efa`](https://github.com/Afloat16/craft-anything/commit/e9db1bad36cd6b70e6835fdce465573824765efa). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692181984).
+**Current head:** [`e9db1bad36cd6b70e6835fdce465573824765efa`](https://github.com/Afloat16/craft-anything/commit/e9db1bad36cd6b70e6835fdce465573824765efa). **Current CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41692181984).
 
 **Previous-head CI:** [failure](https://github.com/storytold/craft-anything/actions/runs/41687698727) at `a570fdff89498a8ed87182d77c728d0c889b60ee`.
 
@@ -255,7 +255,7 @@ Validate nested header lengths and ensure the complete declared header lies with
 
 **Regression coverage:** Inconsistent nested lengths and truncated archive headers.
 
-**Current head:** [`0b9f5d7c8b3799d087f23ca03ca1c6fee1b54f88`](https://github.com/Afloat16/craft-anything/commit/0b9f5d7c8b3799d087f23ca03ca1c6fee1b54f88). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692289599).
+**Current head:** [`0b9f5d7c8b3799d087f23ca03ca1c6fee1b54f88`](https://github.com/Afloat16/craft-anything/commit/0b9f5d7c8b3799d087f23ca03ca1c6fee1b54f88). **Current CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41692289599).
 
 **Previous-head CI:** [failure](https://github.com/storytold/craft-anything/actions/runs/41687774538) at `5862e25ba261301ba37c1152010fe91e52bf0997`.
 
@@ -307,7 +307,7 @@ Report mapped data blocks beyond the captured image as unavailable instead of si
 
 Scope: missing mapped data blocks. Indirect and extent metadata recovery remains separate roadmap work.
 
-**Current head:** [`178d789785ffbba3dc7bbce71a1547fb2e904544`](https://github.com/Afloat16/craft-anything/commit/178d789785ffbba3dc7bbce71a1547fb2e904544). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692394230).
+**Current head:** [`178d789785ffbba3dc7bbce71a1547fb2e904544`](https://github.com/Afloat16/craft-anything/commit/178d789785ffbba3dc7bbce71a1547fb2e904544). **Current CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41692394230).
 
 **Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687825216) at `3e17fe135982574bb80d6ff33f48c04a673746fb`.
 
@@ -321,7 +321,7 @@ Reject listed module payloads outside the PYZ archive rather than reading bytes 
 
 Scope: module entries produced by the archive listing.
 
-**Current head:** [`8612a9c73d08d3273589679e079d293c8c3d17d8`](https://github.com/Afloat16/craft-anything/commit/8612a9c73d08d3273589679e079d293c8c3d17d8). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692411966).
+**Current head:** [`8612a9c73d08d3273589679e079d293c8c3d17d8`](https://github.com/Afloat16/craft-anything/commit/8612a9c73d08d3273589679e079d293c8c3d17d8). **Current CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41692411966).
 
 **Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687886220) at `6e9b69c9b500ef4c6805404365df23ede2dfeee8`.
 

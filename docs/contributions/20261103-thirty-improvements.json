@@ -2,15 +2,15 @@
   "schema_version": 2,
   "repository": "storytold/craft-anything",
   "fork": "Afloat16/craft-anything",
-  "snapshot_utc": "2026-11-03 18:30:26 UTC",
-  "snapshot_beijing": "2026-11-04 02:30:26 UTC+08:00",
+  "snapshot_utc": "2026-11-03 18:35:31 UTC",
+  "snapshot_beijing": "2026-11-04 02:35:31 UTC+08:00",
   "original_baseline": "b79fc506e2f119f9188edb791b900df5170e155b",
   "upstream_snapshot": "f5d1f275a597b434b4bc36d3af27f64bc0fd2773",
   "pull_requests_created_upstream": true,
   "ci_summary": {
-    "in_progress": 24,
-    "success": 5,
-    "failure": 1
+    "success": 19,
+    "failure": 1,
+    "in_progress": 10
   },
   "verification": {
     "all_thirty_heads_match_verified_remote_refs": true,
@@ -143,8 +143,8 @@
         "id": 41692721275,
         "head": "26b1ab7978c0eeb7baa258bfe839ff13fef2dbd0",
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692721275",
-        "status": "in_progress",
-        "conclusion": null,
+        "status": "completed",
+        "conclusion": "success",
         "attempt": 1,
         "name": "CI"
       },
@@ -229,8 +229,8 @@
         "id": 41692739762,
         "head": "14e95f3e7365aa266edc33c527b525949b9ae493",
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692739762",
-        "status": "in_progress",
-        "conclusion": null,
+        "status": "completed",
+        "conclusion": "success",
         "attempt": 1,
         "name": "CI"
       },
@@ -307,8 +307,8 @@
         "id": 41692753004,
         "head": "ad488410ebc9dc745aaea510f5ffd84ee47789ca",
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692753004",
-        "status": "in_progress",
-        "conclusion": null,
+        "status": "completed",
+        "conclusion": "success",
         "attempt": 1,
         "name": "CI"
       },
@@ -393,8 +393,8 @@
         "id": 41692767850,
         "head": "5a073e46febddc75e169e83c90a7c1cdd1437527",
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692767850",
-        "status": "in_progress",
-        "conclusion": null,
+        "status": "completed",
+        "conclusion": "success",
         "attempt": 1,
         "name": "CI"
       },
@@ -477,8 +477,8 @@
         "id": 41692778074,
         "head": "390df5f83642d4aa9b7964b709079e2c411c5c58",
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692778074",
-        "status": "in_progress",
-        "conclusion": null,
+        "status": "completed",
+        "conclusion": "success",
         "attempt": 1,
         "name": "CI"
       },
@@ -555,8 +555,8 @@
         "id": 41692792746,
         "head": "7d5f4770cab5f30dee6c24fd745c35428256ae17",
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692792746",
-        "status": "in_progress",
-        "conclusion": null,
+        "status": "completed",
+        "conclusion": "success",
         "attempt": 1,
         "name": "CI"
       },
@@ -633,8 +633,8 @@
         "id": 41692801601,
         "head": "9c49f69a9032be69896d45419328fdac850eece6",
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692801601",
-        "status": "in_progress",
-        "conclusion": null,
+        "status": "completed",
+        "conclusion": "success",
         "attempt": 1,
         "name": "CI"
       },
@@ -717,8 +717,8 @@
         "id": 41692814058,
         "head": "b5b47a5d3d4bd39d8b396dce5d7779199091689a",
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692814058",
-        "status": "in_progress",
-        "conclusion": null,
+        "status": "completed",
+        "conclusion": "success",
         "attempt": 1,
         "name": "CI"
       },
@@ -795,8 +795,8 @@
         "id": 41692830030,
         "head": "97b03a6f9022a688daabc91dea259f153dad87cc",
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692830030",
-        "status": "in_progress",
-        "conclusion": null,
+        "status": "completed",
+        "conclusion": "success",
         "attempt": 1,
         "name": "CI"
       },
@@ -873,8 +873,8 @@
         "id": 41692842389,
         "head": "cddf8441b395105fbb452c9d060250dfb8cf448b",
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692842389",
-        "status": "in_progress",
-        "conclusion": null,
+        "status": "completed",
+        "conclusion": "success",
         "attempt": 1,
         "name": "CI"
       },
@@ -1029,8 +1029,8 @@
         "id": 41692181984,
         "head": "e9db1bad36cd6b70e6835fdce465573824765efa",
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692181984",
-        "status": "in_progress",
-        "conclusion": null,
+        "status": "completed",
+        "conclusion": "success",
         "attempt": 1,
         "name": "CI"
       },
@@ -1185,8 +1185,8 @@
         "id": 41692289599,
         "head": "0b9f5d7c8b3799d087f23ca03ca1c6fee1b54f88",
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692289599",
-        "status": "in_progress",
-        "conclusion": null,
+        "status": "completed",
+        "conclusion": "success",
         "attempt": 1,
         "name": "CI"
       },
@@ -1497,8 +1497,8 @@
         "id": 41692394230,
         "head": "178d789785ffbba3dc7bbce71a1547fb2e904544",
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692394230",
-        "status": "in_progress",
-        "conclusion": null,
+        "status": "completed",
+        "conclusion": "success",
         "attempt": 1,
         "name": "CI"
       },
@@ -1575,8 +1575,8 @@
         "id": 41692411966,
         "head": "8612a9c73d08d3273589679e079d293c8c3d17d8",
         "url": "https://github.com/storytold/craft-anything/actions/runs/41692411966",
-        "status": "in_progress",
-        "conclusion": null,
+        "status": "completed",
+        "conclusion": "success",
         "attempt": 1,
         "name": "CI"
       },
@@ -2485,5 +2485,6 @@
         "recorded_wasm_status": "not_applicable"
       }
     }
-  ]
+  ],
+  "pr_metadata_snapshot_utc": "2026-11-03 18:28:19 UTC"
 }
