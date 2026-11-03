@@ -595,6 +595,7 @@ Gaps found while using the app for real projects.
 
 - [ ] Make the pasted-picture cleanup regression independent of same-millisecond filename reuse.
       — claimed: Afloat16, branch test/r2.9-paste-cleanup-fixture-20261104
+      Historical-filename fixture prepared; automated validation remains pending.
 
 ### R2.10 Pinned builds
 Owner: maintainers · Status: in progress

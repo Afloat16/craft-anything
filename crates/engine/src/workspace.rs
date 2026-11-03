@@ -1235,12 +1235,16 @@ mod tests {
         assert!(save_pasted_picture(dir.path(), u32::MAX, u32::MAX, Vec::new(), &[]).is_err());
         assert_eq!(pictures_in(dir.path()).len(), 2, "fresh pastes are kept");
         // A day later, a paste clears out old ones, but not one still attached somewhere.
+        // Give the old paste a historical name too: a new paste may reuse a deleted name
+        // when this whole test runs within one millisecond.
+        let old_paste = dir.path().join("pasted-0.png");
+        std::fs::rename(&p, &old_paste).unwrap();
         let old = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 24 * 60 * 60);
-        for f in [&p, &second] {
+        for f in [&old_paste, &second] {
             std::fs::File::options().write(true).open(f).unwrap().set_modified(old).unwrap();
         }
         let third = save_pasted_picture(dir.path(), 2, 1, vec![0; 8], std::slice::from_ref(&second)).unwrap();
-        assert!(!p.exists() && second.exists() && third.exists());
+        assert!(!old_paste.exists() && second.exists() && third.exists());
         let mut names: Vec<_> = std::fs::read_dir(dir.path()).unwrap().flatten().map(|e| e.file_name()).collect();
         names.sort();
         assert_eq!(names.len(), 2, "no temp files left behind: {names:?}");
