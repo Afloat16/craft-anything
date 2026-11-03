@@ -189,6 +189,10 @@ See [ROADMAP.md](ROADMAP.md) for the ordered plan.
 
 ## Bound preview connections and release its listening port on drop
 
-Static preview bounds active connections to 64 and releases its listening port before drop returns. A loopback
-saturation test checks the 503 response and immediate listener shutdown; active workers retain their existing
-timeouts.
+Static preview bounds ordinary request workers to 64 and releases its listening port before drop returns.
+One fixed refusal worker and one queued connection deliver 503 responses with a bounded graceful close;
+when that refusal capacity is full, further connections close immediately. Each refusal spends at most
+200 ms writing and draining up to 16 KiB, outside the accept loop. Drop joins the listener and refusal worker.
+Request reads share an absolute five-second deadline while retaining the 16 KiB cap; file responses keep
+their existing write timeout. Loopback fixtures propagate response-read errors and cover saturation,
+refusal queue overflow, capacity recovery, bounded shutdown, trickled input and ordinary GET responses.

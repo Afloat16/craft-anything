@@ -5,17 +5,22 @@
 //! `index.html` (single-page apps). It stops when the [`StaticServer`] is dropped.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+const MAX_CONNECTIONS: usize = 64;
+const CLOSE_BUDGET: Duration = Duration::from_millis(200);
+const UNAVAILABLE: &[u8] = b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
 pub struct StaticServer {
     pub port: u16,
     pub root: PathBuf,
     stop: Arc<AtomicBool>,
     accept_thread: Option<std::thread::JoinHandle<()>>,
+    refusal_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl StaticServer {
@@ -28,6 +33,11 @@ impl Drop for StaticServer {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(thread) = self.accept_thread.take() {
+            let _ = thread.join();
+        }
+        // Joining the accept thread closes the sender. At most one current refusal and one
+        // queued refusal remain, each with its own short close budget.
+        if let Some(thread) = self.refusal_thread.take() {
             let _ = thread.join();
         }
     }
@@ -50,13 +60,20 @@ pub fn serve_dir(root: &Path) -> std::io::Result<StaticServer> {
     let stop = Arc::new(AtomicBool::new(false));
     let (r, s) = (root.clone(), stop.clone());
     let active = Arc::new(AtomicUsize::new(0));
+    // A fixed worker and one waiting connection keep rejection itself bounded. When both
+    // are occupied, try_send drops the excess connection instead of creating more workers.
+    let (refuse, refused) = std::sync::mpsc::sync_channel(1);
+    let refusal_thread = std::thread::Builder::new().name("static-refusal".into()).spawn(move || {
+        while let Ok(stream) = refused.recv() {
+            close_after_response(stream, UNAVAILABLE);
+        }
+    })?;
     let accept_thread = std::thread::Builder::new().name("static-server".into()).spawn(move || {
         while !s.load(Ordering::SeqCst) {
             match listener.accept() {
-                Ok((mut stream, _)) => {
-                    if active.load(Ordering::SeqCst) >= 64 {
-                        let _ = stream.set_write_timeout(Some(Duration::from_millis(200)));
-                        let _ = stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                Ok((stream, _)) => {
+                    if active.load(Ordering::SeqCst) >= MAX_CONNECTIONS {
+                        let _ = refuse.try_send(stream);
                         continue;
                     }
                     active.fetch_add(1, Ordering::SeqCst);
@@ -71,8 +88,81 @@ pub fn serve_dir(root: &Path) -> std::io::Result<StaticServer> {
                 Err(_) => std::thread::sleep(Duration::from_millis(50)),
             }
         }
-    })?;
-    Ok(StaticServer { port, root, stop, accept_thread: Some(accept_thread) })
+    });
+    let accept_thread = match accept_thread {
+        Ok(thread) => thread,
+        Err(error) => {
+            // A failed spawn drops its closure, including the only sender.
+            let _ = refusal_thread.join();
+            return Err(error);
+        }
+    };
+    Ok(StaticServer { port, root, stop, accept_thread: Some(accept_thread), refusal_thread: Some(refusal_thread) })
+}
+
+/// Send the response and a FIN before draining unread input, with a shared time and byte cap.
+fn close_after_response(mut stream: TcpStream, mut response: &[u8]) {
+    if stream.set_nonblocking(true).is_err() {
+        return;
+    }
+    let until = Instant::now() + CLOSE_BUDGET;
+    while !response.is_empty() {
+        if Instant::now() >= until {
+            return;
+        }
+        match stream.write(response) {
+            Ok(0) => return,
+            Ok(n) => response = response.get(n..).unwrap_or_default(),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(1)),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => return,
+        }
+    }
+    let _ = stream.shutdown(Shutdown::Write);
+    let mut incoming = (&stream).take(16 * 1024);
+    let mut buf = [0u8; 1024];
+    while Instant::now() < until {
+        match incoming.read(&mut buf) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(1)),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => break,
+        }
+    }
+}
+
+/// A whole-request read budget cannot be extended by a client periodically sending another byte.
+struct RequestReader<'a> {
+    stream: &'a TcpStream,
+    deadline: Instant,
+}
+
+impl Read for RequestReader<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let left = self.deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "Preview request read deadline exceeded"));
+        }
+        self.stream.set_read_timeout(Some(left))?;
+        let count = self.stream.read(buf)?;
+        if Instant::now() >= self.deadline {
+            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "Preview request read deadline exceeded"));
+        }
+        Ok(count)
+    }
+}
+
+/// Preserve the request size limit while sharing one deadline across the request line and headers.
+fn request_line(stream: &TcpStream) -> std::io::Result<String> {
+    let mut reader = BufReader::new(RequestReader { stream, deadline: Instant::now() + Duration::from_secs(5) }.take(16 * 1024));
+    let mut line = String::new();
+    reader.read_line(&mut line)?;
+    let mut h = String::new();
+    while reader.read_line(&mut h)? > 2 {
+        h.clear();
+    }
+    Ok(line)
 }
 
 fn content_type(p: &Path) -> &'static str {
@@ -148,16 +238,16 @@ pub fn resolve(root: &Path, url_path: &str) -> Option<PathBuf> {
 
 fn handle(mut stream: TcpStream, root: &Path) -> std::io::Result<()> {
     stream.set_nonblocking(false)?;
-    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     stream.set_write_timeout(Some(Duration::from_secs(20)))?;
-    let mut reader = BufReader::new((&stream).take(16 * 1024));
-    let mut line = String::new();
-    reader.read_line(&mut line)?;
-    // Drain the headers (bounded by `take`).
-    let mut h = String::new();
-    while reader.read_line(&mut h)? > 2 {
-        h.clear();
-    }
+    let line = match request_line(&stream) {
+        Ok(line) => line,
+        Err(error) => {
+            // Incomplete reads still close without serving a file. Send the FIN before
+            // draining so a timed-out client does not need to stop writing first.
+            close_after_response(stream, &[]);
+            return Err(error);
+        }
+    };
     let mut parts = line.split_whitespace();
     let (method, target) = (parts.next().unwrap_or_default(), parts.next().unwrap_or("/"));
     if method != "GET" && method != "HEAD" {
