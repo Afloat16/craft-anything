@@ -274,6 +274,8 @@ pub struct AgentLoop {
     pub meter: Meter,
     /// The last turn's real input size (tokens), 0 before the first or after making room.
     last_input: u64,
+    /// Estimated history size sent with that turn, before its reply and tool results were added.
+    last_history_estimate: u64,
 }
 
 impl AgentLoop {
@@ -332,6 +334,7 @@ impl AgentLoop {
             let system = self.system.clone().unwrap_or_default();
             let Some(result) = self.one_turn(&system, &tools, effort, &mut msg_usage, &mut msg_cost) else { break };
             self.last_input = result.usage.input_tokens + result.usage.cache_read_tokens + result.usage.cache_write_tokens;
+            self.last_history_estimate = context::estimate_tokens(&self.history).max(1);
             let (slot_name, local, model_id) = match self.chain.get(self.current) {
                 Some(s) => (s.name.clone(), s.local, result.model.clone()),
                 None => break,
@@ -435,15 +438,18 @@ impl AgentLoop {
     fn fit_context(&mut self, system: &str) -> Option<(Usage, Option<f64>)> {
         let budget = self.context_budget();
         let estimate = context::estimate_tokens(&self.history).max(1);
-        let size = if self.last_input > 0 { self.last_input } else { estimate };
+        // Reported input includes prompt/tool overhead. Add the history accumulated since it
+        // was measured; comparing only with the current estimate can miss that growth.
+        let size = if self.last_input > 0 { self.last_input.saturating_add(estimate.saturating_sub(self.last_history_estimate)) } else { estimate };
         if size <= budget {
             return None;
         }
-        // Real tokens per estimated token, to judge the trimmed size before the next turn.
+        // Use the same approximate scale to judge the trimmed history before the next turn.
         let scale = size as f64 / estimate as f64;
         let trimmed = context::trim_old(&mut self.history);
         let after = (context::estimate_tokens(&self.history) as f64 * scale) as u64;
         self.last_input = 0;
+        self.last_history_estimate = 0;
         self.host.journal("context", json!({"action": "trim", "blocks": trimmed, "tokens_before": size, "tokens_after": after, "budget": budget}));
         // floor(3 * budget / 4), without overflowing for a large configured budget.
         if trimmed > 0 && after <= budget - budget.div_ceil(4) {
@@ -704,6 +710,7 @@ impl ApiConversation {
             cancel: cancel.clone(),
             meter: Meter::default(),
             last_input: 0,
+            last_history_estimate: 0,
         };
         let busy2 = busy.clone();
         std::thread::Builder::new()
@@ -882,10 +889,13 @@ pub(crate) mod tests {
                 _ => None,
             }
         }
-        fn call(&self, id: &str, _input: Value, consent: bool, _c: CancelToken) -> Result<ToolOutput, ToolError> {
+        fn call(&self, id: &str, input: Value, consent: bool, _c: CancelToken) -> Result<ToolOutput, ToolError> {
             self.calls.lock().unwrap().push((id.to_string(), consent));
             if id == "danger" && !consent {
                 return Err(ToolError::new(ErrorCode::ConsentRequired, "needs your OK"));
+            }
+            if id == "look" && input.get("large").and_then(Value::as_bool) == Some(true) {
+                return Ok(ToolOutput::Value(json!({"content": "n".repeat(8000)})));
             }
             Ok(ToolOutput::Value(json!({"ran": id})))
         }
@@ -1187,6 +1197,82 @@ pub(crate) mod tests {
         let journal = host.journal.lock().unwrap();
         assert!(journal.iter().any(|(kind, entry)| kind == "context" && entry["budget"] == 5));
         assert!(journal.iter().any(|(kind, entry)| kind == "model_turn" && entry["purpose"] == "context_summary" && entry["backend"] == "Small"));
+    }
+
+    #[test]
+    fn fallback_budget_counts_new_results_since_the_last_request() {
+        let last_input = 10_000;
+        let budget = 11_000;
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = dir.path().join("transcript.json");
+        let host = Arc::new(FakeHost { calls: Mutex::default(), journal: Mutex::default() });
+        let mut history = vec![
+            Msg::user_text("Build it"),
+            Msg { role: Speaker::Assistant, blocks: vec![Block::ToolUse { id: "old".into(), name: "look".into(), input: json!({}) }] },
+            Msg { role: Speaker::User, blocks: vec![Block::ToolResult { tool_use_id: "old".into(), content: "x".repeat(8000), is_error: false }] },
+        ];
+        for _ in 0..context::KEEP_RECENT / 2 {
+            history.push(Msg { role: Speaker::Assistant, blocks: vec![Block::Text { text: "checked".into() }] });
+            history.push(Msg::user_text("continue"));
+        }
+        context::save(&transcript, &history).unwrap();
+        let mut first = turn(vec![Block::ToolUse { id: "new".into(), name: "look".into(), input: json!({"large": true}) }], StopReason::ToolUse).unwrap();
+        first.usage.input_tokens = last_input;
+        let primary_seen = Arc::new(Mutex::new(Vec::new()));
+        let primary = Scripted {
+            turns: VecDeque::from([Ok(first), Err(ToolError::new(ErrorCode::EngineMissing, "temporarily unavailable"))]),
+            seen: primary_seen.clone(),
+        };
+        let answer = |text: &str| {
+            let mut result = turn(vec![Block::Text { text: text.into() }], StopReason::EndTurn).unwrap();
+            result.usage.input_tokens = last_input;
+            Ok(result)
+        };
+        let fallback_seen = Arc::new(Mutex::new(Vec::new()));
+        let fallback = Scripted { turns: VecDeque::from([answer("done"), answer("next done")]), seen: fallback_seen.clone() };
+        let chain = vec![
+            ModelSlot { name: "Large".into(), model: Box::new(primary), local: false, effort: None, max_turns: 5, context_tokens: 30_000 },
+            ModelSlot { name: "Small".into(), model: Box::new(fallback), local: false, effort: None, max_turns: 5, context_tokens: budget },
+        ];
+        let mut conversation = ApiConversation::start(host.clone(), chain, LoopConfig { transcript: Some(transcript), ..Default::default() }).unwrap();
+        conversation.send("continue");
+        let events = drain_until_done(&mut conversation, |event, _| assert!(!matches!(event, AgentEvent::Error { .. }), "{event:?}"));
+        assert!(events.iter().any(|event| matches!(event, AgentEvent::TextDelta { text } if text == "done")));
+        {
+            let seen = primary_seen.lock().unwrap();
+            assert_eq!(seen.len(), 2);
+            let before = context::estimate_tokens(&seen[0]);
+            let grown = context::estimate_tokens(&seen[1]);
+            assert!(grown < last_input && last_input < budget, "max(last_input, estimate) would still miss the growth");
+            assert!(grown - before > budget - last_input, "the new result crosses the remaining budget");
+        }
+        let result_len = |history: &[Msg], id: &str| {
+            history
+                .iter()
+                .flat_map(|message| &message.blocks)
+                .find_map(|block| match block {
+                    Block::ToolResult { tool_use_id, content, .. } if tool_use_id == id => Some(content.len()),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        {
+            let seen = fallback_seen.lock().unwrap();
+            assert_eq!(seen.len(), 1, "trimming makes room without a summary request");
+            assert!(result_len(&seen[0], "old") < 8000, "the fallback must trim after new tool output grows the history");
+            assert!(result_len(&seen[0], "new") >= 8000, "the latest tool result stays complete");
+        }
+        // The successful fallback records the history it actually received. A short follow-up
+        // must not count the already-sent tool result as new growth and summarise it again.
+        conversation.send("again");
+        let events = drain_until_done(&mut conversation, |event, _| assert!(!matches!(event, AgentEvent::Error { .. }), "{event:?}"));
+        assert!(events.iter().any(|event| matches!(event, AgentEvent::TextDelta { text } if text == "next done")));
+        assert_eq!(fallback_seen.lock().unwrap().len(), 2);
+        let journal = host.journal.lock().unwrap();
+        let trims: Vec<_> = journal.iter().filter(|(kind, entry)| kind == "context" && entry["action"] == "trim").collect();
+        assert_eq!(trims.len(), 1, "the short follow-up does not compact the same growth twice");
+        assert_eq!(trims[0].1["budget"], budget);
+        assert!(trims[0].1["tokens_before"].as_u64().unwrap() > budget);
     }
 
     #[test]
