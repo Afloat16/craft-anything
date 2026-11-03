@@ -43,18 +43,24 @@ fn regression_preview_recovers_after_refusal_queue_overflow() {
     let excess: Vec<_> = (0..16).map(|_| TcpStream::connect(("127.0.0.1", srv.port)).unwrap()).collect();
     drop(excess);
     drop(rejected);
-    // Read every ordinary worker to EOF so its slot is released before the control request.
+    // EOF closes the stream before the worker's slot guard necessarily drops.
     for mut stream in held {
         stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
         stream.shutdown(std::net::Shutdown::Write).unwrap();
         stream.read_to_end(&mut Vec::new()).unwrap();
     }
-    let mut normal = TcpStream::connect(("127.0.0.1", srv.port)).unwrap();
-    normal.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
-    normal.write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
-    response.clear();
-    normal.read_to_string(&mut response).unwrap();
-    assert!(response.starts_with("HTTP/1.1 200") && response.ends_with("recovered-preview"), "{response:?}");
+    for attempt in 0..20 {
+        let mut normal = TcpStream::connect(("127.0.0.1", srv.port)).unwrap();
+        normal.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        normal.write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
+        response.clear();
+        normal.read_to_string(&mut response).unwrap();
+        if !response.starts_with("HTTP/1.1 503 ") || attempt == 19 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(response.starts_with("HTTP/1.1 200 ") && response.ends_with("recovered-preview"), "{response:?}");
 }
 
 #[test]

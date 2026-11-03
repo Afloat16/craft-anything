@@ -49,6 +49,11 @@ Don't close or rewrite other people's work without asking.
 
 ## Tests
 
+**EOF did not mean a worker released its slot.** A preview recovery test read every connection
+to EOF, but the worker's connection-count guard could drop later, briefly returning 503 to
+the next request. Retry only that transient response within a fixed limit; propagate I/O
+errors and reject other unexpected responses.
+
 **A test started a real download on a contributor's machine.** A test called `engines_install` for
 Unity; a later change made that download the vendor installer and open it on Windows. It also
 created folders in the real config directory (`Session::default()` uses it).
