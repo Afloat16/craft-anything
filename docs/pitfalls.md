@@ -239,6 +239,11 @@ edit, right before committing.
 
 ## Design
 
+**An occurrence label was also a binding name.** The second `obj.x` window and the first
+`obj["x[2]"]` window both appeared as `obj.x[2]`. Reserve literal labels and use a separate
+disambiguator for collisions; never change the occurrence index to make a label unique. Include
+unchanged windows when reserving labels so a different set of changes cannot rename a window.
+
 **Reading literals and skipping the rest.** The Electron window reader skipped a spread inside
 `webPreferences`, so a window whose preferences came partly from another object was reported as
 "contextIsolation is not set; the default applies", which nobody had checked until a live run on
