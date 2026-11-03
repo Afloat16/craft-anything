@@ -350,7 +350,7 @@ Owner: open · Status: in progress
       by default for the ones that pass
 - [x] Over ACP, suppress `session/update` notifications until `session/load` answers, keeping
       replayed messages and tool activity out of the current turn
-      — claimed: Afloat16, branch bugfix/r2.2-acp-load-replay-20261103
+      — commit `38ffc39be084`
 - [ ] Over ACP, turns report 0 tokens: the protocol sends only `usage_update` (context used and
       size). Read real counts where an agent keeps them (Maki: `token_usage` in its session file
       under `~/.local/state/maki/sessions/`) or say the count is unknown instead of 0
