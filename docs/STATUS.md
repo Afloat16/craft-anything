@@ -189,5 +189,6 @@ See [ROADMAP.md](ROADMAP.md) for the ordered plan.
 
 ## Keep custom HTML tag names out of the script inventory
 
-The HTML inventory recognises complete tag names before treating them as scripts or resource tags. Synthetic
-public-API regressions cover custom names and ordinary built-in tags.
+The HTML inventory recognises complete tag names before treating them as scripts or resource tags, with bounded
+name checks even across long runs of malformed tag starts. Synthetic public-API regressions cover custom names,
+ordinary built-in tags and recovery after repeated `<` characters.
