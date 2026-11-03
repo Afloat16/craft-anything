@@ -625,7 +625,7 @@ Owner: open · Status: in progress
       PAX sizes across other metadata records; CRC cpio checks member data; source maps decode
       percent-escaped data URLs and report indexed-map columns in the generated file
       (#606–#615, by Afloat16)
-- [ ] Reject invalid invocation count and reserved operand bytes before reporting Java call instructions.
+- [x] Reject invalid invocation count and reserved operand bytes before reporting Java call instructions.
       — claimed: Afloat16, branch bugfix/r3.12-java-invoke-operands-20261103b
 
 ### R3.13 Web inspection correctness
