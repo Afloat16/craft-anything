@@ -4,7 +4,8 @@
 
 use crate::openai::{LOCAL_SERVERS, OpenAi};
 use crate::{BackendConfig, BackendKind, Detected};
-use craft_anything_evidence::ErrorCode;
+use craft_anything_evidence::{ErrorCode, ToolError};
+use craft_anything_platform::process::{Output, Process};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -101,6 +102,26 @@ pub fn agent_clis() -> Vec<Detected> {
             })
         })
         .collect()
+}
+
+/// A configured SSH host is only a candidate: prove the remote agent can start before offering it.
+fn probe_remote(host: &str) -> Option<Detected> {
+    if host.is_empty() || host.starts_with('-') {
+        return None;
+    }
+    let args = crate::ssh::ssh_args(host, &["claude".into(), "--version".into()]);
+    let result = Process::new("ssh").args(args).timeout(Duration::from_millis(700)).stdout_cap(4096).stderr_cap(4096).run();
+    remote_agent(host, result)
+}
+
+fn remote_agent(host: &str, result: Result<Output, ToolError>) -> Option<Detected> {
+    let output = result.ok()?;
+    if !output.success || output.stdout_truncated || output.stdout_text().trim().is_empty() {
+        return None;
+    }
+    let mut config = cfg(&format!("Claude Code on {host}"), BackendKind::AgentCli, "claude-code");
+    config.ssh_host = Some(host.to_string());
+    Some(Detected { suggestion: config, reason: format!("Claude Code answered --version on SSH host {host}"), needs_key: false })
 }
 
 /// The most servers taken from OpenCode's settings.
@@ -200,6 +221,18 @@ pub fn detect_all() -> Vec<Detected> {
             jobs += 1;
         }
     }
+    for (i, host) in crate::ssh::ssh_hosts().into_iter().take(5).enumerate() {
+        let tx = tx.clone();
+        if std::thread::Builder::new()
+            .name("ai-detect-ssh".into())
+            .spawn(move || {
+                let _ = tx.send((100 + i, probe_remote(&host).into_iter().collect()));
+            })
+            .is_ok()
+        {
+            jobs += 1;
+        }
+    }
     drop(tx);
     let mut parts: Vec<(usize, Vec<Detected>)> = vec![(0, env_keys(|v| std::env::var(v).ok()))];
     while jobs > 0 {
@@ -212,17 +245,6 @@ pub fn detect_all() -> Vec<Detected> {
             Err(_) => break,
         }
     }
-    let mut hosts = crate::ssh::ssh_hosts();
-    hosts.truncate(5);
-    let ssh: Vec<Detected> = hosts
-        .into_iter()
-        .map(|h| {
-            let mut c = cfg(&format!("Claude Code on {h}"), BackendKind::AgentCli, "claude-code");
-            c.ssh_host = Some(h.clone());
-            Detected { suggestion: c, reason: format!("SSH host {h} from ~/.ssh/config (runs an agent CLI there)"), needs_key: false }
-        })
-        .collect();
-    parts.push((100, ssh));
     parts.sort_by_key(|(i, _)| *i);
     parts.into_iter().flat_map(|(_, v)| v).collect()
 }
@@ -230,6 +252,24 @@ pub fn detect_all() -> Vec<Detected> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_ssh_alias_is_not_evidence_of_an_installed_agent() {
+        for code in [1, 127, 255] {
+            let result = Output { code: Some(code), success: false, stdout: b"unrelated login banner".to_vec(), ..Default::default() };
+            assert!(remote_agent("lab", Ok(result)).is_none());
+        }
+        assert!(remote_agent("lab", Err(ToolError::new(ErrorCode::TimedOut, "probe timed out"))).is_none());
+        assert!(remote_agent("lab", Ok(Output { success: true, ..Default::default() })).is_none());
+        assert!(remote_agent("lab", Ok(Output { success: true, stdout: b" \n".to_vec(), ..Default::default() })).is_none());
+        let result = Output { code: Some(0), success: true, stdout: b"1.0.0 (Claude Code)\n".to_vec(), ..Default::default() };
+        let found = remote_agent("lab", Ok(result.clone())).unwrap();
+        assert_eq!(found.suggestion.ssh_host.as_deref(), Some("lab"));
+        assert_eq!(found.suggestion.model, "claude-code");
+        assert!(found.reason.contains("--version"));
+        assert!(remote_agent("lab", Ok(Output { stdout_truncated: true, ..result })).is_none());
+        assert!(probe_remote("-oProxyCommand=example").is_none(), "a host must not be read as an SSH option");
+    }
 
     #[test]
     fn env_detection() {

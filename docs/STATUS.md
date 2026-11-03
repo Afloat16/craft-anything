@@ -86,6 +86,11 @@ metadata, directory indexes and a real firmware extraction were not newly checke
 
 ## Known limits
 
+- SSH discovery offers Claude Code only after a bounded, non-interactive `claude --version`
+  probe succeeds. The probes run concurrently within the existing detection deadline; unreachable
+  hosts can still be configured manually. Version detection does not establish sign-in or build readiness.
+  Success, missing-program, connection-failure, timeout and empty-output cases use synthetic results;
+  no real SSH account was used for this correction.
 - Locks: every mutex but the browser viewer's goes through `platform::sync`. A deadlock on one thread or across
   threads is broken when it forms, with an error and a report in `logs/`; a watchdog looks every 5 s; a holder
   that isn't a labelled job is reported after 2 minutes and waited on for 15 at most. Tools are labelled, so they
