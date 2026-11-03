@@ -142,16 +142,20 @@ fn handle(mut stream: TcpStream, root: &Path) -> std::io::Result<()> {
     if method != "GET" && method != "HEAD" {
         return stream.write_all(b"HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
     }
-    match resolve(root, target).and_then(|p| std::fs::read(&p).ok().map(|b| (p, b))) {
-        Some((p, body)) => {
+    match resolve(root, target).and_then(|p| {
+        let file = std::fs::File::open(&p).ok()?;
+        let len = file.metadata().ok()?.len();
+        Some((p, file, len))
+    }) {
+        Some((p, file, len)) => {
             let head = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
                 content_type(&p),
-                body.len()
+                len
             );
             stream.write_all(head.as_bytes())?;
             if method == "GET" {
-                stream.write_all(&body)?;
+                std::io::copy(&mut file.take(len), &mut stream)?;
             }
             Ok(())
         }
