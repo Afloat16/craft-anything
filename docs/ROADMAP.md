@@ -476,6 +476,12 @@ Owner: open · Status: in progress
 
 ---
 
+### R3.13 Web inspection correctness
+Owner: open · Status: in progress
+- [ ] Apply declared-value redaction to retained HAR metadata, field names and aggregate keys. — claimed: Afloat16, branch bugfix/r3.13-har-metadata-20261103
+
+---
+
 ## M4 Release
 
 ### R4.1 A macOS CLI that opens
