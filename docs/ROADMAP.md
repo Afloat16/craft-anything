@@ -476,6 +476,12 @@ Owner: open · Status: in progress
 
 ---
 
+### R3.12 File parser correctness
+Owner: open · Status: in progress
+- [ ] Restore section offsets in the generated columns returned by indexed source-map lookups. — claimed: Afloat16, branch bugfix/r3.12-sourcemap-section-columns-20261103
+
+---
+
 ## M4 Release
 
 ### R4.1 A macOS CLI that opens
