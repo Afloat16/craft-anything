@@ -486,35 +486,44 @@ fn local_server_without_tools_falls_back_to_react() {
 #[test]
 fn json_text_tool_calls_execute_through_both_protocols() {
     for react in [false, true] {
-        let call = r#"{"name":"core_session_show","arguments":{}}"#;
-        let t1 = chat_sse(&[json!({"choices":[{"delta":{"content":call},"finish_reason":"stop"}]})]);
-        let t2 = chat_sse(&[json!({"choices":[{"delta":{"content":"Nothing open."},"finish_reason":"stop"}]})]);
-        let (url, seen) = mock(vec![(200, "text/event-stream", t1), (200, "text/event-stream", t2)]);
-        let (hub, _dir) = hub();
-        let config = BackendConfig {
-            name: "Local".into(),
-            kind: BackendKind::OpenaiCompatible,
-            model: "scripted".into(),
-            base_url: Some(url),
-            ssh_host: None,
-            enabled: true,
-        };
-        hub.add_backend_with(BackendEntry { config, options: BackendOptions { react_fallback: Some(react), ..Default::default() } }, None).unwrap();
-        let mut conversation = hub.start(Some("Local"), true).unwrap();
-        let events = run(&mut conversation, "status?");
-        assert!(events.iter().any(|e| matches!(e, AgentEvent::ToolFinished { tool, ok: true, .. } if tool == "core_session_show")), "{events:?}");
-        assert!(events.iter().any(|e| matches!(e, AgentEvent::TextDelta { text } if text == "Nothing open.")), "{events:?}");
-        let seen = seen.lock().unwrap();
-        assert_eq!(seen.len(), 2);
-        let messages = seen[1].body["messages"].as_array().unwrap();
-        let result = messages.last().unwrap();
-        if react {
-            assert_eq!(result["role"], "user");
-            assert!(result["content"].as_str().unwrap().starts_with("Observation:"));
-        } else {
-            assert_eq!(result["role"], "tool");
-            assert_eq!(result["tool_call_id"], messages[2]["tool_calls"][0]["id"]);
-            assert_eq!(messages[2]["tool_calls"][0]["function"]["name"], "core_session_show");
+        for call in [
+            r#"{"name":"core_session_show","arguments":{}}"#,
+            "```json\n{\"name\":\"core_session_show\",\"arguments\":{}}\n````",
+            "````json\n{\"name\":\"core_session_show\",\"arguments\":{}}\n````",
+        ] {
+            let t1 = chat_sse(&[json!({"choices":[{"delta":{"content":call},"finish_reason":"stop"}]})]);
+            let t2 = chat_sse(&[json!({"choices":[{"delta":{"content":"Nothing open."},"finish_reason":"stop"}]})]);
+            let (url, seen) = mock(vec![(200, "text/event-stream", t1), (200, "text/event-stream", t2)]);
+            let (hub, _dir) = hub();
+            let config = BackendConfig {
+                name: "Local".into(),
+                kind: BackendKind::OpenaiCompatible,
+                model: "scripted".into(),
+                base_url: Some(url),
+                ssh_host: None,
+                enabled: true,
+            };
+            hub.add_backend_with(BackendEntry { config, options: BackendOptions { react_fallback: Some(react), ..Default::default() } }, None).unwrap();
+            let mut conversation = hub.start(Some("Local"), true).unwrap();
+            let events = run(&mut conversation, "status?");
+            assert_eq!(
+                events.iter().filter(|e| matches!(e, AgentEvent::ToolFinished { tool, ok: true, .. } if tool == "core_session_show")).count(),
+                1,
+                "react={react}, call={call}: {events:?}"
+            );
+            assert!(events.iter().any(|e| matches!(e, AgentEvent::TextDelta { text } if text == "Nothing open.")), "{events:?}");
+            let seen = seen.lock().unwrap();
+            assert_eq!(seen.len(), 2);
+            let messages = seen[1].body["messages"].as_array().unwrap();
+            let result = messages.last().unwrap();
+            if react {
+                assert_eq!(result["role"], "user");
+                assert!(result["content"].as_str().unwrap().starts_with("Observation:"));
+            } else {
+                assert_eq!(result["role"], "tool");
+                assert_eq!(result["tool_call_id"], messages[2]["tool_calls"][0]["id"]);
+                assert_eq!(messages[2]["tool_calls"][0]["function"]["name"], "core_session_show");
+            }
         }
     }
 }
@@ -546,31 +555,38 @@ fn react_action_errors_still_reach_the_tool_loop() {
 
 #[test]
 fn fenced_legacy_react_calls_still_execute() {
-    let replies = ["```text\nAction: core_session_show\nAction Input: {}\n```", "Final Answer: Nothing open."]
-        .map(|text| (200, "text/event-stream", chat_sse(&[json!({"choices":[{"delta":{"content":text},"finish_reason":"stop"}]})])));
-    let (url, seen) = mock(replies.into());
-    let (hub, _dir) = hub();
-    let config = BackendConfig {
-        name: "Local".into(),
-        kind: BackendKind::OpenaiCompatible,
-        model: "scripted".into(),
-        base_url: Some(url),
-        ssh_host: None,
-        enabled: true,
-    };
-    hub.add_backend_with(BackendEntry { config, options: BackendOptions { react_fallback: Some(true), ..Default::default() } }, None).unwrap();
-    let mut conversation = hub.start(Some("Local"), true).unwrap();
-    let events = run(&mut conversation, "status?");
-    assert_eq!(
-        events.iter().filter(|e| matches!(e, AgentEvent::ToolFinished { tool, ok: true, .. } if tool == "core_session_show")).count(),
-        1,
-        "the fenced legacy call must execute exactly once: {events:?}"
-    );
-    assert!(events.iter().any(|e| matches!(e, AgentEvent::TextDelta { text } if text == "Final Answer: Nothing open.")), "{events:?}");
-    let seen = seen.lock().unwrap();
-    assert_eq!(seen.len(), 2);
-    let observation = seen[1].body["messages"].as_array().unwrap().last().unwrap()["content"].as_str().unwrap();
-    assert!(observation.starts_with("Observation:"), "{observation}");
+    for call in [
+        "```text\nAction: core_session_show\nAction Input: {}\n```",
+        "```text\nAction: core_session_show\nAction Input: {}\n````",
+        "````text\nAction: core_session_show\nAction Input: {}\n````",
+        "````text\nAction: core_session_show\nAction Input: ```json\n{}\n```\n````",
+    ] {
+        let replies = [call, "Final Answer: Nothing open."]
+            .map(|text| (200, "text/event-stream", chat_sse(&[json!({"choices":[{"delta":{"content":text},"finish_reason":"stop"}]})])));
+        let (url, seen) = mock(replies.into());
+        let (hub, _dir) = hub();
+        let config = BackendConfig {
+            name: "Local".into(),
+            kind: BackendKind::OpenaiCompatible,
+            model: "scripted".into(),
+            base_url: Some(url),
+            ssh_host: None,
+            enabled: true,
+        };
+        hub.add_backend_with(BackendEntry { config, options: BackendOptions { react_fallback: Some(true), ..Default::default() } }, None).unwrap();
+        let mut conversation = hub.start(Some("Local"), true).unwrap();
+        let events = run(&mut conversation, "status?");
+        assert_eq!(
+            events.iter().filter(|e| matches!(e, AgentEvent::ToolFinished { tool, ok: true, .. } if tool == "core_session_show")).count(),
+            1,
+            "the fenced legacy call must execute exactly once: {events:?}"
+        );
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::TextDelta { text } if text == "Final Answer: Nothing open.")), "{events:?}");
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        let observation = seen[1].body["messages"].as_array().unwrap().last().unwrap()["content"].as_str().unwrap();
+        assert!(observation.starts_with("Observation:"), "{observation}");
+    }
 }
 
 #[test]

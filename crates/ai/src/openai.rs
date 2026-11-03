@@ -341,20 +341,10 @@ pub fn parse_react(text: &str) -> ReactStep {
     // Preserve a whole fenced ReAct step, but do not treat markers inside a JSON answer or
     // ordinary code example as instructions.
     let lead = text.trim();
-    let fenced_protocol = lead
-        .strip_prefix("```")
-        .and_then(|rest| rest.split_once('\n'))
-        .filter(|(language, _)| !language.contains('`'))
-        .and_then(|(_, body)| body.rsplit_once('\n'))
-        .is_some_and(|(body, closing)| {
-            let body = body.trim_start();
-            closing.trim() == "```"
-                && !body.lines().any(|line| {
-                    let line = line.trim();
-                    line.starts_with("```") && line.chars().all(|c| c == '`')
-                })
-                && ["Action:", "Thought:", "Final Answer:"].into_iter().any(|marker| body.starts_with(marker))
-        });
+    let fenced_protocol = backtick_fence(lead).is_some_and(|(_, body)| {
+        let body = body.trim_start();
+        ["Action:", "Thought:", "Final Answer:"].into_iter().any(|marker| body.starts_with(marker))
+    });
     if lead.starts_with(['{', '[']) || (lead.starts_with("```") && !fenced_protocol) {
         return ReactStep::Text(text.trim().to_string());
     }
@@ -375,16 +365,35 @@ pub fn parse_react(text: &str) -> ReactStep {
     if tool.is_empty() { ReactStep::Text(text.trim().to_string()) } else { ReactStep::Action { tool, input } }
 }
 
+/// A complete backtick fence. Its standalone closing line can be longer than its opener,
+/// but an earlier closing line means the remaining text is outside that fence.
+fn backtick_fence(text: &str) -> Option<(&str, &str)> {
+    let (opening, rest) = text.trim().split_once('\n')?;
+    let length = opening.bytes().take_while(|byte| *byte == b'`').count();
+    if length < 3 {
+        return None;
+    }
+    let language = opening.get(length..)?.trim();
+    if language.contains('`') {
+        return None;
+    }
+    let (body, closing) = rest.rsplit_once('\n')?;
+    let closes = |line: &str| {
+        let line = line.trim();
+        line.len() >= length && line.bytes().all(|byte| byte == b'`')
+    };
+    if !closes(closing) || body.lines().any(closes) {
+        return None;
+    }
+    Some((language, body))
+}
+
 /// Accept a complete call, not a JSON object quoted somewhere in an explanation.
 fn json_action(text: &str) -> Option<ReactStep> {
     let text = text.trim();
-    let raw = if let Some(fenced) = text.strip_prefix("```") {
-        let (language, body) = fenced.split_once('\n')?;
-        if !matches!(language.trim(), "" | "json") {
-            return None;
-        }
-        let (body, closing) = body.rsplit_once('\n')?;
-        if closing.trim() != "```" {
+    let raw = if text.starts_with("```") {
+        let (language, body) = backtick_fence(text)?;
+        if !matches!(language, "" | "json") {
             return None;
         }
         body.trim()
@@ -485,6 +494,9 @@ mod tests {
             r#"{"type":"function","function":{"name":"look","arguments":{"path":"app"}}}"#,
             "```json\n{\"name\":\"look\",\"arguments\":{\"path\":\"app\"}}\n```",
             "```\n{\"name\":\"look\",\"arguments\":{\"path\":\"app\"}}\n```",
+            "```json\n{\"name\":\"look\",\"arguments\":{\"path\":\"app\"}}\n````",
+            "````json\n{\"name\":\"look\",\"arguments\":{\"path\":\"app\"}}\n````",
+            "````\n{\"name\":\"look\",\"arguments\":{\"path\":\"app\"}}\n`````",
         ] {
             assert_eq!(parse_react(text), ReactStep::Action { tool: "look".into(), input: json!({"path": "app"}) }, "{text}");
         }
@@ -502,6 +514,9 @@ mod tests {
             r#"For example, use {"name":"look","arguments":{}}."#,
             "```json\n{\"name\":\"look\",\"arguments\":{}}\n```\nThis is an example.",
             "```json\n{\"name\":\"look\",\"arguments\":{}}```",
+            "```json`example\n{\"name\":\"look\",\"arguments\":{}}\n```",
+            "````json\n{\"name\":\"look\",\"arguments\":{}}\n```",
+            "```json\n{\"name\":\"look\",\"arguments\":{}}\n```\nThis is only an example.\n```",
         ] {
             assert!(matches!(parse_react(text), ReactStep::Text(_)), "{text}");
         }
@@ -519,6 +534,9 @@ mod tests {
             "```json\nThought: inspect the app\nAction: look\nAction Input: {\"path\":\"app\"}\n```",
             " \n```\r\nAction: look\r\nAction Input: {\"path\":\"app\"}\r\n```\n ",
             "```text\nAction: look\nAction Input: {\"path\":\"app\"}\n  ``` \t",
+            "```text\nAction: look\nAction Input: {\"path\":\"app\"}\n````",
+            "````text\nAction: look\nAction Input: {\"path\":\"app\"}\n````",
+            "````text\nAction: look\nAction Input: ```json\n{\"path\":\"app\"}\n```\n````",
         ] {
             assert_eq!(parse_react(text), ReactStep::Action { tool: "look".into(), input: json!({"path": "app"}) }, "{text}");
         }
@@ -532,9 +550,9 @@ mod tests {
             "```text\nAction: look\nAction Input: {}\n```not a close```",
             "```text\nAction: look\nAction Input: {}```",
             "````text\nAction: look\nAction Input: {}\n```",
-            "```text\nAction: look\nAction Input: {}\n````",
             "```text\nAction: look\nAction Input: {}\n```\nThis is only an example.\n```",
             "```text\nAction: look\nAction Input: {}\n````\nThis is only an example.\n```",
+            "````text\nAction: look\nAction Input: {}\n````\nThis is only an example.\n````",
             "```json\n{\"name\":\"look\",\"arguments\":{}}```",
         ] {
             assert!(matches!(parse_react(text), ReactStep::Text(_)), "{text}");

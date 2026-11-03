@@ -91,11 +91,13 @@ The text fallback accepts complete bare or fenced JSON calls with `name` and `ar
 Automatic recovery also handles these responses when native tool calling was offered. A call
 must name a tool offered in that turn; ordinary JSON answers and JSON examples surrounded by
 prose are left as text. Native calls are kept once; text-call recovery skips truncated or refused replies.
-Complete three-backtick legacy ReAct steps remain supported when their body begins with an explicit
-protocol marker. The matching closing fence must be on its own line, with no earlier closing fence;
-ordinary fenced code, malformed fences and JSON strings containing markers remain text. The parser regression
-failed on the previous guard and passed with this correction.
-Fenced JSON calls also require a standalone matching closing line, including automatic recovery.
+Complete backtick-fenced legacy ReAct steps remain supported when their body begins with an explicit
+protocol marker. Both parsers use the same fence boundaries: at least three opening backticks and a
+standalone closing line of at least that length, with no earlier matching closing fence. Shorter
+backtick lines inside a longer fence remain content. Ordinary fenced code, malformed fences and non-call
+JSON objects or examples containing protocol markers remain text; valid call arguments may contain those markers.
+The parser regressions failed on the previous guards and passed with their corrections.
+Fenced JSON calls also use these boundaries during automatic recovery and accept only an empty or `json` info string.
 Checked with parser fixtures, HTTP/SSE stand-ins exercising real engine tool execution in both
 protocols, and non-action, stop-reason and duplicate-call controls. No live local-model build
 was run; other text-call formats remain unsupported.
