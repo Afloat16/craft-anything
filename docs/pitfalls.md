@@ -239,11 +239,6 @@ edit, right before committing.
 
 ## Design
 
-**An occurrence label was also a binding name.** The second `obj.x` window and the first
-`obj["x[2]"]` window both appeared as `obj.x[2]`. Reserve literal labels and use a separate
-disambiguator for collisions; never change the occurrence index to make a label unique. Include
-unchanged windows when reserving labels so a different set of changes cannot rename a window.
-
 **Reading literals and skipping the rest.** The Electron window reader skipped a spread inside
 `webPreferences`, so a window whose preferences came partly from another object was reported as
 "contextIsolation is not set; the default applies", which nobody had checked until a live run on
@@ -254,6 +249,11 @@ readers on real, minified inputs, not only on the shapes the tests were written 
 **A naming scheme that clients can't accept.** Dotted tool ids (`web.page.capture`) were decided
 before checking that MCP clients and model APIs allow only `[A-Za-z0-9_-]` in tool names. Check
 external constraints (protocols, APIs, file systems) before fixing a public contract.
+
+**An occurrence label was also a binding name.** The second `obj.x` window and the first
+`obj["x[2]"]` window both appeared as `obj.x[2]`. Reserve literal labels and use a separate
+disambiguator for collisions; never change the occurrence index to make a label unique. Include
+unchanged windows when reserving labels so a different set of changes cannot rename a window.
 
 **A tool planned in a layer that can't reach what it needs.** Rebuild control as engine tools (L4)
 can't call `RebuildRun` (L5). Before planning a tool, check which crate owns what it calls; if a
@@ -405,6 +405,11 @@ button started it, and a check that couldn't look says nothing about the build.
 tool calls without matching results. The next model request then carried unpaired calls.
 Every retained call needs a matching result, including an explicit non-execution result.
 Test the next serialized request as well as whether a tool ran.
+
+**A deferred request reset lost on failure.** Moving consumed-note bookkeeping out of the live
+builder loop saved the reset only after a successful turn. A failed or cancelled turn had already
+removed the note, so reopening kept the old unchanged-turn count. Persist deferred request state
+on terminal errors too, outside provider retries; keep the original outcome if that save also fails.
 
 **A filter written for one kind of text, run on another.** The stand-in's secret scan was written for
 API answers, then also ran on recorded scripts: `this.token=t` became `[dropped]` and the scripts
