@@ -8,12 +8,14 @@ workspace clippy, layers, fmt and the secret scan of all history were clean. Chi
 
 | Area | State | Verified by |
 |---|---|---|
+| Settings saved on exit | Pending app settings merge the session's latest AI table when its guard is available. A busy session defers non-AI edits in `config.pending.toml` without waiting for the tool; startup recovers them with the latest committed AI table | Isolated child-process regression exercises idle and busy exit saves, a late AI commit, startup recovery and pending non-AI edits; engine tests cover sidecar migrations and damaged/newer files. No live desktop shutdown was exercised |
 | SQLite payload limits | Capped records retain column positions, disclose partial TEXT and BLOB values, omit incomplete BLOB hashes, and report partial coverage with read notes | Hand-built overflow-page regressions for five oversized records (including WITHOUT ROWID in declaration order) and two controls; table and index engine coverage and limitation regressions |
 | SQLite added columns | Short records include missing trailing fields using literal column defaults, or NULL when absent; unsupported default expressions produce NULL with a row note. Stored fields and records longer than the schema retain their values. Defaults are filled before restoring rowid aliases | Nine hand-built parser regressions and an engine tool test cover added-column defaults, rewritten records and short records with a rowid alias, including a missing alias field |
+| OpenCode models and thinking | OpenCode V2 locally and over SSH; Settings → AI lists only that instance's enabled chat models and supported Low/Medium/High/Xhigh/Max variants. Selection is validated and saved through UI, CLI and `ai_models_list` / `ai_model_set`. Explicit-selection execution is refused until native MCP integration exists; local ACP runs require clearing the selection. See [OpenCode](opencode.md). | Stand-in catalogue/process, persistence, remote-command and UI tests; local live catalogue checks (34 models, all five depths represented). Regression checks reject native chat/builds before process I/O with ACP on/off, local/SSH and model-only/depth-only/combined selections. No live SSH host or paid generation used |
 | Mach-O Objective-C pointers | Chained offsets mapped only into file-empty `__PAGEZERO` reach the image-base fallback; pointer candidates must be backed by file bytes | Synthetic thin and fat Mach-O regression, plain-pointer and authenticated-rebase controls, null and unmapped-pointer checks. Real binaries were not checked for this correction |
 | Apple app graphs | Selecting a macOS bundle recognises its root-relative `Contents/Info.plist` and retains its service/extension type; nested XPC bundles appear in `services` and as `xpc-service` graph nodes, including their executables when hosted in frameworks | Synthetic inventory tests, including parent-directory and flat bundle layouts, selected services/extensions, framework-hosted service executables, and bare-program controls. Ordinary selected directories with `Contents/Info.plist` need an Apple bundle suffix; archives retain layout-based recognition. Framework libraries and dylibs stay excluded from executables. Real app bundles were not checked for this correction |
 | Chinese UI | Simplified (`zh-hans`) and Traditional (`zh-hant`) Chinese in Settings → General → Language; System chooses a supported OS language, otherwise English. Both catalogs cover UI controls and tool titles; translated titles are searchable. Raw tool data, AI text, logs, CLI/MCP and the separate browser viewer keep their original text. See [localisation](localization.md). | Catalog integrity and locale-resolution tests; `cargo xtask i18n-coverage`; isolated UI language-switch test. Platform visual checks are recorded separately. |
-| Engine | 298 engine tools (314 with the AI and setup layers') across native, managed, Java, Android, Apple, JS/Electron, web, firmware, packets, databases, game archives and assets; see [tools.md](tools.md) and [tool-status.md](tool-status.md). A saved result can be narrowed without running again (`core_evidence_browse` keeps the rows matching given field values, cut to chosen fields) | A functional audit that ran every tool on real inputs on Windows, plus 600+ unit and integration tests |
+| Engine | 299 engine tools (317 with the AI and setup layers') across native, managed, Java, Android, Apple, JS/Electron, web, firmware, packets, databases, game archives and assets; see [tools.md](tools.md) and [tool-status.md](tool-status.md). A saved result can be narrowed without running again (`core_evidence_browse` keeps the rows matching given field values, cut to chosen fields) | A functional audit that ran every tool on real inputs on Windows, plus 600+ unit and integration tests |
 | Tool argument correction | Shared parameter parsing keeps schema types strict and reports the rejected value's JSON Pointer when known, the original type error and guidance to correct the call. Unknown locations are null; a root failure uses the empty pointer | Parser regressions cover string/array mismatches, nested indices, escaped keys, oversized paths, enum locations, defaults and strict fields. Shared engine dispatch is checked for Agent, MCP and CLI callers: rejected arrays create no record, and corrected input creates one. No live Qwen or Ollama build was run for this correction |
 | Java class usage | `java_class_users_find` includes the component class of multidimensional object arrays; primitive-array descriptors do not match an unrelated class with the same descriptor letter | Synthetic class files parsed by the built-in reader: one- and two-dimensional allocations, class names beginning with `L`, primitive arrays, hit limits and method filters; formats tests. This correction was not checked with javac output or a JVM |
 | Single-file apps and game files | `core_packed_files_list` and `core_packed_files_unpack` read Bun and Node.js single-file programs, .NET single-file apps, PyInstaller and Godot packs through one seam (`formats::packed`); `formats_bytecode_show` reads Python bytecode, `game_unity_code_names_show` Unity IL2CPP metadata, `formats_ai_weights_show` GGUF and safetensors headers. `app_folder_explain` says what an install folder is made with and what to run next | Unit tests with damaged files. Real files: a 279 MB Bun program, Node blobs, PyInstaller programs (Python 3.9, 3.14), .NET 8 single-file apps (macOS, Linux, Windows, compressed), Godot 3.6, 4.3 and 4.5 packs, 214 Python modules against CPython's own reader, a GGUF and a safetensors file, about 25 installed Mac apps. IL2CPP on synthetic files only |
@@ -96,6 +98,13 @@ it. The affected crate's 223 tests and Clippy checks passed locally. The initial
 correction also passed [hosted CI](https://github.com/storytold/craft-anything/actions/runs/41587580930)
 in PR #544. This correction concerns reported finish reasons; handling of a missing finish
 reason is unchanged. No live provider or local-model build was run.
+
+### OpenCode review follow-up
+
+OpenCode variants now use the shared five-level `Effort` type while retaining exact catalogue
+validation. Hub and headless tool selections share a strict disk-based save that preserves unrelated
+settings changes and refuses damaged files or changed backends. Regression tests cover both entry
+points. Rejected or cancelled model validation emits a terminal turn event so headless chat exits.
 
 ### Linux Unreal setup
 
@@ -238,3 +247,45 @@ was run; other text-call formats remain unsupported.
 ## Next
 
 See [ROADMAP.md](ROADMAP.md) for the ordered plan.
+
+## Build progress across runs
+
+When app files can be compared, a build stops after two consecutive completed builder turns leave them unchanged.
+The versioned `inbox/build-progress.json` record keeps that count when the project is reopened or
+Try again is pressed. File contents and executable permissions decide progress, so rewriting
+identical bytes does not reset it. An actual app edit or a new nonempty request starts another
+attempt, including notes queued during a turn or check and notes consumed by a builder hook.
+Empty notes and plain Try again keep the saved count. Dependency/build caches,
+git metadata and Craft's own records, including checks in a project edited in place, do not count.
+Symlinks are recorded without following their targets. A successful check may still finish the
+second unchanged turn, and a run waiting only for checks does not start the builder again.
+Within a run, file digests are reused while size, modification time and executable bits match;
+Unix file identity and change time also invalidate a cached read. The first scan reads content,
+but unchanged imported assets are not read again before and after every turn. The metadata is
+only a cache key: rewriting identical bytes still produces the same content fingerprint.
+The cache is isolated by project root, drops deleted or retyped paths, and is discarded after
+scan errors or cancellation. It is not persisted, and the version-1 fingerprint/schema is unchanged.
+Sockets, pipes and devices contribute their names and types without opening their contents.
+If a scan cannot finish because of limits, permissions or changing files, the feed says why the
+unchanged-turn limit is skipped for that run. The saved fingerprint and count are cleared so a
+later readable run starts a fresh comparison. Checks and the existing round limit still apply.
+Cancellation still stops the run; completed builder replies are saved as awaiting checks before
+the post-turn scan. Broken or newer progress records and record-write failures remain errors.
+
+Scripted API turns and executable CLI stand-ins cover the stop, persistence, fresh requests and
+check recovery. This change has not been verified with a paid model or a live provider. Copying a
+whole project keeps its progress record; Duplicate creates a new attempt with a fresh conversation
+and count, as it already does for usage.
+An existing root-level file or directory named `build-progress.json` remains app data: it is
+fingerprinted, copied by Duplicate and kept when Craft's project records are removed. Its JSON
+shape does not make it a Craft record, and it is never migrated into the inbox.
+
+Notes consumed by builder hooks now only queue a progress reset while the turn is running.
+The reset is saved after the successful turn and its `awaiting_check` recovery state are
+persisted. Multiple consumed notes coalesce into one reset; blank notes do not reset the count.
+A broken or inaccessible progress record still returns its actual error at that safe boundary,
+without starting another provider request or losing the finished builder reply.
+If the turn fails or is cancelled after consuming a note, its reset is saved before the run ends
+so reopening keeps the new request's full allowance. The original failure or cancellation remains
+the result; a reset that cannot be saved is reported separately and never overwrites a broken
+or newer record. Scripted turns cover both outcomes, blank notes and unreadable records.
