@@ -8,6 +8,7 @@ version up to the current one, then turn the document into Rust types. The step 
 | File | Owner | Current version | Older files | Newer files |
 |---|---|---|---|---|
 | `<project>/craft.json` | `engine::workspace` (`Manifest`) | `MANIFEST_VERSION` = 1 (`version`; missing = 0) | brought forward, saved as current | opened read-only: saving is refused |
+| `<project>/build-progress.json` | `engine::workspace::progress` (`BuildProgress`; written only by the rebuild run) | `BUILD_PROGRESS_VERSION` = 1 (`version`; missing = 0) | brought forward; an absent file starts with no counted turns | the build stops and the record is left unchanged |
 | `config.toml` (`settings::config_dir()`) | `engine::settings` (`Settings`) | `SETTINGS_VERSION` = 2 (`version`; missing = 0; 2 moved `[engines.ghidra] enabled` to `deep_mode`) | brought forward | loaded, never saved over |
 | `<name>.cany/project.toml` | `engine::project` (`ProjectMeta`) | `FORMAT_VERSION` = 1 (`format_version`, required) | brought forward | refused, with "update Craft Anything" |
 | `<project>/transcript.json` | `ai::context` (the API builder's conversation) | `TRANSCRIPT_VERSION` = 1 (`{version, history}`) | read as before | not resumed; a fresh build replaces it |
@@ -45,5 +46,5 @@ out of the project list.
    list and the constant disagree.
 3. Add a test that reads a literal sample of the old file (keep the existing samples; old files
    must keep loading forever).
-4. For `craft.json`, `mechanics.json` and `self-test.json`, run `cargo xtask schemas` and commit `docs/schemas/`.
+4. For `craft.json`, `build-progress.json`, `mechanics.json` and `self-test.json`, run `cargo xtask schemas` and commit `docs/schemas/`.
    `cargo xtask schemas --check` (and an engine test) fail when the published schema is stale.

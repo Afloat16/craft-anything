@@ -26,6 +26,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
+pub mod progress;
+
 pub const MANIFEST: &str = "craft.json";
 
 /// Folders a copy of a project leaves out: what a build makes again, which can be gigabytes.
@@ -921,6 +923,7 @@ pub const AGENT_SESSION_FILE: &str = "agent-session.jsonl";
 /// mustn't already have any of them.
 pub const OWN_NAMES: &[&str] = &[
     MANIFEST,
+    progress::BUILD_PROGRESS_FILE,
     crate::feed::FEED_FILE,
     crate::questions::QUESTIONS_FILE,
     USAGE_FILE,

@@ -39,6 +39,23 @@ workspace clippy, layers, fmt and the secret scan of all history were clean. Chi
 | SQLite database files (`db_sqlite_show`) | A rowid alias column (`INTEGER PRIMARY KEY`, including the table-constraint form) shows the rowid; `DESC`, non-`INTEGER` and composite keys keep their stored values | Hand-built fixtures; generated files compared with the official SQLite library |
 | SQLite WITHOUT ROWID tables | Read from the index b-tree, interior records and overflow included; rows in primary-key order, values in declaration order, `rowid` null | Hand-built fixtures; generated files compared with the official SQLite library |
 
+### Build progress across runs
+
+A build stops after two consecutive completed builder turns leave the app's files unchanged.
+The versioned `build-progress.json` record keeps that count when the project is reopened or
+Try again is pressed. File contents and executable permissions decide progress, so rewriting
+identical bytes does not reset it. An actual app edit or a new nonempty request starts another
+attempt, including notes queued during a turn or check and notes consumed by a builder hook.
+Empty notes and plain Try again keep the saved count. Dependency/build caches,
+git metadata and Craft's own records, including checks in a project edited in place, do not count.
+Symlinks are recorded without following their targets. A successful check may still finish the
+second unchanged turn, and a run waiting only for checks does not start the builder again.
+
+Scripted API turns and executable CLI stand-ins cover the stop, persistence, fresh requests and
+check recovery. This change has not been verified with a paid model or a live provider. Copying a
+whole project keeps its progress record; Duplicate creates a new attempt with a fresh conversation
+and count, as it already does for usage.
+
 ### Bun stored-text encoding
 
 Packed Bun members with encoding value 2 are labelled `utf16le`, matching their stored UTF-16LE

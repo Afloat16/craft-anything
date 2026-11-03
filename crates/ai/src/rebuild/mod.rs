@@ -21,6 +21,7 @@ use crate::cli_agents::{Builder, CliSpec};
 use crate::{AgentEvent, AiHub, BackendKind, Conversation, Role};
 use craft_anything_engine::inbox::{Answer, Inbox, InboxDir, Request};
 use craft_anything_engine::project::{Project, Purpose};
+use craft_anything_engine::workspace::progress::BuildProgress;
 use craft_anything_engine::workspace::{CheckResult, ProjectUsage, Status, TargetRef, Workspace};
 use craft_anything_engine::{CallOptions, Caller, CancelToken, Engine, ToolOutput};
 use craft_anything_engines::game;
@@ -488,7 +489,7 @@ impl Worker {
 
     /// The prompt for notes the person added while the agent worked, if there are any.
     fn added(&self, ws: &mut Workspace) -> Option<String> {
-        let notes = std::mem::take(&mut *self.notes.lock().unwrap_or_else(PoisonError::into_inner));
+        let mut notes = std::mem::take(&mut *self.notes.lock().unwrap_or_else(PoisonError::into_inner));
         if notes.is_empty() {
             return None;
         }
@@ -496,6 +497,10 @@ impl Worker {
         let dir = notes::notes_dir(&ws.inbox_dir());
         for n in &notes {
             notes::forget(&dir, n.id);
+        }
+        notes.retain(|n| !n.text.trim().is_empty());
+        if notes.is_empty() {
+            return None;
         }
         for n in &notes {
             self.emit(RunEvent::Note(n.shown.clone()));
@@ -579,6 +584,13 @@ impl Worker {
         extractor: Option<(String, crate::agent::ApiConversation)>,
         opts: &RunOptions,
     ) -> Result<String, ToolError> {
+        let mut progress = BuildProgress::load(&ws.root)?;
+        // Try again has no message. Only an explicit new request starts another attempt on
+        // unchanged files; restarting the app or resuming a paused run keeps the saved count.
+        if opts.message.as_deref().is_some_and(|m| !m.trim().is_empty()) {
+            progress.reset();
+            progress.save(&ws.root)?;
+        }
         // Fail before any work when the agent's tools are missing or it can't sign in.
         let remote = entry.config.ssh_host.as_deref().is_some_and(|h| !h.trim().is_empty());
         if !remote && api.is_none() {
@@ -675,6 +687,12 @@ impl Worker {
         let mut only_check = carrying_on && !first && opts.message.is_none() && ws.manifest.awaiting_check;
         loop {
             if !std::mem::take(&mut only_check) {
+                progress = BuildProgress::load(&ws.root)?;
+                progress.before_turn(ws.app_fingerprint(&self.stop)?);
+                if progress.stalled() {
+                    return Err(no_build_progress(ws));
+                }
+                progress.save(&ws.root)?;
                 let doing = match (round, carrying_on) {
                     (0, false) => "Building the first version…",
                     (0, true) => "Carrying on with the build…",
@@ -688,6 +706,11 @@ impl Worker {
                     self.keep_session(ws, a.as_ref());
                 }
                 let reply = reply?;
+                // A hook may have delivered a new request within this turn and reset the
+                // saved count. This completed turn is its first turn, not part of the old one.
+                progress = BuildProgress::load(&ws.root)?;
+                progress.after_turn(ws.app_fingerprint(&self.stop)?);
+                progress.save(&ws.root)?;
                 if !reply.trim().is_empty() {
                     ws.manifest.last_reply = reply.trim().to_string();
                 }
@@ -703,6 +726,8 @@ impl Worker {
                 ws.save()?;
                 // What the person added while the agent worked goes in before anything else.
                 if let Some(p) = self.added(ws) {
+                    progress.reset();
+                    progress.save(&ws.root)?;
                     prompt = p;
                     continue;
                 }
@@ -721,10 +746,21 @@ impl Worker {
             for c in &checks {
                 self.emit(RunEvent::Checked(c.clone()));
             }
-            let not_good = checks.iter().find(|c| !c.good(opts.good_enough));
             if let Some(p) = self.added(ws) {
+                progress.reset();
+                progress.save(&ws.root)?;
                 prompt = p;
                 continue;
+            }
+            let not_good = checks.iter().find(|c| !c.good(opts.good_enough));
+            if not_good.is_some() && progress.stalled() {
+                // A check-only resume skipped the builder's before-turn scan. A real edit
+                // while the project was closed (or during this check) still starts an attempt.
+                progress.before_turn(ws.app_fingerprint(&self.stop)?);
+                progress.save(&ws.root)?;
+                if progress.stalled() {
+                    return Err(no_build_progress(ws));
+                }
             }
             let Some(check) = not_good else { break };
             if refinements >= opts.max_rounds {
@@ -928,6 +964,7 @@ impl Worker {
                     self.emit(RunEvent::Agent(e));
                 }
                 if done {
+                    self.relay_read_notes(ws)?;
                     self.stop.check()?;
                     // An agent-level error (sign-in, crash, limits) ends the run: checking a
                     // build that never happened would only mislead.
@@ -938,7 +975,7 @@ impl Worker {
                 }
             }
             self.relay_inbox();
-            self.relay_read_notes(ws);
+            self.relay_read_notes(ws)?;
             self.answer_self_checks(ws)?;
             if self.usage.as_ref().is_some_and(|c| c.since.elapsed() >= USAGE_FLUSH) {
                 self.record_usage(None);
@@ -949,7 +986,7 @@ impl Worker {
 
     /// Notes the builder took at a step of this turn (its hook claimed them): they join the feed
     /// now and aren't sent again after the turn.
-    fn relay_read_notes(&self, ws: &Workspace) {
+    fn relay_read_notes(&self, ws: &Workspace) -> Result<(), ToolError> {
         let dir = notes::notes_dir(&ws.inbox_dir());
         let read: Vec<Note> = {
             let mut notes = self.notes.lock().unwrap_or_else(PoisonError::into_inner);
@@ -957,10 +994,17 @@ impl Worker {
             *notes = waiting;
             read
         };
+        let new_request = read.iter().any(|n| !n.text.trim().is_empty());
         for n in read {
             notes::forget(&dir, n.id);
             self.emit(RunEvent::Note(n.shown));
         }
+        if new_request {
+            let mut progress = BuildProgress::load(&ws.root)?;
+            progress.reset();
+            progress.save(&ws.root)?;
+        }
+        Ok(())
     }
 
     fn relay_inbox(&mut self) {
@@ -970,6 +1014,11 @@ impl Worker {
             }
         }
     }
+}
+
+fn no_build_progress(ws: &Workspace) -> ToolError {
+    ToolError::new(ErrorCode::OverLimit, format!("The build stopped after two builder turns changed no files in {}.", ws.app_place()))
+        .with_remediation("Send a new request with a concrete correction, or edit the app's files before trying again.")
 }
 
 /// Largest builder session the project keeps a copy of.
