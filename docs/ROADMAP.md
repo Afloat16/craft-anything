@@ -476,6 +476,12 @@ Owner: open · Status: in progress
 
 ---
 
+### R3.12 File parser correctness
+Owner: open · Status: in progress
+- [ ] Apply the tar prefix field only to POSIX ustar headers, not old GNU headers. — claimed: Afloat16, branch bugfix/r3.12-tar-gnu-names-20261103
+
+---
+
 ## M4 Release
 
 ### R4.1 A macOS CLI that opens
