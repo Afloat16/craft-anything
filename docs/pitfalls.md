@@ -239,6 +239,13 @@ edit, right before committing.
 
 ## Design
 
+**A conditional call erased the skipped path's value.** The ARM decoder discarded conditions on
+calls, and value flow replaced the earlier register definitions as if every call executed. Keep
+the call's condition and merge its possible writes with the skipped path in both block transfer
+and edge construction. A known non-returning target stops only an unconditional call; after a
+conditional one, only the skipped path contributes values. Test both kinds within one block and
+across blocks, with unconditional calls as controls.
+
 **Reading literals and skipping the rest.** The Electron window reader skipped a spread inside
 `webPreferences`, so a window whose preferences came partly from another object was reported as
 "contextIsolation is not set; the default applies", which nobody had checked until a live run on
