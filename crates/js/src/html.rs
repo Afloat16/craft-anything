@@ -104,7 +104,7 @@ pub fn scan_html(src: &str) -> HtmlFacts {
         }
         let at = pos + rel;
         let rest = lower.get(at + 1..).unwrap_or("");
-        let name_len = rest.bytes().take_while(|c| c.is_ascii_alphanumeric() || *c == b'-').count();
+        let name_len = rest.bytes().take_while(|c| !c.is_ascii_whitespace() && !matches!(c, b'/' | b'>')).count();
         let name = rest.get(..name_len).unwrap_or("");
         let after = at + 1 + name_len;
         match name {
