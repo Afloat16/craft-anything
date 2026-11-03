@@ -1,0 +1,1976 @@
+{
+  "repository": "storytold/craft-anything",
+  "author": "Afloat16",
+  "observedAt": "2026-11-03 18:40:36 UTC",
+  "prMetadataObservedAt": "2026-11-03 18:36:36 UTC",
+  "status": "work_in_progress",
+  "baseline": "f5d1f275a597b434b4bc36d3af27f64bc0fd2773",
+  "counts": {
+    "total": 30,
+    "merged": 0,
+    "success": 24,
+    "failure": 1,
+    "inProgress": 5,
+    "mergeable": 30
+  },
+  "entries": [
+    {
+      "number": 1,
+      "pr": 688,
+      "url": "https://github.com/storytold/craft-anything/pull/688",
+      "title": "Reject signed LEB128 values outside the 64-bit range",
+      "description": "拒绝超出 64 位范围的 DEX signed LEB128",
+      "branch": "bugfix/r3.12-dex-signed-leb128-20261103b",
+      "originalImplementation": "c6f256518b2e16c91087211665beab4a78df3e96",
+      "currentHead": "26b1ab7978c0eeb7baa258bfe839ff13fef2dbd0",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "clean",
+      "ci": {
+        "run": 41692721275,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41692721275",
+        "head": "26b1ab7978c0eeb7baa258bfe839ff13fef2dbd0",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "4a1fd2e6577fd6faa12a0deb5daa458f291496d4",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/dex.rs",
+          "sha": "fdde0d969fc58d0fff0442753a4f29c6e10c06a0",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 0
+        },
+        {
+          "path": "crates/formats/tests/dex_signed_leb128.rs",
+          "sha": "3a5c36d07759680dc4519a528a37e2e80dfd441b",
+          "status": "added",
+          "additions": 52,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "7a7b339d27eee49dba05d6afbb6e8cabf138802b",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "e4731fe2428a0804b89fcdbc335c8cddd104f378",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 2,
+      "pr": 690,
+      "url": "https://github.com/storytold/craft-anything/pull/690",
+      "title": "Preserve valid text around damaged modified UTF-8",
+      "description": "保留损坏 Modified UTF-8 周围的有效文字",
+      "branch": "bugfix/r3.12-modified-utf8-validation-20261103b",
+      "originalImplementation": "7defc6c3583946aa1072ddb209734f2f25817c6b",
+      "currentHead": "14e95f3e7365aa266edc33c527b525949b9ae493",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "clean",
+      "ci": {
+        "run": 41692739762,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41692739762",
+        "head": "14e95f3e7365aa266edc33c527b525949b9ae493",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "5509a4ed3beca1ffdfb326c257931707d68cdf21",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/bytes.rs",
+          "sha": "b1ab11b2f693f1dd211926657fe42dd7aae7ef8b",
+          "status": "modified",
+          "additions": 14,
+          "deletions": 0
+        },
+        {
+          "path": "crates/formats/src/dex.rs",
+          "sha": "8f5bc2e84e14364a782be2249228ea806548186e",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 12
+        },
+        {
+          "path": "crates/formats/src/java_class.rs",
+          "sha": "22d336b3713710a27799da73e8b55f15e2576e47",
+          "status": "modified",
+          "additions": 3,
+          "deletions": 17
+        },
+        {
+          "path": "crates/formats/tests/modified_utf8_validation.rs",
+          "sha": "f189e96cdc85edea6f58a90682e3ce845f3435dd",
+          "status": "added",
+          "additions": 47,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "9e9660b826c4dd29f1ac70f991294a3e679e94fa",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "69d4750364bd75fadbed29d7fa4e8917a7c8ca65",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 3,
+      "pr": 691,
+      "url": "https://github.com/storytold/craft-anything/pull/691",
+      "title": "Reject invalid widened Java instructions",
+      "description": "拒绝不合法的 Java wide 指令",
+      "branch": "bugfix/r3.12-java-wide-opcodes-20261103b",
+      "originalImplementation": "206c2804e54ad8639965203c6a16cff2732f3c8c",
+      "currentHead": "ad488410ebc9dc745aaea510f5ffd84ee47789ca",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "clean",
+      "ci": {
+        "run": 41692753004,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41692753004",
+        "head": "ad488410ebc9dc745aaea510f5ffd84ee47789ca",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "d7e508b51f42ac51ae52c31453c7431134e0e050",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/java_ops.rs",
+          "sha": "e81a55265c7fb37d475aafd790f5a5d345c199b4",
+          "status": "modified",
+          "additions": 3,
+          "deletions": 0
+        },
+        {
+          "path": "crates/formats/tests/java_wide_opcodes.rs",
+          "sha": "4663c53d11688b75dcac46e4d735c713afb876ad",
+          "status": "added",
+          "additions": 33,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "26e5bc4d864989bda41e44260483fbf18c3e1537",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "dedffbc0ced2897daef9111f88df889699b102dd",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 4,
+      "pr": 692,
+      "url": "https://github.com/storytold/craft-anything/pull/692",
+      "title": "Validate Java invocation operands before decoding calls",
+      "description": "校验 Java 调用指令的保留字节及参数计数",
+      "branch": "bugfix/r3.12-java-invoke-operands-20261103b",
+      "originalImplementation": "63e3af8dbad23f0885590d3b7d7912440acf1d68",
+      "currentHead": "5a073e46febddc75e169e83c90a7c1cdd1437527",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "clean",
+      "ci": {
+        "run": 41692767850,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41692767850",
+        "head": "5a073e46febddc75e169e83c90a7c1cdd1437527",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "be4c6dc527f029a6eb6bba60f0ba3646d78248c4",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/java_ops.rs",
+          "sha": "e996e5da621b14a7af90648d9a1998feae1a9ccd",
+          "status": "modified",
+          "additions": 6,
+          "deletions": 3
+        },
+        {
+          "path": "crates/formats/tests/java_invoke_operands.rs",
+          "sha": "a0ab4139d97341a2c758c622cb4df23d5339c0d3",
+          "status": "added",
+          "additions": 37,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "5045817d68a2f44f1cde0ed2a5bc6785b0926f8b",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "739dae0d264cb5a926ce065d1e695b0394a2883b",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 5,
+      "pr": 693,
+      "url": "https://github.com/storytold/craft-anything/pull/693",
+      "title": "Reject impossible DEX invocation register lists",
+      "description": "拒绝越界的 DEX 调用寄存器列表",
+      "branch": "bugfix/r3.12-dex-invoke-registers-20261103b",
+      "originalImplementation": "6da3b104817744d3baefad1a01413db6d3df2930",
+      "currentHead": "390df5f83642d4aa9b7964b709079e2c411c5c58",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "clean",
+      "ci": {
+        "run": 41692778074,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41692778074",
+        "head": "390df5f83642d4aa9b7964b709079e2c411c5c58",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "0872a25f352c1fdeb8489a198c63005579575c54",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/dex_ops.rs",
+          "sha": "768d842f42fada60cf945b00826ede5753a4e08d",
+          "status": "modified",
+          "additions": 9,
+          "deletions": 2
+        },
+        {
+          "path": "crates/formats/tests/dex_invoke_registers.rs",
+          "sha": "1399b7f8637c2e4fd7290bc42fa102216f22d207",
+          "status": "added",
+          "additions": 33,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "dad0c07eb9e9f40513529e70332f2f648d103d2f",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "bf596ea3ecb0c9940297a829ad8f797877f01c11",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 6,
+      "pr": 694,
+      "url": "https://github.com/storytold/craft-anything/pull/694",
+      "title": "Reject invalid DEX array payload element widths",
+      "description": "限制 DEX 数组载荷元素宽度",
+      "branch": "bugfix/r3.12-dex-array-widths-20261103b",
+      "originalImplementation": "e4802ee7713eff91eb9a6e27a0459c0383f63761",
+      "currentHead": "7d5f4770cab5f30dee6c24fd745c35428256ae17",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "clean",
+      "ci": {
+        "run": 41692792746,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41692792746",
+        "head": "7d5f4770cab5f30dee6c24fd745c35428256ae17",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "a230f5ac1a932eebab0df21f36ed4a8f44f7f765",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/dex_ops.rs",
+          "sha": "9b1b7ad60c738ef410e7a3c696d61c6b287b052d",
+          "status": "modified",
+          "additions": 3,
+          "deletions": 0
+        },
+        {
+          "path": "crates/formats/tests/dex_array_widths.rs",
+          "sha": "72538f05f1c717c54d35bde50b1e6b19457f8825",
+          "status": "added",
+          "additions": 39,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "894942a4c917a9a5f9c15b176742e71f0d5195e5",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "54b51d0c33bb2f3e8765f40ee0a3ad3420be6aa3",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 7,
+      "pr": 695,
+      "url": "https://github.com/storytold/craft-anything/pull/695",
+      "title": "Read SQLite text using the database encoding",
+      "description": "按 SQLite 声明的编码读取文本",
+      "branch": "bugfix/r3.12-sqlite-text-encoding-20261103b",
+      "originalImplementation": "be78da063a6ebac4e8f399d8ef7da793981ec95b",
+      "currentHead": "9c49f69a9032be69896d45419328fdac850eece6",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "clean",
+      "ci": {
+        "run": 41692801601,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41692801601",
+        "head": "9c49f69a9032be69896d45419328fdac850eece6",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "6085a1ce984868b627af8c087a3fece24c2b3acc",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/sqlite.rs",
+          "sha": "1d30a378173a5b6d2ed8457f72f092588d5b5450",
+          "status": "modified",
+          "additions": 34,
+          "deletions": 16
+        },
+        {
+          "path": "crates/formats/tests/sqlite_text_encoding.rs",
+          "sha": "e83b521e4ed8c476e57ec77821627a2bb267632a",
+          "status": "added",
+          "additions": 105,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "aeff744b1869f7c679dc864ffb282c08338608da",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "03055f255ce237b7b2855d1bd880691176f4fb74",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 8,
+      "pr": 696,
+      "url": "https://github.com/storytold/craft-anything/pull/696",
+      "title": "Keep SQLite cell reads within their page",
+      "description": "限制 SQLite 单元格读取范围",
+      "branch": "bugfix/r3.12-sqlite-page-boundaries-20261103b",
+      "originalImplementation": "1d2a3b0f812bc0cac6414d278142ad82a13b5bd7",
+      "currentHead": "b5b47a5d3d4bd39d8b396dce5d7779199091689a",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "clean",
+      "ci": {
+        "run": 41692814058,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41692814058",
+        "head": "b5b47a5d3d4bd39d8b396dce5d7779199091689a",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "fd4cb3f71f23297a97e4b1183aa6f56d0706fd68",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/sqlite.rs",
+          "sha": "93cd553052ea984ecf4f7b3c676a7af338f07dcc",
+          "status": "modified",
+          "additions": 78,
+          "deletions": 37
+        },
+        {
+          "path": "crates/formats/tests/sqlite_page_boundaries.rs",
+          "sha": "859f8472f35649906785e873abeae506ea9105bb",
+          "status": "added",
+          "additions": 94,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "ea0143b08cd25fe5e202708bbc001dc0e652d213",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "7258f50c7451fb037b908a4b1f512e2a004691cb",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 9,
+      "pr": 697,
+      "url": "https://github.com/storytold/craft-anything/pull/697",
+      "title": "Stop repeated SQLite overflow pages from fabricating data",
+      "description": "阻止 SQLite 溢出页循环伪造数据",
+      "branch": "bugfix/r3.12-sqlite-overflow-cycles-20261103b",
+      "originalImplementation": "bc1482115787d4fa0172c2901ac16c1479724dcb",
+      "currentHead": "97b03a6f9022a688daabc91dea259f153dad87cc",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "clean",
+      "ci": {
+        "run": 41692830030,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41692830030",
+        "head": "97b03a6f9022a688daabc91dea259f153dad87cc",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "dedc0cdb497b0322b1306a48d3e3946c07dec493",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/sqlite.rs",
+          "sha": "e220696dabd628b396bba3c6133c5eaf1cd6652d",
+          "status": "modified",
+          "additions": 5,
+          "deletions": 0
+        },
+        {
+          "path": "crates/formats/tests/sqlite_overflow_cycles.rs",
+          "sha": "f47dae9ff355245ffcd9a77cdd9cbb9d3175fc60",
+          "status": "added",
+          "additions": 44,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "87866e0150f6397e035ffa17509683549fd7161f",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "848f3b39a09b2dc73159c62b34c7c4d0c64f7ade",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 10,
+      "pr": 698,
+      "url": "https://github.com/storytold/craft-anything/pull/698",
+      "title": "Keep Android string pools within declared chunks",
+      "description": "限制 Android 字符串池读取边界",
+      "branch": "bugfix/r3.12-android-string-pool-bounds-20261103b",
+      "originalImplementation": "4c00f0e3dca3fac29d95b85f53620ceed323ebe7",
+      "currentHead": "cddf8441b395105fbb452c9d060250dfb8cf448b",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "clean",
+      "ci": {
+        "run": 41692842389,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41692842389",
+        "head": "cddf8441b395105fbb452c9d060250dfb8cf448b",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "2713f5d7149e5cf536b0f28b695e5ce653d44ab8",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/axml.rs",
+          "sha": "caeae09f49c0c377e913f79627b09d748fd8d078",
+          "status": "modified",
+          "additions": 31,
+          "deletions": 16
+        },
+        {
+          "path": "crates/formats/tests/android_string_pool_bounds.rs",
+          "sha": "2d29595305cb903f566dda537e9a3b9dc359a3ce",
+          "status": "added",
+          "additions": 92,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "d7534f5a23173144c4e4b4d1bee025e297451dcb",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "71c80b7850d067b0fec11c00c950fab4ef5b169c",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 11,
+      "pr": 699,
+      "url": "https://github.com/storytold/craft-anything/pull/699",
+      "title": "Apply ZIP output limits to stored entries",
+      "description": "对 ZIP 未压缩条目执行输出上限",
+      "branch": "bugfix/r3.12-zip-stored-cap-20261103b",
+      "originalImplementation": "77e235402385fe77f436a107db8bc6123e494571",
+      "currentHead": "1e593fbe41ad275ab2f0f0709f4bd44e034ce962",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "clean",
+      "ci": {
+        "run": 41692159741,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41692159741",
+        "head": "1e593fbe41ad275ab2f0f0709f4bd44e034ce962",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "74ca0753c019b2e1edf7153306650f2d24e8f0b7",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/zip.rs",
+          "sha": "6ee761d15b36612be04529d97bd1e9c203033922",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        },
+        {
+          "path": "crates/formats/tests/zip_stored_cap.rs",
+          "sha": "3857ed69350c2014c9729581162647111b2c872e",
+          "status": "added",
+          "additions": 18,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "262929b43bc50710182ed1caf9d5e95bcb1912b5",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "41d5c15668d3a44398b342f6b73a99fae461ae74",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 12,
+      "pr": 700,
+      "url": "https://github.com/storytold/craft-anything/pull/700",
+      "title": "Check ZIP member sizes after decompression",
+      "description": "校验 ZIP 实际解压长度",
+      "branch": "bugfix/r3.12-zip-decoded-size-20261103b",
+      "originalImplementation": "fc6b69da397429a80715f8e4b9f6c2d3580301ee",
+      "currentHead": "e9db1bad36cd6b70e6835fdce465573824765efa",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "clean",
+      "ci": {
+        "run": 41692181984,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41692181984",
+        "head": "e9db1bad36cd6b70e6835fdce465573824765efa",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "422e65820a0adfdb6e4c39adaada811509880231",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/zip.rs",
+          "sha": "55da36fede410165add165c3aa9a1194c04af867",
+          "status": "modified",
+          "additions": 3,
+          "deletions": 0
+        },
+        {
+          "path": "crates/formats/tests/zip_decoded_size.rs",
+          "sha": "1656ac7070693ab989e25bac3e83fa01ff5d000b",
+          "status": "added",
+          "additions": 40,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "f5bc896cd5f81233cd5836b0452d5983e7bb1b36",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "d57daca60210bfcff6c3a00780067d389d49d935",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 13,
+      "pr": 701,
+      "url": "https://github.com/storytold/craft-anything/pull/701",
+      "title": "Keep ZIP64 values within their extra field",
+      "description": "限制 ZIP64 扩展字段读取范围",
+      "branch": "bugfix/r3.12-zip64-extra-boundaries-20261103b",
+      "originalImplementation": "9aecbbae5e80a50a0cc4e4652cf9d42595430ad3",
+      "currentHead": "aa701bdf34486de20ddaf5cc951df8b4ee017586",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "clean",
+      "ci": {
+        "run": 41692195763,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41692195763",
+        "head": "aa701bdf34486de20ddaf5cc951df8b4ee017586",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "e178bb447bb7e930556cfa0a7ad6928dc78c7c2d",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/zip.rs",
+          "sha": "be763b4acc4755d60b1b6a333a765b6791412b06",
+          "status": "modified",
+          "additions": 21,
+          "deletions": 17
+        },
+        {
+          "path": "crates/formats/tests/zip64_extra_boundaries.rs",
+          "sha": "e634144992e52e8f2743f408713a3ff493c7d66a",
+          "status": "added",
+          "additions": 50,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "5cd0b4f79c36850e33c4632e0a9e1e07c9bec1b7",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "ec0e5801e4dc3c2f10d643f51ad77219258c56b2",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 14,
+      "pr": 702,
+      "url": "https://github.com/storytold/craft-anything/pull/702",
+      "title": "Validate ASAR header framing",
+      "description": "校验 ASAR 嵌套头部长度",
+      "branch": "bugfix/r3.12-asar-header-bounds-20261103b",
+      "originalImplementation": "e0010694cbf37bdd894a9528a309d7a258bcd66a",
+      "currentHead": "0b9f5d7c8b3799d087f23ca03ca1c6fee1b54f88",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "clean",
+      "ci": {
+        "run": 41692289599,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41692289599",
+        "head": "0b9f5d7c8b3799d087f23ca03ca1c6fee1b54f88",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "e66c8051de95344e8236f4fa039c74283a47c1e2",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/asar.rs",
+          "sha": "e63ad61623b8d811264ac0a3f88de577eca4c6a4",
+          "status": "modified",
+          "additions": 5,
+          "deletions": 1
+        },
+        {
+          "path": "crates/formats/tests/asar_header_bounds.rs",
+          "sha": "1ca59685d4df933a2c402f6d77c14771e0ad71e4",
+          "status": "added",
+          "additions": 29,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "ad3bc7b43af8c4253e71426f9ab0d649dd24afce",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "0d0a46cca52d8d952b86dc165e48b4656f49056e",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 15,
+      "pr": 703,
+      "url": "https://github.com/storytold/craft-anything/pull/703",
+      "title": "Traverse ROMFS dot and empty root directories",
+      "description": "正确遍历 ROMFS 点名称及空名称根目录",
+      "branch": "bugfix/r3.12-romfs-root-directory-20261103b",
+      "originalImplementation": "d2b4ec71bf85888c47930c222963db2c0418d831",
+      "currentHead": "2bef9409336d42f1a0f764848670dfd6b69fdb87",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "clean",
+      "ci": {
+        "run": 41692309447,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41692309447",
+        "head": "2bef9409336d42f1a0f764848670dfd6b69fdb87",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "9a3f12e0620b91b809fefba8af1d6a471c367d79",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/fsread/romfs.rs",
+          "sha": "bf07aa4c3e9d982b511bfd5b3aaa0a1b3a45a710",
+          "status": "modified",
+          "additions": 10,
+          "deletions": 1
+        },
+        {
+          "path": "crates/formats/tests/romfs_root_directory.rs",
+          "sha": "d96028f9ef050d0ec739090ad7a593bbe9de6347",
+          "status": "added",
+          "additions": 39,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "925197a523eda34cd2e75c155dc93594cc7dd779",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "7fbce7ef946b8166ac6b72becc0badc265731115",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 16,
+      "pr": 704,
+      "url": "https://github.com/storytold/craft-anything/pull/704",
+      "title": "Report incomplete cramfs block output",
+      "description": "识别 cramfs 解压块不完整",
+      "branch": "bugfix/r3.12-cramfs-block-lengths-20261103b",
+      "originalImplementation": "49b87d98ff18f2a01411c083e9d8a379afc9943d",
+      "currentHead": "8328b4e549330a09b4eb787857089a5263d0966d",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "clean",
+      "ci": {
+        "run": 41692327401,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41692327401",
+        "head": "8328b4e549330a09b4eb787857089a5263d0966d",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "009313c429931119d506229952c1f9995e087768",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/fsread/cramfs.rs",
+          "sha": "da91d9b77784a82ca2894ce5fcfa70d178f2209f",
+          "status": "modified",
+          "additions": 9,
+          "deletions": 1
+        },
+        {
+          "path": "crates/formats/tests/cramfs_block_lengths.rs",
+          "sha": "75204132d03eeac62f6876a9c153c34073d741e4",
+          "status": "added",
+          "additions": 80,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "880400993398d815ee4e4aa55ab613a6db1e7aa5",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "c442df7fd14e25a5f3e1daf170c97d26b14b22cd",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 17,
+      "pr": 705,
+      "url": "https://github.com/storytold/craft-anything/pull/705",
+      "title": "Preserve sparse ext positions across indirect levels",
+      "description": "保留 ext 间接块中的稀疏文件位置",
+      "branch": "bugfix/r3.12-ext-sparse-indirect-20261103b",
+      "originalImplementation": "dc86da3e15d599217c8662c90d48487ed66e0f77",
+      "currentHead": "13d210d63b21c1edf93d7b02d3a2f15adde544e3",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "unstable",
+      "ci": {
+        "run": 41692378272,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41692378272",
+        "head": "13d210d63b21c1edf93d7b02d3a2f15adde544e3",
+        "status": "completed",
+        "conclusion": "failure",
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "cacaa2aadee5aabcf09bcddc942f68ad70d7c94d",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/fsread/extfs.rs",
+          "sha": "76fd55314b8d8f5696726109717503acd441ae4a",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "crates/formats/tests/ext_sparse_indirect.rs",
+          "sha": "81e0ab804f29fe46d6c54415534fd26dc93377b9",
+          "status": "added",
+          "additions": 41,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "ea7c5a0357cd4119dcaa07ad9cf329949af2df27",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "aa816ef87cf2c1f34a01347b87a0d7409fd923aa",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 18,
+      "pr": 706,
+      "url": "https://github.com/storytold/craft-anything/pull/706",
+      "title": "Distinguish missing ext data from sparse holes",
+      "description": "区分 ext 缺失数据与合法稀疏空洞",
+      "branch": "bugfix/r3.12-ext-missing-blocks-20261103b",
+      "originalImplementation": "59b9f2ea006993970fe5a27cab99d94442927577",
+      "currentHead": "178d789785ffbba3dc7bbce71a1547fb2e904544",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "clean",
+      "ci": {
+        "run": 41692394230,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41692394230",
+        "head": "178d789785ffbba3dc7bbce71a1547fb2e904544",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "03a2d7a3043dbfb9e6a006c1b6b44a2f5c46ed33",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/fsread/extfs.rs",
+          "sha": "064e97109ca11b41030a868f0700284ac2d08b82",
+          "status": "modified",
+          "additions": 6,
+          "deletions": 2
+        },
+        {
+          "path": "crates/formats/tests/ext_missing_blocks.rs",
+          "sha": "f5c5544ba1872a00eb31a67013ade036cd41a902",
+          "status": "added",
+          "additions": 29,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "c50f12ccaf47df30719075b38665d4c496cd14c8",
+          "status": "modified",
+          "additions": 3,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "900278cd1aa12314bc4198b96d0c7dc1450201ec",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 19,
+      "pr": 707,
+      "url": "https://github.com/storytold/craft-anything/pull/707",
+      "title": "Keep PyInstaller modules within their PYZ archive",
+      "description": "限制 PyInstaller PYZ 模块读取范围",
+      "branch": "bugfix/r3.12-pyz-module-bounds-20261103b",
+      "originalImplementation": "caefe67e5102f34483352944ce160f8a9a25e704",
+      "currentHead": "8612a9c73d08d3273589679e079d293c8c3d17d8",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "clean",
+      "ci": {
+        "run": 41692411966,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41692411966",
+        "head": "8612a9c73d08d3273589679e079d293c8c3d17d8",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "6cedc883e9b7aa2a726f951bae84441bfd2797af",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/pyinstaller.rs",
+          "sha": "4e240b46956f269b0c6fd2b01137eb58c53f1c65",
+          "status": "modified",
+          "additions": 7,
+          "deletions": 2
+        },
+        {
+          "path": "crates/formats/tests/pyz_module_bounds.rs",
+          "sha": "09ef5f9ab7db6e730dfd7f350a7cfac20eacfeca",
+          "status": "added",
+          "additions": 46,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "8afa691d346f6adf50e2e0ada26955df4a905693",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "9bf78041ab7aca4338c498173430f0fc9d93517d",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 20,
+      "pr": 708,
+      "url": "https://github.com/storytold/craft-anything/pull/708",
+      "title": "Preserve JFFS2 sizes when recovery budgets are exhausted",
+      "description": "保留无法恢复内容的 JFFS2 文件大小",
+      "branch": "bugfix/r3.12-jffs2-unrecovered-size-20261103b",
+      "originalImplementation": "077050320b0dc5a7a5fc0ef9d72655185f5848a0",
+      "currentHead": "1e4d6f36353d2da27f0f13f0957d9c8205b7809c",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "clean",
+      "ci": {
+        "run": 41692427030,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41692427030",
+        "head": "1e4d6f36353d2da27f0f13f0957d9c8205b7809c",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "ddfd031795e5cac30f221255565886e98eb8a430",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/fsread/jffs2.rs",
+          "sha": "7ac4074fdf6555d24d695ecb1c4e814cc479c3b0",
+          "status": "modified",
+          "additions": 3,
+          "deletions": 2
+        },
+        {
+          "path": "crates/formats/tests/jffs2_unrecovered_size.rs",
+          "sha": "b72c35aea656b7c5f2374e6b16842fe9c298cb5d",
+          "status": "added",
+          "additions": 35,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "1bf4f581d54406c91e42655a59cc09ac07a0ab6e",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "5beaec5343f7b8eed40eec41ce837bc37c60489a",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 21,
+      "pr": 709,
+      "url": "https://github.com/storytold/craft-anything/pull/709",
+      "title": "Keep comments when adding the first JSON configuration value",
+      "description": "在仅含注释的 JSON 配置中添加值时保留注释",
+      "branch": "bugfix/r3.12-jsonc-comment-only-20261103b",
+      "originalImplementation": "35da589f43453bd1322f823f0f03fdec608510fb",
+      "currentHead": "8af65ca72d40c5284d15cf96e1ecc29ab41ca9cc",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "unstable",
+      "ci": {
+        "run": 41693676646,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41693676646",
+        "head": "8af65ca72d40c5284d15cf96e1ecc29ab41ca9cc",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "aa030550da0140635c54b993ea17975d6f132b07",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/jsonc.rs",
+          "sha": "615ef46657082264b95fdd0fec85abec41509528",
+          "status": "modified",
+          "additions": 6,
+          "deletions": 2
+        },
+        {
+          "path": "crates/formats/tests/regression_jsonc_comment_only.rs",
+          "sha": "c336560d6d77aaf309a650e8f01a217aff1a90c0",
+          "status": "added",
+          "additions": 20,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "6ba37efad40ddb4f14b29fe986796b5c87f0c262",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "0e50f3610e014aa0e332125e8c04dc8991748d62",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 22,
+      "pr": 710,
+      "url": "https://github.com/storytold/craft-anything/pull/710",
+      "title": "Remove every duplicate JSON configuration key",
+      "description": "移除 JSON 配置中的全部重复键",
+      "branch": "bugfix/r3.12-jsonc-duplicate-removal-20261103b",
+      "originalImplementation": "a4ce5ea4cca6c56cee7bf860751ea7a3fd775736",
+      "currentHead": "7a32fc5486c96358ae52a6f5494ca4f7b0244300",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "unstable",
+      "ci": {
+        "run": 41693809704,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41693809704",
+        "head": "7a32fc5486c96358ae52a6f5494ca4f7b0244300",
+        "status": "in_progress",
+        "conclusion": null,
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "9ff8ad7bae13b6b16ec967df72068ed84a149343",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/jsonc.rs",
+          "sha": "19714a7644922fb4038ed819e7a5d11082ed94a8",
+          "status": "modified",
+          "additions": 36,
+          "deletions": 21
+        },
+        {
+          "path": "crates/formats/tests/regression_jsonc_duplicate_removal.rs",
+          "sha": "dae803baa1da2996278fb733592f8da43428539e",
+          "status": "added",
+          "additions": 77,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "36013ca6cbec3454e5a4f609555018f06d3075f3",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "f4c4f3e2c239691b833eb7a939a6b0d363670e03",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 23,
+      "pr": 711,
+      "url": "https://github.com/storytold/craft-anything/pull/711",
+      "title": "Keep UDP payloads within declared datagram lengths",
+      "description": "按 UDP 声明长度截取载荷",
+      "branch": "bugfix/r3.12-udp-length-bounds-20261103b",
+      "originalImplementation": "11f4e9ea85375e06204e98fac55bab9261602f61",
+      "currentHead": "2f6533961eaeecfd8ca94337ffedd681a39b6acc",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "unstable",
+      "ci": {
+        "run": 41693826718,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41693826718",
+        "head": "2f6533961eaeecfd8ca94337ffedd681a39b6acc",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "22c74345a2e591eabeea5362dbe552afdfc9fda1",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/pcap.rs",
+          "sha": "09c18126a8275e8a39d1c8773d57d56a9f64470c",
+          "status": "modified",
+          "additions": 13,
+          "deletions": 1
+        },
+        {
+          "path": "crates/formats/tests/regression_udp_length.rs",
+          "sha": "84c571ae5ade0833c0aaca9069c352ff850b05fe",
+          "status": "added",
+          "additions": 48,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "aba6e90a0b4872e8e5342b9ff7be14b6ddd541ef",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "b0376b417a0d39f7a03b2aa883c4cfecaf0f829e",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 24,
+      "pr": 712,
+      "url": "https://github.com/storytold/craft-anything/pull/712",
+      "title": "Reject invalid TCP header lengths",
+      "description": "拒绝无效 TCP 首部长度",
+      "branch": "bugfix/r3.12-tcp-header-bounds-20261103b",
+      "originalImplementation": "d9a65e6f4d2db3dc288bb6cf3b2808bf74323d8d",
+      "currentHead": "83487ac2fe99f0bc9dfab5230366bb6e7fd5e30d",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "unstable",
+      "ci": {
+        "run": 41693841558,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41693841558",
+        "head": "83487ac2fe99f0bc9dfab5230366bb6e7fd5e30d",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "16c6e364edf9dcff0d15e2e2eaaec8ba326eedc8",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/pcap.rs",
+          "sha": "e9fa7609dde50e55b667b412a7a03ad98854d1d2",
+          "status": "modified",
+          "additions": 11,
+          "deletions": 4
+        },
+        {
+          "path": "crates/formats/tests/regression_tcp_header_length.rs",
+          "sha": "1893181164ec5e180fbe7f86c142685262a58798",
+          "status": "added",
+          "additions": 52,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "e56492c26090276bc9fc6d1aafe1b6c8fc4a32db",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "fb31cbe6b7130808d6571b1ca92c8bce99668478",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 25,
+      "pr": 713,
+      "url": "https://github.com/storytold/craft-anything/pull/713",
+      "title": "Respect DNS-over-TCP frame lengths",
+      "description": "按 DNS over TCP 的帧长度解析消息",
+      "branch": "bugfix/r3.12-tcp-dns-framing-20261103b",
+      "originalImplementation": "8cbfa44cd91470b0b1bfb27ac3d1c1e89a145fbe",
+      "currentHead": "67f0cfb73ae21e2e8a9aff0bec5280792d967680",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "unstable",
+      "ci": {
+        "run": 41693932774,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41693932774",
+        "head": "67f0cfb73ae21e2e8a9aff0bec5280792d967680",
+        "status": "in_progress",
+        "conclusion": null,
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "9adb0cde94fc32da3f593aa9911c2a94c6973bcd",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/pcap.rs",
+          "sha": "fadf7077b4e6af1746645bd5a925331b51445862",
+          "status": "modified",
+          "additions": 13,
+          "deletions": 2
+        },
+        {
+          "path": "crates/formats/tests/regression_tcp_dns_framing.rs",
+          "sha": "4dad459bb79f0b06d67e8adf87251e6253b31fa0",
+          "status": "added",
+          "additions": 67,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "2f44581cd404b8f86217c42a95a324cf2a991c36",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "ba2b1f3bc680b0f8020c98398890787b3eac14fe",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 26,
+      "pr": 714,
+      "url": "https://github.com/storytold/craft-anything/pull/714",
+      "title": "Validate pcapng block framing",
+      "description": "校验 pcapng 块尾长度及最小头部",
+      "branch": "bugfix/r3.12-pcapng-block-framing-20261103b",
+      "originalImplementation": "533d404ff9234db41e15f11ac63c49c931326f02",
+      "currentHead": "d9ffd0cd0fd4467b042de22c9755dc665830610f",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "unstable",
+      "ci": {
+        "run": 41693917149,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41693917149",
+        "head": "d9ffd0cd0fd4467b042de22c9755dc665830610f",
+        "status": "in_progress",
+        "conclusion": null,
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "a955c7716ff4b893401222ffc29b5d046c9303a9",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/pcap.rs",
+          "sha": "8c2b68429588b74b380a1f20876d3014b83586b9",
+          "status": "modified",
+          "additions": 15,
+          "deletions": 3
+        },
+        {
+          "path": "crates/formats/tests/regression_pcapng_framing.rs",
+          "sha": "69a58a6b34f444193e1099856d2783729d0c9135",
+          "status": "added",
+          "additions": 66,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "f95c00db26f14cada7fd090ffbd432031b62d3a2",
+          "status": "modified",
+          "additions": 3,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "37eca6725f2a5d2addfda9f5f85343bf95de6a9a",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 27,
+      "pr": 715,
+      "url": "https://github.com/storytold/craft-anything/pull/715",
+      "title": "Keep TLS metadata within declared lengths",
+      "description": "限制 TLS 记录、握手及扩展的读取范围",
+      "branch": "bugfix/r3.12-tls-declared-bounds-20261103b",
+      "originalImplementation": "b0decf6f3187770147f9f921a2b4f4656a280641",
+      "currentHead": "a3f8763f4aa84cdeeba2dd0a05b1230b388dd241",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "unstable",
+      "ci": {
+        "run": 41693905229,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41693905229",
+        "head": "a3f8763f4aa84cdeeba2dd0a05b1230b388dd241",
+        "status": "in_progress",
+        "conclusion": null,
+        "headMatches": true
+      },
+      "integrationPr": 722,
+      "integrationCommit": "193566726b4516eb099b2e4e5c1b8dec0d3b0c14",
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/formats/src/pcap.rs",
+          "sha": "f93ecd534d59ec276fd40f3874f2992e13c6d813",
+          "status": "modified",
+          "additions": 105,
+          "deletions": 33
+        },
+        {
+          "path": "crates/formats/tests/regression_tls_bounds.rs",
+          "sha": "674ff7942a8fe79b6e534ecbcafcb899510151a9",
+          "status": "added",
+          "additions": 102,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "3cf3fdef4b566b5542855f8fd490c28c18dfbad1",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "8903f314993acf84a95ea7a018d2f3bb3304e951",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "number": 28,
+      "pr": 716,
+      "url": "https://github.com/storytold/craft-anything/pull/716",
+      "title": "Preserve distinct response metadata in replay samples",
+      "description": "保留响应元数据不同的回放样本",
+      "branch": "bugfix/r3.11-standin-sample-metadata-20261103b",
+      "originalImplementation": "ec385c38b69e021617bd2b93f226d891cefb0c9a",
+      "currentHead": "53a902a772d30e78951e2b8af5e301f4e1738052",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "unstable",
+      "ci": {
+        "run": 41693894074,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41693894074",
+        "head": "53a902a772d30e78951e2b8af5e301f4e1738052",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": null,
+      "integrationCommit": null,
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/analysis/src/standin.rs",
+          "sha": "14c1552f98c7e94ebb22e7563f246a5b796930a7",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 8
+        },
+        {
+          "path": "crates/analysis/tests/regression_standin_sample_metadata.rs",
+          "sha": "6b871519ba9b4ffb1c68da6d02b69c034cb78d6b",
+          "status": "added",
+          "additions": 62,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "cdf46242eb18fe31eaa60aa590709d476b031859",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "001e032f365905ac6d1788e3f18ab3310845c01e",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        }
+      ]
+    },
+    {
+      "number": 29,
+      "pr": 717,
+      "url": "https://github.com/storytold/craft-anything/pull/717",
+      "title": "Apply replay body limits after redaction",
+      "description": "按脱敏后的实际正文执行容量限制",
+      "branch": "bugfix/r3.11-standin-redacted-budget-20261103b",
+      "originalImplementation": "b95862470c5e75af14f5bcd9247fc7a1c2cce9dd",
+      "currentHead": "f6c86482cab1d888aacc8f932591585a7fd80a61",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "unstable",
+      "ci": {
+        "run": 41693880980,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41693880980",
+        "head": "f6c86482cab1d888aacc8f932591585a7fd80a61",
+        "status": "in_progress",
+        "conclusion": null,
+        "headMatches": true
+      },
+      "integrationPr": null,
+      "integrationCommit": null,
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/analysis/src/standin.rs",
+          "sha": "ae48dcdc89514e43fc571b41b3081b9f22827456",
+          "status": "modified",
+          "additions": 11,
+          "deletions": 2
+        },
+        {
+          "path": "crates/analysis/tests/regression_standin_redacted_budget.rs",
+          "sha": "cbb944f7730dccc679fd896d502504da1032ce53",
+          "status": "added",
+          "additions": 51,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "a6d404368c9d0efd1bd30b5de669f3d10398a8d8",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "b8597d1e16642facb66c34b52ae608366673a711",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        }
+      ]
+    },
+    {
+      "number": 30,
+      "pr": 718,
+      "url": "https://github.com/storytold/craft-anything/pull/718",
+      "title": "Create atomic-write temporary files exclusively",
+      "description": "独占创建原子写入的临时文件",
+      "branch": "bugfix/r2.9-atomic-temp-creation-20261103b",
+      "originalImplementation": "5f0f1ce228af21a6ccc6494f6dacf392357f56a1",
+      "currentHead": "fb8a7df04af3ba1b84414a997b0b3bde00d3b5e3",
+      "state": "open",
+      "merged": false,
+      "mergeable": true,
+      "mergeableState": "unstable",
+      "ci": {
+        "run": 41693868110,
+        "url": "https://github.com/storytold/craft-anything/actions/runs/41693868110",
+        "head": "fb8a7df04af3ba1b84414a997b0b3bde00d3b5e3",
+        "status": "completed",
+        "conclusion": "success",
+        "headMatches": true
+      },
+      "integrationPr": null,
+      "integrationCommit": null,
+      "author": "Afloat16",
+      "originalFiles": [
+        {
+          "path": "crates/platform/src/fs.rs",
+          "sha": "2f4caaf0b0fefafd4354fba582f8ca4ead7b0249",
+          "status": "modified",
+          "additions": 17,
+          "deletions": 3
+        },
+        {
+          "path": "crates/platform/tests/regression_atomic_temp_creation.rs",
+          "sha": "1f4e982a732c3eb33278207aef14cf14be4cfa11",
+          "status": "added",
+          "additions": 67,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "b5fc8d01da28f4b1374a6f706887b38668c41967",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "8d506067f2e9f37bbda6d3b02fdaf0f3cac5f603",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        }
+      ]
+    }
+  ],
+  "integration": {
+    "number": 722,
+    "url": "https://github.com/storytold/craft-anything/pull/722",
+    "head": "cf860e3566cfc15aeef327687daf05a5e2c728d5",
+    "state": "open",
+    "merged": false,
+    "ci": {
+      "id": 41693727323,
+      "head": "cf860e3566cfc15aeef327687daf05a5e2c728d5",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    "originalAuthorCount": 27,
+    "commits": [
+      {
+        "sha": "4a1fd2e6577fd6faa12a0deb5daa458f291496d4",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Reject signed LEB128 values outside the 64-bit range (from #688)"
+      },
+      {
+        "sha": "5509a4ed3beca1ffdfb326c257931707d68cdf21",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Preserve valid text around damaged modified UTF-8 (from #690)"
+      },
+      {
+        "sha": "d7e508b51f42ac51ae52c31453c7431134e0e050",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Reject invalid widened Java instructions (from #691)"
+      },
+      {
+        "sha": "be4c6dc527f029a6eb6bba60f0ba3646d78248c4",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Validate Java invocation operands before decoding calls (from #692)"
+      },
+      {
+        "sha": "0872a25f352c1fdeb8489a198c63005579575c54",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Reject impossible DEX invocation register lists (from #693)"
+      },
+      {
+        "sha": "a230f5ac1a932eebab0df21f36ed4a8f44f7f765",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Reject invalid DEX array payload element widths (from #694)"
+      },
+      {
+        "sha": "6085a1ce984868b627af8c087a3fece24c2b3acc",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Read SQLite text using the database encoding (from #695)"
+      },
+      {
+        "sha": "fd4cb3f71f23297a97e4b1183aa6f56d0706fd68",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Keep SQLite cell reads within their page (from #696)"
+      },
+      {
+        "sha": "dedc0cdb497b0322b1306a48d3e3946c07dec493",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Stop repeated SQLite overflow pages from fabricating data (from #697)"
+      },
+      {
+        "sha": "2713f5d7149e5cf536b0f28b695e5ce653d44ab8",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Keep Android string pools within declared chunks (from #698)"
+      },
+      {
+        "sha": "74ca0753c019b2e1edf7153306650f2d24e8f0b7",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Apply ZIP output limits to stored entries (from #699)"
+      },
+      {
+        "sha": "422e65820a0adfdb6e4c39adaada811509880231",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Check ZIP member sizes after decompression (from #700)"
+      },
+      {
+        "sha": "e178bb447bb7e930556cfa0a7ad6928dc78c7c2d",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Keep ZIP64 values within their extra field (from #701)"
+      },
+      {
+        "sha": "e66c8051de95344e8236f4fa039c74283a47c1e2",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Validate ASAR header framing (from #702)"
+      },
+      {
+        "sha": "9a3f12e0620b91b809fefba8af1d6a471c367d79",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Traverse ROMFS dot and empty root directories (from #703)"
+      },
+      {
+        "sha": "009313c429931119d506229952c1f9995e087768",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Report incomplete cramfs block output (from #704)"
+      },
+      {
+        "sha": "cacaa2aadee5aabcf09bcddc942f68ad70d7c94d",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Preserve sparse ext positions across indirect levels (from #705)"
+      },
+      {
+        "sha": "03a2d7a3043dbfb9e6a006c1b6b44a2f5c46ed33",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Distinguish missing ext data from sparse holes (from #706)"
+      },
+      {
+        "sha": "6cedc883e9b7aa2a726f951bae84441bfd2797af",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Keep PyInstaller modules within their PYZ archive (from #707)"
+      },
+      {
+        "sha": "ddfd031795e5cac30f221255565886e98eb8a430",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Preserve JFFS2 sizes when recovery budgets are exhausted (from #708)"
+      },
+      {
+        "sha": "aa030550da0140635c54b993ea17975d6f132b07",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Keep comments when adding the first JSON configuration value (from #709)"
+      },
+      {
+        "sha": "9ff8ad7bae13b6b16ec967df72068ed84a149343",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Remove every duplicate JSON configuration key (from #710)"
+      },
+      {
+        "sha": "22c74345a2e591eabeea5362dbe552afdfc9fda1",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Keep UDP payloads within declared datagram lengths (from #711)"
+      },
+      {
+        "sha": "16c6e364edf9dcff0d15e2e2eaaec8ba326eedc8",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Reject invalid TCP header lengths (from #712)"
+      },
+      {
+        "sha": "9adb0cde94fc32da3f593aa9911c2a94c6973bcd",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Respect DNS-over-TCP frame lengths (from #713)"
+      },
+      {
+        "sha": "a955c7716ff4b893401222ffc29b5d046c9303a9",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Validate pcapng block framing (from #714)"
+      },
+      {
+        "sha": "193566726b4516eb099b2e4e5c1b8dec0d3b0c14",
+        "author": "Afloat16",
+        "committer": "bflatastic",
+        "title": "Keep TLS metadata within declared lengths (from #715)"
+      },
+      {
+        "sha": "cf860e3566cfc15aeef327687daf05a5e2c728d5",
+        "author": "bflatastic",
+        "committer": "bflatastic",
+        "title": "Format the combined SQLite change and record the parser fixes under R3.12"
+      }
+    ],
+    "missingJavaFollowup": true,
+    "reviewThreads": [
+      {
+        "id": "PRRT_kwDOVeM_1M6zRqWb",
+        "path": "crates/formats/src/axml.rs",
+        "url": "https://github.com/storytold/craft-anything/pull/722#discussion_r4458905639",
+        "resolved": false,
+        "status": "verified_fix_in_preparation"
+      },
+      {
+        "id": "PRRT_kwDOVeM_1M6zRqWj",
+        "path": "crates/formats/src/dex.rs",
+        "url": "https://github.com/storytold/craft-anything/pull/722#discussion_r4458905653",
+        "resolved": false,
+        "status": "verified_fix_in_preparation"
+      },
+      {
+        "id": "PRRT_kwDOVeM_1M6zRqWt",
+        "path": "crates/formats/src/fsread/extfs.rs",
+        "url": "https://github.com/storytold/craft-anything/pull/722#discussion_r4458905664",
+        "resolved": false,
+        "status": "verified_fix_in_preparation"
+      }
+    ]
+  },
+  "reviewBundle": {
+    "branch": "bugfix/r3.12-parser-review-followups-20261104",
+    "head": "76d42791d18c40f252573ee5be502158c12cd42d",
+    "status": "claim_published_implementation_in_preparation"
+  },
+  "javaFollowup": {
+    "key": "java",
+    "branch": "bugfix/r3.12-java-reference-completeness-20261104",
+    "base": "cf860e3566cfc15aeef327687daf05a5e2c728d5",
+    "baseRef": "bugfix/r3.12-format-parsers-2",
+    "head": "b79eb422efc6fdefa638b5c6579479a3371a3071",
+    "title": "Preserve partial Java reference coverage in the combined parsers (R3.12)",
+    "body": "**Roadmap item:** R3.12 — retain incomplete reference-scan coverage after decoder rejection.\n\n**What changed:**\n\nFollow-up to #692 for the combined parser branch in #722. Propagate decoder completeness, keep references already found, continue later methods, and report partial tool coverage. Carry the two class-reference regressions alongside the existing three invocation tests. The modified UTF-8 changes from #690 are preserved.\n\n**Verified:**\n\nThe original fix e7cd6da passed full CI: https://github.com/storytold/craft-anything/actions/runs/41688827573. The replay diff contains exactly the same three code/test changes, plus ROADMAP and STATUS updates.\n\n**Not verified:**\n\nThis combined revision has not executed CI. Its validation remains pending.\n\n- [ ] Formatting, Clippy, tests, layers, locks and secrets on this combined revision.\n- [ ] Complete the ROADMAP validation item after CI passes; STATUS records the scope.\n- [x] Original implementation; no other project's code, scripts or wording copied.",
+    "url": "https://github.com/storytold/craft-anything/compare/bugfix/r3.12-format-parsers-2...Afloat16:bugfix/r3.12-java-reference-completeness-20261104?quick_pull=1&title=Preserve+partial+Java+reference+coverage+in+the+combined+parsers+%28R3.12%29&body=%2A%2ARoadmap+item%3A%2A%2A+R3.12+%E2%80%94+retain+incomplete+reference-scan+coverage+after+decoder+rejection.%0A%0A%2A%2AWhat+changed%3A%2A%2A%0A%0AFollow-up+to+%23692+for+the+combined+parser+branch+in+%23722.+Propagate+decoder+completeness%2C+keep+references+already+found%2C+continue+later+methods%2C+and+report+partial+tool+coverage.+Carry+the+two+class-reference+regressions+alongside+the+existing+three+invocation+tests.+The+modified+UTF-8+changes+from+%23690+are+preserved.%0A%0A%2A%2AVerified%3A%2A%2A%0A%0AThe+original+fix+e7cd6da+passed+full+CI%3A+https%3A%2F%2Fgithub.com%2Fstorytold%2Fcraft-anything%2Factions%2Fruns%2F41688827573.+The+replay+diff+contains+exactly+the+same+three+code%2Ftest+changes%2C+plus+ROADMAP+and+STATUS+updates.%0A%0A%2A%2ANot+verified%3A%2A%2A%0A%0AThis+combined+revision+has+not+executed+CI.+Its+validation+remains+pending.%0A%0A-+%5B+%5D+Formatting%2C+Clippy%2C+tests%2C+layers%2C+locks+and+secrets+on+this+combined+revision.%0A-+%5B+%5D+Complete+the+ROADMAP+validation+item+after+CI+passes%3B+STATUS+records+the+scope.%0A-+%5Bx%5D+Original+implementation%3B+no+other+project%27s+code%2C+scripts+or+wording+copied.",
+    "commitUrl": "https://github.com/Afloat16/craft-anything/commit/b79eb422efc6fdefa638b5c6579479a3371a3071"
+  },
+  "supportFixes": [
+    {
+      "key": "paste",
+      "pr": 702,
+      "branch": "test/r2.9-paste-cleanup-fixture-20261104",
+      "head": "fb1e2fde6b9eabc67b68c6c4e3ad4ba7a666b82c",
+      "title": "Keep paste cleanup tests independent of clock resolution (R2.9)",
+      "body": "**Roadmap item:** R2.9 — make the pasted-picture cleanup regression independent of same-millisecond filename reuse.\n\n**What changed:**\n\nThe fixture makes a paste old by changing its modification time, while leaving a current-millisecond filename. Cleanup can remove that file and a new save can legitimately reuse its path, causing the removal assertion to fail. Give the old paste a historical filename and keep the age-based removal, attached-file retention and new-save assertions.\n\n**Verified:**\n\nThe failure in #702 was inspected: https://github.com/storytold/craft-anything/actions/runs/41687774538. The patch changes the test fixture and its ROADMAP/STATUS records; production code is unchanged.\n\n**Not verified:**\n\nThis new revision has not run tests, formatting or Clippy because the execution environment is unavailable. Repository CI is still required.\n\n- [ ] Formatting, Clippy, affected-crate tests, layers, locks and secrets.\n- [ ] Complete the ROADMAP validation item after CI passes; STATUS records the pending check.\n- [x] Original implementation; no other project's code, scripts or wording copied.",
+      "url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:test/r2.9-paste-cleanup-fixture-20261104?quick_pull=1&title=Keep+paste+cleanup+tests+independent+of+clock+resolution+%28R2.9%29&body=%2A%2ARoadmap+item%3A%2A%2A+R2.9+%E2%80%94+make+the+pasted-picture+cleanup+regression+independent+of+same-millisecond+filename+reuse.%0A%0A%2A%2AWhat+changed%3A%2A%2A%0A%0AThe+fixture+makes+a+paste+old+by+changing+its+modification+time%2C+while+leaving+a+current-millisecond+filename.+Cleanup+can+remove+that+file+and+a+new+save+can+legitimately+reuse+its+path%2C+causing+the+removal+assertion+to+fail.+Give+the+old+paste+a+historical+filename+and+keep+the+age-based+removal%2C+attached-file+retention+and+new-save+assertions.%0A%0A%2A%2AVerified%3A%2A%2A%0A%0AThe+failure+in+%23702+was+inspected%3A+https%3A%2F%2Fgithub.com%2Fstorytold%2Fcraft-anything%2Factions%2Fruns%2F41687774538.+The+patch+changes+the+test+fixture+and+its+ROADMAP%2FSTATUS+records%3B+production+code+is+unchanged.%0A%0A%2A%2ANot+verified%3A%2A%2A%0A%0AThis+new+revision+has+not+run+tests%2C+formatting+or+Clippy+because+the+execution+environment+is+unavailable.+Repository+CI+is+still+required.%0A%0A-+%5B+%5D+Formatting%2C+Clippy%2C+affected-crate+tests%2C+layers%2C+locks+and+secrets.%0A-+%5B+%5D+Complete+the+ROADMAP+validation+item+after+CI+passes%3B+STATUS+records+the+pending+check.%0A-+%5Bx%5D+Original+implementation%3B+no+other+project%27s+code%2C+scripts+or+wording+copied.",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/8f9d79822ed0d00691435478bbb97e2bf4cbbe23",
+      "executionStatus": "not_run",
+      "upstreamPr": null
+    },
+    {
+      "key": "builder",
+      "pr": 711,
+      "branch": "test/r2.9-builder-discovery-fixture-20261104",
+      "head": "13a0bf438cc740a9db144cc3513eb44551e21aaf",
+      "title": "Keep builder availability fixtures independent of live discovery (R2.9)",
+      "body": "**Roadmap item:** R2.9 — keep the builder-availability smoke regression independent of live agent discovery.\n\n**What changed:**\n\nOpening the builder dialog starts real discovery. A late completion can replace the synthetic results before the test checks Start availability. Mark discovery as already in progress before opening the dialog, then complete it with the existing fixture. Keep the warning, dialog, controls and build-availability assertions.\n\n**Verified:**\n\nThe failure in #711 was inspected: https://github.com/storytold/craft-anything/actions/runs/41687928153. Source tracing confirms that headless setup has no prior discovery worker and the guard prevents starting one. The patch changes only this test fixture and ROADMAP/STATUS records.\n\n**Not verified:**\n\nThis new revision has not run tests, formatting or Clippy because the execution environment is unavailable. Repository CI is still required.\n\n- [ ] Formatting, Clippy, affected-crate tests, layers, locks and secrets.\n- [ ] Complete the ROADMAP validation item after CI passes; STATUS records the pending check.\n- [x] Original implementation; no other project's code, scripts or wording copied.",
+      "url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:test/r2.9-builder-discovery-fixture-20261104?quick_pull=1&title=Keep+builder+availability+fixtures+independent+of+live+discovery+%28R2.9%29&body=%2A%2ARoadmap+item%3A%2A%2A+R2.9+%E2%80%94+keep+the+builder-availability+smoke+regression+independent+of+live+agent+discovery.%0A%0A%2A%2AWhat+changed%3A%2A%2A%0A%0AOpening+the+builder+dialog+starts+real+discovery.+A+late+completion+can+replace+the+synthetic+results+before+the+test+checks+Start+availability.+Mark+discovery+as+already+in+progress+before+opening+the+dialog%2C+then+complete+it+with+the+existing+fixture.+Keep+the+warning%2C+dialog%2C+controls+and+build-availability+assertions.%0A%0A%2A%2AVerified%3A%2A%2A%0A%0AThe+failure+in+%23711+was+inspected%3A+https%3A%2F%2Fgithub.com%2Fstorytold%2Fcraft-anything%2Factions%2Fruns%2F41687928153.+Source+tracing+confirms+that+headless+setup+has+no+prior+discovery+worker+and+the+guard+prevents+starting+one.+The+patch+changes+only+this+test+fixture+and+ROADMAP%2FSTATUS+records.%0A%0A%2A%2ANot+verified%3A%2A%2A%0A%0AThis+new+revision+has+not+run+tests%2C+formatting+or+Clippy+because+the+execution+environment+is+unavailable.+Repository+CI+is+still+required.%0A%0A-+%5B+%5D+Formatting%2C+Clippy%2C+affected-crate+tests%2C+layers%2C+locks+and+secrets.%0A-+%5B+%5D+Complete+the+ROADMAP+validation+item+after+CI+passes%3B+STATUS+records+the+pending+check.%0A-+%5Bx%5D+Original+implementation%3B+no+other+project%27s+code%2C+scripts+or+wording+copied.",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/be7f58ff632b886a2faf3388c4c93e2935267b79",
+      "executionStatus": "not_run",
+      "upstreamPr": null
+    }
+  ],
+  "verifiedHistoricalFixes": [
+    {
+      "pr": 692,
+      "head": "e7cd6da59d2858dc9ab5e9fba1fcd2ceaaea434f",
+      "run": 41688827573,
+      "conclusion": "success",
+      "note": "Propagates incomplete Java reference scans; two new class-level regressions."
+    },
+    {
+      "pr": 695,
+      "head": "8357dced53cb153764d503c8cee312499d457919",
+      "run": 41689288428,
+      "conclusion": "success",
+      "note": "Matches rustfmt after the as_chunks Clippy adjustment."
+    },
+    {
+      "pr": 716,
+      "head": "ec385c38b69e021617bd2b93f226d891cefb0c9a",
+      "run": 41686996208,
+      "conclusion": "success",
+      "regressions": 5
+    },
+    {
+      "pr": 717,
+      "head": "b95862470c5e75af14f5bcd9247fc7a1c2cce9dd",
+      "run": 41687009280,
+      "conclusion": "success",
+      "regressions": 4
+    },
+    {
+      "pr": 718,
+      "head": "5f0f1ce228af21a6ccc6494f6dacf392357f56a1",
+      "run": 41687019068,
+      "conclusion": "success",
+      "regressions": 1
+    }
+  ],
+  "permissions": {
+    "upstreamPush": false,
+    "upstreamPrMetadataUpdate": "403 Resource not accessible by integration",
+    "upstreamActionsRerun": "403 Resource not accessible by integration",
+    "forkGitWrites": "available"
+  },
+  "validationLimits": "No local execution environment. New follow-up revisions have not run Rust tests, rustfmt or Clippy. CI successes are tied to the exact recorded heads."
+}
