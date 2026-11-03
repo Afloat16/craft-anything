@@ -24,8 +24,8 @@ A saved `User` message with pictures is `{text, pictures: [paths]}`, where the p
 copies in the project's `attachments/`; one without pictures stays the plain string earlier
 versions wrote.
 
-Other JSON in a project (`assets.json`, `inbox/`, `checks/`, evidence records) has no version yet;
-add one the first time its shape changes.
+Other JSON in a project (`assets.json`, `inbox/` except `inbox/build-progress.json`, `checks/`,
+evidence records) has no version yet; add one the first time its shape changes.
 
 ## Stand-in cached responses
 
