@@ -193,7 +193,7 @@ been run live.
 - [ ] A live local build through Ollama, small target, to Ready or to a clear stop, and note in
       STATUS.md which models it worked with. Do this first: it shows which of the lines below matter
 - [ ] An assistant turn with no text sends `content: null` (`openai.rs`), which likely causes #403's
-      `invalid message content type: <nil>`: send an empty string
+      `invalid message content type: <nil>`: send an empty string — claimed: Afloat16, branch bugfix/r5.4-empty-assistant-content-20261103
 - [ ] Understand a tool call a model writes as JSON in its text (#417). The fallback protocol reads
       only `Action:` and `Action Input:` lines, so anything else ends the turn with nothing done
 - [ ] Accept a tool argument of a near type, such as a list for a string, or answer so the model
