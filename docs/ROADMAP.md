@@ -476,6 +476,12 @@ Owner: open · Status: in progress
 
 ---
 
+### R3.12 File parser correctness
+Owner: open · Status: in progress
+- [ ] Check the 32-bit data sums in CRC-format cpio archives and report mismatches. — claimed: Afloat16, branch bugfix/r3.12-cpio-checksum-20261103
+
+---
+
 ## M4 Release
 
 ### R4.1 A macOS CLI that opens
