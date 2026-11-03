@@ -272,7 +272,9 @@ mod tests {
 
     #[test]
     fn backend_context_budget_is_optional_and_validated() {
-        let table = |line: &str| -> toml::Table { toml::from_str(&format!("[[backends]]\nname = \"Local\"\nkind = \"openai_compatible\"\n{line}")).unwrap() };
+        let table = |line: &str| -> toml::Table {
+            toml::from_str(&format!("[[backends]]\nname = \"Local\"\nkind = \"openai_compatible\"\nmodel = \"qwen3:8b\"\n{line}")).unwrap()
+        };
         for (line, expected) in [
             ("", None),
             ("context_tokens = 0", Some(0)),
