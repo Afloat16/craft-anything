@@ -1,0 +1,1622 @@
+{
+  "repository": "storytold/craft-anything",
+  "fork": "Afloat16/craft-anything",
+  "baseline": "b79fc506e2f119f9188edb791b900df5170e155b",
+  "upstream_snapshot": "87174476d9e8b0395155926f8329bf93a2c60e82",
+  "integration": {
+    "items": "1-27",
+    "tree": "450d06683b305748efc07415a05d0edd7e9ed374",
+    "passed": 563,
+    "ignored": 0,
+    "native": true,
+    "clippy": true,
+    "format": true
+  },
+  "pull_requests_created_upstream": 0,
+  "entries": [
+    {
+      "n": 1,
+      "id": "r3.12",
+      "slug": "dex-signed-leb128",
+      "head": "c6f256518b2e16c91087211665beab4a78df3e96",
+      "title": "Reject signed LEB128 values outside the 64-bit range",
+      "zh": "拒绝超出 64 位范围的 DEX signed LEB128",
+      "change": "Reject invalid sign extension in the tenth byte so malformed exception counts cannot become valid values.",
+      "coverage": "Signed-limit and overflowing tenth-byte regressions.",
+      "wasm": true,
+      "branch": "bugfix/r3.12-dex-signed-leb128-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/c6f256518b2e16c91087211665beab4a78df3e96",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-dex-signed-leb128-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/dex.rs",
+          "sha": "fdde0d969fc58d0fff0442753a4f29c6e10c06a0",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 0
+        },
+        {
+          "path": "crates/formats/tests/dex_signed_leb128.rs",
+          "sha": "3a5c36d07759680dc4519a528a37e2e80dfd441b",
+          "status": "added",
+          "additions": 52,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "7a7b339d27eee49dba05d6afbb6e8cabf138802b",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "e4731fe2428a0804b89fcdbc335c8cddd104f378",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "234f18ee48d22b60a29da7db5da11fb2f885fa39",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "body": "## Change\n\nReject invalid sign extension in the tenth byte so malformed exception counts cannot become valid values.\n\n## Regression coverage\n\nSigned-limit and overflowing tenth-byte regressions.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.\n\nScope: the current signed 64-bit LEB128 helper; broader DEX 32-bit operand rules are unchanged.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-dex-signed-leb128-20261103b?quick_pull=1&title=Reject+signed+LEB128+values+outside+the+64-bit+range&body=%23%23+Change%0A%0AReject+invalid+sign+extension+in+the+tenth+byte+so+malformed+exception+counts+cannot+become+valid+values.%0A%0A%23%23+Regression+coverage%0A%0ASigned-limit+and+overflowing+tenth-byte+regressions.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.%0A%0AScope%3A+the+current+signed+64-bit+LEB128+helper%3B+broader+DEX+32-bit+operand+rules+are+unchanged.",
+      "scope": "Scope: the current signed 64-bit LEB128 helper; broader DEX 32-bit operand rules are unchanged.",
+      "wasm_status": "passed"
+    },
+    {
+      "n": 2,
+      "id": "r3.12",
+      "slug": "modified-utf8-validation",
+      "head": "7defc6c3583946aa1072ddb209734f2f25817c6b",
+      "title": "Preserve valid text around damaged modified UTF-8",
+      "zh": "保留损坏 Modified UTF-8 周围的有效文字",
+      "change": "Validate continuation and overlong encodings in the shared DEX/Java decoder while preserving valid following text, encoded NUL and surrogate pairs.",
+      "coverage": "Malformed encodings and valid surrounding text controls.",
+      "wasm": true,
+      "branch": "bugfix/r3.12-modified-utf8-validation-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/7defc6c3583946aa1072ddb209734f2f25817c6b",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-modified-utf8-validation-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/bytes.rs",
+          "sha": "b1ab11b2f693f1dd211926657fe42dd7aae7ef8b",
+          "status": "modified",
+          "additions": 14,
+          "deletions": 0
+        },
+        {
+          "path": "crates/formats/src/dex.rs",
+          "sha": "8f5bc2e84e14364a782be2249228ea806548186e",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 12
+        },
+        {
+          "path": "crates/formats/src/java_class.rs",
+          "sha": "22d336b3713710a27799da73e8b55f15e2576e47",
+          "status": "modified",
+          "additions": 3,
+          "deletions": 17
+        },
+        {
+          "path": "crates/formats/tests/modified_utf8_validation.rs",
+          "sha": "f189e96cdc85edea6f58a90682e3ce845f3435dd",
+          "status": "added",
+          "additions": 47,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "9e9660b826c4dd29f1ac70f991294a3e679e94fa",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "69d4750364bd75fadbed29d7fa4e8917a7c8ca65",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "88f3f94d63b7862da67fff9eed48aab26c4cc249",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "body": "## Change\n\nValidate continuation and overlong encodings in the shared DEX/Java decoder while preserving valid following text, encoded NUL and surrogate pairs.\n\n## Regression coverage\n\nMalformed encodings and valid surrounding text controls.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-modified-utf8-validation-20261103b?quick_pull=1&title=Preserve+valid+text+around+damaged+modified+UTF-8&body=%23%23+Change%0A%0AValidate+continuation+and+overlong+encodings+in+the+shared+DEX%2FJava+decoder+while+preserving+valid+following+text%2C+encoded+NUL+and+surrogate+pairs.%0A%0A%23%23+Regression+coverage%0A%0AMalformed+encodings+and+valid+surrounding+text+controls.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.",
+      "scope": null,
+      "wasm_status": "passed"
+    },
+    {
+      "n": 3,
+      "id": "r3.12",
+      "slug": "java-wide-opcodes",
+      "head": "206c2804e54ad8639965203c6a16cff2732f3c8c",
+      "title": "Reject invalid widened Java instructions",
+      "zh": "拒绝不合法的 Java wide 指令",
+      "change": "Allow wide only for the defined load, store, ret and iinc instructions so malformed bytecode cannot be decoded as a valid widened operation.",
+      "coverage": "Allowed widened operations and invalid opcode regressions.",
+      "wasm": true,
+      "branch": "bugfix/r3.12-java-wide-opcodes-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/206c2804e54ad8639965203c6a16cff2732f3c8c",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-java-wide-opcodes-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/java_ops.rs",
+          "sha": "e81a55265c7fb37d475aafd790f5a5d345c199b4",
+          "status": "modified",
+          "additions": 3,
+          "deletions": 0
+        },
+        {
+          "path": "crates/formats/tests/java_wide_opcodes.rs",
+          "sha": "4663c53d11688b75dcac46e4d735c713afb876ad",
+          "status": "added",
+          "additions": 33,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "26e5bc4d864989bda41e44260483fbf18c3e1537",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "dedffbc0ced2897daef9111f88df889699b102dd",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "f6e75080a84518ec24519679f734e6e0bd4322e0",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "body": "## Change\n\nAllow wide only for the defined load, store, ret and iinc instructions so malformed bytecode cannot be decoded as a valid widened operation.\n\n## Regression coverage\n\nAllowed widened operations and invalid opcode regressions.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-java-wide-opcodes-20261103b?quick_pull=1&title=Reject+invalid+widened+Java+instructions&body=%23%23+Change%0A%0AAllow+wide+only+for+the+defined+load%2C+store%2C+ret+and+iinc+instructions+so+malformed+bytecode+cannot+be+decoded+as+a+valid+widened+operation.%0A%0A%23%23+Regression+coverage%0A%0AAllowed+widened+operations+and+invalid+opcode+regressions.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.",
+      "scope": null,
+      "wasm_status": "passed"
+    },
+    {
+      "n": 4,
+      "id": "r3.12",
+      "slug": "java-invoke-operands",
+      "head": "63e3af8dbad23f0885590d3b7d7912440acf1d68",
+      "title": "Validate Java invocation operands before decoding calls",
+      "zh": "校验 Java 调用指令的保留字节及参数计数",
+      "change": "Require a nonzero invokeinterface count and zero reserved operand bytes before accepting interface or dynamic calls.",
+      "coverage": "Invalid counts, reserved bytes and valid invocation controls.",
+      "wasm": true,
+      "branch": "bugfix/r3.12-java-invoke-operands-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/63e3af8dbad23f0885590d3b7d7912440acf1d68",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-java-invoke-operands-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/java_ops.rs",
+          "sha": "e996e5da621b14a7af90648d9a1998feae1a9ccd",
+          "status": "modified",
+          "additions": 6,
+          "deletions": 3
+        },
+        {
+          "path": "crates/formats/tests/java_invoke_operands.rs",
+          "sha": "a0ab4139d97341a2c758c622cb4df23d5339c0d3",
+          "status": "added",
+          "additions": 37,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "5045817d68a2f44f1cde0ed2a5bc6785b0926f8b",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "739dae0d264cb5a926ce065d1e695b0394a2883b",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "64850cad57780d7247edc8ee4707181b9aff15ec",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "body": "## Change\n\nRequire a nonzero invokeinterface count and zero reserved operand bytes before accepting interface or dynamic calls.\n\n## Regression coverage\n\nInvalid counts, reserved bytes and valid invocation controls.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-java-invoke-operands-20261103b?quick_pull=1&title=Validate+Java+invocation+operands+before+decoding+calls&body=%23%23+Change%0A%0ARequire+a+nonzero+invokeinterface+count+and+zero+reserved+operand+bytes+before+accepting+interface+or+dynamic+calls.%0A%0A%23%23+Regression+coverage%0A%0AInvalid+counts%2C+reserved+bytes+and+valid+invocation+controls.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.",
+      "scope": null,
+      "wasm_status": "passed"
+    },
+    {
+      "n": 5,
+      "id": "r3.12",
+      "slug": "dex-invoke-registers",
+      "head": "6da3b104817744d3baefad1a01413db6d3df2930",
+      "title": "Reject impossible DEX invocation register lists",
+      "zh": "拒绝越界的 DEX 调用寄存器列表",
+      "change": "Reject fixed invocation lists larger than five registers and range operands extending beyond the register index space.",
+      "coverage": "Oversized fixed lists, overflowing ranges and valid boundaries.",
+      "wasm": true,
+      "branch": "bugfix/r3.12-dex-invoke-registers-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/6da3b104817744d3baefad1a01413db6d3df2930",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-dex-invoke-registers-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/dex_ops.rs",
+          "sha": "768d842f42fada60cf945b00826ede5753a4e08d",
+          "status": "modified",
+          "additions": 9,
+          "deletions": 2
+        },
+        {
+          "path": "crates/formats/tests/dex_invoke_registers.rs",
+          "sha": "1399b7f8637c2e4fd7290bc42fa102216f22d207",
+          "status": "added",
+          "additions": 33,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "dad0c07eb9e9f40513529e70332f2f648d103d2f",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "bf596ea3ecb0c9940297a829ad8f797877f01c11",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "33ecd2b5201577a01da57a6c0e945c6e0997f6f6",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "body": "## Change\n\nReject fixed invocation lists larger than five registers and range operands extending beyond the register index space.\n\n## Regression coverage\n\nOversized fixed lists, overflowing ranges and valid boundaries.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-dex-invoke-registers-20261103b?quick_pull=1&title=Reject+impossible+DEX+invocation+register+lists&body=%23%23+Change%0A%0AReject+fixed+invocation+lists+larger+than+five+registers+and+range+operands+extending+beyond+the+register+index+space.%0A%0A%23%23+Regression+coverage%0A%0AOversized+fixed+lists%2C+overflowing+ranges+and+valid+boundaries.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.",
+      "scope": null,
+      "wasm_status": "passed"
+    },
+    {
+      "n": 6,
+      "id": "r3.12",
+      "slug": "dex-array-widths",
+      "head": "e4802ee7713eff91eb9a6e27a0459c0383f63761",
+      "title": "Reject invalid DEX array payload element widths",
+      "zh": "限制 DEX 数组载荷元素宽度",
+      "change": "Accept only 1, 2, 4 or 8 byte array elements, rejecting unsupported and zero widths before payload-size calculations.",
+      "coverage": "Invalid element widths, large counts and valid width controls.",
+      "wasm": true,
+      "branch": "bugfix/r3.12-dex-array-widths-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/e4802ee7713eff91eb9a6e27a0459c0383f63761",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-dex-array-widths-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/dex_ops.rs",
+          "sha": "9b1b7ad60c738ef410e7a3c696d61c6b287b052d",
+          "status": "modified",
+          "additions": 3,
+          "deletions": 0
+        },
+        {
+          "path": "crates/formats/tests/dex_array_widths.rs",
+          "sha": "72538f05f1c717c54d35bde50b1e6b19457f8825",
+          "status": "added",
+          "additions": 39,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "894942a4c917a9a5f9c15b176742e71f0d5195e5",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "54b51d0c33bb2f3e8765f40ee0a3ad3420be6aa3",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "0a129c8be008308a9839b24d99a04f4b1b0ac71f",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "body": "## Change\n\nAccept only 1, 2, 4 or 8 byte array elements, rejecting unsupported and zero widths before payload-size calculations.\n\n## Regression coverage\n\nInvalid element widths, large counts and valid width controls.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-dex-array-widths-20261103b?quick_pull=1&title=Reject+invalid+DEX+array+payload+element+widths&body=%23%23+Change%0A%0AAccept+only+1%2C+2%2C+4+or+8+byte+array+elements%2C+rejecting+unsupported+and+zero+widths+before+payload-size+calculations.%0A%0A%23%23+Regression+coverage%0A%0AInvalid+element+widths%2C+large+counts+and+valid+width+controls.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.",
+      "scope": null,
+      "wasm_status": "passed"
+    },
+    {
+      "n": 7,
+      "id": "r3.12",
+      "slug": "sqlite-text-encoding",
+      "head": "be78da063a6ebac4e8f399d8ef7da793981ec95b",
+      "title": "Read SQLite text using the database encoding",
+      "zh": "按 SQLite 声明的编码读取文本",
+      "change": "Use the database text encoding for schema and row text so UTF-16 databases are decoded correctly.",
+      "coverage": "UTF-8, UTF-16LE and UTF-16BE schema and row fixtures.",
+      "wasm": true,
+      "branch": "bugfix/r3.12-sqlite-text-encoding-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/be78da063a6ebac4e8f399d8ef7da793981ec95b",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-sqlite-text-encoding-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/sqlite.rs",
+          "sha": "1d30a378173a5b6d2ed8457f72f092588d5b5450",
+          "status": "modified",
+          "additions": 34,
+          "deletions": 16
+        },
+        {
+          "path": "crates/formats/tests/sqlite_text_encoding.rs",
+          "sha": "e83b521e4ed8c476e57ec77821627a2bb267632a",
+          "status": "added",
+          "additions": 105,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "aeff744b1869f7c679dc864ffb282c08338608da",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "03055f255ce237b7b2855d1bd880691176f4fb74",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "6911a2e3bec92002c7931949085c71e5e29332bf",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "body": "## Change\n\nUse the database text encoding for schema and row text so UTF-16 databases are decoded correctly.\n\n## Regression coverage\n\nUTF-8, UTF-16LE and UTF-16BE schema and row fixtures.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-sqlite-text-encoding-20261103b?quick_pull=1&title=Read+SQLite+text+using+the+database+encoding&body=%23%23+Change%0A%0AUse+the+database+text+encoding+for+schema+and+row+text+so+UTF-16+databases+are+decoded+correctly.%0A%0A%23%23+Regression+coverage%0A%0AUTF-8%2C+UTF-16LE+and+UTF-16BE+schema+and+row+fixtures.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.",
+      "scope": null,
+      "wasm_status": "passed"
+    },
+    {
+      "n": 8,
+      "id": "r3.12",
+      "slug": "sqlite-page-boundaries",
+      "head": "1d2a3b0f812bc0cac6414d278142ad82a13b5bd7",
+      "title": "Keep SQLite cell reads within their page",
+      "zh": "限制 SQLite 单元格读取范围",
+      "change": "Constrain cell headers, pointer arrays and payload reads to the current usable page instead of borrowing bytes from a neighboring page.",
+      "coverage": "Malformed page pointers and truncated page-local data.",
+      "wasm": true,
+      "branch": "bugfix/r3.12-sqlite-page-boundaries-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/1d2a3b0f812bc0cac6414d278142ad82a13b5bd7",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-sqlite-page-boundaries-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/sqlite.rs",
+          "sha": "93cd553052ea984ecf4f7b3c676a7af338f07dcc",
+          "status": "modified",
+          "additions": 78,
+          "deletions": 37
+        },
+        {
+          "path": "crates/formats/tests/sqlite_page_boundaries.rs",
+          "sha": "859f8472f35649906785e873abeae506ea9105bb",
+          "status": "added",
+          "additions": 94,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "ea0143b08cd25fe5e202708bbc001dc0e652d213",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "7258f50c7451fb037b908a4b1f512e2a004691cb",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "d5ad364841a8fc44ce0e9951e0171b06742d527d",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "body": "## Change\n\nConstrain cell headers, pointer arrays and payload reads to the current usable page instead of borrowing bytes from a neighboring page.\n\n## Regression coverage\n\nMalformed page pointers and truncated page-local data.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-sqlite-page-boundaries-20261103b?quick_pull=1&title=Keep+SQLite+cell+reads+within+their+page&body=%23%23+Change%0A%0AConstrain+cell+headers%2C+pointer+arrays+and+payload+reads+to+the+current+usable+page+instead+of+borrowing+bytes+from+a+neighboring+page.%0A%0A%23%23+Regression+coverage%0A%0AMalformed+page+pointers+and+truncated+page-local+data.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.",
+      "scope": null,
+      "wasm_status": "passed"
+    },
+    {
+      "n": 9,
+      "id": "r3.12",
+      "slug": "sqlite-overflow-cycles",
+      "head": "bc1482115787d4fa0172c2901ac16c1479724dcb",
+      "title": "Stop repeated SQLite overflow pages from fabricating data",
+      "zh": "阻止 SQLite 溢出页循环伪造数据",
+      "change": "Track visited overflow pages and stop repeated pages while retaining only the actually recovered partial payload.",
+      "coverage": "Repeated-page and cyclic overflow-chain regressions.",
+      "wasm": true,
+      "branch": "bugfix/r3.12-sqlite-overflow-cycles-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/bc1482115787d4fa0172c2901ac16c1479724dcb",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-sqlite-overflow-cycles-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/sqlite.rs",
+          "sha": "e220696dabd628b396bba3c6133c5eaf1cd6652d",
+          "status": "modified",
+          "additions": 5,
+          "deletions": 0
+        },
+        {
+          "path": "crates/formats/tests/sqlite_overflow_cycles.rs",
+          "sha": "f47dae9ff355245ffcd9a77cdd9cbb9d3175fc60",
+          "status": "added",
+          "additions": 44,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "87866e0150f6397e035ffa17509683549fd7161f",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "848f3b39a09b2dc73159c62b34c7c4d0c64f7ade",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "cdea39a5cc6a3e69aee261d2989007e4351a982d",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "body": "## Change\n\nTrack visited overflow pages and stop repeated pages while retaining only the actually recovered partial payload.\n\n## Regression coverage\n\nRepeated-page and cyclic overflow-chain regressions.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-sqlite-overflow-cycles-20261103b?quick_pull=1&title=Stop+repeated+SQLite+overflow+pages+from+fabricating+data&body=%23%23+Change%0A%0ATrack+visited+overflow+pages+and+stop+repeated+pages+while+retaining+only+the+actually+recovered+partial+payload.%0A%0A%23%23+Regression+coverage%0A%0ARepeated-page+and+cyclic+overflow-chain+regressions.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.",
+      "scope": null,
+      "wasm_status": "passed"
+    },
+    {
+      "n": 10,
+      "id": "r3.12",
+      "slug": "android-string-pool-bounds",
+      "head": "4c00f0e3dca3fac29d95b85f53620ceed323ebe7",
+      "title": "Keep Android string pools within declared chunks",
+      "zh": "限制 Android 字符串池读取边界",
+      "change": "Validate chunk framing, offsets, string/style regions and terminators before decoding string pool entries.",
+      "coverage": "Out-of-chunk offsets, malformed regions and termination checks.",
+      "wasm": true,
+      "branch": "bugfix/r3.12-android-string-pool-bounds-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/4c00f0e3dca3fac29d95b85f53620ceed323ebe7",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-android-string-pool-bounds-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/axml.rs",
+          "sha": "caeae09f49c0c377e913f79627b09d748fd8d078",
+          "status": "modified",
+          "additions": 31,
+          "deletions": 16
+        },
+        {
+          "path": "crates/formats/tests/android_string_pool_bounds.rs",
+          "sha": "2d29595305cb903f566dda537e9a3b9dc359a3ce",
+          "status": "added",
+          "additions": 92,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "d7534f5a23173144c4e4b4d1bee025e297451dcb",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "71c80b7850d067b0fec11c00c950fab4ef5b169c",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "ca938493e6f8ac602145d69cff8fe3d1517d9c22",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "body": "## Change\n\nValidate chunk framing, offsets, string/style regions and terminators before decoding string pool entries.\n\n## Regression coverage\n\nOut-of-chunk offsets, malformed regions and termination checks.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-android-string-pool-bounds-20261103b?quick_pull=1&title=Keep+Android+string+pools+within+declared+chunks&body=%23%23+Change%0A%0AValidate+chunk+framing%2C+offsets%2C+string%2Fstyle+regions+and+terminators+before+decoding+string+pool+entries.%0A%0A%23%23+Regression+coverage%0A%0AOut-of-chunk+offsets%2C+malformed+regions+and+termination+checks.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.",
+      "scope": null,
+      "wasm_status": "passed"
+    },
+    {
+      "n": 11,
+      "id": "r3.12",
+      "slug": "zip-stored-cap",
+      "head": "77e235402385fe77f436a107db8bc6123e494571",
+      "title": "Apply ZIP output limits to stored entries",
+      "zh": "对 ZIP 未压缩条目执行输出上限",
+      "change": "Check the actual stored entry length before allocation so stored members obey the same extraction output cap.",
+      "coverage": "Oversized stored members and exact-limit controls.",
+      "wasm": true,
+      "branch": "bugfix/r3.12-zip-stored-cap-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/77e235402385fe77f436a107db8bc6123e494571",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-zip-stored-cap-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/zip.rs",
+          "sha": "6ee761d15b36612be04529d97bd1e9c203033922",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        },
+        {
+          "path": "crates/formats/tests/zip_stored_cap.rs",
+          "sha": "3857ed69350c2014c9729581162647111b2c872e",
+          "status": "added",
+          "additions": 18,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "262929b43bc50710182ed1caf9d5e95bcb1912b5",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "41d5c15668d3a44398b342f6b73a99fae461ae74",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "63966315fec68752c498c38a7debe769efe2819d",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "body": "## Change\n\nCheck the actual stored entry length before allocation so stored members obey the same extraction output cap.\n\n## Regression coverage\n\nOversized stored members and exact-limit controls.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-zip-stored-cap-20261103b?quick_pull=1&title=Apply+ZIP+output+limits+to+stored+entries&body=%23%23+Change%0A%0ACheck+the+actual+stored+entry+length+before+allocation+so+stored+members+obey+the+same+extraction+output+cap.%0A%0A%23%23+Regression+coverage%0A%0AOversized+stored+members+and+exact-limit+controls.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.",
+      "scope": null,
+      "wasm_status": "passed"
+    },
+    {
+      "n": 12,
+      "id": "r3.12",
+      "slug": "zip-decoded-size",
+      "head": "fc6b69da397429a80715f8e4b9f6c2d3580301ee",
+      "title": "Check ZIP member sizes after decompression",
+      "zh": "校验 ZIP 实际解压长度",
+      "change": "Compare the decoded member size with the advertised uncompressed size before returning recovered content.",
+      "coverage": "Decoded-size mismatches and valid member controls.",
+      "wasm": true,
+      "branch": "bugfix/r3.12-zip-decoded-size-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/fc6b69da397429a80715f8e4b9f6c2d3580301ee",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-zip-decoded-size-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/zip.rs",
+          "sha": "55da36fede410165add165c3aa9a1194c04af867",
+          "status": "modified",
+          "additions": 3,
+          "deletions": 0
+        },
+        {
+          "path": "crates/formats/tests/zip_decoded_size.rs",
+          "sha": "1656ac7070693ab989e25bac3e83fa01ff5d000b",
+          "status": "added",
+          "additions": 40,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "f5bc896cd5f81233cd5836b0452d5983e7bb1b36",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "d57daca60210bfcff6c3a00780067d389d49d935",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "770e8ed1d724d13544995fb348439f1692994f35",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "body": "## Change\n\nCompare the decoded member size with the advertised uncompressed size before returning recovered content.\n\n## Regression coverage\n\nDecoded-size mismatches and valid member controls.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-zip-decoded-size-20261103b?quick_pull=1&title=Check+ZIP+member+sizes+after+decompression&body=%23%23+Change%0A%0ACompare+the+decoded+member+size+with+the+advertised+uncompressed+size+before+returning+recovered+content.%0A%0A%23%23+Regression+coverage%0A%0ADecoded-size+mismatches+and+valid+member+controls.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.",
+      "scope": null,
+      "wasm_status": "passed"
+    },
+    {
+      "n": 13,
+      "id": "r3.12",
+      "slug": "zip64-extra-boundaries",
+      "head": "9aecbbae5e80a50a0cc4e4652cf9d42595430ad3",
+      "title": "Keep ZIP64 values within their extra field",
+      "zh": "限制 ZIP64 扩展字段读取范围",
+      "change": "Read ZIP64 metadata only inside its own extra field and reject missing metadata for sentinel size or offset values.",
+      "coverage": "Truncated ZIP64 fields, adjacent fields and missing sentinel metadata.",
+      "wasm": true,
+      "branch": "bugfix/r3.12-zip64-extra-boundaries-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/9aecbbae5e80a50a0cc4e4652cf9d42595430ad3",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-zip64-extra-boundaries-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/zip.rs",
+          "sha": "be763b4acc4755d60b1b6a333a765b6791412b06",
+          "status": "modified",
+          "additions": 21,
+          "deletions": 17
+        },
+        {
+          "path": "crates/formats/tests/zip64_extra_boundaries.rs",
+          "sha": "e634144992e52e8f2743f408713a3ff493c7d66a",
+          "status": "added",
+          "additions": 50,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "5cd0b4f79c36850e33c4632e0a9e1e07c9bec1b7",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "ec0e5801e4dc3c2f10d643f51ad77219258c56b2",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "e25ed354018e68e36414029164cb2904e1199d6f",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "body": "## Change\n\nRead ZIP64 metadata only inside its own extra field and reject missing metadata for sentinel size or offset values.\n\n## Regression coverage\n\nTruncated ZIP64 fields, adjacent fields and missing sentinel metadata.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-zip64-extra-boundaries-20261103b?quick_pull=1&title=Keep+ZIP64+values+within+their+extra+field&body=%23%23+Change%0A%0ARead+ZIP64+metadata+only+inside+its+own+extra+field+and+reject+missing+metadata+for+sentinel+size+or+offset+values.%0A%0A%23%23+Regression+coverage%0A%0ATruncated+ZIP64+fields%2C+adjacent+fields+and+missing+sentinel+metadata.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.",
+      "scope": null,
+      "wasm_status": "passed"
+    },
+    {
+      "n": 14,
+      "id": "r3.12",
+      "slug": "asar-header-bounds",
+      "head": "e0010694cbf37bdd894a9528a309d7a258bcd66a",
+      "title": "Validate ASAR header framing",
+      "zh": "校验 ASAR 嵌套头部长度",
+      "change": "Validate nested header lengths and ensure the complete declared header lies within the archive before parsing it.",
+      "coverage": "Inconsistent nested lengths and truncated archive headers.",
+      "wasm": true,
+      "branch": "bugfix/r3.12-asar-header-bounds-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/e0010694cbf37bdd894a9528a309d7a258bcd66a",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-asar-header-bounds-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/asar.rs",
+          "sha": "e63ad61623b8d811264ac0a3f88de577eca4c6a4",
+          "status": "modified",
+          "additions": 5,
+          "deletions": 1
+        },
+        {
+          "path": "crates/formats/tests/asar_header_bounds.rs",
+          "sha": "1ca59685d4df933a2c402f6d77c14771e0ad71e4",
+          "status": "added",
+          "additions": 29,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "ad3bc7b43af8c4253e71426f9ab0d649dd24afce",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "0d0a46cca52d8d952b86dc165e48b4656f49056e",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "4b96dcf7be03a254253c3ef01686de35899aedf7",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "body": "## Change\n\nValidate nested header lengths and ensure the complete declared header lies within the archive before parsing it.\n\n## Regression coverage\n\nInconsistent nested lengths and truncated archive headers.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-asar-header-bounds-20261103b?quick_pull=1&title=Validate+ASAR+header+framing&body=%23%23+Change%0A%0AValidate+nested+header+lengths+and+ensure+the+complete+declared+header+lies+within+the+archive+before+parsing+it.%0A%0A%23%23+Regression+coverage%0A%0AInconsistent+nested+lengths+and+truncated+archive+headers.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.",
+      "scope": null,
+      "wasm_status": "passed"
+    },
+    {
+      "n": 15,
+      "id": "r3.12",
+      "slug": "romfs-root-directory",
+      "head": "d2b4ec71bf85888c47930c222963db2c0418d831",
+      "title": "Traverse ROMFS dot and empty root directories",
+      "zh": "正确遍历 ROMFS 点名称及空名称根目录",
+      "change": "Traverse children for supported dot and empty root names so valid root layouts expose their contained files.",
+      "coverage": "Root layout, recovered contents and entry-limit fixtures.",
+      "wasm": true,
+      "branch": "bugfix/r3.12-romfs-root-directory-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/d2b4ec71bf85888c47930c222963db2c0418d831",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-romfs-root-directory-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/fsread/romfs.rs",
+          "sha": "bf07aa4c3e9d982b511bfd5b3aaa0a1b3a45a710",
+          "status": "modified",
+          "additions": 10,
+          "deletions": 1
+        },
+        {
+          "path": "crates/formats/tests/romfs_root_directory.rs",
+          "sha": "d96028f9ef050d0ec739090ad7a593bbe9de6347",
+          "status": "added",
+          "additions": 39,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "925197a523eda34cd2e75c155dc93594cc7dd779",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "7fbce7ef946b8166ac6b72becc0badc265731115",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "b0638143da0c871957937d42142e3c7801c4d7a7",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "body": "## Change\n\nTraverse children for supported dot and empty root names so valid root layouts expose their contained files.\n\n## Regression coverage\n\nRoot layout, recovered contents and entry-limit fixtures.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.\n\nScope: supported root-directory layouts; existing nested-directory handling is preserved.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-romfs-root-directory-20261103b?quick_pull=1&title=Traverse+ROMFS+dot+and+empty+root+directories&body=%23%23+Change%0A%0ATraverse+children+for+supported+dot+and+empty+root+names+so+valid+root+layouts+expose+their+contained+files.%0A%0A%23%23+Regression+coverage%0A%0ARoot+layout%2C+recovered+contents+and+entry-limit+fixtures.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.%0A%0AScope%3A+supported+root-directory+layouts%3B+existing+nested-directory+handling+is+preserved.",
+      "scope": "Scope: supported root-directory layouts; existing nested-directory handling is preserved.",
+      "wasm_status": "passed"
+    },
+    {
+      "n": 16,
+      "id": "r3.12",
+      "slug": "cramfs-block-lengths",
+      "head": "49b87d98ff18f2a01411c083e9d8a379afc9943d",
+      "title": "Report incomplete cramfs block output",
+      "zh": "识别 cramfs 解压块不完整",
+      "change": "Require full-sized decoded blocks and the exact final remainder before claiming complete file recovery.",
+      "coverage": "Short intermediate blocks, final block lengths and valid controls.",
+      "wasm": true,
+      "branch": "bugfix/r3.12-cramfs-block-lengths-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/49b87d98ff18f2a01411c083e9d8a379afc9943d",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-cramfs-block-lengths-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/fsread/cramfs.rs",
+          "sha": "da91d9b77784a82ca2894ce5fcfa70d178f2209f",
+          "status": "modified",
+          "additions": 9,
+          "deletions": 1
+        },
+        {
+          "path": "crates/formats/tests/cramfs_block_lengths.rs",
+          "sha": "75204132d03eeac62f6876a9c153c34073d741e4",
+          "status": "added",
+          "additions": 80,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "880400993398d815ee4e4aa55ab613a6db1e7aa5",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "c442df7fd14e25a5f3e1daf170c97d26b14b22cd",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "0fd9f66d7dfd40d41dc01487ec23ef3d94ea37c7",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "body": "## Change\n\nRequire full-sized decoded blocks and the exact final remainder before claiming complete file recovery.\n\n## Regression coverage\n\nShort intermediate blocks, final block lengths and valid controls.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-cramfs-block-lengths-20261103b?quick_pull=1&title=Report+incomplete+cramfs+block+output&body=%23%23+Change%0A%0ARequire+full-sized+decoded+blocks+and+the+exact+final+remainder+before+claiming+complete+file+recovery.%0A%0A%23%23+Regression+coverage%0A%0AShort+intermediate+blocks%2C+final+block+lengths+and+valid+controls.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.",
+      "scope": null,
+      "wasm_status": "passed"
+    },
+    {
+      "n": 17,
+      "id": "r3.12",
+      "slug": "ext-sparse-indirect",
+      "head": "dc86da3e15d599217c8662c90d48487ed66e0f77",
+      "title": "Preserve sparse ext positions across indirect levels",
+      "zh": "保留 ext 间接块中的稀疏文件位置",
+      "change": "Advance by the logical span of a missing indirect block so later data stays at the correct file offset.",
+      "coverage": "Missing indirect spans and later mapped data regressions.",
+      "wasm": true,
+      "branch": "bugfix/r3.12-ext-sparse-indirect-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/dc86da3e15d599217c8662c90d48487ed66e0f77",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-ext-sparse-indirect-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/fsread/extfs.rs",
+          "sha": "76fd55314b8d8f5696726109717503acd441ae4a",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "crates/formats/tests/ext_sparse_indirect.rs",
+          "sha": "81e0ab804f29fe46d6c54415534fd26dc93377b9",
+          "status": "added",
+          "additions": 41,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "ea7c5a0357cd4119dcaa07ad9cf329949af2df27",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "aa816ef87cf2c1f34a01347b87a0d7409fd923aa",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "cf1411f9f1426df26d12a29f209796d349a4b55e",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "body": "## Change\n\nAdvance by the logical span of a missing indirect block so later data stays at the correct file offset.\n\n## Regression coverage\n\nMissing indirect spans and later mapped data regressions.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-ext-sparse-indirect-20261103b?quick_pull=1&title=Preserve+sparse+ext+positions+across+indirect+levels&body=%23%23+Change%0A%0AAdvance+by+the+logical+span+of+a+missing+indirect+block+so+later+data+stays+at+the+correct+file+offset.%0A%0A%23%23+Regression+coverage%0A%0AMissing+indirect+spans+and+later+mapped+data+regressions.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.",
+      "scope": null,
+      "wasm_status": "passed"
+    },
+    {
+      "n": 18,
+      "id": "r3.12",
+      "slug": "ext-missing-blocks",
+      "head": "59b9f2ea006993970fe5a27cab99d94442927577",
+      "title": "Distinguish missing ext data from sparse holes",
+      "zh": "区分 ext 缺失数据与合法稀疏空洞",
+      "change": "Report mapped data blocks beyond the captured image as unavailable instead of silently returning zero-filled bytes.",
+      "coverage": "Out-of-image mapped blocks and real sparse-hole controls.",
+      "wasm": true,
+      "branch": "bugfix/r3.12-ext-missing-blocks-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/59b9f2ea006993970fe5a27cab99d94442927577",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-ext-missing-blocks-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/fsread/extfs.rs",
+          "sha": "064e97109ca11b41030a868f0700284ac2d08b82",
+          "status": "modified",
+          "additions": 6,
+          "deletions": 2
+        },
+        {
+          "path": "crates/formats/tests/ext_missing_blocks.rs",
+          "sha": "f5c5544ba1872a00eb31a67013ade036cd41a902",
+          "status": "added",
+          "additions": 29,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "c50f12ccaf47df30719075b38665d4c496cd14c8",
+          "status": "modified",
+          "additions": 3,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "900278cd1aa12314bc4198b96d0c7dc1450201ec",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "d6da5b41ce8918ea2820092ca9c4e9888b1c4424",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "body": "## Change\n\nReport mapped data blocks beyond the captured image as unavailable instead of silently returning zero-filled bytes.\n\n## Regression coverage\n\nOut-of-image mapped blocks and real sparse-hole controls.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.\n\nScope: missing mapped data blocks. Indirect and extent metadata recovery remains separate roadmap work.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-ext-missing-blocks-20261103b?quick_pull=1&title=Distinguish+missing+ext+data+from+sparse+holes&body=%23%23+Change%0A%0AReport+mapped+data+blocks+beyond+the+captured+image+as+unavailable+instead+of+silently+returning+zero-filled+bytes.%0A%0A%23%23+Regression+coverage%0A%0AOut-of-image+mapped+blocks+and+real+sparse-hole+controls.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.%0A%0AScope%3A+missing+mapped+data+blocks.+Indirect+and+extent+metadata+recovery+remains+separate+roadmap+work.",
+      "scope": "Scope: missing mapped data blocks. Indirect and extent metadata recovery remains separate roadmap work.",
+      "wasm_status": "passed"
+    },
+    {
+      "n": 19,
+      "id": "r3.12",
+      "slug": "pyz-module-bounds",
+      "head": "caefe67e5102f34483352944ce160f8a9a25e704",
+      "title": "Keep PyInstaller modules within their PYZ archive",
+      "zh": "限制 PyInstaller PYZ 模块读取范围",
+      "change": "Reject listed module payloads outside the PYZ archive rather than reading bytes from neighboring outer members.",
+      "coverage": "A module starting at the PYZ end with a valid adjacent outer member.",
+      "wasm": true,
+      "branch": "bugfix/r3.12-pyz-module-bounds-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/caefe67e5102f34483352944ce160f8a9a25e704",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-pyz-module-bounds-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/pyinstaller.rs",
+          "sha": "4e240b46956f269b0c6fd2b01137eb58c53f1c65",
+          "status": "modified",
+          "additions": 7,
+          "deletions": 2
+        },
+        {
+          "path": "crates/formats/tests/pyz_module_bounds.rs",
+          "sha": "09ef5f9ab7db6e730dfd7f350a7cfac20eacfeca",
+          "status": "added",
+          "additions": 46,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "8afa691d346f6adf50e2e0ada26955df4a905693",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "9bf78041ab7aca4338c498173430f0fc9d93517d",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "e8cb9eaa37a18535a8369cc1f6fe3ed7c0610bd3",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "body": "## Change\n\nReject listed module payloads outside the PYZ archive rather than reading bytes from neighboring outer members.\n\n## Regression coverage\n\nA module starting at the PYZ end with a valid adjacent outer member.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.\n\nScope: module entries produced by the archive listing.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-pyz-module-bounds-20261103b?quick_pull=1&title=Keep+PyInstaller+modules+within+their+PYZ+archive&body=%23%23+Change%0A%0AReject+listed+module+payloads+outside+the+PYZ+archive+rather+than+reading+bytes+from+neighboring+outer+members.%0A%0A%23%23+Regression+coverage%0A%0AA+module+starting+at+the+PYZ+end+with+a+valid+adjacent+outer+member.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.%0A%0AScope%3A+module+entries+produced+by+the+archive+listing.",
+      "scope": "Scope: module entries produced by the archive listing.",
+      "wasm_status": "passed"
+    },
+    {
+      "n": 20,
+      "id": "r3.12",
+      "slug": "jffs2-unrecovered-size",
+      "head": "077050320b0dc5a7a5fc0ef9d72655185f5848a0",
+      "title": "Preserve JFFS2 sizes when recovery budgets are exhausted",
+      "zh": "保留无法恢复内容的 JFFS2 文件大小",
+      "change": "Keep the latest inode logical size when per-file or total recovery budgets prevent retaining the file contents.",
+      "coverage": "Per-file and total-budget exhaustion fixtures.",
+      "wasm": false,
+      "branch": "bugfix/r3.12-jffs2-unrecovered-size-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/077050320b0dc5a7a5fc0ef9d72655185f5848a0",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-jffs2-unrecovered-size-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/fsread/jffs2.rs",
+          "sha": "7ac4074fdf6555d24d695ecb1c4e814cc479c3b0",
+          "status": "modified",
+          "additions": 3,
+          "deletions": 2
+        },
+        {
+          "path": "crates/formats/tests/jffs2_unrecovered_size.rs",
+          "sha": "b72c35aea656b7c5f2374e6b16842fe9c298cb5d",
+          "status": "added",
+          "additions": 35,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "1bf4f581d54406c91e42655a59cc09ac07a0ab6e",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "5beaec5343f7b8eed40eec41ce837bc37c60489a",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "94a3919f8c83b38aedc885d544e812d081148c17",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. The independent shared WASM gate remains pending.",
+      "body": "## Change\n\nKeep the latest inode logical size when per-file or total recovery budgets prevent retaining the file contents.\n\n## Regression coverage\n\nPer-file and total-budget exhaustion fixtures.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. The independent shared WASM gate remains pending.\n\nScope: recovery-budget failures; unsupported compression handling is unchanged.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-jffs2-unrecovered-size-20261103b?quick_pull=1&title=Preserve+JFFS2+sizes+when+recovery+budgets+are+exhausted&body=%23%23+Change%0A%0AKeep+the+latest+inode+logical+size+when+per-file+or+total+recovery+budgets+prevent+retaining+the+file+contents.%0A%0A%23%23+Regression+coverage%0A%0APer-file+and+total-budget+exhaustion+fixtures.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+The+independent+shared+WASM+gate+remains+pending.%0A%0AScope%3A+recovery-budget+failures%3B+unsupported+compression+handling+is+unchanged.",
+      "scope": "Scope: recovery-budget failures; unsupported compression handling is unchanged.",
+      "wasm_status": "pending"
+    },
+    {
+      "n": 21,
+      "id": "r3.12",
+      "slug": "jsonc-comment-only",
+      "head": "35da589f43453bd1322f823f0f03fdec608510fb",
+      "title": "Keep comments when adding the first JSON configuration value",
+      "zh": "在仅含注释的 JSON 配置中添加值时保留注释",
+      "change": "Preserve leading comments, a byte-order mark and newline style when inserting the first configuration value.",
+      "coverage": "Comment-only inputs, BOM and newline-style controls.",
+      "wasm": false,
+      "branch": "bugfix/r3.12-jsonc-comment-only-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/35da589f43453bd1322f823f0f03fdec608510fb",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-jsonc-comment-only-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/jsonc.rs",
+          "sha": "615ef46657082264b95fdd0fec85abec41509528",
+          "status": "modified",
+          "additions": 6,
+          "deletions": 2
+        },
+        {
+          "path": "crates/formats/tests/regression_jsonc_comment_only.rs",
+          "sha": "c336560d6d77aaf309a650e8f01a217aff1a90c0",
+          "status": "added",
+          "additions": 20,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "6ba37efad40ddb4f14b29fe986796b5c87f0c262",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "0e50f3610e014aa0e332125e8c04dc8991748d62",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "d88664c487ec28091e7f0f69001ee95ce8a1475e",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. The independent shared WASM gate remains pending.",
+      "body": "## Change\n\nPreserve leading comments, a byte-order mark and newline style when inserting the first configuration value.\n\n## Regression coverage\n\nComment-only inputs, BOM and newline-style controls.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. The independent shared WASM gate remains pending.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-jsonc-comment-only-20261103b?quick_pull=1&title=Keep+comments+when+adding+the+first+JSON+configuration+value&body=%23%23+Change%0A%0APreserve+leading+comments%2C+a+byte-order+mark+and+newline+style+when+inserting+the+first+configuration+value.%0A%0A%23%23+Regression+coverage%0A%0AComment-only+inputs%2C+BOM+and+newline-style+controls.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+The+independent+shared+WASM+gate+remains+pending.",
+      "scope": null,
+      "wasm_status": "pending"
+    },
+    {
+      "n": 22,
+      "id": "r3.12",
+      "slug": "jsonc-duplicate-removal",
+      "head": "a4ce5ea4cca6c56cee7bf860751ea7a3fd775736",
+      "title": "Remove every duplicate JSON configuration key",
+      "zh": "移除 JSON 配置中的全部重复键",
+      "change": "Remove every occurrence of the requested key while keeping valid separators and independent comments between entries.",
+      "coverage": "Adjacent duplicates, separators and retained line/block comments.",
+      "wasm": true,
+      "branch": "bugfix/r3.12-jsonc-duplicate-removal-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/a4ce5ea4cca6c56cee7bf860751ea7a3fd775736",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-jsonc-duplicate-removal-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/jsonc.rs",
+          "sha": "19714a7644922fb4038ed819e7a5d11082ed94a8",
+          "status": "modified",
+          "additions": 36,
+          "deletions": 21
+        },
+        {
+          "path": "crates/formats/tests/regression_jsonc_duplicate_removal.rs",
+          "sha": "dae803baa1da2996278fb733592f8da43428539e",
+          "status": "added",
+          "additions": 77,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "36013ca6cbec3454e5a4f609555018f06d3075f3",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "f4c4f3e2c239691b833eb7a939a6b0d363670e03",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "592542a2f5ce7d3525d698e8b124daa11f685ab2",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "body": "## Change\n\nRemove every occurrence of the requested key while keeping valid separators and independent comments between entries.\n\n## Regression coverage\n\nAdjacent duplicates, separators and retained line/block comments.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-jsonc-duplicate-removal-20261103b?quick_pull=1&title=Remove+every+duplicate+JSON+configuration+key&body=%23%23+Change%0A%0ARemove+every+occurrence+of+the+requested+key+while+keeping+valid+separators+and+independent+comments+between+entries.%0A%0A%23%23+Regression+coverage%0A%0AAdjacent+duplicates%2C+separators+and+retained+line%2Fblock+comments.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.",
+      "scope": null,
+      "wasm_status": "passed"
+    },
+    {
+      "n": 23,
+      "id": "r3.12",
+      "slug": "udp-length-bounds",
+      "head": "11f4e9ea85375e06204e98fac55bab9261602f61",
+      "title": "Keep UDP payloads within declared datagram lengths",
+      "zh": "按 UDP 声明长度截取载荷",
+      "change": "Diagnose invalid or truncated datagrams and prevent trailing capture bytes from being interpreted as UDP payload or DNS data.",
+      "coverage": "Invalid lengths, truncation, trailing padding and valid datagrams.",
+      "wasm": false,
+      "branch": "bugfix/r3.12-udp-length-bounds-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/11f4e9ea85375e06204e98fac55bab9261602f61",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-udp-length-bounds-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/pcap.rs",
+          "sha": "09c18126a8275e8a39d1c8773d57d56a9f64470c",
+          "status": "modified",
+          "additions": 13,
+          "deletions": 1
+        },
+        {
+          "path": "crates/formats/tests/regression_udp_length.rs",
+          "sha": "84c571ae5ade0833c0aaca9069c352ff850b05fe",
+          "status": "added",
+          "additions": 48,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "aba6e90a0b4872e8e5342b9ff7be14b6ddd541ef",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "b0376b417a0d39f7a03b2aa883c4cfecaf0f829e",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "99abd411769e4d29eb313fdedb080397d6d7ce3a",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. The independent shared WASM gate remains pending.",
+      "body": "## Change\n\nDiagnose invalid or truncated datagrams and prevent trailing capture bytes from being interpreted as UDP payload or DNS data.\n\n## Regression coverage\n\nInvalid lengths, truncation, trailing padding and valid datagrams.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. The independent shared WASM gate remains pending.\n\nScope: ordinary UDP datagrams; IPv6 jumbograms are not added.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-udp-length-bounds-20261103b?quick_pull=1&title=Keep+UDP+payloads+within+declared+datagram+lengths&body=%23%23+Change%0A%0ADiagnose+invalid+or+truncated+datagrams+and+prevent+trailing+capture+bytes+from+being+interpreted+as+UDP+payload+or+DNS+data.%0A%0A%23%23+Regression+coverage%0A%0AInvalid+lengths%2C+truncation%2C+trailing+padding+and+valid+datagrams.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+The+independent+shared+WASM+gate+remains+pending.%0A%0AScope%3A+ordinary+UDP+datagrams%3B+IPv6+jumbograms+are+not+added.",
+      "scope": "Scope: ordinary UDP datagrams; IPv6 jumbograms are not added.",
+      "wasm_status": "pending"
+    },
+    {
+      "n": 24,
+      "id": "r3.12",
+      "slug": "tcp-header-bounds",
+      "head": "d9a65e6f4d2db3dc288bb6cf3b2808bf74323d8d",
+      "title": "Reject invalid TCP header lengths",
+      "zh": "拒绝无效 TCP 首部长度",
+      "change": "Reject data offsets below the minimum header or beyond captured bytes before exposing a TCP payload.",
+      "coverage": "Undersized headers, offsets beyond capture and valid headers.",
+      "wasm": false,
+      "branch": "bugfix/r3.12-tcp-header-bounds-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/d9a65e6f4d2db3dc288bb6cf3b2808bf74323d8d",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-tcp-header-bounds-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/pcap.rs",
+          "sha": "e9fa7609dde50e55b667b412a7a03ad98854d1d2",
+          "status": "modified",
+          "additions": 11,
+          "deletions": 4
+        },
+        {
+          "path": "crates/formats/tests/regression_tcp_header_length.rs",
+          "sha": "1893181164ec5e180fbe7f86c142685262a58798",
+          "status": "added",
+          "additions": 52,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "e56492c26090276bc9fc6d1aafe1b6c8fc4a32db",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "fb31cbe6b7130808d6571b1ca92c8bce99668478",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "8e7f449a8af37516de29f556f548b9cab59aa95a",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. The independent shared WASM gate remains pending.",
+      "body": "## Change\n\nReject data offsets below the minimum header or beyond captured bytes before exposing a TCP payload.\n\n## Regression coverage\n\nUndersized headers, offsets beyond capture and valid headers.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. The independent shared WASM gate remains pending.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-tcp-header-bounds-20261103b?quick_pull=1&title=Reject+invalid+TCP+header+lengths&body=%23%23+Change%0A%0AReject+data+offsets+below+the+minimum+header+or+beyond+captured+bytes+before+exposing+a+TCP+payload.%0A%0A%23%23+Regression+coverage%0A%0AUndersized+headers%2C+offsets+beyond+capture+and+valid+headers.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+The+independent+shared+WASM+gate+remains+pending.",
+      "scope": null,
+      "wasm_status": "pending"
+    },
+    {
+      "n": 25,
+      "id": "r3.12",
+      "slug": "tcp-dns-framing",
+      "head": "8cbfa44cd91470b0b1bfb27ac3d1c1e89a145fbe",
+      "title": "Respect DNS-over-TCP frame lengths",
+      "zh": "按 DNS over TCP 的帧长度解析消息",
+      "change": "Limit decoding to the first complete length-prefixed DNS message and diagnose truncated frames.",
+      "coverage": "Incomplete frames, trailing data and valid first-message controls.",
+      "wasm": false,
+      "branch": "bugfix/r3.12-tcp-dns-framing-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/8cbfa44cd91470b0b1bfb27ac3d1c1e89a145fbe",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-tcp-dns-framing-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/pcap.rs",
+          "sha": "fadf7077b4e6af1746645bd5a925331b51445862",
+          "status": "modified",
+          "additions": 13,
+          "deletions": 2
+        },
+        {
+          "path": "crates/formats/tests/regression_tcp_dns_framing.rs",
+          "sha": "4dad459bb79f0b06d67e8adf87251e6253b31fa0",
+          "status": "added",
+          "additions": 67,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "2f44581cd404b8f86217c42a95a324cf2a991c36",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "ba2b1f3bc680b0f8020c98398890787b3eac14fe",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "2f819662cf4dd519bc5526e83486cc3b460225fe",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. The independent shared WASM gate remains pending.",
+      "body": "## Change\n\nLimit decoding to the first complete length-prefixed DNS message and diagnose truncated frames.\n\n## Regression coverage\n\nIncomplete frames, trailing data and valid first-message controls.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. The independent shared WASM gate remains pending.\n\nScope: one complete captured DNS/TCP message; stream reassembly is not added.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-tcp-dns-framing-20261103b?quick_pull=1&title=Respect+DNS-over-TCP+frame+lengths&body=%23%23+Change%0A%0ALimit+decoding+to+the+first+complete+length-prefixed+DNS+message+and+diagnose+truncated+frames.%0A%0A%23%23+Regression+coverage%0A%0AIncomplete+frames%2C+trailing+data+and+valid+first-message+controls.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+The+independent+shared+WASM+gate+remains+pending.%0A%0AScope%3A+one+complete+captured+DNS%2FTCP+message%3B+stream+reassembly+is+not+added.",
+      "scope": "Scope: one complete captured DNS/TCP message; stream reassembly is not added.",
+      "wasm_status": "pending"
+    },
+    {
+      "n": 26,
+      "id": "r3.12",
+      "slug": "pcapng-block-framing",
+      "head": "533d404ff9234db41e15f11ac63c49c931326f02",
+      "title": "Validate pcapng block framing",
+      "zh": "校验 pcapng 块尾长度及最小头部",
+      "change": "Validate repeated block lengths and each supported fixed header before reading interfaces or packets; update section byte order only after validation.",
+      "coverage": "Mismatched trailers, short supported blocks, both byte orders and valid capture controls.",
+      "wasm": false,
+      "branch": "bugfix/r3.12-pcapng-block-framing-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/533d404ff9234db41e15f11ac63c49c931326f02",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-pcapng-block-framing-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/pcap.rs",
+          "sha": "8c2b68429588b74b380a1f20876d3014b83586b9",
+          "status": "modified",
+          "additions": 15,
+          "deletions": 3
+        },
+        {
+          "path": "crates/formats/tests/regression_pcapng_framing.rs",
+          "sha": "69a58a6b34f444193e1099856d2783729d0c9135",
+          "status": "added",
+          "additions": 66,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "f95c00db26f14cada7fd090ffbd432031b62d3a2",
+          "status": "modified",
+          "additions": 3,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "37eca6725f2a5d2addfda9f5f85343bf95de6a9a",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "928ef0e3f08ac9c8c0fb49b8ca57a302bfbfaf56",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. The independent shared WASM gate remains pending.",
+      "body": "## Change\n\nValidate repeated block lengths and each supported fixed header before reading interfaces or packets; update section byte order only after validation.\n\n## Regression coverage\n\nMismatched trailers, short supported blocks, both byte orders and valid capture controls.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. The independent shared WASM gate remains pending.\n\nRemaining roadmap work: checked 32-bit arithmetic for captured lengths and section-relative interface ids.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-pcapng-block-framing-20261103b?quick_pull=1&title=Validate+pcapng+block+framing&body=%23%23+Change%0A%0AValidate+repeated+block+lengths+and+each+supported+fixed+header+before+reading+interfaces+or+packets%3B+update+section+byte+order+only+after+validation.%0A%0A%23%23+Regression+coverage%0A%0AMismatched+trailers%2C+short+supported+blocks%2C+both+byte+orders+and+valid+capture+controls.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+The+independent+shared+WASM+gate+remains+pending.%0A%0ARemaining+roadmap+work%3A+checked+32-bit+arithmetic+for+captured+lengths+and+section-relative+interface+ids.",
+      "scope": "Remaining roadmap work: checked 32-bit arithmetic for captured lengths and section-relative interface ids.",
+      "wasm_status": "pending"
+    },
+    {
+      "n": 27,
+      "id": "r3.12",
+      "slug": "tls-declared-bounds",
+      "head": "b0decf6f3187770147f9f921a2b4f4656a280641",
+      "title": "Keep TLS metadata within declared lengths",
+      "zh": "限制 TLS 记录、握手及扩展的读取范围",
+      "change": "Bound nested record, handshake and extension slices before reading TLS hello metadata.",
+      "coverage": "Ten fixtures cover truncation, injected trailing bytes and valid SNI/ALPN and TLS 1.2 hellos.",
+      "wasm": false,
+      "branch": "bugfix/r3.12-tls-declared-bounds-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/b0decf6f3187770147f9f921a2b4f4656a280641",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-tls-declared-bounds-20261103b",
+      "native": true,
+      "files": [
+        {
+          "path": "crates/formats/src/pcap.rs",
+          "sha": "f93ecd534d59ec276fd40f3874f2992e13c6d813",
+          "status": "modified",
+          "additions": 105,
+          "deletions": 33
+        },
+        {
+          "path": "crates/formats/tests/regression_tls_bounds.rs",
+          "sha": "674ff7942a8fe79b6e534ecbcafcb899510151a9",
+          "status": "added",
+          "additions": 102,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "3cf3fdef4b566b5542855f8fd490c28c18dfbad1",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "8903f314993acf84a95ea7a018d2f3bb3304e951",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        }
+      ],
+      "tree": "9474bd3608cad4d02a128fb1b2064574b9e06dc2",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. The independent shared WASM gate remains pending.",
+      "body": "## Change\n\nBound nested record, handshake and extension slices before reading TLS hello metadata.\n\n## Regression coverage\n\nTen fixtures cover truncation, injected trailing bytes and valid SNI/ALPN and TLS 1.2 hellos.\n\n## Validation\n\nAffected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. The independent shared WASM gate remains pending.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-tls-declared-bounds-20261103b?quick_pull=1&title=Keep+TLS+metadata+within+declared+lengths&body=%23%23+Change%0A%0ABound+nested+record%2C+handshake+and+extension+slices+before+reading+TLS+hello+metadata.%0A%0A%23%23+Regression+coverage%0A%0ATen+fixtures+cover+truncation%2C+injected+trailing+bytes+and+valid+SNI%2FALPN+and+TLS+1.2+hellos.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+The+independent+shared+WASM+gate+remains+pending.",
+      "scope": null,
+      "wasm_status": "pending"
+    },
+    {
+      "n": 28,
+      "id": "r3.11",
+      "slug": "standin-sample-metadata",
+      "head": "ec385c38b69e021617bd2b93f226d891cefb0c9a",
+      "title": "Preserve distinct response metadata in replay samples",
+      "zh": "保留响应元数据不同的回放样本",
+      "change": "Consecutive samples compare all response fields, keeping distinct headers, content types and omitted-body metadata.",
+      "coverage": "Five synthetic capture/replay regressions added; execution, formatting, Clippy and shared-target checks pending because the runner is unavailable.",
+      "wasm": false,
+      "branch": "bugfix/r3.11-standin-sample-metadata-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/ec385c38b69e021617bd2b93f226d891cefb0c9a",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.11-standin-sample-metadata-20261103b",
+      "native": false,
+      "files": [
+        {
+          "path": "crates/analysis/src/standin.rs",
+          "sha": "14c1552f98c7e94ebb22e7563f246a5b796930a7",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 8
+        },
+        {
+          "path": "crates/analysis/tests/regression_standin_sample_metadata.rs",
+          "sha": "6b871519ba9b4ffb1c68da6d02b69c034cb78d6b",
+          "status": "added",
+          "additions": 62,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "cdf46242eb18fe31eaa60aa590709d476b031859",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "001e032f365905ac6d1788e3f18ab3310845c01e",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        }
+      ],
+      "tree": "1a21e7cdb44bf234b626067b40ca9e64aede7568",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Source and published files checked. Automated tests, formatting, Clippy and remaining gates are pending because the execution environment is unavailable.",
+      "body": "## Change\n\nConsecutive samples compare all response fields, keeping distinct headers, content types and omitted-body metadata.\n\n## Regression coverage\n\nFive regressions cover changing Location headers, MIME types, omitted-body reasons, cached 304 markers and identical-sample deduplication.\n\n## Validation\n\nSource and published files checked. Automated tests, formatting, Clippy and remaining gates are pending because the execution environment is unavailable.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.11-standin-sample-metadata-20261103b?quick_pull=1&title=Preserve+distinct+response+metadata+in+replay+samples&body=%23%23+Change%0A%0AConsecutive+samples+compare+all+response+fields%2C+keeping+distinct+headers%2C+content+types+and+omitted-body+metadata.%0A%0A%23%23+Regression+coverage%0A%0AFive+regressions+cover+changing+Location+headers%2C+MIME+types%2C+omitted-body+reasons%2C+cached+304+markers+and+identical-sample+deduplication.%0A%0A%23%23+Validation%0A%0ASource+and+published+files+checked.+Automated+tests%2C+formatting%2C+Clippy+and+remaining+gates+are+pending+because+the+execution+environment+is+unavailable.",
+      "scope": null,
+      "wasm_status": "pending"
+    },
+    {
+      "n": 29,
+      "id": "r3.11",
+      "slug": "standin-redacted-budget",
+      "head": "b95862470c5e75af14f5bcd9247fc7a1c2cce9dd",
+      "title": "Apply replay body limits after redaction",
+      "zh": "按脱敏后的实际正文执行容量限制",
+      "change": "Check the redacted text against each body and capture budget before retaining it or charging its bytes.",
+      "coverage": "Four synthetic capture regressions added for expanding redactions, exact limits and rejected-body accounting; execution, formatting, Clippy and shared-target checks pending because the runner is unavailable.",
+      "wasm": false,
+      "branch": "bugfix/r3.11-standin-redacted-budget-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/b95862470c5e75af14f5bcd9247fc7a1c2cce9dd",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.11-standin-redacted-budget-20261103b",
+      "native": false,
+      "files": [
+        {
+          "path": "crates/analysis/src/standin.rs",
+          "sha": "ae48dcdc89514e43fc571b41b3081b9f22827456",
+          "status": "modified",
+          "additions": 11,
+          "deletions": 2
+        },
+        {
+          "path": "crates/analysis/tests/regression_standin_redacted_budget.rs",
+          "sha": "cbb944f7730dccc679fd896d502504da1032ce53",
+          "status": "added",
+          "additions": 51,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "a6d404368c9d0efd1bd30b5de669f3d10398a8d8",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "b8597d1e16642facb66c34b52ae608366673a711",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        }
+      ],
+      "tree": "33fb331d39a7fd659ec7ba2ab7ff7ea2c420ee3e",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Source and published files checked. Automated tests, formatting, Clippy and remaining gates are pending because the execution environment is unavailable.",
+      "body": "## Change\n\nCheck the redacted text against each body and capture budget before retaining it or charging its bytes.\n\n## Regression coverage\n\nFour regressions cover expanding redactions, per-body and total limits, exact retained size and rejected-body budget accounting.\n\n## Validation\n\nSource and published files checked. Automated tests, formatting, Clippy and remaining gates are pending because the execution environment is unavailable.\n\nScope: retained text bytes. Existing raw-input prechecks remain in place; temporary redaction allocations are not bounded by this change.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.11-standin-redacted-budget-20261103b?quick_pull=1&title=Apply+replay+body+limits+after+redaction&body=%23%23+Change%0A%0ACheck+the+redacted+text+against+each+body+and+capture+budget+before+retaining+it+or+charging+its+bytes.%0A%0A%23%23+Regression+coverage%0A%0AFour+regressions+cover+expanding+redactions%2C+per-body+and+total+limits%2C+exact+retained+size+and+rejected-body+budget+accounting.%0A%0A%23%23+Validation%0A%0ASource+and+published+files+checked.+Automated+tests%2C+formatting%2C+Clippy+and+remaining+gates+are+pending+because+the+execution+environment+is+unavailable.%0A%0AScope%3A+retained+text+bytes.+Existing+raw-input+prechecks+remain+in+place%3B+temporary+redaction+allocations+are+not+bounded+by+this+change.",
+      "scope": "Scope: retained text bytes. Existing raw-input prechecks remain in place; temporary redaction allocations are not bounded by this change.",
+      "wasm_status": "pending"
+    },
+    {
+      "n": 30,
+      "id": "r2.9",
+      "slug": "atomic-temp-creation",
+      "head": "5f0f1ce228af21a6ccc6494f6dacf392357f56a1",
+      "title": "Create atomic-write temporary files exclusively",
+      "zh": "独占创建原子写入的临时文件",
+      "change": "Reserve temporary files exclusively with bounded collision retries, and only clean up a file reserved by the current write.",
+      "coverage": "A synthetic filesystem regression covers file and Unix symlink collisions, permissions, exhausted retries and cleanup after rename failure; execution, formatting, Clippy and platform gates pending because the runner is unavailable.",
+      "wasm": false,
+      "branch": "bugfix/r2.9-atomic-temp-creation-20261103b",
+      "commitUrl": "https://github.com/Afloat16/craft-anything/commit/5f0f1ce228af21a6ccc6494f6dacf392357f56a1",
+      "compareUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r2.9-atomic-temp-creation-20261103b",
+      "native": false,
+      "files": [
+        {
+          "path": "crates/platform/src/fs.rs",
+          "sha": "2f4caaf0b0fefafd4354fba582f8ca4ead7b0249",
+          "status": "modified",
+          "additions": 17,
+          "deletions": 3
+        },
+        {
+          "path": "crates/platform/tests/regression_atomic_temp_creation.rs",
+          "sha": "1f4e982a732c3eb33278207aef14cf14be4cfa11",
+          "status": "added",
+          "additions": 67,
+          "deletions": 0
+        },
+        {
+          "path": "docs/ROADMAP.md",
+          "sha": "b5fc8d01da28f4b1374a6f706887b38668c41967",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 0
+        },
+        {
+          "path": "docs/STATUS.md",
+          "sha": "8d506067f2e9f37bbda6d3b02fdaf0f3cac5f603",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        }
+      ],
+      "tree": "2d5696bfc08ab757953679ce1cfedaed2059642a",
+      "author": "Afloat16",
+      "committer": "Afloat16",
+      "validation": "Source and published files checked. Automated tests, formatting, Clippy and remaining gates are pending because the execution environment is unavailable.",
+      "body": "## Change\n\nReserve temporary files exclusively with bounded collision retries, and only clean up a file reserved by the current write.\n\n## Regression coverage\n\nOne filesystem regression covers existing files, Unix symlinks, private and inherited permissions, exhausted retries and cleanup after rename failure.\n\n## Validation\n\nSource and published files checked. Automated tests, formatting, Clippy and remaining gates are pending because the execution environment is unavailable.",
+      "prUrl": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r2.9-atomic-temp-creation-20261103b?quick_pull=1&title=Create+atomic-write+temporary+files+exclusively&body=%23%23+Change%0A%0AReserve+temporary+files+exclusively+with+bounded+collision+retries%2C+and+only+clean+up+a+file+reserved+by+the+current+write.%0A%0A%23%23+Regression+coverage%0A%0AOne+filesystem+regression+covers+existing+files%2C+Unix+symlinks%2C+private+and+inherited+permissions%2C+exhausted+retries+and+cleanup+after+rename+failure.%0A%0A%23%23+Validation%0A%0ASource+and+published+files+checked.+Automated+tests%2C+formatting%2C+Clippy+and+remaining+gates+are+pending+because+the+execution+environment+is+unavailable.",
+      "scope": null,
+      "wasm_status": "not_applicable"
+    }
+  ]
+}
