@@ -424,6 +424,8 @@ Gaps found while using the app for real projects.
       effort environment variable we use can't turn it on) and its model names beyond the list
       (`opusplan`, `[1m]` variants) offered in Settings → AI; `ai model` already takes any name
 
+- [ ] Keep static-preview HEAD error responses bodyless while reporting the corresponding GET length. — claimed: Afloat16, branch bugfix/r2.9-preview-head-20261103
+
 ### R2.10 Pinned builds
 Owner: maintainers · Status: in progress
 Keep a build that works at hand: pin it, and open it from the sidebar whatever the builder does
