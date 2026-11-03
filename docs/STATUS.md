@@ -48,6 +48,7 @@ workspace clippy, layers, fmt and the secret scan of all history were clean. Chi
 | CLI | Every tool, `--deep` or `--clean-room` for one run (never saved), `rebuild` (including `--continue-in`, and `--resume` to carry on a stopped build), `mcp --inbox`, `ai`, `setup`, `doctor`, `report` | CLI integration tests |
 | SQLite database files (`db_sqlite_show`) | A rowid alias column (`INTEGER PRIMARY KEY`, including the table-constraint form) shows the rowid; `DESC`, non-`INTEGER` and composite keys keep their stored values | Hand-built fixtures; generated files compared with the official SQLite library |
 | SQLite WITHOUT ROWID tables | Read from the index b-tree, interior records and overflow included; rows in primary-key order, values in declaration order, `rowid` null | Hand-built fixtures; generated files compared with the official SQLite library |
+| Parser review follow-ups | Java reference scans retain partial coverage; DEX signed LEB128 enforces 32-bit values; legacy AAPT strings stay inside their pool; missing classic ext indirect metadata is not recovered as zeros. | Java's original follow-up passed [#692 CI](https://github.com/storytold/craft-anything/actions/runs/41688827573). New DEX, Android and ext regression fixtures and the combined revision await automated validation. Extent-tree metadata handling is unchanged. |
 
 ### Builder retry policy
 
