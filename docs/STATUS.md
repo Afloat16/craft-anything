@@ -127,11 +127,6 @@ not been rechecked for this change; Windows runtime validation remains on the ro
 
 The full workspace gates (`cargo xtask ci`) passed in [hosted CI for #541](https://github.com/storytold/craft-anything/actions/runs/41584228995).
 
-### Keep script text through lookalike closing tags
-
-HTML script/title content ends only at a matching end-tag name boundary, and an unclosed title consumes the
-remaining text. Synthetic public-API regressions cover lookalikes, mixed case, valid boundaries and EOF.
-
 ## Known limits
 
 - Locks: every mutex but the browser viewer's goes through `platform::sync`. A deadlock on one thread or across
@@ -191,3 +186,8 @@ remaining text. Synthetic public-API regressions cover lookalikes, mixed case, v
 ## Next
 
 See [ROADMAP.md](ROADMAP.md) for the ordered plan.
+
+## Keep script text through lookalike closing tags
+
+HTML script/title content ends only at a matching end-tag name boundary, and an unclosed title consumes the
+remaining text. Synthetic public-API regressions cover lookalikes, mixed case, valid boundaries and EOF.
