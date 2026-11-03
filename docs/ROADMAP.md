@@ -211,7 +211,7 @@ been run live.
 
 ### R5.5 API-key builds fail in words people can use
 Owner: open · Status: todo
-- [ ] Bound accumulated data across all lines of one server-sent event, so short lines cannot
+- [x] Bound accumulated data across all lines of one server-sent event, so short lines cannot
       grow a streamed API response without limit
       — claimed: Afloat16, branch bugfix/r5.5-bounded-sse-events-20261103
 - [x] Show the provider's own reason: #369 bought $10 of credit and got only "OpenRouter answered
