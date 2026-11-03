@@ -612,17 +612,24 @@ impl AiHub {
             };
             return Ok(cli_agents::conversation(cli_agents::CliSpec { deep, logs: Some(logs), ..spec }));
         }
-        let mut chain = vec![self.build_model(&first)?];
+        let first_slot = self.build_model(&first)?;
+        let mut context_tokens = first.options.context_budget(first_slot.local);
+        let mut chain = vec![first_slot];
         for name in cfg.chain_from(&first.config.name).into_iter().skip(1) {
             if let Some(e) = cfg.get(&name).filter(|e| e.config.kind != BackendKind::AgentCli) {
                 match self.build_model(e) {
-                    Ok(slot) => chain.push(slot),
+                    Ok(slot) => {
+                        // A fallback may happen inside one turn, before another trim. Fit the
+                        // conversation to every backend that may receive this request.
+                        context_tokens = context_tokens.min(e.options.context_budget(slot.local));
+                        chain.push(slot);
+                    }
                     Err(err) => log::info!("fallback {name} skipped: {}", err.message),
                 }
             }
         }
         let host = Arc::new(EngineHost(self.engine.clone()));
-        let conv = ApiConversation::start(host, chain, LoopConfig { beginner, prices: cfg.prices.clone(), ..LoopConfig::default() })?;
+        let conv = ApiConversation::start(host, chain, LoopConfig { beginner, prices: cfg.prices.clone(), context_tokens, ..LoopConfig::default() })?;
         Ok(Box::new(conv))
     }
 
@@ -652,11 +659,12 @@ impl AiHub {
     ) -> Result<ApiConversation, ToolError> {
         let mut slot = self.build_model(entry)?;
         slot.max_turns = slot.max_turns.max(agent::BUILDER_MAX_TURNS);
+        let context_tokens = entry.options.context_budget(slot.local);
         let host = Arc::new(EngineHost(self.engine.clone()));
         ApiConversation::start_with(
             host,
             vec![slot],
-            LoopConfig { beginner, prices: self.config().prices.clone(), transcript, ..LoopConfig::default() },
+            LoopConfig { beginner, prices: self.config().prices.clone(), transcript, context_tokens },
             toolsets.iter().copied().collect(),
         )
     }

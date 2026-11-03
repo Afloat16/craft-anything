@@ -461,6 +461,55 @@ fn openai_streaming_tool_loop() {
 }
 
 #[test]
+fn configured_context_budgets_reach_chats_builders_and_fallbacks() {
+    for mode in ["chat", "builder", "fallback"] {
+        let tool = |id: &str| {
+            chat_sse(&[json!({"choices": [{
+                "delta": {"tool_calls": [{"index": 0, "id": id, "type": "function", "function": {"name": "core_session_show", "arguments": "{}"}}]},
+                "finish_reason": "tool_calls"
+            }]})])
+        };
+        let text = |content: &str| chat_sse(&[json!({"choices": [{"delta": {"content": content}, "finish_reason": "stop"}]})]);
+        let (url, seen) = mock(vec![
+            (200, "text/event-stream", tool("a")),
+            (200, "text/event-stream", tool("b")),
+            (200, "text/event-stream", text("The session was inspected.")),
+            (200, "text/event-stream", text("done")),
+        ]);
+        let (h, _d) = hub();
+        let entry = |name: &str, context_tokens| BackendEntry {
+            config: BackendConfig {
+                name: name.into(),
+                kind: BackendKind::OpenaiCompatible,
+                model: "test-model".into(),
+                base_url: Some(format!("{url}/v1")),
+                ssh_host: None,
+                enabled: true,
+            },
+            options: BackendOptions { context_tokens, ..Default::default() },
+        };
+        h.add_backend_with(entry("Primary", if mode == "fallback" { Some(150_000) } else { Some(5) }), None).unwrap();
+        if mode == "fallback" {
+            h.add_backend_with(entry("Fallback", Some(5)), None).unwrap();
+            let mut config = h.config();
+            config.fallback_chain = vec!["Fallback".into()];
+            h.save_config(&config).unwrap();
+        }
+        let mut conversation: Box<dyn Conversation> = if mode == "builder" {
+            Box::new(h.start_builder(&h.entry("Primary").unwrap(), false, None).unwrap())
+        } else {
+            h.start(Some("Primary"), false).unwrap()
+        };
+        let events = run(&mut conversation, "Inspect the session.");
+        assert!(!events.iter().any(|event| matches!(event, AgentEvent::Error { .. })), "{mode}: {events:?}");
+        let requests = seen.lock().unwrap();
+        assert_eq!(requests.len(), 4, "{mode}: two tool calls, a summary, and the answer");
+        assert!(requests[2].body["messages"].as_array().unwrap().last().unwrap()["content"].as_str().unwrap().contains(context::SUMMARY_REQUEST), "{mode}");
+        assert!(requests[3].body["messages"].to_string().contains("The session was inspected."), "{mode}");
+    }
+}
+
+#[test]
 fn local_server_without_tools_falls_back_to_react() {
     let t1 = chat_sse(&[json!({"choices":[{"delta":{"content":"Thought: check\nAction: core_session_show\nAction Input: {}"},"finish_reason":"stop"}]})]);
     let t2 = chat_sse(&[json!({"choices":[{"delta":{"content":"Final Answer: nothing is open"},"finish_reason":"stop"}]})]);

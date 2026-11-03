@@ -86,6 +86,12 @@ metadata, directory indexes and a real firmware extraction were not newly checke
 
 ## Known limits
 
+- API backends accept `context_tokens` in their `[[ai.backends]]` entry as the input-token
+  threshold for trimming and summarising conversations. It applies to chats, builders, asset
+  extraction and build questions. A chat with fallbacks uses the smallest budget in its active
+  chain, so switching providers cannot skip the narrower threshold. Zero or an omitted value
+  keeps the local/cloud default. This setting does not configure the model server's own window
+  or guarantee that the system prompt, tool schemas and the newest messages fit that window.
 - Locks: every mutex but the browser viewer's goes through `platform::sync`. A deadlock on one thread or across
   threads is broken when it forms, with an error and a report in `logs/`; a watchdog looks every 5 s; a holder
   that isn't a labelled job is reported after 2 minutes and waited on for 15 at most. Tools are labelled, so they

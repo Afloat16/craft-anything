@@ -9,6 +9,7 @@
 //! kind = "anthropic"
 //! model = "claude-opus-5-5"
 //! effort = "high"
+//! context_tokens = 100000
 //!
 //! [ai.roles]
 //! lead = "Claude"
@@ -43,6 +44,10 @@ pub struct BackendOptions {
     /// Most model turns per user message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<u32>,
+    /// Input-token budget before the conversation is trimmed or summarised. Zero or omitted
+    /// uses the local/cloud default; this does not change a server's loaded model window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_tokens: Option<u64>,
     /// Agent CLIs: the program to run instead of the default for `model`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
@@ -60,6 +65,12 @@ pub struct BackendOptions {
     /// per conversation (off unless set).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub acp: Option<bool>,
+}
+
+impl BackendOptions {
+    pub(crate) fn context_budget(&self, local: bool) -> u64 {
+        self.context_tokens.filter(|n| *n > 0).unwrap_or(if local { crate::context::LOCAL_CONTEXT_TOKENS } else { crate::context::CLOUD_CONTEXT_TOKENS })
+    }
 }
 
 /// One configured backend.
@@ -248,6 +259,7 @@ mod tests {
         let mut a = entry("Claude", BackendKind::Anthropic);
         a.options.effort = Some(Effort::High);
         a.options.fallbacks_enabled = Some(false);
+        a.options.context_tokens = Some(8192);
         c.upsert(a);
         c.upsert(entry("Local", BackendKind::OpenaiCompatible));
         c.roles.insert("reviewer".into(), "Local".into());
@@ -260,6 +272,25 @@ mod tests {
         assert_eq!(back, c);
         assert!(text.contains("[[ai.backends]]"), "{text}");
         assert!(text.contains("effort = \"high\""), "{text}");
+        assert!(text.contains("context_tokens = 8192"), "{text}");
+    }
+
+    #[test]
+    fn context_budget_defaults_and_invalid_types() {
+        for context_tokens in [None, Some(0)] {
+            let options = BackendOptions { context_tokens, ..Default::default() };
+            assert_eq!(options.context_budget(true), crate::context::LOCAL_CONTEXT_TOKENS);
+            assert_eq!(options.context_budget(false), crate::context::CLOUD_CONTEXT_TOKENS);
+        }
+        let options = BackendOptions { context_tokens: Some(8192), ..Default::default() };
+        assert_eq!(options.context_budget(true), 8192);
+        assert_eq!(options.context_budget(false), 8192);
+        for invalid in ["-1", "\"8192\""] {
+            let mut settings = Settings::default();
+            settings.ai =
+                toml::from_str(&format!("[[backends]]\nname = 'Local'\nkind = 'openai_compatible'\nmodel = 'model'\ncontext_tokens = {invalid}\n")).unwrap();
+            assert_eq!(AiConfig::from_table(&settings.ai).unwrap_err().code, ErrorCode::BadSettings);
+        }
     }
 
     #[test]

@@ -97,9 +97,14 @@ pub fn ask(
             engine.session().ext.insert(Arc::new(InboxDir(ws.inbox_dir())));
             let host = Arc::new(ReadOnlyHost(EngineHost(engine)));
             let slot = hub.build_model(&entry)?;
+            let context_tokens = entry.options.context_budget(slot.local);
             let toolsets = [Toolset::Core, Toolset::Build].into_iter().collect();
-            let conv =
-                crate::agent::ApiConversation::start_with(host, vec![slot], LoopConfig { prices: cfg.prices.clone(), ..LoopConfig::default() }, toolsets)?;
+            let conv = crate::agent::ApiConversation::start_with(
+                host,
+                vec![slot],
+                LoopConfig { prices: cfg.prices.clone(), context_tokens, ..LoopConfig::default() },
+                toolsets,
+            )?;
             (Box::new(conv), AnsweredFrom::TheFiles)
         }
     };
