@@ -21,7 +21,7 @@ use crate::cli_agents::{Builder, CliSpec};
 use crate::{AgentEvent, AiHub, BackendKind, Conversation, Role};
 use craft_anything_engine::inbox::{Answer, Inbox, InboxDir, Request};
 use craft_anything_engine::project::{Project, Purpose};
-use craft_anything_engine::workspace::progress::BuildProgress;
+use craft_anything_engine::workspace::progress::{AppFingerprintCache, BuildProgress};
 use craft_anything_engine::workspace::{CheckResult, ProjectUsage, Status, TargetRef, Workspace};
 use craft_anything_engine::{CallOptions, Caller, CancelToken, Engine, ToolOutput};
 use craft_anything_engines::game;
@@ -251,7 +251,7 @@ impl RebuildRun {
                 let mut ctx = ctx;
                 let mut ws = ws;
                 // A clone can run for hours: keep the computer from sleeping until it ends.
-                let _awake = craft_anything_platform::keep_awake();
+                let awake = craft_anything_platform::keep_awake();
                 let _here = self_check::BuildingHere::new(&ws.root);
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ctx.run(&mut ws, entry, api, extractor, &opts)));
                 let (ok, message, paused) = match result {
@@ -268,6 +268,9 @@ impl RebuildRun {
                     Err(_) => (false, "The workflow hit a bug and stopped safely. Your files are untouched.".to_string(), false),
                 };
                 ctx.record_usage(None);
+                // The CLI can exit as soon as it sees completion: release the helper while its
+                // supervisor threads are still available to stop it.
+                drop(awake);
                 ctx.emit(RunEvent::Finished { ok, message, paused });
                 r2.store(false, Ordering::SeqCst);
             })
@@ -586,6 +589,7 @@ impl Worker {
     ) -> Result<String, ToolError> {
         let mut progress = BuildProgress::load(&ws.root)?;
         let mut progress_available = true;
+        let mut fingerprints = AppFingerprintCache::default();
         // Try again has no message. Only an explicit new request starts another attempt on
         // unchanged files; restarting the app or resuming a paused run keeps the saved count.
         if opts.message.as_deref().is_some_and(|m| !m.trim().is_empty()) {
@@ -689,7 +693,7 @@ impl Worker {
         loop {
             if !std::mem::take(&mut only_check) {
                 progress = BuildProgress::load(&ws.root)?;
-                if let Some(fingerprint) = self.progress_fingerprint(ws, &mut progress, &mut progress_available)? {
+                if let Some(fingerprint) = self.progress_fingerprint(ws, &mut progress, &mut progress_available, &mut fingerprints)? {
                     progress.before_turn(fingerprint);
                     if progress.stalled() {
                         return Err(no_build_progress(ws));
@@ -726,7 +730,7 @@ impl Worker {
                 // must not make Try again repeat work that only needs its checks.
                 // A hook may also have reset the saved count for a new request in this turn.
                 progress = BuildProgress::load(&ws.root)?;
-                if let Some(fingerprint) = self.progress_fingerprint(ws, &mut progress, &mut progress_available)? {
+                if let Some(fingerprint) = self.progress_fingerprint(ws, &mut progress, &mut progress_available, &mut fingerprints)? {
                     progress.after_turn(fingerprint);
                     progress.save(&ws.root)?;
                 }
@@ -762,7 +766,7 @@ impl Worker {
             if not_good.is_some() && progress_available && progress.stalled() {
                 // A check-only resume skipped the builder's before-turn scan. A real edit
                 // while the project was closed (or during this check) still starts an attempt.
-                if let Some(fingerprint) = self.progress_fingerprint(ws, &mut progress, &mut progress_available)? {
+                if let Some(fingerprint) = self.progress_fingerprint(ws, &mut progress, &mut progress_available, &mut fingerprints)? {
                     progress.before_turn(fingerprint);
                     progress.save(&ws.root)?;
                     if progress.stalled() {
@@ -808,12 +812,18 @@ impl Worker {
 
     /// File scanning is an optional guard, not a prerequisite for building or checking. Once
     /// it is unavailable, skip it for this run and start a new comparison on the next run.
-    fn progress_fingerprint(&self, ws: &Workspace, progress: &mut BuildProgress, available: &mut bool) -> Result<Option<String>, ToolError> {
+    fn progress_fingerprint(
+        &self,
+        ws: &Workspace,
+        progress: &mut BuildProgress,
+        available: &mut bool,
+        fingerprints: &mut AppFingerprintCache,
+    ) -> Result<Option<String>, ToolError> {
         self.stop.check()?;
         if !*available {
             return Ok(None);
         }
-        match ws.app_fingerprint(&self.stop) {
+        match fingerprints.scan(ws, &self.stop) {
             Ok(fingerprint) => Ok(Some(fingerprint)),
             Err(e) if e.code == ErrorCode::Cancelled => Err(e),
             Err(e) => {

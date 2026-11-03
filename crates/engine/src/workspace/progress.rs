@@ -8,8 +8,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 /// A builder gets two consecutive turns without changing the app before it needs attention.
 pub const UNCHANGED_TURN_LIMIT: u32 = 2;
@@ -133,12 +135,103 @@ impl Workspace {
     /// the same exclusions as project copies; Craft's own records and git metadata are left out.
     /// Symlinks are recorded as links, never followed. Reads are streamed and cancellable.
     pub fn app_fingerprint(&self, stop: &CancelToken) -> Result<String, ToolError> {
-        let root = self.app_dir();
-        let mut hash = Sha256::new();
-        hash.update(b"craft-build-files-v1\0");
-        let mut visited = 0;
-        fingerprint_tree(self, &root, &root, &mut hash, &mut visited, 0, stop)?;
-        Ok(hex::encode(hash.finalize()))
+        AppFingerprintCache::default().scan(self, stop)
+    }
+}
+
+/// Content digests reused within one build run. The first scan reads the files; subsequent
+/// scans only reread files whose metadata changed. Nothing here is persisted or added to the
+/// fingerprint, so identical bytes still have the same version-1 fingerprint after a rewrite.
+#[derive(Default)]
+pub struct AppFingerprintCache {
+    root: Option<PathBuf>,
+    files: HashMap<PathBuf, CachedFile>,
+    #[cfg(test)]
+    content_bytes: u64,
+}
+
+struct CachedFile {
+    stamp: FileStamp,
+    digest: [u8; 32],
+    seen: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FileStamp {
+    len: u64,
+    modified: SystemTime,
+    executable: u32,
+    #[cfg(unix)]
+    identity: (u64, u64, i64, i64),
+}
+
+impl FileStamp {
+    fn of(metadata: &std::fs::Metadata) -> Option<Self> {
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt;
+        Some(Self {
+            len: metadata.len(),
+            modified: metadata.modified().ok()?,
+            executable: executable_mode(metadata),
+            #[cfg(unix)]
+            identity: (metadata.dev(), metadata.ino(), metadata.ctime(), metadata.ctime_nsec()),
+        })
+    }
+}
+
+struct Scan {
+    hash: Sha256,
+    visited: usize,
+}
+
+impl AppFingerprintCache {
+    /// Return the same content fingerprint as a fresh scan while avoiding unchanged reads.
+    /// Root changes, scan errors and cancellation discard cached comparisons. Missing files
+    /// and paths that become another type are removed after every successful scan.
+    pub fn scan(&mut self, ws: &Workspace, stop: &CancelToken) -> Result<String, ToolError> {
+        let root = ws.app_dir();
+        if self.root.as_ref() != Some(&root) {
+            self.files.clear();
+            self.root = Some(root.clone());
+        }
+        for file in self.files.values_mut() {
+            file.seen = false;
+        }
+        let mut scan = Scan { hash: Sha256::new(), visited: 0 };
+        scan.hash.update(b"craft-build-files-v1\0");
+        if let Err(error) = fingerprint_tree(ws, &root, &root, &mut scan, self, 0, stop) {
+            self.files.clear();
+            self.root = None;
+            return Err(error);
+        }
+        self.files.retain(|_, file| file.seen);
+        Ok(hex::encode(scan.hash.finalize()))
+    }
+
+    fn file(&mut self, path: &Path, relative: &Path, stop: &CancelToken) -> Result<[u8; 32], ToolError> {
+        stop.check()?;
+        let metadata = std::fs::symlink_metadata(path).map_err(|e| ToolError::io(path.display(), e))?;
+        if !metadata.is_file() {
+            return Err(ToolError::new(ErrorCode::FileChanged, format!("{} changed type while checking build progress.", path.display())));
+        }
+        if let Some(stamp) = FileStamp::of(&metadata)
+            && let Some(file) = self.files.get_mut(relative)
+            && file.stamp == stamp
+        {
+            file.seen = true;
+            return Ok(file.digest);
+        }
+        let read = file_fingerprint(path, stop)?;
+        #[cfg(test)]
+        {
+            self.content_bytes = self.content_bytes.saturating_add(read.content_bytes);
+        }
+        // Use the metadata of the file actually opened, only after its entire stable read
+        // succeeded. Without a usable modification time it is deliberately not cached.
+        if let Some(stamp) = read.stamp {
+            self.files.insert(relative.to_path_buf(), CachedFile { stamp, digest: read.digest, seen: true });
+        }
+        Ok(read.digest)
     }
 }
 
@@ -146,8 +239,8 @@ fn fingerprint_tree(
     ws: &Workspace,
     root: &Path,
     dir: &Path,
-    hash: &mut Sha256,
-    visited: &mut usize,
+    scan: &mut Scan,
+    cache: &mut AppFingerprintCache,
     depth: usize,
     stop: &CancelToken,
 ) -> Result<(), ToolError> {
@@ -171,8 +264,8 @@ fn fingerprint_tree(
         if kind.is_dir() && rebuilt(&path) {
             continue;
         }
-        *visited = visited.saturating_add(1);
-        if *visited > MAX_ENTRIES {
+        scan.visited = scan.visited.saturating_add(1);
+        if scan.visited > MAX_ENTRIES {
             return Err(ToolError::new(
                 ErrorCode::OverLimit,
                 format!("Can't check build progress: {} contains more than {MAX_ENTRIES} files and folders.", root.display()),
@@ -184,29 +277,29 @@ fn fingerprint_tree(
     for (path, kind) in entries {
         stop.check()?;
         if kind.is_dir() {
-            fingerprint_tree(ws, root, &path, hash, visited, depth + 1, stop)?;
+            fingerprint_tree(ws, root, &path, scan, cache, depth + 1, stop)?;
             continue;
         }
         let relative = path.strip_prefix(root).map_err(|_| ToolError::internal("A build file is outside its app folder."))?;
         for component in relative.components() {
             let name = component.as_os_str().as_encoded_bytes();
-            hash.update((name.len() as u64).to_le_bytes());
-            hash.update(name);
+            scan.hash.update((name.len() as u64).to_le_bytes());
+            scan.hash.update(name);
         }
-        hash.update(0u64.to_le_bytes());
+        scan.hash.update(0u64.to_le_bytes());
         if kind.is_symlink() {
-            hash.update(b"link\0");
+            scan.hash.update(b"link\0");
             let target = std::fs::read_link(&path).map_err(|e| ToolError::io(path.display(), e))?;
             let target = target.as_os_str().as_encoded_bytes();
-            hash.update((target.len() as u64).to_le_bytes());
-            hash.update(target);
+            scan.hash.update((target.len() as u64).to_le_bytes());
+            scan.hash.update(target);
         } else if kind.is_file() {
-            hash.update(b"file\0");
-            hash.update(file_fingerprint(&path, stop)?);
+            scan.hash.update(b"file\0");
+            scan.hash.update(cache.file(&path, relative, stop)?);
         } else {
             // A dev server can leave sockets or pipes beside its source. Their contents are
             // not comparable (and opening a FIFO can block); only their name and type count.
-            hash.update(special_type(kind));
+            scan.hash.update(special_type(kind));
         }
     }
     Ok(())
@@ -233,7 +326,14 @@ fn special_type(kind: std::fs::FileType) -> &'static [u8] {
     b"special\0"
 }
 
-fn file_fingerprint(path: &Path, stop: &CancelToken) -> Result<[u8; 32], ToolError> {
+struct FileFingerprint {
+    digest: [u8; 32],
+    stamp: Option<FileStamp>,
+    #[cfg(test)]
+    content_bytes: u64,
+}
+
+fn file_fingerprint(path: &Path, stop: &CancelToken) -> Result<FileFingerprint, ToolError> {
     let mut file = std::fs::File::open(path).map_err(|e| ToolError::io(path.display(), e))?;
     let before = file.metadata().map_err(|e| ToolError::io(path.display(), e))?;
     // A growing log can't keep the scan running forever. A changed file is checked again on the
@@ -259,13 +359,19 @@ fn file_fingerprint(path: &Path, stop: &CancelToken) -> Result<[u8; 32], ToolErr
         || before.len() != after.len()
         || before.modified().ok() != after.modified().ok()
         || executable_mode(&before) != executable_mode(&after)
+        || FileStamp::of(&before) != FileStamp::of(&after)
     {
         return Err(ToolError::new(
             ErrorCode::FileChanged,
             format!("{} changed while checking build progress. Try again after its write finishes.", path.display()),
         ));
     }
-    Ok(hash.finalize().into())
+    Ok(FileFingerprint {
+        digest: hash.finalize().into(),
+        stamp: FileStamp::of(&before),
+        #[cfg(test)]
+        content_bytes: bytes,
+    })
 }
 
 #[cfg(unix)]
@@ -286,6 +392,117 @@ mod tests {
 
     fn fingerprint(ws: &Workspace) -> String {
         ws.app_fingerprint(&CancelToken::default()).unwrap()
+    }
+
+    fn modified(path: &Path, seconds: u64) {
+        let time = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(seconds);
+        std::fs::File::options().write(true).open(path).unwrap().set_times(std::fs::FileTimes::new().set_modified(time)).unwrap();
+    }
+
+    #[test]
+    fn cache_does_not_reread_an_unchanged_large_tree_or_count_identical_rewrites_as_progress() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "Game", "A game with imported assets", TargetRef::None).unwrap();
+        let bytes = vec![b'a'; 2 * 1024 * 1024];
+        for name in ["Original/a.bin", "Original/b.bin", "assets/c.bin", "assets/d.bin"] {
+            let path = ws.app_dir().join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, &bytes).unwrap();
+            modified(&path, 1);
+        }
+        let mut cache = AppFingerprintCache::default();
+        let stop = CancelToken::default();
+        let first = cache.scan(&ws, &stop).unwrap();
+        assert_eq!(cache.content_bytes, 8 * 1024 * 1024, "the first scan actually read every asset byte");
+        let second = cache.scan(&ws, &stop).unwrap();
+        assert_eq!(second, first);
+        assert_eq!(cache.content_bytes, 8 * 1024 * 1024, "the unchanged second scan read zero content bytes");
+        let file = ws.app_dir().join("Original/a.bin");
+        std::fs::write(&file, &bytes).unwrap();
+        modified(&file, 2);
+        let rewritten = cache.scan(&ws, &stop).unwrap();
+        assert_eq!(rewritten, first, "mtime is only a cache key, not build progress");
+        assert_eq!(cache.content_bytes, 10 * 1024 * 1024, "only the rewritten file was reread");
+        let mut progress = BuildProgress::default();
+        progress.before_turn(first.clone());
+        progress.after_turn(second);
+        progress.after_turn(rewritten);
+        assert!(progress.stalled(), "rewriting identical bytes cannot reset the unchanged-turn limit");
+        let mut changed = bytes;
+        changed[0] = b'b';
+        std::fs::write(&file, changed).unwrap();
+        modified(&file, 3);
+        let edited = cache.scan(&ws, &stop).unwrap();
+        assert_ne!(edited, first, "a same-length content edit is still progress");
+        assert_eq!(cache.content_bytes, 12 * 1024 * 1024);
+        assert_eq!(edited, fingerprint(&ws), "cached and fresh scans use the same content hash");
+    }
+
+    #[test]
+    fn cache_tracks_added_deleted_and_retyped_paths() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "Files", "A project", TargetRef::None).unwrap();
+        std::fs::create_dir_all(ws.app_dir()).unwrap();
+        let path = ws.app_dir().join("item");
+        std::fs::write(&path, "a").unwrap();
+        let mut cache = AppFingerprintCache::default();
+        let stop = CancelToken::default();
+        let first = cache.scan(&ws, &stop).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("child"), "b").unwrap();
+        assert_ne!(cache.scan(&ws, &stop).unwrap(), first);
+        std::fs::remove_dir_all(&path).unwrap();
+        std::fs::write(&path, "a").unwrap();
+        assert_eq!(cache.scan(&ws, &stop).unwrap(), first);
+        assert_eq!(cache.content_bytes, 3, "a type change evicts the old file digest");
+        std::fs::remove_file(&path).unwrap();
+        let empty = cache.scan(&ws, &stop).unwrap();
+        assert_ne!(empty, first);
+        std::fs::write(&path, "a").unwrap();
+        assert_eq!(cache.scan(&ws, &stop).unwrap(), first);
+        assert_eq!(cache.content_bytes, 4, "a removed path is not retained in the cache");
+        std::fs::write(ws.app_dir().join("new"), "c").unwrap();
+        assert_ne!(cache.scan(&ws, &stop).unwrap(), first);
+        assert_eq!(cache.content_bytes, 5, "adding a file leaves unchanged file contents cached");
+    }
+
+    #[test]
+    fn cache_discards_comparisons_after_scan_errors_and_cancellation() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "Files", "A project", TargetRef::None).unwrap();
+        std::fs::create_dir_all(ws.app_dir()).unwrap();
+        std::fs::write(ws.app_dir().join("source"), "abc").unwrap();
+        let mut cache = AppFingerprintCache::default();
+        let stop = CancelToken::default();
+        let first = cache.scan(&ws, &stop).unwrap();
+        let nested = (0..=MAX_DEPTH).fold(ws.app_dir().join("deep"), |p, _| p.join("d"));
+        std::fs::create_dir_all(nested).unwrap();
+        assert_eq!(cache.scan(&ws, &stop).unwrap_err().code, ErrorCode::OverLimit);
+        std::fs::remove_dir_all(ws.app_dir().join("deep")).unwrap();
+        assert_eq!(cache.scan(&ws, &stop).unwrap(), first);
+        assert_eq!(cache.content_bytes, 6, "an error discarded the previous successful read too");
+        let cancelled = CancelToken::default();
+        cancelled.cancel();
+        assert_eq!(cache.scan(&ws, &cancelled).unwrap_err().code, ErrorCode::Cancelled);
+        assert_eq!(cache.scan(&ws, &stop).unwrap(), first);
+        assert_eq!(cache.content_bytes, 9, "cancellation left no cached partial scan");
+    }
+
+    #[test]
+    fn cache_never_reuses_reads_from_another_project_root() {
+        let d = tempfile::tempdir().unwrap();
+        let mut cache = AppFingerprintCache::default();
+        let stop = CancelToken::default();
+        for name in ["First", "Second"] {
+            let ws = Workspace::create(d.path(), name, "A project", TargetRef::None).unwrap();
+            std::fs::create_dir_all(ws.app_dir()).unwrap();
+            let path = ws.app_dir().join("source");
+            std::fs::write(&path, "abc").unwrap();
+            modified(&path, 1);
+            assert_eq!(cache.scan(&ws, &stop).unwrap(), fingerprint(&ws));
+        }
+        assert_eq!(cache.content_bytes, 6, "matching relative paths and metadata in another root still need reading");
     }
 
     #[test]
@@ -446,7 +663,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn executable_mode_is_progress_but_other_permission_bits_are_not() {
+    fn cache_keeps_executable_mode_as_progress_but_not_other_permission_bits() {
         use std::os::unix::fs::PermissionsExt;
         let d = tempfile::tempdir().unwrap();
         let ws = Workspace::create(d.path(), "Script", "A script", TargetRef::None).unwrap();
@@ -454,13 +671,15 @@ mod tests {
         let file = ws.app_dir().join("build.sh");
         std::fs::write(&file, "#!/bin/sh\nexit 0\n").unwrap();
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
-        let before = fingerprint(&ws);
+        let mut cache = AppFingerprintCache::default();
+        let stop = CancelToken::default();
+        let before = cache.scan(&ws, &stop).unwrap();
         let mut progress = BuildProgress { fingerprint: Some(before.clone()), unchanged_turns: 2, ..BuildProgress::default() };
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
-        progress.before_turn(fingerprint(&ws));
+        progress.before_turn(cache.scan(&ws, &stop).unwrap());
         assert!(progress.stalled(), "read/write mode alone is not source progress");
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o700)).unwrap();
-        progress.before_turn(fingerprint(&ws));
+        progress.before_turn(cache.scan(&ws, &stop).unwrap());
         assert_ne!(progress.fingerprint.as_deref(), Some(before.as_str()));
         assert_eq!(progress.unchanged_turns, 0, "making the script runnable is progress");
     }

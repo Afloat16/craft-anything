@@ -609,7 +609,7 @@ fn an_api_backend_builds_with_the_build_tools() {
         ]),
         seen: Arc::default(),
     };
-    let slot = ModelSlot { name: "Scripted".into(), model: Box::new(script), local: false, effort: None, max_turns: 10 };
+    let slot = ModelSlot { name: "Scripted".into(), model: Box::new(script), local: false, effort: None, max_turns: 10, context_tokens: 0 };
     let enabled = std::collections::BTreeSet::from([craft_anything_engine::Toolset::Core, craft_anything_engine::Toolset::Build]);
     let mut api = ApiConversation::start_with(Arc::new(EngineHost(engine)), vec![slot], LoopConfig::default(), enabled).unwrap();
     let reply = w.turn(&mut ws, &mut api, "Build it.", None).unwrap();
@@ -1078,24 +1078,25 @@ mod picking_up_a_build {
             progress.unchanged_turns = 2;
             progress.save(&ws.root).unwrap();
             let mut available = true;
+            let mut fingerprints = AppFingerprintCache::default();
             if fail_scan_first {
                 // A deterministic read_dir I/O failure, including when tests run as root.
                 std::fs::remove_dir(ws.app_dir()).unwrap();
                 std::fs::write(ws.app_dir(), "the app directory is temporarily unavailable").unwrap();
-                assert!(worker.progress_fingerprint(&ws, &mut progress, &mut available).unwrap().is_none());
+                assert!(worker.progress_fingerprint(&ws, &mut progress, &mut available, &mut fingerprints).unwrap().is_none());
                 assert!(!available);
                 assert_eq!(progress, BuildProgress::default());
                 assert_eq!(BuildProgress::load(&ws.root).unwrap(), progress);
                 std::fs::remove_file(ws.app_dir()).unwrap();
                 std::fs::create_dir(ws.app_dir()).unwrap();
                 assert!(
-                    worker.progress_fingerprint(&ws, &mut progress, &mut available).unwrap().is_none(),
+                    worker.progress_fingerprint(&ws, &mut progress, &mut available, &mut fingerprints).unwrap().is_none(),
                     "a recovered directory does not resume comparisons within the same run"
                 );
             }
             let before = progress.clone();
             worker.stop.cancel();
-            assert_eq!(worker.progress_fingerprint(&ws, &mut progress, &mut available).unwrap_err().code, ErrorCode::Cancelled);
+            assert_eq!(worker.progress_fingerprint(&ws, &mut progress, &mut available, &mut fingerprints).unwrap_err().code, ErrorCode::Cancelled);
             assert_eq!(progress, before, "cancellation does not erase a known comparison");
             assert_eq!(BuildProgress::load(&ws.root).unwrap(), before);
         }
@@ -1192,7 +1193,7 @@ mod picking_up_a_build {
             seen: Arc::clone(&seen),
         };
         let mut worker = check_worker(&ws, false);
-        let slot = ModelSlot { name: "Scripted".into(), model: Box::new(script), local: true, effort: None, max_turns: 10 };
+        let slot = ModelSlot { name: "Scripted".into(), model: Box::new(script), local: true, effort: None, max_turns: 10, context_tokens: 0 };
         let api = ApiConversation::start(Arc::new(EngineHost(worker.engine.clone())), vec![slot], LoopConfig::default()).unwrap();
         let entry = crate::BackendEntry {
             config: crate::BackendConfig {
@@ -1303,7 +1304,7 @@ mod picking_up_a_build {
                     dir: notes::notes_dir(&ws.inbox_dir()),
                     text,
                 };
-                let slot = ModelSlot { name: "Scripted".into(), model: Box::new(model), local: true, effort: None, max_turns: 10 };
+                let slot = ModelSlot { name: "Scripted".into(), model: Box::new(model), local: true, effort: None, max_turns: 10, context_tokens: 0 };
                 let api = ApiConversation::start(Arc::new(EngineHost(worker.engine.clone())), vec![slot], LoopConfig::default()).unwrap();
                 let entry = crate::BackendEntry {
                     config: crate::BackendConfig {
