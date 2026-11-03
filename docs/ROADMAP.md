@@ -417,7 +417,7 @@ Gaps found while using the app for real projects.
 - [ ] The keep-awake helper once outlived a CLI `rebuild` on Windows by more than 9 minutes and held
       the caller's output pipe; not reproduced in 8 more runs, where it ended with the CLI. Dropping
       its guard only raises a flag (`RunningProcess::drop` waits only for `hands_off` programs), so
-      ending on time rests on the Job Object closing, and its time limit is 7 days
+      ending on time rests on the Job Object closing, and its time limit is 7 days — claimed: Afloat16, branch fix/r2-9-keep-awake-cleanup
 - [ ] Find why a site capture lost its browser ("the WebSocket is closed", 419 ms into
       `web_site_capture` for a second page, seen once; the same capture passed 41 s earlier)
 - [ ] Claude Code's own extras: its Ultracode switch (a setting, not an effort level; the
