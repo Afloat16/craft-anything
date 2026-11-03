@@ -31,22 +31,35 @@ pub fn env_keys(get: impl Fn(&str) -> Option<String>) -> Vec<Detected> {
             out.push(Detected { suggestion: cfg(name, kind, model), reason: format!("Found {var} in your environment"), needs_key: false });
         }
     }
-    // Kimi K3 builds through OpenRouter: with its key found, or one the person pastes.
+    // A Google AI Studio key is free and the easiest one to get (#646): always offered, found or pasted.
+    let gemini = get("GEMINI_API_KEY").is_some_and(|v| !v.trim().is_empty());
+    out.push(Detected {
+        suggestion: cfg(GEMINI_NAME, BackendKind::Gemini, crate::openai::GEMINI_DEFAULT_MODEL),
+        reason: if gemini {
+            "Found GEMINI_API_KEY in your environment".into()
+        } else {
+            "Gemini: paste a free key from Google AI Studio (aistudio.google.com/apikey)".into()
+        },
+        needs_key: !gemini,
+    });
+    // Kimi K3.1 Pro builds through OpenRouter: with its key found, or one the person pastes.
     let found = get("OPENROUTER_API_KEY").is_some_and(|v| !v.trim().is_empty());
     out.push(Detected {
-        suggestion: cfg(KIMI_NAME, BackendKind::Openrouter, crate::openai::KIMI_K3),
+        suggestion: cfg(KIMI_NAME, BackendKind::Openrouter, crate::openai::KIMI_K3_1),
         reason: if found {
-            "Kimi K3 through OpenRouter, with the OPENROUTER_API_KEY in your environment".into()
+            "Kimi K3.1 Pro through OpenRouter, with the OPENROUTER_API_KEY in your environment".into()
         } else {
-            "Kimi K3 through OpenRouter: paste your OpenRouter key".into()
+            "Kimi K3.1 Pro through OpenRouter: paste your OpenRouter key".into()
         },
         needs_key: !found,
     });
     out
 }
 
-/// The name Kimi K3 is added under.
-pub const KIMI_NAME: &str = "Kimi K3 (OpenRouter)";
+/// The name Kimi K3.1 Pro is added under.
+pub const KIMI_NAME: &str = "Kimi K3.1 Pro (OpenRouter)";
+/// Name given to a Google AI Studio (Gemini API key) backend.
+pub const GEMINI_NAME: &str = "Gemini (Google AI Studio)";
 
 /// Is something listening at this URL's host:port? (bounded TCP connect)
 pub fn port_open(base_url: &str, timeout: Duration) -> bool {
@@ -61,9 +74,15 @@ const NOT_CHAT: &[&str] = &["embed", "embedding", "embeddings", "embeddinggemma"
 
 /// The first model a server lists that can chat. A specialised model isn't a chat fallback.
 pub(crate) fn chat_model(models: &[String]) -> Option<String> {
+    let specialised =
+        |name: &str| name.split(|c: char| !c.is_ascii_alphanumeric()).any(|token| NOT_CHAT.contains(&token.trim_end_matches(|c: char| c.is_ascii_digit())));
     let chats = |m: &&String| {
-        let name = m.rsplit('/').next().unwrap_or(m).to_ascii_lowercase();
-        !name.split(|c: char| !c.is_ascii_alphanumeric()).any(|token| NOT_CHAT.contains(&token))
+        let lower = m.to_ascii_lowercase();
+        let (directory, name) = lower.rsplit_once(['/', '\\']).unwrap_or(("", lower.as_str()));
+        // A generic GGUF filename needs its model directory; arbitrary ancestors do not identify it.
+        let generic_gguf = name == "model.gguf" || name == "ggml-model.gguf" || (name.starts_with("ggml-model-") && name.ends_with(".gguf"));
+        let model_directory = directory.rsplit(['/', '\\']).next().unwrap_or_default();
+        !(specialised(name) || generic_gguf && specialised(model_directory))
     };
     models.iter().find(chats).cloned()
 }
@@ -165,13 +184,43 @@ pub(crate) fn on_this_network(url: &str) -> bool {
     }
 }
 
-/// Every local server to probe: the usual addresses, then those OpenCode names elsewhere.
+/// The ports just above LM Studio's 1234, where its server goes when 1234 is taken or the person
+/// moved it (#73: 1235). Whatever answers there is checked like any other server: it must speak
+/// the OpenAI API and list models.
+const LM_STUDIO_NEARBY: std::ops::RangeInclusive<u16> = 1235..=1239;
+
+/// Where LM Studio keeps its server settings, under the home folder (newer, then older versions).
+/// Taken from LM Studio's own folders as they were seen, not from its documentation.
+const LM_STUDIO_SETTINGS: &[&str] = &[".lmstudio/.internal/http-server-config.json", ".cache/lm-studio/.internal/http-server-config.json"];
+
+/// The server port in LM Studio's settings file (`"port": 1235`).
+pub(crate) fn lmstudio_port(text: &str) -> Option<u16> {
+    let doc = craft_anything_formats::jsonc::parse(text, false).ok()?.to_value();
+    doc.get("port").and_then(serde_json::Value::as_u64).and_then(|p| u16::try_from(p).ok()).filter(|p| *p != 0)
+}
+
+/// Every local server to probe: the usual addresses, the port LM Studio's settings name, those
+/// OpenCode names elsewhere, then the ports next to LM Studio's. Each address once, under the most
+/// specific name.
 fn local_servers() -> Vec<(String, String)> {
+    let read = |p: &std::path::Path| std::fs::metadata(p).ok().filter(|m| m.len() <= 1024 * 1024).and_then(|_| std::fs::read_to_string(p).ok());
+    let home = dirs::home_dir();
+    let lm_port = home.iter().flat_map(|h| LM_STUDIO_SETTINGS.iter().map(move |f| h.join(f))).find_map(|p| read(&p).as_deref().and_then(lmstudio_port));
+    let opencode = opencode_config(|v| std::env::var(v).ok(), home).and_then(|p| read(&p)).as_deref().map(opencode_servers).unwrap_or_default();
+    servers_to_probe(lm_port, opencode)
+}
+
+/// [`local_servers`] without the files: `lm_port` is the port LM Studio's settings name, and
+/// `opencode` the servers OpenCode's settings name.
+fn servers_to_probe(lm_port: Option<u16>, opencode: Vec<(String, String)>) -> Vec<(String, String)> {
     let mut all: Vec<(String, String)> = LOCAL_SERVERS.iter().map(|(l, b)| (l.to_string(), b.to_string())).collect();
-    let config = opencode_config(|v| std::env::var(v).ok(), dirs::home_dir());
-    let text = config.filter(|p| std::fs::metadata(p).is_ok_and(|m| m.len() <= 1024 * 1024)).and_then(|p| std::fs::read_to_string(p).ok());
-    for (label, base) in text.as_deref().map(opencode_servers).unwrap_or_default() {
-        if !all.iter().any(|(_, b)| b.trim_end_matches('/') == base) {
+    let extra = lm_port
+        .map(|p| ("LM Studio".to_string(), format!("http://127.0.0.1:{p}/v1")))
+        .into_iter()
+        .chain(opencode)
+        .chain(LM_STUDIO_NEARBY.map(|p| (format!("AI server on port {p}"), format!("http://127.0.0.1:{p}/v1"))));
+    for (label, base) in extra {
+        if !all.iter().any(|(_, b)| b.trim_end_matches('/') == base.trim_end_matches('/')) {
             all.push((label, base));
         }
     }
@@ -240,6 +289,9 @@ fn remote_agents(host: String) -> Vec<Detected> {
 }
 
 #[cfg(test)]
+mod model_id_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -256,15 +308,27 @@ mod tests {
     #[test]
     fn env_detection() {
         let d = env_keys(|v| (v == "OPENROUTER_API_KEY").then(|| "k".to_string()));
-        assert_eq!(d.len(), 2);
+        assert_eq!(d.len(), 3);
         assert_eq!(d[0].suggestion.kind, BackendKind::Openrouter);
         assert!(d[0].reason.contains("OPENROUTER_API_KEY"));
-        // Kimi K3 rides on the same key, so it needs none of its own.
-        assert_eq!((d[1].suggestion.model.as_str(), d[1].needs_key), (crate::openai::KIMI_K3, false));
-        // Without a key, Kimi K3 is still offered, asking for one.
+        // Gemini is always offered; without its key it asks for one.
+        assert!(d[1].suggestion.kind == BackendKind::Gemini && d[1].needs_key);
+        // Kimi K3.1 Pro rides on the same key, so it needs none of its own.
+        assert_eq!((d[2].suggestion.model.as_str(), d[2].needs_key), (crate::openai::KIMI_K3_1, false));
+        // Without a key, Gemini and Kimi K3.1 Pro are still offered, asking for one.
         let none = env_keys(|_| Some("  ".into()));
-        assert_eq!(none.len(), 1);
-        assert!(none[0].needs_key && none[0].suggestion.name == KIMI_NAME);
+        assert_eq!(none.len(), 2);
+        assert!(none[0].needs_key && none[0].suggestion.name == GEMINI_NAME);
+        assert!(none[1].needs_key && none[1].suggestion.name == KIMI_NAME);
+    }
+
+    #[test]
+    fn gemini_key_in_the_environment_is_used() {
+        let d = env_keys(|v| (v == "GEMINI_API_KEY").then(|| "k".to_string()));
+        let g = d.iter().find(|x| x.suggestion.kind == BackendKind::Gemini).expect("Gemini offered");
+        assert!(!g.needs_key && g.reason.contains("GEMINI_API_KEY"));
+        assert_eq!(g.suggestion.model, crate::openai::GEMINI_DEFAULT_MODEL);
+        assert!(BackendKind::Gemini.needs_key());
     }
 
     #[test]
@@ -357,6 +421,32 @@ mod tests {
         let found = opencode_servers(&format!(r#"{{"provider": {{"lmstudio": {{"name": "LM Studio", "options": {{"baseURL": "{url}"}}}}}}}}"#));
         let (label, base) = found.first().unwrap();
         assert_eq!(probe_local(label, base).unwrap().suggestion.name, "LM Studio from OpenCode (local)");
+    }
+
+    /// #73: LM Studio on another port was missed: its settings name the port, and the ports next to
+    /// 1234 are probed too. Each address is probed once, under the most specific name.
+    #[test]
+    fn lm_studio_on_another_port_is_probed() {
+        assert_eq!(lmstudio_port(r#"{"port": 1235, "networkInterface": "127.0.0.1", "cors": false}"#), Some(1235));
+        for bad in ["", "not json", r#"{"port": 0}"#, r#"{"port": 70000}"#, r#"{"port": "1235"}"#, r#"{"cors": true}"#] {
+            assert_eq!(lmstudio_port(bad), None, "{bad}");
+        }
+        let bases = |v: &[(String, String)]| v.iter().map(|(_, b)| b.clone()).collect::<Vec<_>>();
+        let plain = servers_to_probe(None, Vec::new());
+        let base_count = LOCAL_SERVERS.len();
+        assert_eq!(plain.len(), base_count + LM_STUDIO_NEARBY.count(), "the usual servers, then the ports next to 1234");
+        assert!(bases(&plain).contains(&"http://127.0.0.1:1235/v1".to_string()));
+        // A port from LM Studio's settings, away from 1234, is probed as LM Studio.
+        let moved = servers_to_probe(Some(4321), Vec::new());
+        assert!(moved.contains(&("LM Studio".to_string(), "http://127.0.0.1:4321/v1".to_string())), "{moved:?}");
+        // The usual port named again adds nothing; OpenCode's name for 1235 wins over the generic one.
+        assert_eq!(servers_to_probe(Some(1234), Vec::new()).len(), plain.len());
+        let from_opencode = servers_to_probe(None, vec![("LM Studio from OpenCode".into(), "http://127.0.0.1:1235/v1".into())]);
+        assert_eq!(from_opencode.len(), plain.len(), "no address twice");
+        assert!(from_opencode.contains(&("LM Studio from OpenCode".to_string(), "http://127.0.0.1:1235/v1".to_string())));
+        // What answers on one of those ports is found like a server at a usual address.
+        let url = crate::tests::serve("200 OK", r#"{"object":"list","data":[{"id":"gemma"}]}"#);
+        assert_eq!(probe_local("LM Studio", &url).unwrap().suggestion.model, "gemma");
     }
 
     #[test]

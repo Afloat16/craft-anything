@@ -355,12 +355,12 @@ fn main() {
         let b = |name: &str, kind, model: &str| BackendConfig { name: name.into(), kind, model: model.into(), base_url: None, ssh_host: None, enabled: true };
         a.backends = vec![
             b("Claude Code", BackendKind::AgentCli, "claude-code"),
-            b("Kimi K3 (OpenRouter)", BackendKind::Openrouter, "moonshotai/kimi-k3"),
+            b("Kimi K3.1 Pro (OpenRouter)", BackendKind::Openrouter, "moonshotai/kimi-k3.1-pro"),
             b("Claude", BackendKind::Anthropic, "claude-opus-5-5"),
         ];
         a.state.backend = Some("Claude".into());
         a.builder = Some("Claude Code".into());
-        a.extractor = Some("Kimi K3 (OpenRouter)".into());
+        a.extractor = Some("Kimi K3.1 Pro (OpenRouter)".into());
         if error {
             a.toast("Couldn't save C:/Users/me/AppData/Roaming/craft-anything/config.toml: access is denied.", true);
         }
