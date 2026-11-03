@@ -170,6 +170,9 @@ only when it's green and a maintainer has fully reviewed it, code as well as wor
 ### R5.3 A builder that can't make progress stops
 Owner: open · Status: todo
 Every round spends the person's money or quota. One that can't do anything shouldn't start.
+- [x] Preserve the interrupted request when an agent cannot restore its session: ACP starts a new
+      session, or a registered CLI adapter falls back to Plain (#552 review).
+      — claimed: Afloat16, branch bugfix/r5.3-interrupted-request-recovery-20261103
 - [x] A build stops and says why after two builder turns in a row that changed nothing in `app/`,
       on every backend (#44, #110, #417, #481). The count is saved in the project, so it holds
       across runs: a run ends at 7 checks (`max_rounds`) but check numbers carry on, so #44's check
@@ -214,9 +217,13 @@ been run live.
       services whose real window differs from 150k (#374) — implementation: `6bd94b84828ec89b805cb8a246f557d0a778c037`
 - [ ] Find LM Studio on another port (#73)
 - [ ] See why Bionic or LM Studio can't be picked (#140)
+- [x] Do not select an embedding, ranking or transcription model as a chat backend when a local server has no chat models — claimed: Afloat16, branch bugfix/r5.4-nonchat-model-detection-20261103
 
 ### R5.5 API-key builds fail in words people can use
 Owner: open · Status: todo
+- [x] Bound accumulated data across all lines of one server-sent event, so short lines cannot
+      grow a streamed API response without limit
+      — claimed: Afloat16, branch bugfix/r5.5-bounded-sse-events-20261103
 - [x] Show the provider's own reason: #369 bought $10 of credit and got only "OpenRouter answered
       400: Provider returned error". Find the reason in the response body and show it — PR #542
 - [ ] A live API-key build (needs a key on the test machine)
@@ -349,8 +356,9 @@ Owner: open · Status: in progress
 - [ ] OpenCode's plain adapter never passes our tool server, so its builder has none of our tools
       and hunts for a setting that doesn't exist (#481). Hand it the server, or build over ACP by
       default once that passes
-- [ ] Aider has no adapter, so the plain one hands it the prompt as a file name, and it can open a
-      browser sign-in nobody agreed to (#72). Give it an adapter, or stop offering it
+- [x] Aider has no adapter, so the plain one hands it the prompt as a file name, and it can open a
+      browser sign-in nobody agreed to (#72). Give it an adapter, or stop offering it — claimed: Afloat16, branch bugfix/r2.2-aider-recommendations-20261103
+- [ ] Add a non-interactive Aider adapter before recommending it again; detection currently leaves it out.
 - [ ] Codex (#499): in a chat the tool server has no active target, tools turned on with
       `enable_toolset` can't be called, The
       reporter attached a patch for chat continuity; look at that first
@@ -378,8 +386,16 @@ Owner: open · Status: in progress
       differs by agent: Claude Code asks our approval tool; OpenCode's builder runs with `--auto`;
       Hermes's `-z` turns its approvals off on every run, chats included. Clean room's approval
       rule doesn't reach an agent that never asks us
+- [x] Clean room outside builds (#564): a chat or question with Claude Code refuses the agent's own
+      file, shell and web tools outright (`--disallowedTools`), not through its defaults; an ACP chat
+      refuses them through an approver instead of a consent card (`docs/claude-code.md`)
 - [ ] Say on each adapter, as typed data, what it can be held to (asks us, its own sandbox,
-      nothing), and have runs act on that, once the decision above is made
+      nothing), in a build, a chat and a question, and have runs act on that, once the decision above
+      is made. Today Codex, Gemini CLI, OpenCode, Antigravity, Hermes and Maki are not held to
+      Clean room in a chat (their own sandbox, if any, is not established)
+- [ ] Check live that a Clean room chat with Claude Code can't read a file outside its folder, and
+      that an ACP chat in Clean room still reaches our tools (its permission requests for them are
+      allowed, only its own read/write/command/fetch are refused)
 - [ ] Check live what Hermes over ACP asks about: whether its file reads reach our approval policy
 - [ ] Maki's plain `maki -p` builder doesn't ask us before commands, and in Clean room its reads
       aren't checked (as with every agent that never asks us): say so in the approval decision
@@ -410,7 +426,7 @@ Owner: open · Status: in progress
       (#259, a guess at its cause)
 - [ ] macOS: `/Applications/Antigravity.app` ended up as the agent's command (#467); find what
       writes it (no code for it was found; maybe the file picker)
-- [ ] Windows: look in `%LOCALAPPDATA%\agy\bin` too (#62)
+- [x] Windows: look in `%LOCALAPPDATA%\agy\bin` too (#62) — claimed: Afloat16, branch bugfix/r2.2-antigravity-search-20261103
 - [ ] "Claude Code on <ssh host>" is offered for any SSH host, whether or not it has Claude Code
       (#62)
 - [ ] Gemini CLI's sign-in reportedly refuses individuals now (#400): check, and stop recommending
@@ -435,8 +451,9 @@ Owner: open · Status: in progress
 - [ ] Make: a game whose request names a technology the stack table doesn't know (Phaser, Bevy…)
       still needs the default engine installed to start, though the builder is told to use what
       was named; ask the person, or let such a game start without an engine
-- [ ] The website check's "No built site found in app/dist, app/out or app/build yet" leaves out
-      plain HTML in `app/`, which `site_dir` accepts: name it too (#494)
+- [x] The website check's missing-site note names every place `site_dir` accepts (dist/, build/,
+      out/, or a plain index.html with no package.json) and the app's real place, "app/" or "the
+      project folder" (#494)
 
 ### R2.8 Clean room means clean room
 Owner: maintainers · Status: in progress
@@ -449,6 +466,12 @@ Gaps found while using the app for real projects.
 - [x] A prompt brought back with Up keeps its pictures (their paths are absolute, so they don't
       come back after the project is moved)
 - [ ] Change a project's builder from its page (a tool, so the CLI and MCP can too) — in PR #245
+- [x] Ctrl+V (Shift+Insert, Cmd+V) in a prompt box that takes pictures pastes a copied image (saved
+      as a PNG) or copied picture files; attachments show as square picture tiles, the whole
+      picture on hover, decoded on a worker
+- [ ] A picture over 20 MB dropped on a prompt box or picked in its dialog still shows as
+      attached, and the message then goes without it (`copy_pictures` skips it); refuse it when
+      it's added, as a paste does (`workspace::attachable_picture`)
 - [ ] When the builder decides a question, show the question and its choice as an answered card
       in the feed (the run sees only the tool call today; the builder's words say what it chose)
 - [ ] A question's own cost: a forked Claude Code session reports the whole session's running
@@ -530,6 +553,16 @@ Owner: open · Status: in progress
       it's there
 - [ ] `native_publisher_show` hashes the file minus the signature fields, not section by section;
       a file with unusual gaps between sections can read as different
+
+### R3.12 Format parser correctness
+Owner: open · Status: in progress
+- [x] Parsers refuse what they used to half-read: binary plists keep objects inside their object
+      area and reject unrepresentable widths, base64 (plists, source maps) refuses damaged tails
+      and incomplete quanta through one shared decoder, OIDs must be minimally encoded, and string
+      offsets past the address space are left out. Tar keeps old GNU timestamps out of names and
+      PAX sizes across other metadata records; CRC cpio checks member data; source maps decode
+      percent-escaped data URLs and report indexed-map columns in the generated file
+      (#606–#615, by Afloat16)
 
 ### R3.13 Web inspection correctness
 Owner: open · Status: in progress
