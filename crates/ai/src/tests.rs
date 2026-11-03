@@ -587,6 +587,11 @@ fn json_text_recovery_preserves_non_actions_and_stop_reasons() {
             (r#"{"name":"look","arguments":{}"#, "stop", StopReason::EndTurn),
             (r#"{"answer":42}"#, "stop", StopReason::EndTurn),
             (r#"For example: {"name":"look","arguments":{}}"#, "stop", StopReason::EndTurn),
+            ("```text\nAction: look\nAction Input: {}\n```not a close```", "stop", StopReason::EndTurn),
+            ("```json\n{\"name\":\"look\",\"arguments\":{}}```", "stop", StopReason::EndTurn),
+            ("```text\nAction: look\nAction Input: {}```", "stop", StopReason::EndTurn),
+            ("````text\nAction: look\nAction Input: {}\n```", "stop", StopReason::EndTurn),
+            ("```text\nAction: look\nAction Input: {}\n```\nThis is only an example.\n```", "stop", StopReason::EndTurn),
         ] {
             let reply = chat_sse(&[json!({"choices":[{"delta":{"content":text},"finish_reason":finish}]})]);
             let (url, _seen) = mock(vec![(200, "text/event-stream", reply)]);
