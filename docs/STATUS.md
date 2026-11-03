@@ -127,12 +127,6 @@ not been rechecked for this change; Windows runtime validation remains on the ro
 
 The full workspace gates (`cargo xtask ci`) passed in [hosted CI for #541](https://github.com/storytold/craft-anything/actions/runs/41584228995).
 
-### Reject binary plist values whose widths cannot be represented
-
-Unsupported binary plist integer, UID and length widths are rejected instead of truncated. Synthetic cases
-preserve supported 128-bit integers and 64-bit UIDs/lengths and reject oversized markers; this does not add
-larger result types.
-
 ## Known limits
 
 - Locks: every mutex but the browser viewer's goes through `platform::sync`. A deadlock on one thread or across
@@ -192,3 +186,9 @@ larger result types.
 ## Next
 
 See [ROADMAP.md](ROADMAP.md) for the ordered plan.
+
+## Reject binary plist values whose widths cannot be represented
+
+Unsupported binary plist integer, UID and length widths are rejected instead of truncated. Synthetic cases
+preserve supported 128-bit integers and 64-bit UIDs/lengths and reject oversized markers; this does not add
+larger result types.
