@@ -127,11 +127,6 @@ not been rechecked for this change; Windows runtime validation remains on the ro
 
 The full workspace gates (`cargo xtask ci`) passed in [hosted CI for #541](https://github.com/storytold/craft-anything/actions/runs/41584228995).
 
-### Keep GNU tar timestamps out of recovered member names
-
-The tar walker distinguishes POSIX ustar pathname prefixes from old GNU timestamp fields. Synthetic GNU and
-POSIX controls preserve member names and bytes; sparse-file reconstruction is unchanged.
-
 ## Known limits
 
 - Locks: every mutex but the browser viewer's goes through `platform::sync`. A deadlock on one thread or across
@@ -191,3 +186,8 @@ POSIX controls preserve member names and bytes; sparse-file reconstruction is un
 ## Next
 
 See [ROADMAP.md](ROADMAP.md) for the ordered plan.
+
+## Keep GNU tar timestamps out of recovered member names
+
+The tar walker distinguishes POSIX ustar pathname prefixes from old GNU timestamp fields. Synthetic GNU and
+POSIX controls preserve member names and bytes; sparse-file reconstruction is unchanged.
