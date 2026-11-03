@@ -127,12 +127,6 @@ not been rechecked for this change; Windows runtime validation remains on the ro
 
 The full workspace gates (`cargo xtask ci`) passed in [hosted CI for #541](https://github.com/storytold/craft-anything/actions/runs/41584228995).
 
-### Reject malformed base64 tails instead of accepting a decoded prefix
-
-Source-map and XML plist base64 decoding rejects malformed padding, incomplete quanta and trailing input.
-Public parser tests retain whitespace and unpadded compatibility, with the URL-safe alphabet limited to source
-maps; unused pad-bit tolerance is unchanged.
-
 ## Known limits
 
 - Locks: every mutex but the browser viewer's goes through `platform::sync`. A deadlock on one thread or across
@@ -192,3 +186,9 @@ maps; unused pad-bit tolerance is unchanged.
 ## Next
 
 See [ROADMAP.md](ROADMAP.md) for the ordered plan.
+
+## Reject malformed base64 tails instead of accepting a decoded prefix
+
+Source-map and XML plist base64 decoding rejects malformed padding, incomplete quanta and trailing input.
+Public parser tests retain whitespace and unpadded compatibility, with the URL-safe alphabet limited to source
+maps; unused pad-bit tolerance is unchanged.
