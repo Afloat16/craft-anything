@@ -738,10 +738,10 @@ fn encoded_text_value(slice: &[u8], encoding: &str) -> CellValue {
     let take = slice.get(..MAX_TEXT.min(slice.len())).unwrap_or(slice);
     let text = match encoding {
         "utf-16le" | "utf-16be" => {
-            let units: Vec<u16> = take
-                .chunks_exact(2)
-                .filter_map(|pair| <[u8; 2]>::try_from(pair).ok())
-                .map(|pair| if encoding == "utf-16le" { u16::from_le_bytes(pair) } else { u16::from_be_bytes(pair) })
+            let (pairs, _) = take.as_chunks::<2>();
+            let units: Vec<u16> = pairs
+                .iter()
+                .map(|&pair| if encoding == "utf-16le" { u16::from_le_bytes(pair) } else { u16::from_be_bytes(pair) })
                 .collect();
             let mut text = String::from_utf16_lossy(&units);
             if !take.len().is_multiple_of(2) {
