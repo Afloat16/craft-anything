@@ -192,3 +192,6 @@ See [ROADMAP.md](ROADMAP.md) for the ordered plan.
 HAR hidden-value filtering covers retained metadata, MIME kinds and aggregate labels and omits secret-bearing
 field names, including once-decoded query names. A serialized public-report fixture checks these fields
 together with ordinary-value controls.
+Raw ASCII-lowercased private spellings are also removed from normalized IPv6 hosts and MIME metadata.
+Regressions cover punctuation-bearing private values and ordinary hosts; JSON, form and multipart classification
+continues to use the unredacted MIME value.

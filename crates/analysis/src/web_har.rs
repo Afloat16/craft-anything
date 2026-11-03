@@ -87,7 +87,7 @@ impl Redactor {
         let mut needles: Vec<String> = Vec::new();
         for v in values.iter().filter(|v| !v.is_empty()) {
             let json_escaped = serde_json::to_string(v).ok().and_then(|q| q.get(1..q.len().saturating_sub(1)).map(String::from)).unwrap_or_default();
-            for form in [v.clone(), percent_encode(v), percent_encode(v).to_ascii_lowercase(), json_escaped, v.replace(' ', "+")] {
+            for form in [v.clone(), v.to_ascii_lowercase(), percent_encode(v), percent_encode(v).to_ascii_lowercase(), json_escaped, v.replace(' ', "+")] {
                 if !form.is_empty() && !needles.contains(&form) {
                     needles.push(form);
                 }

@@ -361,6 +361,11 @@ on Windows (`write_atomic`); show errors where the person is looking.
 clients. The journal only redacts by field name. When a setting can hold a secret, hide its value
 in every tool that prints settings, and test that it doesn't appear.
 
+**Normalised metadata outlived its private spelling.** Hosts and MIME values were lowercased before redaction,
+but the declared-value matcher only lowercased percent-encoded forms. A raw value containing punctuation could
+therefore survive in normalized metadata. Cover the raw normalized spelling too, and keep format classification
+on the original value rather than the replacement text.
+
 **Secret files kept out only by one person's gitignore.** `.env` files and
 `.claude/settings.local.json` were ignored by a contributor's global gitignore, not the repo's, so
 anyone else could have committed them. Ignore secret and local files in the repo's `.gitignore`,
