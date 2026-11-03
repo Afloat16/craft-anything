@@ -311,7 +311,7 @@ Owner: open · Status: in progress
       and hunts for a setting that doesn't exist (#481). Hand it the server, or build over ACP by
       default once that passes
 - [ ] Aider has no adapter, so the plain one hands it the prompt as a file name, and it can open a
-      browser sign-in nobody agreed to (#72). Give it an adapter, or stop offering it
+      browser sign-in nobody agreed to (#72). Give it an adapter, or stop offering it — claimed: Afloat16, branch bugfix/r2.2-aider-recommendations-20261103
 - [ ] Codex (#499): in a chat the tool server has no active target, tools turned on with
       `enable_toolset` can't be called, and `rebuild_start` is refused by the approval policy. The
       reporter attached a patch for chat continuity; look at that first
