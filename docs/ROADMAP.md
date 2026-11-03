@@ -476,6 +476,12 @@ Owner: open · Status: in progress
 
 ---
 
+### R3.13 Web inspection correctness
+Owner: open · Status: in progress
+- [ ] Require a complete HTML tag name before recognising a script, link, meta or title. — claimed: Afloat16, branch bugfix/r3.13-html-tag-names-20261103
+
+---
+
 ## M4 Release
 
 ### R4.1 A macOS CLI that opens
