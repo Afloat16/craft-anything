@@ -13,7 +13,9 @@ use std::path::Path;
 
 /// A builder gets two consecutive turns without changing the app before it needs attention.
 pub const UNCHANGED_TURN_LIMIT: u32 = 2;
-pub const BUILD_PROGRESS_FILE: &str = "build-progress.json";
+// Keep state inside an already reserved Craft directory. A project created by an older
+// version may have its own app data named build-progress.json at the root.
+pub const BUILD_PROGRESS_FILE: &str = "inbox/build-progress.json";
 pub const BUILD_PROGRESS_VERSION: u32 = 1;
 const MAX_RECORD_BYTES: u64 = 16 * 1024;
 const MAX_ENTRIES: usize = 100_000;
@@ -308,6 +310,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let path = d.path().join(BUILD_PROGRESS_FILE);
         assert_eq!(BuildProgress::load(d.path()).unwrap(), BuildProgress::default());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, r#"{"fingerprint":"previous","unchanged_turns":2}"#).unwrap();
         let old = BuildProgress::load(d.path()).unwrap();
         assert_eq!(old.version, BUILD_PROGRESS_VERSION);
@@ -338,6 +341,60 @@ mod tests {
         assert!(!copy.app_dir().join(BUILD_PROGRESS_FILE).exists());
         assert_eq!(fingerprint(&ws), fingerprint(&copy));
         assert_eq!(BuildProgress::load(&ws.root).unwrap(), progress, "the original keeps its limit");
+    }
+
+    #[test]
+    fn an_existing_root_build_progress_name_remains_the_persons_app_data() {
+        for (data, directory) in
+            [(r#"{"player":"saved"}"#, false), ("{}", false), (r#"{"version":1,"fingerprint":null,"unchanged_turns":2}"#, false), ("a runtime asset", true)]
+        {
+            let d = tempfile::tempdir().unwrap();
+            let root = d.path().join("mine");
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::write(root.join("index.html"), "the app").unwrap();
+            let ws = Workspace::create_at(&root, "Mine", "A page", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+            let before = fingerprint(&ws);
+            // Simulate an existing in-place project from before progress was recorded. Even a
+            // JSON object matching the new record's shape does not prove Craft owns it.
+            let relative = if directory { "build-progress.json/state.txt" } else { "build-progress.json" };
+            let app_file = root.join(relative);
+            std::fs::create_dir_all(app_file.parent().unwrap()).unwrap();
+            std::fs::write(&app_file, data).unwrap();
+            assert!(!ws.is_own_record(&root.join("build-progress.json")));
+            let with_data = fingerprint(&ws);
+            assert_ne!(before, with_data, "the root name belongs to the app");
+            let progress = BuildProgress { fingerprint: Some(with_data.clone()), unchanged_turns: 2, ..BuildProgress::default() };
+            progress.save(&root).unwrap();
+            assert_eq!(std::fs::read_to_string(&app_file).unwrap(), data, "save must not claim or migrate the root file");
+            assert_eq!(fingerprint(&ws), with_data, "the inbox record is not app progress");
+            std::fs::write(&app_file, format!("{data}\n")).unwrap();
+            assert_ne!(fingerprint(&ws), with_data, "changes to that app file count");
+            std::fs::write(&app_file, data).unwrap();
+            let copy = ws.duplicate("Another attempt").unwrap();
+            assert_eq!(std::fs::read_to_string(copy.app_dir().join(relative)).unwrap(), data);
+            assert_eq!(BuildProgress::load(&copy.root).unwrap(), BuildProgress::default());
+            assert!(!copy.app_dir().join(BUILD_PROGRESS_FILE).exists());
+            ws.delete().unwrap();
+            assert_eq!(std::fs::read_to_string(&app_file).unwrap(), data, "removing Craft's records must keep the app's data");
+            assert!(!root.join(BUILD_PROGRESS_FILE).exists());
+        }
+    }
+
+    #[test]
+    fn inbox_messages_do_not_consume_the_progress_record() {
+        use crate::inbox::{Answer, Inbox, RequestKind};
+        let d = tempfile::tempdir().unwrap();
+        let progress = BuildProgress { unchanged_turns: 2, ..BuildProgress::default() };
+        progress.save(d.path()).unwrap();
+        let inbox = Inbox::new(d.path().join("inbox"));
+        assert!(inbox.pending().is_empty());
+        let id = inbox.post(RequestKind::Question, "Continue?", "", Vec::new(), true, None).unwrap();
+        assert_eq!(inbox.pending().len(), 1);
+        inbox.answer(&id, &Answer { text: Some("Yes".into()), ..Default::default() }).unwrap();
+        let answer = inbox.wait(&id, std::time::Duration::from_millis(100), &|| false).unwrap();
+        assert_eq!(answer.text.as_deref(), Some("Yes"));
+        assert!(inbox.pending().is_empty());
+        assert_eq!(BuildProgress::load(d.path()).unwrap(), progress);
     }
 
     #[test]

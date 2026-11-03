@@ -42,7 +42,7 @@ workspace clippy, layers, fmt and the secret scan of all history were clean. Chi
 ### Build progress across runs
 
 A build stops after two consecutive completed builder turns leave the app's files unchanged.
-The versioned `build-progress.json` record keeps that count when the project is reopened or
+The versioned `inbox/build-progress.json` record keeps that count when the project is reopened or
 Try again is pressed. File contents and executable permissions decide progress, so rewriting
 identical bytes does not reset it. An actual app edit or a new nonempty request starts another
 attempt, including notes queued during a turn or check and notes consumed by a builder hook.
@@ -55,6 +55,9 @@ Scripted API turns and executable CLI stand-ins cover the stop, persistence, fre
 check recovery. This change has not been verified with a paid model or a live provider. Copying a
 whole project keeps its progress record; Duplicate creates a new attempt with a fresh conversation
 and count, as it already does for usage.
+An existing root-level file or directory named `build-progress.json` remains app data: it is
+fingerprinted, copied by Duplicate and kept when Craft's project records are removed. Its JSON
+shape does not make it a Craft record, and it is never migrated into the inbox.
 
 ### Bun stored-text encoding
 
