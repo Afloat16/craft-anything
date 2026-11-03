@@ -83,6 +83,11 @@ the engines its settings or store name.
 `a`, so `b`'s tests never ran; the rerun was filtered to the failing test, and a broken engine id
 reached `main`. Run with `--no-fail-fast`, and after a fix rerun the whole crates, not a filter.
 
+**A stopped server's port was no longer its identity.** A shutdown test connected to the old
+port and treated any listener there as the stopped server, although another fixture could reuse it.
+Observe the actual tool's registered server and a weak reference to its shared answerer; cancellation
+must release that resource and empty its registry. Do not reserve and release a port before startup.
+
 **A test that changes the whole process.** A UI test raised the process-wide stuck-lock banner; in
 CI the banner moved the layout under another test running beside it, and its click missed. It passed
 25 runs on a Mac. Anything a test sets for the whole process goes in a test program of its own.
