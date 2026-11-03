@@ -229,7 +229,7 @@ impl AcpCore {
             }
             self.failure = Some(TurnFailure::new(match err.get("code").and_then(Value::as_i64) {
                 Some(-32000) => FailureKind::Authentication,
-                Some(-32600 | -32601 | -32602) => FailureKind::Configuration,
+                Some(-32602..=-32600) => FailureKind::Configuration,
                 _ => FailureKind::Unknown,
             }));
             let fix = matches!(kind, Pending::Initialize | Pending::NewSession)
