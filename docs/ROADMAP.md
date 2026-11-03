@@ -476,6 +476,12 @@ Owner: open · Status: in progress
 
 ---
 
+### R3.13 Web inspection correctness
+Owner: open · Status: in progress
+- [ ] Skip style, textarea and other raw-text elements when collecting executable scripts. — claimed: Afloat16, branch bugfix/r3.13-html-raw-text-20261103
+
+---
+
 ## M4 Release
 
 ### R4.1 A macOS CLI that opens
