@@ -8,13 +8,14 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 pub struct StaticServer {
     pub port: u16,
     pub root: PathBuf,
     stop: Arc<AtomicBool>,
+    accept_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl StaticServer {
@@ -26,6 +27,17 @@ impl StaticServer {
 impl Drop for StaticServer {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
+        if let Some(thread) = self.accept_thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+struct PreviewConnection(Arc<AtomicUsize>);
+
+impl Drop for PreviewConnection {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -37,12 +49,21 @@ pub fn serve_dir(root: &Path) -> std::io::Result<StaticServer> {
     let port = listener.local_addr()?.port();
     let stop = Arc::new(AtomicBool::new(false));
     let (r, s) = (root.clone(), stop.clone());
-    std::thread::Builder::new().name("static-server".into()).spawn(move || {
+    let active = Arc::new(AtomicUsize::new(0));
+    let accept_thread = std::thread::Builder::new().name("static-server".into()).spawn(move || {
         while !s.load(Ordering::SeqCst) {
             match listener.accept() {
-                Ok((stream, _)) => {
+                Ok((mut stream, _)) => {
+                    if active.load(Ordering::SeqCst) >= 64 {
+                        let _ = stream.set_write_timeout(Some(Duration::from_millis(200)));
+                        let _ = stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                        continue;
+                    }
+                    active.fetch_add(1, Ordering::SeqCst);
+                    let connection = PreviewConnection(active.clone());
                     let r = r.clone();
                     let _ = std::thread::Builder::new().name("static-conn".into()).spawn(move || {
+                        let _connection = connection;
                         let _ = handle(stream, &r);
                     });
                 }
@@ -51,7 +72,7 @@ pub fn serve_dir(root: &Path) -> std::io::Result<StaticServer> {
             }
         }
     })?;
-    Ok(StaticServer { port, root, stop })
+    Ok(StaticServer { port, root, stop, accept_thread: Some(accept_thread) })
 }
 
 fn content_type(p: &Path) -> &'static str {
