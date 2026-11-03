@@ -451,6 +451,88 @@ mod typed_retries {
     }
 
     #[test]
+    fn a_local_self_check_write_error_is_not_retried_as_a_backend_rate_limit() {
+        #[derive(Clone)]
+        struct BlockReply {
+            answer: PathBuf,
+        }
+        impl Check for BlockReply {
+            fn id(&self) -> &'static str {
+                "blocked-reply"
+            }
+            fn run(&self, cx: &mut CheckCx) -> Result<CheckResult, ToolError> {
+                // The request was pending when the run read it; its answer now cannot be
+                // written. The workspace itself remains writable, including retry status.
+                std::fs::create_dir_all(&self.answer).unwrap();
+                Ok(CheckResult::new(Check::id(self), cx.round, true, "The check finished."))
+            }
+        }
+        impl TargetKind for BlockReply {
+            fn id(&self) -> &'static str {
+                "blocked-reply"
+            }
+            fn words(&self) -> KindWords {
+                SlidesKind.words()
+            }
+            fn detect(&self, _: &DetectCx) -> Option<u32> {
+                Some(1)
+            }
+            fn default_stack(&self, cx: &DetectCx) -> &'static str {
+                SlidesKind.default_stack(cx)
+            }
+            fn goal(&self) -> &'static str {
+                SlidesKind.goal()
+            }
+            fn checks(&self, _: &Workspace) -> Vec<Box<dyn Check>> {
+                vec![Box::new(self.clone())]
+            }
+        }
+        struct RateLimited {
+            sent: usize,
+            first_poll: bool,
+        }
+        impl Conversation for RateLimited {
+            fn send(&mut self, _: &str) {
+                self.sent += 1;
+                self.first_poll = true;
+            }
+            fn poll(&mut self) -> Vec<AgentEvent> {
+                vec![if std::mem::take(&mut self.first_poll) {
+                    AgentEvent::Error { message: "The provider is rate limited.".into(), remediation: None, log: None }
+                } else {
+                    AgentEvent::TurnDone { backend: "scripted".into(), input_tokens: 0, output_tokens: 0, cost_usd: None, cost_is_estimate: false }
+                }]
+            }
+            fn last_failure(&self) -> Option<TurnFailure> {
+                Some(TurnFailure::new(FailureKind::RateLimited))
+            }
+            fn answer_consent(&mut self, _: &str, _: bool) {}
+            fn stop(&mut self) {}
+            fn is_busy(&self) -> bool {
+                false
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(dir.path(), "x", "Build a thing", TargetRef::None).unwrap();
+        let asks = Inbox::new(self_check::asks_dir(&ws.root));
+        let id = asks.post(craft_anything_engine::inbox::RequestKind::Question, "Check the build", "", Vec::new(), false, None).unwrap();
+        let mut worker = check_worker(&ws, false);
+        worker.self_check = Some((Arc::new(BlockReply { answer: asks.dir().join(format!("{id}.answer.json")) }), 90.0));
+        let mut agent = RateLimited { sent: 0, first_poll: false };
+        let mut waits = Vec::new();
+        let error = worker
+            .turn_with_wait(&mut ws, &mut agent, "Build the app", None, |_, seconds| {
+                waits.push(seconds);
+                Ok(())
+            })
+            .unwrap_err();
+        assert_eq!(agent.sent, 1, "a backend's retry hint cannot retry a local persistence failure");
+        assert!(waits.is_empty());
+        assert_ne!(error.code, ErrorCode::ProgramFailed);
+        assert!(error.message.contains(".answer.json"), "the original local failure is retained: {error:?}");
+    }
+
+    #[test]
     fn an_api_rate_limit_continues_history_without_repeating_users_or_completed_tools() {
         use crate::agent::tests::{Scripted, turn};
         use crate::agent::{ApiConversation, EngineHost, LoopConfig, ModelSlot};

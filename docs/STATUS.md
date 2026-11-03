@@ -47,6 +47,8 @@ transport interruptions and rate limits get at most three retries; the decision 
 searches English error messages. Structured provider waits win; the earlier numeric “retry in”
 hint is only a delay fallback after a failure has already been classified as retryable. All waits
 remain cancellable and bounded to fifteen minutes.
+Local inbox and workspace write failures are not retried using a concurrent backend failure's
+retry advice; the original local error is returned.
 
 Claude Code's failed or unauthenticated `craft-anything` MCP server in its init event stops the
 owned CLI process. Pending servers and failures in unrelated optional servers do not stop it.

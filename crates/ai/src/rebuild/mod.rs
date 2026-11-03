@@ -880,7 +880,9 @@ impl Worker {
                     prompt = f;
                     retry = false;
                 }
-                Err(e) if e.code != ErrorCode::Cancelled && tries < 3 && agent.last_failure().is_some_and(crate::TurnFailure::retryable) => {
+                // Only backend Error events become ProgramFailed here. A simultaneous backend
+                // failure must not make an inbox or workspace write failure retryable.
+                Err(e) if e.code == ErrorCode::ProgramFailed && tries < 3 && agent.last_failure().is_some_and(crate::TurnFailure::retryable) => {
                     tries += 1;
                     let why = e.message.chars().take(160).collect::<String>();
                     // Typed status decides whether to retry. A display-only wait remains a
