@@ -1,5 +1,5 @@
 use craft_anything_platform::serve::serve_dir;
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 fn get(port: u16, path: &str) -> String {
@@ -151,4 +151,48 @@ fn regression_request_targets_reject_non_uri_characters() {
             assert_eq!(response.contains("private-preview-content"), method == "GET", "{method} {target}: {response:?}");
         }
     }
+}
+
+#[test]
+fn regression_slow_progress_cannot_extend_request_deadline() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("index.html"), "private-preview-content").unwrap();
+    let srv = serve_dir(dir.path()).unwrap();
+    let started = std::time::Instant::now();
+    let mut stream = TcpStream::connect(("127.0.0.1", srv.port)).unwrap();
+    stream.set_read_timeout(Some(Duration::from_secs(7))).unwrap();
+    let mut writer = stream.try_clone().unwrap();
+    writer.set_write_timeout(Some(Duration::from_millis(100))).unwrap();
+    stream.write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nX-Slow: ").unwrap();
+    let (stop, stopped) = std::sync::mpsc::channel::<()>();
+    let worker = std::thread::spawn(move || {
+        let until = std::time::Instant::now() + Duration::from_secs(8);
+        let mut sent = 0;
+        // Writes are more frequent than the server's 100 ms read slices.
+        while std::time::Instant::now() < until && stopped.recv_timeout(Duration::from_millis(25)) == Err(std::sync::mpsc::RecvTimeoutError::Timeout) {
+            if writer.write_all(b"x").is_err() {
+                break;
+            }
+            sent += 1;
+        }
+        sent
+    });
+    let mut reader = std::io::BufReader::new(stream).take(1024);
+    let mut response = String::new();
+    let read_result = (|| -> std::io::Result<()> {
+        while !response.ends_with("\r\n\r\n") {
+            if reader.read_line(&mut response)? == 0 {
+                break;
+            }
+        }
+        Ok(())
+    })();
+    let elapsed = started.elapsed();
+    drop(stop);
+    let sent = worker.join().unwrap();
+    read_result.unwrap();
+    assert!(sent >= 10, "the connection must keep making progress");
+    assert!(response.starts_with("HTTP/1.1 408") && response.ends_with("\r\n\r\n"), "{response:?}");
+    assert!(response.contains("\r\nContent-Length: 0\r\n"), "{response:?}");
+    assert!(elapsed >= Duration::from_secs(5) && elapsed < Duration::from_secs(7), "{elapsed:?}");
 }

@@ -198,4 +198,5 @@ encoded-hash and valid GET controls, HTTP/1.0 compatibility, and an open incompl
 after the whole-head deadline. GET and HEAD regressions reject incomplete and non-hex query escapes while
 retaining valid escaped bytes, encoded percent signs and ordinary path resolution. Another 62-request
 loopback matrix checks 13 invalid characters in both path and query and five valid controls per method,
-including all query punctuation, encoded braces and UTF-8 file names.
+including all query punctuation, encoded braces and UTF-8 file names. A request that keeps sending header bytes
+every 25 ms still receives 408 after the fixed five-second deadline.
