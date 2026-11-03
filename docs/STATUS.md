@@ -1,13 +1,14 @@
 # Status
 
 What works today and how it was checked. The plan, owners and order of work are in
-[ROADMAP.md](ROADMAP.md). Last updated 2026-11-02. The baseline audit on 2026-10-23 from `main` had 923 tests passing;
+[ROADMAP.md](ROADMAP.md). Last updated 2026-11-04. The baseline audit on 2026-10-23 from `main` had 923 tests passing;
 workspace clippy, layers, fmt and the secret scan of all history were clean. Chinese UI checks are listed separately below.
 
 ## What works, and how it was checked
 
 | Area | State | Verified by |
 |---|---|---|
+| Java wide instructions | Restrict wide to the specified local loads, local stores, ret, and iinc. | Synthetic regression fixtures: All 256 possible following opcode bytes, valid widened operands and boundaries, and stopping after an invalid prefix. |
 | Settings saved on exit | Pending app settings merge the session's latest AI table when its guard is available. A busy session defers non-AI edits in `config.pending.toml` without waiting for the tool; startup recovers them with the latest committed AI table | Isolated child-process regression exercises idle and busy exit saves, a late AI commit, startup recovery and pending non-AI edits; engine tests cover sidecar migrations and damaged/newer files. No live desktop shutdown was exercised |
 | SQLite payload limits | Capped records retain column positions, disclose partial TEXT and BLOB values, omit incomplete BLOB hashes, and report partial coverage with read notes | Hand-built overflow-page regressions for five oversized records (including WITHOUT ROWID in declaration order) and two controls; table and index engine coverage and limitation regressions |
 | SQLite added columns | Short records include missing trailing fields using literal column defaults, or NULL when absent; unsupported default expressions produce NULL with a row note. Stored fields and records longer than the schema retain their values. Defaults are filled before restoring rowid aliases | Nine hand-built parser regressions and an engine tool test cover added-column defaults, rewritten records and short records with a rowid alias, including a missing alias field |
