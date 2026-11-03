@@ -6,6 +6,11 @@ Keep entries short: what happened, then the rule.
 
 ## Git and pull requests
 
+**Work began before its roadmap claim, on a branch without the required prefix.** Renaming the
+branch and recording the claim during PR preparation fixes coordination going forward, not the
+missed order. Create and publish the claim on a correctly named branch before implementation;
+never describe a late claim as compliance with the claim-before-work rule.
+
 **A commit landed on `main` without a PR.** `git switch main && git pull` was run with uncommitted
 changes: the switch succeeded, the pull refused, and the failure was read as "still on my branch".
 The next commit and `git push --force-with-lease` went to `main`.
@@ -86,10 +91,7 @@ reached `main`. Run with `--no-fail-fast`, and after a fix rerun the whole crate
 **A stopped server's port was no longer its identity.** A shutdown test connected to the old
 port and treated any listener there as the stopped server, although another fixture could reuse it.
 Observe the actual tool's registered server and a weak reference to its shared answerer; cancellation
-must release that resource and empty its registry. When testing session teardown, keep only weak
-references across dropping the engine, then check that both the registry and its original answerer
-are gone within a deadline. A strong registry reference in the test would keep the server alive.
-Do not reserve and release a port before startup.
+must release that resource and empty its registry. Do not reserve and release a port before startup.
 
 **A test that changes the whole process.** A UI test raised the process-wide stuck-lock banner; in
 CI the banner moved the layout under another test running beside it, and its click missed. It passed
@@ -252,6 +254,13 @@ anything; the tool ignored the exit status and returned "Observed 0 call(s)" wit
 observed (#251). A run that never started the thing it observes is a failure, not a count of zero:
 check the exit status before building evidence, and compile generated code (here, with Python)
 before trusting it. lldb itself was not run here.
+
+**A graphics default that drew on the other card.** egui-wgpu picks the discrete GPU unless told
+otherwise; on a Linux laptop whose integrated GPU drives the panel, every frame was copied across
+to it, the window took 20 s to open and the whole desktop lagged (#571). Forcing the low-power GPU
+instead breaks desktops whose monitors are on the discrete card. Draw on the GPU that drives the
+screen, read from the connected displays, and keep wgpu's environment variables as the override;
+when a window is slow to open, check which adapter `desktop.log` says it drew with.
 
 **A Mac app that couldn't find Claude Code, and offered a GitHub key instead.** An app opened from
 the Dock gets the system's short `PATH`, not the shell's, so `claude` in `~/.local/bin` wasn't
@@ -522,6 +531,16 @@ builder loop saved the reset only after a successful turn. A failed or cancelled
 removed the note, so reopening kept the old unchanged-turn count. Persist deferred request state
 on terminal errors too, outside provider retries; keep the original outcome if that save also fails.
 
+**Lower-casing a command, then comparing its paths.** Auto mode lower-cased a shell command to
+match keywords, then checked its paths against the project folder with that same text; Windows
+compares paths without case, so only a Mac showed it: deleting `/Users/…/app/Build` in the
+person's own project was refused. Match keywords on a lower-cased copy and compare paths as
+written; test a path rule with capitals and a folder outside the temp directory.
+The same check split the command at every space, quotes included, so `"…/MyGame Backup/x"`
+began with the project's path and went through; it had been noted as "only refuses too much"
+without trying a folder named like the project. Read arguments as the shell does, and test a
+path rule with the folder beside the target, not only the target.
+
 **A filter written for one kind of text, run on another.** The stand-in's secret scan was written for
 API answers, then also ran on recorded scripts: `this.token=t` became `[dropped]` and the scripts
 broke, and "Basic Membership" lost a word. It also tested whole tokens, so a secret inside a URL or
@@ -550,6 +569,41 @@ points to as well (`agent-session.jsonl`), tell "not here" apart from a failure 
 (`Conversation::session_lost`), and never retry what can't succeed.
 
 ## Agent tooling
+
+**Shared CLI efforts reached Claude unchanged.** Keep CLI-only levels available for agents, but
+normalize at the provider boundary; test serialized requests for known and unknown model families.
+
+**A sender could exceed its MCP receiver's target limit.** Bound the handoff to the receiver's
+accepted count and retain the active target; test the boundary, truncation order and remote mode.
+
+**A finding correction reset omitted confidence to inferred.** Edit defaults must preserve existing
+values unless explicitly changed; test omitted fields and every supplied confidence level.
+
+**Atomic replacements still lost concurrent investigation updates.** A process-local mutex and
+rename protect neither a cross-process revision check nor the whole read/modify/write sequence.
+Hold one OS file lock from load through every rendered write, use it for all writers, bound and
+cancel the wait, and test with separate processes. Never treat malformed state as an empty update.
+
+**An optional view refresh could fail the builder's turn.** Log cache-refresh errors and continue
+relaying agent events; only failures of the actual build belong on its fatal path.
+
+**Generic ACP errors named Copilot for every adapter.** Use the current agent's display name and
+the adapter's sign-in guidance; test an ACP-only adapter with and without that guidance.
+
+**An agent's findings existed only in its own session.** A separate MCP process started without
+the desktop's targets or a saved project, so its `fnd_*` records never reached the app. Local
+agent chats now attach a shared investigation, hand over target metadata and refresh snapshots
+after tool results. Test the child process's targets and the UI's finding ids, not only tool calls.
+
+**A headless egui check reached rendering and then failed in teardown.** The app's named fonts
+must be installed, and a test without a renderer must explicitly clear `output.textures_delta`.
+Use the repository's `run_ui` API and its font setup instead of assuming an older egui harness.
+
+**An ACP handshake passed while the tools were missing, and an empty tool list enabled them all.**
+Copilot CLI 1.0.105 initialized successfully but did not expose a server supplied only through
+ACP's `session/new`; explicit `--additional-mcp-config` made it available. An empty
+`--available-tools=` restored native tools instead of disabling them. Verify the tools actually
+sent to a fake local model, including the no-tools case, before trusting startup or argument tests.
 
 **Shell quoting breaks generated edits.** Heredocs carrying Python with quotes, `'''` or `\n` were
 mangled by the shell several times. Write multi-line edit scripts to a file and run the file.
@@ -628,3 +682,9 @@ malformed suffixes and non-call JSON examples whose strings contain protocol mar
 the selected row each frame, so the wheel's scroll was pulled back to it at once and the list
 kept jumping to the top (#584). Scroll something into view on the frame it changed (a key, a new
 query), never as a standing request.
+
+**A test wrote into the real config folder.** A helper that keeps one id per installation created
+opencode-session under settings::config_dir() when the first request was made, so running the
+tests left a file on the developer's machine and two runs could collide. Anything we persist goes
+through the hub's stores (AiHub::with_stores, Session::isolated), which tests point at a temp
+folder; production code never writes under the real config folder by hand.

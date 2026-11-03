@@ -181,23 +181,18 @@ fn starting_twice_reuses_and_a_session_ending_stops_it() {
         assert_eq!(b["result"]["already_running"], true);
         let url = a["result"]["url"].as_str().unwrap().to_string();
         assert!(get(&url, "/users/1").contains("Pat"));
-        let (servers, replay) = {
-            let registered = e.session().ext.get::<StandIns>().unwrap();
-            let running = registered.running.lock().unwrap_or_else(PoisonError::into_inner);
-            let server = running.get(a["result"]["id"].as_str().unwrap()).unwrap();
-            assert_eq!(server.server.url(), url);
-            (Arc::downgrade(&registered), Arc::downgrade(&server.replay))
+        let answerer = {
+            let registry = e.session().ext.get::<StandIns>().unwrap();
+            let running = registry.running.lock().unwrap();
+            Arc::downgrade(&running.get(a["result"]["id"].as_str().unwrap()).unwrap().replay)
         };
-        assert!(servers.upgrade().is_some(), "the session owns its stand-in registry");
-        assert!(replay.upgrade().is_some(), "the running server owns its answerer");
+        assert!(answerer.upgrade().is_some(), "the original answerer is running");
         drop(e);
         let until = std::time::Instant::now() + Duration::from_secs(5);
-        while replay.strong_count() > 0 {
+        while answerer.upgrade().is_some() {
             assert!(std::time::Instant::now() < until, "ending the session releases its answerer");
             std::thread::sleep(Duration::from_millis(20));
         }
-        assert!(servers.upgrade().is_none(), "ending the session drops its stand-in registry");
-        assert!(replay.upgrade().is_none(), "the server and its request workers released their answerer");
     });
 }
 

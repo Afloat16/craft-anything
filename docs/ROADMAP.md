@@ -148,12 +148,12 @@ Owner: maintainers · Status: in progress
 Review comes before new work while the queue is long, smallest and clean PRs first. A PR is merged
 only when it's green and a maintainer has fully reviewed it, code as well as wording.
 - [ ] Maintainers: protect `main` (PRs required, squash only); the only ruleset covers `release`
-- [ ] Auto mode's delete check is a safety bug that shows up as Mac test failures. It splits a
+- [x] Auto mode's delete check is a safety bug that shows up as Mac test failures. It splits a
       command on spaces, so `rm -rf "C:/x/Game Backup/y"` from a project at `C:/x/Game` goes ahead
       unasked, and it lower-cases paths, so on a Mac or Linux a delete inside a project with
       capitals in its path is refused; `auto_mode_keeps_going_but_never_does_the_dangerous_things`
       fails on a Mac for that. `real_binary_end_to_end_if_present` fails there too, expecting
-      `/bin/ls` to be Linux — in PR #357
+      `/bin/ls` to be Linux: both fixed (#357)
 - [ ] **decision** First-time contributors' CI: GitHub holds their runs for approval, so their PRs
       show no `gate` run (#490 and #413 among them, and #413 holds up #455). Approve each push, or
       change the repository's approval setting
@@ -248,6 +248,8 @@ been run live.
       Windows, macOS and Linux (`LM_STUDIO_SETTINGS` is from memory of its folders, not verified)
 - [ ] See why Bionic or LM Studio can't be picked (#140)
 - [x] Do not select an embedding, ranking or transcription model as a chat backend when a local server has no chat models — claimed: Afloat16, branch bugfix/r5.4-nonchat-model-detection-20261103
+- [x] Recognize specialised model file paths and numeric task-name versions during local chat setup
+      — claimed: Afloat16, branch bugfix/r5.4-model-task-identifiers-20261103
 
 ### R5.5 API-key builds fail in words people can use
 Owner: open · Status: todo
@@ -263,6 +265,10 @@ Owner: open · Status: todo
 - [ ] Check #369 live with Kimi K3 and a key limited to Kimi/Moonshot models (needs the person's
       OpenRouter key): that the build starts, or that the error now names the provider's reason
 - [ ] A live API-key build (needs a key on the test machine)
+- [x] A Google AI Studio (Gemini API) key is its own choice in Settings → AI and first run (#646):
+      the `gemini` backend kind uses Gemini's OpenAI-compatible endpoint and `GEMINI_API_KEY`
+- [ ] Check a Gemini build live with a real Google AI Studio key (tool calls through the
+      OpenAI-compatible endpoint)
 - [ ] Failure logs for the other ways an AI stops (API backends, MCP server start-up), like the
       ones agent CLIs write to `logs/` in the config folder
 
@@ -353,6 +359,26 @@ Owner: maintainers · Status: in progress
 
 ### R2.2 More coding agents
 Owner: open · Status: in progress
+- [x] GitHub Copilot through its own CLI login and ACP, without credential import:
+      discovery, MCP-only tool restrictions, model selection and fresh read-only questions;
+      unit tests and CLI 1.0.105 with an isolated home and loopback model, all five access modes
+      — claimed: qu-gg, branch `feature/r2.2-copilot-integration` (recorded during PR preparation)
+- [x] Review hardening: cap target handoff at 128 while preserving the active target; propagate
+      context-discovery cancellation, normalize CLI-only efforts for Claude requests, and name
+      the configured agent in shared picker warnings, with focused regressions and translations
+- [x] Local agent chats share a saved investigation and open-target metadata with MCP; background
+      refresh makes recorded findings visible in the workbench Evidence pane. `core_finding_edit`
+      corrects a finding with checked evidence and an optional revision guard, preserving confidence
+      when omitted. Builder refresh failures warn instead of ending the turn; shared ACP errors
+      use the current agent and its sign-in guidance. Engine, process-level MCP and headless
+      rendering tests cover sharing, mode boundaries and finding ids; regressions cover confidence
+      preservation, explicit overrides and agent-specific errors
+- [x] Serialize project-backed investigation load, revision check, mutation and all rendered
+      writes under one bounded, cancellable interprocess lock. Refuse malformed state rather
+      than replacing it; separate-process regressions retain concurrent appends and reject one
+      of two updates based on the same revision
+- [ ] Refresh externally changed investigation/evidence records incrementally, avoiding repeated
+      full reloads under the session lock while retaining mid-turn findings visibility
 - [x] Offer OpenCode locally and over SSH with its own visible chat models and supported thinking
       depths (Low, Medium, High, Xhigh, Max) in settings and headless clients. Choices are validated
       before saving; explicit choices are refused at execution until native MCP support is available.
@@ -546,6 +572,14 @@ Gaps found while using the app for real projects.
       request may take to arrive (#597, #598, #600, #601, by Afloat16)
 - [x] The command palette stays where the wheel scrolls it; it follows the selection only when the
       arrow keys or typing move it (#584)
+- [x] Linux: draw on the GPU that drives the screen. egui-wgpu's default picks the discrete GPU, so
+      on a laptop whose integrated GPU drives the panel the window took 20 s to open and the whole
+      desktop lagged (#571). Pick by the connected displays in `/sys/class/drm`: the built-in
+      panel's GPU, else the only GPU with displays, else the discrete one; `WGPU_POWER_PREF` and
+      `WGPU_ADAPTER_NAME` still decide when set. Checked live on an AMD + NVIDIA laptop only (#578)
+      — claimed: Nghiathan13, branch bugfix/r2.9-linux-gpu-choice
+- [ ] Linux GPU choice on a desktop with monitors on two GPUs, and on an Intel + NVIDIA laptop:
+      covered by unit tests on fake `/sys/class/drm` folders, not run on such a machine yet (#571)
 
 ### R2.10 Pinned builds
 Owner: maintainers · Status: in progress
@@ -584,6 +618,12 @@ Owner: open · Status: in progress
 
 ### R3.11 Single-file apps, game files and stand-in backends
 Owner: open · Status: in progress
+- [ ] Validate the remaining loopback fixture corrections for complete request headers,
+      negative probes and stand-in cancellation on the current main
+      — claimed: Afloat16, branch test/loopback-fixture-stability-20261103
+- [x] Verify stand-in session cleanup by the original answerer's lifetime rather than polling a
+      released port that another listener may reuse
+      — claimed: Afloat16, branch test/r3.11-standin-session-lifetime-20261103
 - [ ] Stand-in backend: writes that change later reads (recorded answers are replayed as they are)
 - [ ] Tell the builder about the stand-in backend in a website's brief, and start one from a
       recording
@@ -619,6 +659,8 @@ Owner: open · Status: in progress
       backend matches older recordings the same way), redact declared secrets in every kept field
       (names, methods, hosts, versions, timings), count body bytes before text conversion, and
       template only real calendar dates in API paths (#602–#605, by Afloat16)
+- [x] Preserve empty query pairs when matching older stand-in recordings, without treating raw
+      query separators as pairs — claimed: Afloat16, branch `bugfix/r3.13-preserve-empty-query-pairs-20261103`
 
 ---
 
