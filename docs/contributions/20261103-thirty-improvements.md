@@ -1,833 +1,470 @@
-# Thirty focused correctness improvements
+# Thirty contribution follow-ups
 
-Target repository: [storytold/craft-anything](https://github.com/storytold/craft-anything).
+Snapshot: **2026-11-03 18:30:26 UTC** / **2026-11-04 02:30:26 UTC+08:00**.
 
-All 30 implementation branches below are published in Afloat16/craft-anything. Each branch contains its focused production change, regression fixture, ROADMAP entry and STATUS coverage description. GitHub links both the author and committer of every published head to Afloat16.
+All thirty changes have upstream pull requests. The links below replace the earlier creation links. Each listed head includes main at `f5d1f275a597b434b4bc36d3af27f64bc0fd2773` through a normal merge. GitHub reports all thirty as mergeable, and no unresolved inline review threads were found at this snapshot.
 
-## Creating the upstream pull requests
+Current CI at these exact heads: **5 successful, 1 failed, 24 in progress**. Earlier successful runs are listed separately and do not cover the final main synchronization.
 
-The links below select upstream main and the corresponding fork branch, and prefill the title and full description. Click Create pull request in GitHub to submit. Upstream PR creation through the connected integration returned HTTP 403 (Resource not accessible by integration); no upstream PR number is claimed here.
+## Current pull requests
+
+| Item | Pull request | Change | Current head | Current CI |
+|---|---|---|---|---|
+| 1 | [#688](https://github.com/storytold/craft-anything/pull/688) | Reject signed LEB128 values outside the 64-bit range | [`26b1ab79`](https://github.com/Afloat16/craft-anything/commit/26b1ab7978c0eeb7baa258bfe839ff13fef2dbd0) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692721275) |
+| 2 | [#690](https://github.com/storytold/craft-anything/pull/690) | Preserve valid text around damaged modified UTF-8 | [`14e95f3e`](https://github.com/Afloat16/craft-anything/commit/14e95f3e7365aa266edc33c527b525949b9ae493) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692739762) |
+| 3 | [#691](https://github.com/storytold/craft-anything/pull/691) | Reject invalid widened Java instructions | [`ad488410`](https://github.com/Afloat16/craft-anything/commit/ad488410ebc9dc745aaea510f5ffd84ee47789ca) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692753004) |
+| 4 | [#692](https://github.com/storytold/craft-anything/pull/692) | Validate Java invocation operands before decoding calls | [`5a073e46`](https://github.com/Afloat16/craft-anything/commit/5a073e46febddc75e169e83c90a7c1cdd1437527) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692767850) |
+| 5 | [#693](https://github.com/storytold/craft-anything/pull/693) | Reject impossible DEX invocation register lists | [`390df5f8`](https://github.com/Afloat16/craft-anything/commit/390df5f83642d4aa9b7964b709079e2c411c5c58) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692778074) |
+| 6 | [#694](https://github.com/storytold/craft-anything/pull/694) | Reject invalid DEX array payload element widths | [`7d5f4770`](https://github.com/Afloat16/craft-anything/commit/7d5f4770cab5f30dee6c24fd745c35428256ae17) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692792746) |
+| 7 | [#695](https://github.com/storytold/craft-anything/pull/695) | Read SQLite text using the database encoding | [`9c49f69a`](https://github.com/Afloat16/craft-anything/commit/9c49f69a9032be69896d45419328fdac850eece6) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692801601) |
+| 8 | [#696](https://github.com/storytold/craft-anything/pull/696) | Keep SQLite cell reads within their page | [`b5b47a5d`](https://github.com/Afloat16/craft-anything/commit/b5b47a5d3d4bd39d8b396dce5d7779199091689a) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692814058) |
+| 9 | [#697](https://github.com/storytold/craft-anything/pull/697) | Stop repeated SQLite overflow pages from fabricating data | [`97b03a6f`](https://github.com/Afloat16/craft-anything/commit/97b03a6f9022a688daabc91dea259f153dad87cc) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692830030) |
+| 10 | [#698](https://github.com/storytold/craft-anything/pull/698) | Keep Android string pools within declared chunks | [`cddf8441`](https://github.com/Afloat16/craft-anything/commit/cddf8441b395105fbb452c9d060250dfb8cf448b) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692842389) |
+| 11 | [#699](https://github.com/storytold/craft-anything/pull/699) | Apply ZIP output limits to stored entries | [`1e593fbe`](https://github.com/Afloat16/craft-anything/commit/1e593fbe41ad275ab2f0f0709f4bd44e034ce962) | [success](https://github.com/storytold/craft-anything/actions/runs/41692159741) |
+| 12 | [#700](https://github.com/storytold/craft-anything/pull/700) | Check ZIP member sizes after decompression | [`e9db1bad`](https://github.com/Afloat16/craft-anything/commit/e9db1bad36cd6b70e6835fdce465573824765efa) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692181984) |
+| 13 | [#701](https://github.com/storytold/craft-anything/pull/701) | Keep ZIP64 values within their extra field | [`aa701bdf`](https://github.com/Afloat16/craft-anything/commit/aa701bdf34486de20ddaf5cc951df8b4ee017586) | [success](https://github.com/storytold/craft-anything/actions/runs/41692195763) |
+| 14 | [#702](https://github.com/storytold/craft-anything/pull/702) | Validate ASAR header framing | [`0b9f5d7c`](https://github.com/Afloat16/craft-anything/commit/0b9f5d7c8b3799d087f23ca03ca1c6fee1b54f88) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692289599) |
+| 15 | [#703](https://github.com/storytold/craft-anything/pull/703) | Traverse ROMFS dot and empty root directories | [`2bef9409`](https://github.com/Afloat16/craft-anything/commit/2bef9409336d42f1a0f764848670dfd6b69fdb87) | [success](https://github.com/storytold/craft-anything/actions/runs/41692309447) |
+| 16 | [#704](https://github.com/storytold/craft-anything/pull/704) | Report incomplete cramfs block output | [`8328b4e5`](https://github.com/Afloat16/craft-anything/commit/8328b4e549330a09b4eb787857089a5263d0966d) | [success](https://github.com/storytold/craft-anything/actions/runs/41692327401) |
+| 17 | [#705](https://github.com/storytold/craft-anything/pull/705) | Preserve sparse ext positions across indirect levels | [`13d210d6`](https://github.com/Afloat16/craft-anything/commit/13d210d63b21c1edf93d7b02d3a2f15adde544e3) | [failure](https://github.com/storytold/craft-anything/actions/runs/41692378272) |
+| 18 | [#706](https://github.com/storytold/craft-anything/pull/706) | Distinguish missing ext data from sparse holes | [`178d7897`](https://github.com/Afloat16/craft-anything/commit/178d789785ffbba3dc7bbce71a1547fb2e904544) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692394230) |
+| 19 | [#707](https://github.com/storytold/craft-anything/pull/707) | Keep PyInstaller modules within their PYZ archive | [`8612a9c7`](https://github.com/Afloat16/craft-anything/commit/8612a9c73d08d3273589679e079d293c8c3d17d8) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692411966) |
+| 20 | [#708](https://github.com/storytold/craft-anything/pull/708) | Preserve JFFS2 sizes when recovery budgets are exhausted | [`1e4d6f36`](https://github.com/Afloat16/craft-anything/commit/1e4d6f36353d2da27f0f13f0957d9c8205b7809c) | [success](https://github.com/storytold/craft-anything/actions/runs/41692427030) |
+| 21 | [#709](https://github.com/storytold/craft-anything/pull/709) | Keep comments when adding the first JSON configuration value | [`8af65ca7`](https://github.com/Afloat16/craft-anything/commit/8af65ca72d40c5284d15cf96e1ecc29ab41ca9cc) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41693676646) |
+| 22 | [#710](https://github.com/storytold/craft-anything/pull/710) | Remove every duplicate JSON configuration key | [`7a32fc54`](https://github.com/Afloat16/craft-anything/commit/7a32fc5486c96358ae52a6f5494ca4f7b0244300) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41693809704) |
+| 23 | [#711](https://github.com/storytold/craft-anything/pull/711) | Keep UDP payloads within declared datagram lengths | [`2f653396`](https://github.com/Afloat16/craft-anything/commit/2f6533961eaeecfd8ca94337ffedd681a39b6acc) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41693826718) |
+| 24 | [#712](https://github.com/storytold/craft-anything/pull/712) | Reject invalid TCP header lengths | [`83487ac2`](https://github.com/Afloat16/craft-anything/commit/83487ac2fe99f0bc9dfab5230366bb6e7fd5e30d) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41693841558) |
+| 25 | [#713](https://github.com/storytold/craft-anything/pull/713) | Respect DNS-over-TCP frame lengths | [`67f0cfb7`](https://github.com/Afloat16/craft-anything/commit/67f0cfb73ae21e2e8a9aff0bec5280792d967680) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41693932774) |
+| 26 | [#714](https://github.com/storytold/craft-anything/pull/714) | Validate pcapng block framing | [`d9ffd0cd`](https://github.com/Afloat16/craft-anything/commit/d9ffd0cd0fd4467b042de22c9755dc665830610f) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41693917149) |
+| 27 | [#715](https://github.com/storytold/craft-anything/pull/715) | Keep TLS metadata within declared lengths | [`a3f8763f`](https://github.com/Afloat16/craft-anything/commit/a3f8763f4aa84cdeeba2dd0a05b1230b388dd241) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41693905229) |
+| 28 | [#716](https://github.com/storytold/craft-anything/pull/716) | Preserve distinct response metadata in replay samples | [`53a902a7`](https://github.com/Afloat16/craft-anything/commit/53a902a772d30e78951e2b8af5e301f4e1738052) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41693894074) |
+| 29 | [#717](https://github.com/storytold/craft-anything/pull/717) | Apply replay body limits after redaction | [`f6c86482`](https://github.com/Afloat16/craft-anything/commit/f6c86482cab1d888aacc8f932591585a7fd80a61) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41693880980) |
+| 30 | [#718](https://github.com/storytold/craft-anything/pull/718) | Create atomic-write temporary files exclusively | [`fb8a7df0`](https://github.com/Afloat16/craft-anything/commit/fb8a7df04af3ba1b84414a997b0b3bde00d3b5e3) | [in_progress](https://github.com/storytold/craft-anything/actions/runs/41693868110) |
+
+## Verification of the synchronization
+
+Every branch was checked against the fixed main snapshot. Its first parent is the previous contribution head and its second parent is `f5d1f275`. The branch-owned production and regression blobs were preserved. The only conflict resolutions combine ROADMAP and STATUS entries; each contribution's STATUS row is at the end of the first table. Main's conversation-width and desktop-app records remain present.
+
+Equivalent commits already present on the account were retained. No force pushes were used. The author and committer remain Afloat. These checks establish the source and ancestry of each published head; the linked CI runs establish execution status.
+
+## Follow-up corrections
+
+- **#692:** propagate incomplete Java bytecode scans through class references and the references tool, retaining earlier references and subsequent methods. Two class-level regressions accompany the correction. The review thread is resolved.
+- **#695:** use typed two-byte chunks for UTF-16 decoding to satisfy strict Clippy, preserve odd-byte replacement, and retain repository formatting.
+- **#716–#718:** the original implementation heads now have successful CI records. Their source and test blobs remain unchanged in the synchronized heads.
+
+| PR | Earlier tested implementation head | Successful CI |
+|---|---|---|
+| [#692](https://github.com/storytold/craft-anything/pull/692) | [`e7cd6da5`](https://github.com/Afloat16/craft-anything/commit/e7cd6da59d2858dc9ab5e9fba1fcd2ceaaea434f) | [41688827573](https://github.com/storytold/craft-anything/actions/runs/41688827573) |
+| [#695](https://github.com/storytold/craft-anything/pull/695) | [`8357dced`](https://github.com/Afloat16/craft-anything/commit/8357dced53cb153764d503c8cee312499d457919) | [41689288428](https://github.com/storytold/craft-anything/actions/runs/41689288428) |
+| [#716](https://github.com/storytold/craft-anything/pull/716) | [`ec385c38`](https://github.com/Afloat16/craft-anything/commit/ec385c38b69e021617bd2b93f226d891cefb0c9a) | [41686996208](https://github.com/storytold/craft-anything/actions/runs/41686996208) |
+| [#717](https://github.com/storytold/craft-anything/pull/717) | [`b9586247`](https://github.com/Afloat16/craft-anything/commit/b95862470c5e75af14f5bcd9247fc7a1c2cce9dd) | [41687009280](https://github.com/storytold/craft-anything/actions/runs/41687009280) |
+| [#718](https://github.com/storytold/craft-anything/pull/718) | [`5f0f1ce2`](https://github.com/Afloat16/craft-anything/commit/5f0f1ce228af21a6ccc6494f6dacf392357f56a1) | [41687019068](https://github.com/storytold/craft-anything/actions/runs/41687019068) |
+
+## Current CI failure
+
+[#705, run 41692378272, attempt 1](https://github.com/storytold/craft-anything/actions/runs/41692378272/job/126113975177) failed in the existing NeedBuilder UI smoke test. UI smoke: 76 passed, 1 failed, 0 ignored. Both ext_sparse_indirect regressions passed; the executed formats tests totalled 467 passed, 0 failed, 0 ignored. Formatting, strict workspace Clippy, layers, locks and secrets checks passed before the failure. Later gates did not run.
+
+The entire smoke.rs is unchanged from f5d1f275. Existing PR #681 targets this fixture and has a successful full CI run; this log does not establish the precise asynchronous event order. [#681](https://github.com/storytold/craft-anything/pull/681) passed [CI 41670991884](https://github.com/storytold/craft-anything/actions/runs/41670991884), including all 75 smoke tests on its tested merge. No ext change is justified by this failure.
+
+## Earlier CI failures
+
+These runs belong to the previous heads, before the final main synchronization. Their failure logs remain useful context; they are not the status of the current heads in the table above.
+
+| PR and earlier run | Observed failure | Follow-up |
+|---|---|---|
+| [#693, 41687565823](https://github.com/storytold/craft-anything/actions/runs/41687565823/job/126097243842) | Expected OverLimit, observed EngineMissing; server reported BrokenPipe. This fixture already reads the complete request body. The log does not establish the transport or classification root cause. | Keep the error-classification assertion; no speculative parser or fixture change. |
+| [#700, 41687698727](https://github.com/storytold/craft-anything/actions/runs/41687698727/job/126097714866) | Existing single-read HTTP fixture returned None and reported BrokenPipe. The two ZIP regression tests were not reached. | The separate loopback fixture branch 35a32fdb consumes the complete bounded request header; upstream PR creation remains pending. |
+| [#702, 41687774538](https://github.com/storytold/craft-anything/actions/runs/41687774538/job/126097979711) | The cleanup-path assertion failed. Source inspection shows a deleted timestamp-based name can be reused within one millisecond; the log does not print the paths, so that mechanism is not an executed reproduction. | The separate paste-cleanup fixture gives the old image a fixed historical name and retains the deletion/retention assertions; upstream PR creation remains pending. |
+| [#704, 41687797277](https://github.com/storytold/craft-anything/actions/runs/41687797277/job/126098059280) | Expected Transient, observed Unknown. The unchanged test passed in other contemporaneous runs; the first error/event is absent from this log. | Preserve the Transient assertion. A startup-versus-transport root cause is not established. |
+| [#711, 41687928153](https://github.com/storytold/craft-anything/actions/runs/41687928153/job/126098521460) | Existing NeedBuilder UI smoke assertion failed after all four UDP regressions and the 399 formats unit tests passed. | Existing PR #681 isolates discovery in this fixture and has a successful full CI run; it is not yet in the fixed base. |
+
+The ready loopback fixture is on [`test/loopback-fixture-stability-20261103`](https://github.com/Afloat16/craft-anything/tree/test/loopback-fixture-stability-20261103). The paste-cleanup fixture is on [`test/r2.9-paste-cleanup-fixture-20261104`](https://github.com/Afloat16/craft-anything/tree/test/r2.9-paste-cleanup-fixture-20261104). Both are separate test follow-ups, with current execution pending.
 
 ## Validation record
 
-- Implementation baseline: `b79fc506e2f119f9188edb791b900df5170e155b`.
-- Items 1–27: individual affected-formats tests, strict Clippy and formatting completed successfully.
-- Combined source/test tree for items 1–27: `450d06683b305748efc07415a05d0edd7e9ed374`; 563 tests passed, 0 ignored. Doctests, strict Clippy, formatting and whitespace checks also passed. This is a recorded local integration tree, not a published branch.
-- Independent shared WASM checks confirmed for items 1–19 and 22. Checks for 20, 21 and 23–29 remain pending. Item 30 changes the native platform crate, outside that shared five-crate WASM check.
-- Items 28–30: source, regression logic and published blob identities checked. Native tests, formatting, Clippy and other required execution gates remain pending because the execution environment became unavailable.
-- The fork CI probe produced no Actions run or check suite and has been closed without merging. It is not one of the 30 proposed upstream changes.
-- Upstream snapshot `87174476d9e8b0395155926f8329bf93a2c60e82`, checked at 2026-11-03 17:32:57 UTC, added two AI/CLI commits after the implementation baseline. Their source files, tests, dependency manifests and document edit locations do not overlap these changes. This was a file/hunk comparison, not an executed merge.
-- The independent PRs edit common ROADMAP/STATUS sections, so applying them in sequence may require resolving documentation insertions. Their combined format code and tests were validated together as recorded above.
+The [earlier validation record](https://github.com/Afloat16/craft-anything/blob/ae2855a83af28a1050b43c5be00428f7b34c53ee/docs/contributions/20261103-thirty-improvements.md#validation-record) reported affected formats tests, strict Clippy and formatting for items 1–27, and a combined result of 563 passed with 0 ignored at tree `450d06683b305748efc07415a05d0edd7e9ed374`. That combined tree was local and was not published as a Git object; the record does not provide an Actions run or job ID.
 
-## Submission links
+The earlier record marked shared WASM checks passed for items 1–19 and 22, pending for 20–21 and 23–29, and not applicable to item 30. These are historical values. No new standalone shared-target execution is claimed by this synchronization.
 
-| # | Change | Commit | Prefilled pull request | Execution status |
-|---|---|---|---|---|
-| 1 | Reject signed LEB128 values outside the 64-bit range | [c6f25651](https://github.com/Afloat16/craft-anything/commit/c6f256518b2e16c91087211665beab4a78df3e96) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-dex-signed-leb128-20261103b?quick_pull=1&title=Reject+signed+LEB128+values+outside+the+64-bit+range&body=%23%23+Change%0A%0AReject+invalid+sign+extension+in+the+tenth+byte+so+malformed+exception+counts+cannot+become+valid+values.%0A%0A%23%23+Regression+coverage%0A%0ASigned-limit+and+overflowing+tenth-byte+regressions.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.%0A%0AScope%3A+the+current+signed+64-bit+LEB128+helper%3B+broader+DEX+32-bit+operand+rules+are+unchanged.) | Native + shared WASM passed |
-| 2 | Preserve valid text around damaged modified UTF-8 | [7defc6c3](https://github.com/Afloat16/craft-anything/commit/7defc6c3583946aa1072ddb209734f2f25817c6b) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-modified-utf8-validation-20261103b?quick_pull=1&title=Preserve+valid+text+around+damaged+modified+UTF-8&body=%23%23+Change%0A%0AValidate+continuation+and+overlong+encodings+in+the+shared+DEX%2FJava+decoder+while+preserving+valid+following+text%2C+encoded+NUL+and+surrogate+pairs.%0A%0A%23%23+Regression+coverage%0A%0AMalformed+encodings+and+valid+surrounding+text+controls.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.) | Native + shared WASM passed |
-| 3 | Reject invalid widened Java instructions | [206c2804](https://github.com/Afloat16/craft-anything/commit/206c2804e54ad8639965203c6a16cff2732f3c8c) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-java-wide-opcodes-20261103b?quick_pull=1&title=Reject+invalid+widened+Java+instructions&body=%23%23+Change%0A%0AAllow+wide+only+for+the+defined+load%2C+store%2C+ret+and+iinc+instructions+so+malformed+bytecode+cannot+be+decoded+as+a+valid+widened+operation.%0A%0A%23%23+Regression+coverage%0A%0AAllowed+widened+operations+and+invalid+opcode+regressions.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.) | Native + shared WASM passed |
-| 4 | Validate Java invocation operands before decoding calls | [63e3af8d](https://github.com/Afloat16/craft-anything/commit/63e3af8dbad23f0885590d3b7d7912440acf1d68) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-java-invoke-operands-20261103b?quick_pull=1&title=Validate+Java+invocation+operands+before+decoding+calls&body=%23%23+Change%0A%0ARequire+a+nonzero+invokeinterface+count+and+zero+reserved+operand+bytes+before+accepting+interface+or+dynamic+calls.%0A%0A%23%23+Regression+coverage%0A%0AInvalid+counts%2C+reserved+bytes+and+valid+invocation+controls.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.) | Native + shared WASM passed |
-| 5 | Reject impossible DEX invocation register lists | [6da3b104](https://github.com/Afloat16/craft-anything/commit/6da3b104817744d3baefad1a01413db6d3df2930) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-dex-invoke-registers-20261103b?quick_pull=1&title=Reject+impossible+DEX+invocation+register+lists&body=%23%23+Change%0A%0AReject+fixed+invocation+lists+larger+than+five+registers+and+range+operands+extending+beyond+the+register+index+space.%0A%0A%23%23+Regression+coverage%0A%0AOversized+fixed+lists%2C+overflowing+ranges+and+valid+boundaries.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.) | Native + shared WASM passed |
-| 6 | Reject invalid DEX array payload element widths | [e4802ee7](https://github.com/Afloat16/craft-anything/commit/e4802ee7713eff91eb9a6e27a0459c0383f63761) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-dex-array-widths-20261103b?quick_pull=1&title=Reject+invalid+DEX+array+payload+element+widths&body=%23%23+Change%0A%0AAccept+only+1%2C+2%2C+4+or+8+byte+array+elements%2C+rejecting+unsupported+and+zero+widths+before+payload-size+calculations.%0A%0A%23%23+Regression+coverage%0A%0AInvalid+element+widths%2C+large+counts+and+valid+width+controls.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.) | Native + shared WASM passed |
-| 7 | Read SQLite text using the database encoding | [be78da06](https://github.com/Afloat16/craft-anything/commit/be78da063a6ebac4e8f399d8ef7da793981ec95b) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-sqlite-text-encoding-20261103b?quick_pull=1&title=Read+SQLite+text+using+the+database+encoding&body=%23%23+Change%0A%0AUse+the+database+text+encoding+for+schema+and+row+text+so+UTF-16+databases+are+decoded+correctly.%0A%0A%23%23+Regression+coverage%0A%0AUTF-8%2C+UTF-16LE+and+UTF-16BE+schema+and+row+fixtures.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.) | Native + shared WASM passed |
-| 8 | Keep SQLite cell reads within their page | [1d2a3b0f](https://github.com/Afloat16/craft-anything/commit/1d2a3b0f812bc0cac6414d278142ad82a13b5bd7) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-sqlite-page-boundaries-20261103b?quick_pull=1&title=Keep+SQLite+cell+reads+within+their+page&body=%23%23+Change%0A%0AConstrain+cell+headers%2C+pointer+arrays+and+payload+reads+to+the+current+usable+page+instead+of+borrowing+bytes+from+a+neighboring+page.%0A%0A%23%23+Regression+coverage%0A%0AMalformed+page+pointers+and+truncated+page-local+data.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.) | Native + shared WASM passed |
-| 9 | Stop repeated SQLite overflow pages from fabricating data | [bc148211](https://github.com/Afloat16/craft-anything/commit/bc1482115787d4fa0172c2901ac16c1479724dcb) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-sqlite-overflow-cycles-20261103b?quick_pull=1&title=Stop+repeated+SQLite+overflow+pages+from+fabricating+data&body=%23%23+Change%0A%0ATrack+visited+overflow+pages+and+stop+repeated+pages+while+retaining+only+the+actually+recovered+partial+payload.%0A%0A%23%23+Regression+coverage%0A%0ARepeated-page+and+cyclic+overflow-chain+regressions.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.) | Native + shared WASM passed |
-| 10 | Keep Android string pools within declared chunks | [4c00f0e3](https://github.com/Afloat16/craft-anything/commit/4c00f0e3dca3fac29d95b85f53620ceed323ebe7) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-android-string-pool-bounds-20261103b?quick_pull=1&title=Keep+Android+string+pools+within+declared+chunks&body=%23%23+Change%0A%0AValidate+chunk+framing%2C+offsets%2C+string%2Fstyle+regions+and+terminators+before+decoding+string+pool+entries.%0A%0A%23%23+Regression+coverage%0A%0AOut-of-chunk+offsets%2C+malformed+regions+and+termination+checks.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.) | Native + shared WASM passed |
-| 11 | Apply ZIP output limits to stored entries | [77e23540](https://github.com/Afloat16/craft-anything/commit/77e235402385fe77f436a107db8bc6123e494571) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-zip-stored-cap-20261103b?quick_pull=1&title=Apply+ZIP+output+limits+to+stored+entries&body=%23%23+Change%0A%0ACheck+the+actual+stored+entry+length+before+allocation+so+stored+members+obey+the+same+extraction+output+cap.%0A%0A%23%23+Regression+coverage%0A%0AOversized+stored+members+and+exact-limit+controls.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.) | Native + shared WASM passed |
-| 12 | Check ZIP member sizes after decompression | [fc6b69da](https://github.com/Afloat16/craft-anything/commit/fc6b69da397429a80715f8e4b9f6c2d3580301ee) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-zip-decoded-size-20261103b?quick_pull=1&title=Check+ZIP+member+sizes+after+decompression&body=%23%23+Change%0A%0ACompare+the+decoded+member+size+with+the+advertised+uncompressed+size+before+returning+recovered+content.%0A%0A%23%23+Regression+coverage%0A%0ADecoded-size+mismatches+and+valid+member+controls.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.) | Native + shared WASM passed |
-| 13 | Keep ZIP64 values within their extra field | [9aecbbae](https://github.com/Afloat16/craft-anything/commit/9aecbbae5e80a50a0cc4e4652cf9d42595430ad3) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-zip64-extra-boundaries-20261103b?quick_pull=1&title=Keep+ZIP64+values+within+their+extra+field&body=%23%23+Change%0A%0ARead+ZIP64+metadata+only+inside+its+own+extra+field+and+reject+missing+metadata+for+sentinel+size+or+offset+values.%0A%0A%23%23+Regression+coverage%0A%0ATruncated+ZIP64+fields%2C+adjacent+fields+and+missing+sentinel+metadata.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.) | Native + shared WASM passed |
-| 14 | Validate ASAR header framing | [e0010694](https://github.com/Afloat16/craft-anything/commit/e0010694cbf37bdd894a9528a309d7a258bcd66a) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-asar-header-bounds-20261103b?quick_pull=1&title=Validate+ASAR+header+framing&body=%23%23+Change%0A%0AValidate+nested+header+lengths+and+ensure+the+complete+declared+header+lies+within+the+archive+before+parsing+it.%0A%0A%23%23+Regression+coverage%0A%0AInconsistent+nested+lengths+and+truncated+archive+headers.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.) | Native + shared WASM passed |
-| 15 | Traverse ROMFS dot and empty root directories | [d2b4ec71](https://github.com/Afloat16/craft-anything/commit/d2b4ec71bf85888c47930c222963db2c0418d831) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-romfs-root-directory-20261103b?quick_pull=1&title=Traverse+ROMFS+dot+and+empty+root+directories&body=%23%23+Change%0A%0ATraverse+children+for+supported+dot+and+empty+root+names+so+valid+root+layouts+expose+their+contained+files.%0A%0A%23%23+Regression+coverage%0A%0ARoot+layout%2C+recovered+contents+and+entry-limit+fixtures.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.%0A%0AScope%3A+supported+root-directory+layouts%3B+existing+nested-directory+handling+is+preserved.) | Native + shared WASM passed |
-| 16 | Report incomplete cramfs block output | [49b87d98](https://github.com/Afloat16/craft-anything/commit/49b87d98ff18f2a01411c083e9d8a379afc9943d) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-cramfs-block-lengths-20261103b?quick_pull=1&title=Report+incomplete+cramfs+block+output&body=%23%23+Change%0A%0ARequire+full-sized+decoded+blocks+and+the+exact+final+remainder+before+claiming+complete+file+recovery.%0A%0A%23%23+Regression+coverage%0A%0AShort+intermediate+blocks%2C+final+block+lengths+and+valid+controls.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.) | Native + shared WASM passed |
-| 17 | Preserve sparse ext positions across indirect levels | [dc86da3e](https://github.com/Afloat16/craft-anything/commit/dc86da3e15d599217c8662c90d48487ed66e0f77) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-ext-sparse-indirect-20261103b?quick_pull=1&title=Preserve+sparse+ext+positions+across+indirect+levels&body=%23%23+Change%0A%0AAdvance+by+the+logical+span+of+a+missing+indirect+block+so+later+data+stays+at+the+correct+file+offset.%0A%0A%23%23+Regression+coverage%0A%0AMissing+indirect+spans+and+later+mapped+data+regressions.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.) | Native + shared WASM passed |
-| 18 | Distinguish missing ext data from sparse holes | [59b9f2ea](https://github.com/Afloat16/craft-anything/commit/59b9f2ea006993970fe5a27cab99d94442927577) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-ext-missing-blocks-20261103b?quick_pull=1&title=Distinguish+missing+ext+data+from+sparse+holes&body=%23%23+Change%0A%0AReport+mapped+data+blocks+beyond+the+captured+image+as+unavailable+instead+of+silently+returning+zero-filled+bytes.%0A%0A%23%23+Regression+coverage%0A%0AOut-of-image+mapped+blocks+and+real+sparse-hole+controls.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.%0A%0AScope%3A+missing+mapped+data+blocks.+Indirect+and+extent+metadata+recovery+remains+separate+roadmap+work.) | Native + shared WASM passed |
-| 19 | Keep PyInstaller modules within their PYZ archive | [caefe67e](https://github.com/Afloat16/craft-anything/commit/caefe67e5102f34483352944ce160f8a9a25e704) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-pyz-module-bounds-20261103b?quick_pull=1&title=Keep+PyInstaller+modules+within+their+PYZ+archive&body=%23%23+Change%0A%0AReject+listed+module+payloads+outside+the+PYZ+archive+rather+than+reading+bytes+from+neighboring+outer+members.%0A%0A%23%23+Regression+coverage%0A%0AA+module+starting+at+the+PYZ+end+with+a+valid+adjacent+outer+member.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.%0A%0AScope%3A+module+entries+produced+by+the+archive+listing.) | Native + shared WASM passed |
-| 20 | Preserve JFFS2 sizes when recovery budgets are exhausted | [07705032](https://github.com/Afloat16/craft-anything/commit/077050320b0dc5a7a5fc0ef9d72655185f5848a0) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-jffs2-unrecovered-size-20261103b?quick_pull=1&title=Preserve+JFFS2+sizes+when+recovery+budgets+are+exhausted&body=%23%23+Change%0A%0AKeep+the+latest+inode+logical+size+when+per-file+or+total+recovery+budgets+prevent+retaining+the+file+contents.%0A%0A%23%23+Regression+coverage%0A%0APer-file+and+total-budget+exhaustion+fixtures.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+The+independent+shared+WASM+gate+remains+pending.%0A%0AScope%3A+recovery-budget+failures%3B+unsupported+compression+handling+is+unchanged.) | Native passed; shared WASM pending |
-| 21 | Keep comments when adding the first JSON configuration value | [35da589f](https://github.com/Afloat16/craft-anything/commit/35da589f43453bd1322f823f0f03fdec608510fb) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-jsonc-comment-only-20261103b?quick_pull=1&title=Keep+comments+when+adding+the+first+JSON+configuration+value&body=%23%23+Change%0A%0APreserve+leading+comments%2C+a+byte-order+mark+and+newline+style+when+inserting+the+first+configuration+value.%0A%0A%23%23+Regression+coverage%0A%0AComment-only+inputs%2C+BOM+and+newline-style+controls.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+The+independent+shared+WASM+gate+remains+pending.) | Native passed; shared WASM pending |
-| 22 | Remove every duplicate JSON configuration key | [a4ce5ea4](https://github.com/Afloat16/craft-anything/commit/a4ce5ea4cca6c56cee7bf860751ea7a3fd775736) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-jsonc-duplicate-removal-20261103b?quick_pull=1&title=Remove+every+duplicate+JSON+configuration+key&body=%23%23+Change%0A%0ARemove+every+occurrence+of+the+requested+key+while+keeping+valid+separators+and+independent+comments+between+entries.%0A%0A%23%23+Regression+coverage%0A%0AAdjacent+duplicates%2C+separators+and+retained+line%2Fblock+comments.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+Shared+WASM+checks+passed.) | Native + shared WASM passed |
-| 23 | Keep UDP payloads within declared datagram lengths | [11f4e9ea](https://github.com/Afloat16/craft-anything/commit/11f4e9ea85375e06204e98fac55bab9261602f61) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-udp-length-bounds-20261103b?quick_pull=1&title=Keep+UDP+payloads+within+declared+datagram+lengths&body=%23%23+Change%0A%0ADiagnose+invalid+or+truncated+datagrams+and+prevent+trailing+capture+bytes+from+being+interpreted+as+UDP+payload+or+DNS+data.%0A%0A%23%23+Regression+coverage%0A%0AInvalid+lengths%2C+truncation%2C+trailing+padding+and+valid+datagrams.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+The+independent+shared+WASM+gate+remains+pending.%0A%0AScope%3A+ordinary+UDP+datagrams%3B+IPv6+jumbograms+are+not+added.) | Native passed; shared WASM pending |
-| 24 | Reject invalid TCP header lengths | [d9a65e6f](https://github.com/Afloat16/craft-anything/commit/d9a65e6f4d2db3dc288bb6cf3b2808bf74323d8d) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-tcp-header-bounds-20261103b?quick_pull=1&title=Reject+invalid+TCP+header+lengths&body=%23%23+Change%0A%0AReject+data+offsets+below+the+minimum+header+or+beyond+captured+bytes+before+exposing+a+TCP+payload.%0A%0A%23%23+Regression+coverage%0A%0AUndersized+headers%2C+offsets+beyond+capture+and+valid+headers.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+The+independent+shared+WASM+gate+remains+pending.) | Native passed; shared WASM pending |
-| 25 | Respect DNS-over-TCP frame lengths | [8cbfa44c](https://github.com/Afloat16/craft-anything/commit/8cbfa44cd91470b0b1bfb27ac3d1c1e89a145fbe) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-tcp-dns-framing-20261103b?quick_pull=1&title=Respect+DNS-over-TCP+frame+lengths&body=%23%23+Change%0A%0ALimit+decoding+to+the+first+complete+length-prefixed+DNS+message+and+diagnose+truncated+frames.%0A%0A%23%23+Regression+coverage%0A%0AIncomplete+frames%2C+trailing+data+and+valid+first-message+controls.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+The+independent+shared+WASM+gate+remains+pending.%0A%0AScope%3A+one+complete+captured+DNS%2FTCP+message%3B+stream+reassembly+is+not+added.) | Native passed; shared WASM pending |
-| 26 | Validate pcapng block framing | [533d404f](https://github.com/Afloat16/craft-anything/commit/533d404ff9234db41e15f11ac63c49c931326f02) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-pcapng-block-framing-20261103b?quick_pull=1&title=Validate+pcapng+block+framing&body=%23%23+Change%0A%0AValidate+repeated+block+lengths+and+each+supported+fixed+header+before+reading+interfaces+or+packets%3B+update+section+byte+order+only+after+validation.%0A%0A%23%23+Regression+coverage%0A%0AMismatched+trailers%2C+short+supported+blocks%2C+both+byte+orders+and+valid+capture+controls.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+The+independent+shared+WASM+gate+remains+pending.%0A%0ARemaining+roadmap+work%3A+checked+32-bit+arithmetic+for+captured+lengths+and+section-relative+interface+ids.) | Native passed; shared WASM pending |
-| 27 | Keep TLS metadata within declared lengths | [b0decf6f](https://github.com/Afloat16/craft-anything/commit/b0decf6f3187770147f9f921a2b4f4656a280641) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-tls-declared-bounds-20261103b?quick_pull=1&title=Keep+TLS+metadata+within+declared+lengths&body=%23%23+Change%0A%0ABound+nested+record%2C+handshake+and+extension+slices+before+reading+TLS+hello+metadata.%0A%0A%23%23+Regression+coverage%0A%0ATen+fixtures+cover+truncation%2C+injected+trailing+bytes+and+valid+SNI%2FALPN+and+TLS+1.2+hellos.%0A%0A%23%23+Validation%0A%0AAffected+formats+tests%2C+strict+Clippy+and+formatting+passed.+The+combined+27-change+formats+run+passed+563+tests+with+0+ignored.+The+independent+shared+WASM+gate+remains+pending.) | Native passed; shared WASM pending |
-| 28 | Preserve distinct response metadata in replay samples | [ec385c38](https://github.com/Afloat16/craft-anything/commit/ec385c38b69e021617bd2b93f226d891cefb0c9a) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.11-standin-sample-metadata-20261103b?quick_pull=1&title=Preserve+distinct+response+metadata+in+replay+samples&body=%23%23+Change%0A%0AConsecutive+samples+compare+all+response+fields%2C+keeping+distinct+headers%2C+content+types+and+omitted-body+metadata.%0A%0A%23%23+Regression+coverage%0A%0AFive+regressions+cover+changing+Location+headers%2C+MIME+types%2C+omitted-body+reasons%2C+cached+304+markers+and+identical-sample+deduplication.%0A%0A%23%23+Validation%0A%0ASource+and+published+files+checked.+Automated+tests%2C+formatting%2C+Clippy+and+remaining+gates+are+pending+because+the+execution+environment+is+unavailable.) | Execution gates pending |
-| 29 | Apply replay body limits after redaction | [b9586247](https://github.com/Afloat16/craft-anything/commit/b95862470c5e75af14f5bcd9247fc7a1c2cce9dd) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.11-standin-redacted-budget-20261103b?quick_pull=1&title=Apply+replay+body+limits+after+redaction&body=%23%23+Change%0A%0ACheck+the+redacted+text+against+each+body+and+capture+budget+before+retaining+it+or+charging+its+bytes.%0A%0A%23%23+Regression+coverage%0A%0AFour+regressions+cover+expanding+redactions%2C+per-body+and+total+limits%2C+exact+retained+size+and+rejected-body+budget+accounting.%0A%0A%23%23+Validation%0A%0ASource+and+published+files+checked.+Automated+tests%2C+formatting%2C+Clippy+and+remaining+gates+are+pending+because+the+execution+environment+is+unavailable.%0A%0AScope%3A+retained+text+bytes.+Existing+raw-input+prechecks+remain+in+place%3B+temporary+redaction+allocations+are+not+bounded+by+this+change.) | Execution gates pending |
-| 30 | Create atomic-write temporary files exclusively | [5f0f1ce2](https://github.com/Afloat16/craft-anything/commit/5f0f1ce228af21a6ccc6494f6dacf392357f56a1) | [Open form](https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r2.9-atomic-temp-creation-20261103b?quick_pull=1&title=Create+atomic-write+temporary+files+exclusively&body=%23%23+Change%0A%0AReserve+temporary+files+exclusively+with+bounded+collision+retries%2C+and+only+clean+up+a+file+reserved+by+the+current+write.%0A%0A%23%23+Regression+coverage%0A%0AOne+filesystem+regression+covers+existing+files%2C+Unix+symlinks%2C+private+and+inherited+permissions%2C+exhausted+retries+and+cleanup+after+rename+failure.%0A%0A%23%23+Validation%0A%0ASource+and+published+files+checked.+Automated+tests%2C+formatting%2C+Clippy+and+remaining+gates+are+pending+because+the+execution+environment+is+unavailable.) | Execution gates pending |
+The accompanying JSON preserves each original head and validation summary alongside current commit, tree, file hashes and CI identities. A successful earlier run must not be presented as execution of a newer synchronized head.
 
-## Change details
+## Change and regression details
 
-### 1. Reject signed LEB128 values outside the 64-bit range
-
-Branch: `bugfix/r3.12-dex-signed-leb128-20261103b`  
-Head: `c6f256518b2e16c91087211665beab4a78df3e96`  
-Tree: `234f18ee48d22b60a29da7db5da11fb2f885fa39`
-
-## Change
+### 1. Reject signed LEB128 values outside the 64-bit range — [#688](https://github.com/storytold/craft-anything/pull/688)
 
 Reject invalid sign extension in the tenth byte so malformed exception counts cannot become valid values.
 
-## Regression coverage
-
-Signed-limit and overflowing tenth-byte regressions.
-
-## Validation
-
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.
+**Regression coverage:** Signed-limit and overflowing tenth-byte regressions.
 
 Scope: the current signed 64-bit LEB128 helper; broader DEX 32-bit operand rules are unchanged.
 
-Files:
+**Current head:** [`26b1ab7978c0eeb7baa258bfe839ff13fef2dbd0`](https://github.com/Afloat16/craft-anything/commit/26b1ab7978c0eeb7baa258bfe839ff13fef2dbd0). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692721275).
 
-- [crates/formats/src/dex.rs](https://github.com/Afloat16/craft-anything/blob/c6f256518b2e16c91087211665beab4a78df3e96/crates/formats/src/dex.rs)
-- [crates/formats/tests/dex_signed_leb128.rs](https://github.com/Afloat16/craft-anything/blob/c6f256518b2e16c91087211665beab4a78df3e96/crates/formats/tests/dex_signed_leb128.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/c6f256518b2e16c91087211665beab4a78df3e96/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/c6f256518b2e16c91087211665beab4a78df3e96/docs/STATUS.md)
+**Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687513072) at `47dd4c4b7edee5fbec50cf7f47343779623677fd`.
 
-### 2. Preserve valid text around damaged modified UTF-8
+**Files:** `crates/formats/src/dex.rs`, `crates/formats/tests/dex_signed_leb128.rs`.
 
-Branch: `bugfix/r3.12-modified-utf8-validation-20261103b`  
-Head: `7defc6c3583946aa1072ddb209734f2f25817c6b`  
-Tree: `88f3f94d63b7862da67fff9eed48aab26c4cc249`
-
-## Change
+### 2. Preserve valid text around damaged modified UTF-8 — [#690](https://github.com/storytold/craft-anything/pull/690)
 
 Validate continuation and overlong encodings in the shared DEX/Java decoder while preserving valid following text, encoded NUL and surrogate pairs.
 
-## Regression coverage
+**Regression coverage:** Malformed encodings and valid surrounding text controls.
 
-Malformed encodings and valid surrounding text controls.
+**Current head:** [`14e95f3e7365aa266edc33c527b525949b9ae493`](https://github.com/Afloat16/craft-anything/commit/14e95f3e7365aa266edc33c527b525949b9ae493). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692739762).
 
-## Validation
+**Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687531781) at `47c038446f08c8d58f8baa830f513eed17e7458c`.
 
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.
+**Files:** `crates/formats/src/bytes.rs`, `crates/formats/src/dex.rs`, `crates/formats/src/java_class.rs`, `crates/formats/tests/modified_utf8_validation.rs`.
 
-Files:
-
-- [crates/formats/src/bytes.rs](https://github.com/Afloat16/craft-anything/blob/7defc6c3583946aa1072ddb209734f2f25817c6b/crates/formats/src/bytes.rs)
-- [crates/formats/src/dex.rs](https://github.com/Afloat16/craft-anything/blob/7defc6c3583946aa1072ddb209734f2f25817c6b/crates/formats/src/dex.rs)
-- [crates/formats/src/java_class.rs](https://github.com/Afloat16/craft-anything/blob/7defc6c3583946aa1072ddb209734f2f25817c6b/crates/formats/src/java_class.rs)
-- [crates/formats/tests/modified_utf8_validation.rs](https://github.com/Afloat16/craft-anything/blob/7defc6c3583946aa1072ddb209734f2f25817c6b/crates/formats/tests/modified_utf8_validation.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/7defc6c3583946aa1072ddb209734f2f25817c6b/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/7defc6c3583946aa1072ddb209734f2f25817c6b/docs/STATUS.md)
-
-### 3. Reject invalid widened Java instructions
-
-Branch: `bugfix/r3.12-java-wide-opcodes-20261103b`  
-Head: `206c2804e54ad8639965203c6a16cff2732f3c8c`  
-Tree: `f6e75080a84518ec24519679f734e6e0bd4322e0`
-
-## Change
+### 3. Reject invalid widened Java instructions — [#691](https://github.com/storytold/craft-anything/pull/691)
 
 Allow wide only for the defined load, store, ret and iinc instructions so malformed bytecode cannot be decoded as a valid widened operation.
 
-## Regression coverage
+**Regression coverage:** Allowed widened operations and invalid opcode regressions.
 
-Allowed widened operations and invalid opcode regressions.
+**Current head:** [`ad488410ebc9dc745aaea510f5ffd84ee47789ca`](https://github.com/Afloat16/craft-anything/commit/ad488410ebc9dc745aaea510f5ffd84ee47789ca). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692753004).
 
-## Validation
+**Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687543272) at `a0e0cb8cd3ea69a10f586cb0119cea527f3d0f5a`.
 
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.
+**Files:** `crates/formats/src/java_ops.rs`, `crates/formats/tests/java_wide_opcodes.rs`.
 
-Files:
+### 4. Validate Java invocation operands before decoding calls — [#692](https://github.com/storytold/craft-anything/pull/692)
 
-- [crates/formats/src/java_ops.rs](https://github.com/Afloat16/craft-anything/blob/206c2804e54ad8639965203c6a16cff2732f3c8c/crates/formats/src/java_ops.rs)
-- [crates/formats/tests/java_wide_opcodes.rs](https://github.com/Afloat16/craft-anything/blob/206c2804e54ad8639965203c6a16cff2732f3c8c/crates/formats/tests/java_wide_opcodes.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/206c2804e54ad8639965203c6a16cff2732f3c8c/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/206c2804e54ad8639965203c6a16cff2732f3c8c/docs/STATUS.md)
+Require a nonzero invokeinterface count and zero reserved operand bytes before accepting interface or dynamic calls. Propagate an incomplete instruction scan through class references and the Java references tool while retaining earlier references and subsequent methods.
 
-### 4. Validate Java invocation operands before decoding calls
+**Regression coverage:** Invalid counts, reserved bytes and valid invocation controls. Two class-level regressions cover all four malformed invocation operands, earlier references and later methods.
 
-Branch: `bugfix/r3.12-java-invoke-operands-20261103b`  
-Head: `63e3af8dbad23f0885590d3b7d7912440acf1d68`  
-Tree: `64850cad57780d7247edc8ee4707181b9aff15ec`
+**Current head:** [`5a073e46febddc75e169e83c90a7c1cdd1437527`](https://github.com/Afloat16/craft-anything/commit/5a073e46febddc75e169e83c90a7c1cdd1437527). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692767850).
 
-## Change
+**Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41688827573) at `e7cd6da59d2858dc9ab5e9fba1fcd2ceaaea434f`.
 
-Require a nonzero invokeinterface count and zero reserved operand bytes before accepting interface or dynamic calls.
+**Files:** `crates/engine/src/tools/java_tools.rs`, `crates/formats/src/java_class.rs`, `crates/formats/src/java_ops.rs`, `crates/formats/tests/java_invoke_operands.rs`.
 
-## Regression coverage
-
-Invalid counts, reserved bytes and valid invocation controls.
-
-## Validation
-
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.
-
-Files:
-
-- [crates/formats/src/java_ops.rs](https://github.com/Afloat16/craft-anything/blob/63e3af8dbad23f0885590d3b7d7912440acf1d68/crates/formats/src/java_ops.rs)
-- [crates/formats/tests/java_invoke_operands.rs](https://github.com/Afloat16/craft-anything/blob/63e3af8dbad23f0885590d3b7d7912440acf1d68/crates/formats/tests/java_invoke_operands.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/63e3af8dbad23f0885590d3b7d7912440acf1d68/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/63e3af8dbad23f0885590d3b7d7912440acf1d68/docs/STATUS.md)
-
-### 5. Reject impossible DEX invocation register lists
-
-Branch: `bugfix/r3.12-dex-invoke-registers-20261103b`  
-Head: `6da3b104817744d3baefad1a01413db6d3df2930`  
-Tree: `33ecd2b5201577a01da57a6c0e945c6e0997f6f6`
-
-## Change
+### 5. Reject impossible DEX invocation register lists — [#693](https://github.com/storytold/craft-anything/pull/693)
 
 Reject fixed invocation lists larger than five registers and range operands extending beyond the register index space.
 
-## Regression coverage
+**Regression coverage:** Oversized fixed lists, overflowing ranges and valid boundaries.
 
-Oversized fixed lists, overflowing ranges and valid boundaries.
+**Current head:** [`390df5f83642d4aa9b7964b709079e2c411c5c58`](https://github.com/Afloat16/craft-anything/commit/390df5f83642d4aa9b7964b709079e2c411c5c58). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692778074).
 
-## Validation
+**Previous-head CI:** [failure](https://github.com/storytold/craft-anything/actions/runs/41687565823) at `b00334a40f08ef932eb4543338d017db84da5ea4`.
 
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.
+**Files:** `crates/formats/src/dex_ops.rs`, `crates/formats/tests/dex_invoke_registers.rs`.
 
-Files:
-
-- [crates/formats/src/dex_ops.rs](https://github.com/Afloat16/craft-anything/blob/6da3b104817744d3baefad1a01413db6d3df2930/crates/formats/src/dex_ops.rs)
-- [crates/formats/tests/dex_invoke_registers.rs](https://github.com/Afloat16/craft-anything/blob/6da3b104817744d3baefad1a01413db6d3df2930/crates/formats/tests/dex_invoke_registers.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/6da3b104817744d3baefad1a01413db6d3df2930/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/6da3b104817744d3baefad1a01413db6d3df2930/docs/STATUS.md)
-
-### 6. Reject invalid DEX array payload element widths
-
-Branch: `bugfix/r3.12-dex-array-widths-20261103b`  
-Head: `e4802ee7713eff91eb9a6e27a0459c0383f63761`  
-Tree: `0a129c8be008308a9839b24d99a04f4b1b0ac71f`
-
-## Change
+### 6. Reject invalid DEX array payload element widths — [#694](https://github.com/storytold/craft-anything/pull/694)
 
 Accept only 1, 2, 4 or 8 byte array elements, rejecting unsupported and zero widths before payload-size calculations.
 
-## Regression coverage
+**Regression coverage:** Invalid element widths, large counts and valid width controls.
 
-Invalid element widths, large counts and valid width controls.
+**Current head:** [`7d5f4770cab5f30dee6c24fd745c35428256ae17`](https://github.com/Afloat16/craft-anything/commit/7d5f4770cab5f30dee6c24fd745c35428256ae17). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692792746).
 
-## Validation
+**Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687573832) at `c3b33665568d369f3a0e94f0eb054d15a7ef4eed`.
 
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.
+**Files:** `crates/formats/src/dex_ops.rs`, `crates/formats/tests/dex_array_widths.rs`.
 
-Files:
+### 7. Read SQLite text using the database encoding — [#695](https://github.com/storytold/craft-anything/pull/695)
 
-- [crates/formats/src/dex_ops.rs](https://github.com/Afloat16/craft-anything/blob/e4802ee7713eff91eb9a6e27a0459c0383f63761/crates/formats/src/dex_ops.rs)
-- [crates/formats/tests/dex_array_widths.rs](https://github.com/Afloat16/craft-anything/blob/e4802ee7713eff91eb9a6e27a0459c0383f63761/crates/formats/tests/dex_array_widths.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/e4802ee7713eff91eb9a6e27a0459c0383f63761/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/e4802ee7713eff91eb9a6e27a0459c0383f63761/docs/STATUS.md)
+Use the database text encoding for schema and row text so UTF-16 databases are decoded correctly. Decode UTF-16 through typed two-byte chunks while preserving replacement of a trailing odd byte.
 
-### 7. Read SQLite text using the database encoding
+**Regression coverage:** UTF-8, UTF-16LE and UTF-16BE schema and row fixtures.
 
-Branch: `bugfix/r3.12-sqlite-text-encoding-20261103b`  
-Head: `be78da063a6ebac4e8f399d8ef7da793981ec95b`  
-Tree: `6911a2e3bec92002c7931949085c71e5e29332bf`
+**Current head:** [`9c49f69a9032be69896d45419328fdac850eece6`](https://github.com/Afloat16/craft-anything/commit/9c49f69a9032be69896d45419328fdac850eece6). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692801601).
 
-## Change
+**Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41689288428) at `8357dced53cb153764d503c8cee312499d457919`.
 
-Use the database text encoding for schema and row text so UTF-16 databases are decoded correctly.
+**Files:** `crates/formats/src/sqlite.rs`, `crates/formats/tests/sqlite_text_encoding.rs`.
 
-## Regression coverage
-
-UTF-8, UTF-16LE and UTF-16BE schema and row fixtures.
-
-## Validation
-
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.
-
-Files:
-
-- [crates/formats/src/sqlite.rs](https://github.com/Afloat16/craft-anything/blob/be78da063a6ebac4e8f399d8ef7da793981ec95b/crates/formats/src/sqlite.rs)
-- [crates/formats/tests/sqlite_text_encoding.rs](https://github.com/Afloat16/craft-anything/blob/be78da063a6ebac4e8f399d8ef7da793981ec95b/crates/formats/tests/sqlite_text_encoding.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/be78da063a6ebac4e8f399d8ef7da793981ec95b/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/be78da063a6ebac4e8f399d8ef7da793981ec95b/docs/STATUS.md)
-
-### 8. Keep SQLite cell reads within their page
-
-Branch: `bugfix/r3.12-sqlite-page-boundaries-20261103b`  
-Head: `1d2a3b0f812bc0cac6414d278142ad82a13b5bd7`  
-Tree: `d5ad364841a8fc44ce0e9951e0171b06742d527d`
-
-## Change
+### 8. Keep SQLite cell reads within their page — [#696](https://github.com/storytold/craft-anything/pull/696)
 
 Constrain cell headers, pointer arrays and payload reads to the current usable page instead of borrowing bytes from a neighboring page.
 
-## Regression coverage
+**Regression coverage:** Malformed page pointers and truncated page-local data.
 
-Malformed page pointers and truncated page-local data.
+**Current head:** [`b5b47a5d3d4bd39d8b396dce5d7779199091689a`](https://github.com/Afloat16/craft-anything/commit/b5b47a5d3d4bd39d8b396dce5d7779199091689a). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692814058).
 
-## Validation
+**Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687598373) at `bccf303604b895a4dde98079977c4468c3a1064a`.
 
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.
+**Files:** `crates/formats/src/sqlite.rs`, `crates/formats/tests/sqlite_page_boundaries.rs`.
 
-Files:
-
-- [crates/formats/src/sqlite.rs](https://github.com/Afloat16/craft-anything/blob/1d2a3b0f812bc0cac6414d278142ad82a13b5bd7/crates/formats/src/sqlite.rs)
-- [crates/formats/tests/sqlite_page_boundaries.rs](https://github.com/Afloat16/craft-anything/blob/1d2a3b0f812bc0cac6414d278142ad82a13b5bd7/crates/formats/tests/sqlite_page_boundaries.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/1d2a3b0f812bc0cac6414d278142ad82a13b5bd7/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/1d2a3b0f812bc0cac6414d278142ad82a13b5bd7/docs/STATUS.md)
-
-### 9. Stop repeated SQLite overflow pages from fabricating data
-
-Branch: `bugfix/r3.12-sqlite-overflow-cycles-20261103b`  
-Head: `bc1482115787d4fa0172c2901ac16c1479724dcb`  
-Tree: `cdea39a5cc6a3e69aee261d2989007e4351a982d`
-
-## Change
+### 9. Stop repeated SQLite overflow pages from fabricating data — [#697](https://github.com/storytold/craft-anything/pull/697)
 
 Track visited overflow pages and stop repeated pages while retaining only the actually recovered partial payload.
 
-## Regression coverage
+**Regression coverage:** Repeated-page and cyclic overflow-chain regressions.
 
-Repeated-page and cyclic overflow-chain regressions.
+**Current head:** [`97b03a6f9022a688daabc91dea259f153dad87cc`](https://github.com/Afloat16/craft-anything/commit/97b03a6f9022a688daabc91dea259f153dad87cc). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692830030).
 
-## Validation
+**Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687609537) at `06e4b5075189afdc48cbcdac4707869ea3d833dc`.
 
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.
+**Files:** `crates/formats/src/sqlite.rs`, `crates/formats/tests/sqlite_overflow_cycles.rs`.
 
-Files:
-
-- [crates/formats/src/sqlite.rs](https://github.com/Afloat16/craft-anything/blob/bc1482115787d4fa0172c2901ac16c1479724dcb/crates/formats/src/sqlite.rs)
-- [crates/formats/tests/sqlite_overflow_cycles.rs](https://github.com/Afloat16/craft-anything/blob/bc1482115787d4fa0172c2901ac16c1479724dcb/crates/formats/tests/sqlite_overflow_cycles.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/bc1482115787d4fa0172c2901ac16c1479724dcb/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/bc1482115787d4fa0172c2901ac16c1479724dcb/docs/STATUS.md)
-
-### 10. Keep Android string pools within declared chunks
-
-Branch: `bugfix/r3.12-android-string-pool-bounds-20261103b`  
-Head: `4c00f0e3dca3fac29d95b85f53620ceed323ebe7`  
-Tree: `ca938493e6f8ac602145d69cff8fe3d1517d9c22`
-
-## Change
+### 10. Keep Android string pools within declared chunks — [#698](https://github.com/storytold/craft-anything/pull/698)
 
 Validate chunk framing, offsets, string/style regions and terminators before decoding string pool entries.
 
-## Regression coverage
+**Regression coverage:** Out-of-chunk offsets, malformed regions and termination checks.
 
-Out-of-chunk offsets, malformed regions and termination checks.
+**Current head:** [`cddf8441b395105fbb452c9d060250dfb8cf448b`](https://github.com/Afloat16/craft-anything/commit/cddf8441b395105fbb452c9d060250dfb8cf448b). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692842389).
 
-## Validation
+**Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687681072) at `788fcd9f4e5e7dfab0f0cc4ddecc96713c017d56`.
 
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.
+**Files:** `crates/formats/src/axml.rs`, `crates/formats/tests/android_string_pool_bounds.rs`.
 
-Files:
-
-- [crates/formats/src/axml.rs](https://github.com/Afloat16/craft-anything/blob/4c00f0e3dca3fac29d95b85f53620ceed323ebe7/crates/formats/src/axml.rs)
-- [crates/formats/tests/android_string_pool_bounds.rs](https://github.com/Afloat16/craft-anything/blob/4c00f0e3dca3fac29d95b85f53620ceed323ebe7/crates/formats/tests/android_string_pool_bounds.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/4c00f0e3dca3fac29d95b85f53620ceed323ebe7/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/4c00f0e3dca3fac29d95b85f53620ceed323ebe7/docs/STATUS.md)
-
-### 11. Apply ZIP output limits to stored entries
-
-Branch: `bugfix/r3.12-zip-stored-cap-20261103b`  
-Head: `77e235402385fe77f436a107db8bc6123e494571`  
-Tree: `63966315fec68752c498c38a7debe769efe2819d`
-
-## Change
+### 11. Apply ZIP output limits to stored entries — [#699](https://github.com/storytold/craft-anything/pull/699)
 
 Check the actual stored entry length before allocation so stored members obey the same extraction output cap.
 
-## Regression coverage
+**Regression coverage:** Oversized stored members and exact-limit controls.
 
-Oversized stored members and exact-limit controls.
+**Current head:** [`1e593fbe41ad275ab2f0f0709f4bd44e034ce962`](https://github.com/Afloat16/craft-anything/commit/1e593fbe41ad275ab2f0f0709f4bd44e034ce962). **Current CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41692159741).
 
-## Validation
+**Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687686886) at `777a631bcd8a2d425872d6e1d4256f6f0301e6f7`.
 
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.
+**Files:** `crates/formats/src/zip.rs`, `crates/formats/tests/zip_stored_cap.rs`.
 
-Files:
-
-- [crates/formats/src/zip.rs](https://github.com/Afloat16/craft-anything/blob/77e235402385fe77f436a107db8bc6123e494571/crates/formats/src/zip.rs)
-- [crates/formats/tests/zip_stored_cap.rs](https://github.com/Afloat16/craft-anything/blob/77e235402385fe77f436a107db8bc6123e494571/crates/formats/tests/zip_stored_cap.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/77e235402385fe77f436a107db8bc6123e494571/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/77e235402385fe77f436a107db8bc6123e494571/docs/STATUS.md)
-
-### 12. Check ZIP member sizes after decompression
-
-Branch: `bugfix/r3.12-zip-decoded-size-20261103b`  
-Head: `fc6b69da397429a80715f8e4b9f6c2d3580301ee`  
-Tree: `770e8ed1d724d13544995fb348439f1692994f35`
-
-## Change
+### 12. Check ZIP member sizes after decompression — [#700](https://github.com/storytold/craft-anything/pull/700)
 
 Compare the decoded member size with the advertised uncompressed size before returning recovered content.
 
-## Regression coverage
+**Regression coverage:** Decoded-size mismatches and valid member controls.
 
-Decoded-size mismatches and valid member controls.
+**Current head:** [`e9db1bad36cd6b70e6835fdce465573824765efa`](https://github.com/Afloat16/craft-anything/commit/e9db1bad36cd6b70e6835fdce465573824765efa). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692181984).
 
-## Validation
+**Previous-head CI:** [failure](https://github.com/storytold/craft-anything/actions/runs/41687698727) at `a570fdff89498a8ed87182d77c728d0c889b60ee`.
 
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.
+**Files:** `crates/formats/src/zip.rs`, `crates/formats/tests/zip_decoded_size.rs`.
 
-Files:
-
-- [crates/formats/src/zip.rs](https://github.com/Afloat16/craft-anything/blob/fc6b69da397429a80715f8e4b9f6c2d3580301ee/crates/formats/src/zip.rs)
-- [crates/formats/tests/zip_decoded_size.rs](https://github.com/Afloat16/craft-anything/blob/fc6b69da397429a80715f8e4b9f6c2d3580301ee/crates/formats/tests/zip_decoded_size.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/fc6b69da397429a80715f8e4b9f6c2d3580301ee/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/fc6b69da397429a80715f8e4b9f6c2d3580301ee/docs/STATUS.md)
-
-### 13. Keep ZIP64 values within their extra field
-
-Branch: `bugfix/r3.12-zip64-extra-boundaries-20261103b`  
-Head: `9aecbbae5e80a50a0cc4e4652cf9d42595430ad3`  
-Tree: `e25ed354018e68e36414029164cb2904e1199d6f`
-
-## Change
+### 13. Keep ZIP64 values within their extra field — [#701](https://github.com/storytold/craft-anything/pull/701)
 
 Read ZIP64 metadata only inside its own extra field and reject missing metadata for sentinel size or offset values.
 
-## Regression coverage
+**Regression coverage:** Truncated ZIP64 fields, adjacent fields and missing sentinel metadata.
 
-Truncated ZIP64 fields, adjacent fields and missing sentinel metadata.
+**Current head:** [`aa701bdf34486de20ddaf5cc951df8b4ee017586`](https://github.com/Afloat16/craft-anything/commit/aa701bdf34486de20ddaf5cc951df8b4ee017586). **Current CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41692195763).
 
-## Validation
+**Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687762890) at `6f1b326e455f2e4709e23c06130e217da41f02d9`.
 
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.
+**Files:** `crates/formats/src/zip.rs`, `crates/formats/tests/zip64_extra_boundaries.rs`.
 
-Files:
-
-- [crates/formats/src/zip.rs](https://github.com/Afloat16/craft-anything/blob/9aecbbae5e80a50a0cc4e4652cf9d42595430ad3/crates/formats/src/zip.rs)
-- [crates/formats/tests/zip64_extra_boundaries.rs](https://github.com/Afloat16/craft-anything/blob/9aecbbae5e80a50a0cc4e4652cf9d42595430ad3/crates/formats/tests/zip64_extra_boundaries.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/9aecbbae5e80a50a0cc4e4652cf9d42595430ad3/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/9aecbbae5e80a50a0cc4e4652cf9d42595430ad3/docs/STATUS.md)
-
-### 14. Validate ASAR header framing
-
-Branch: `bugfix/r3.12-asar-header-bounds-20261103b`  
-Head: `e0010694cbf37bdd894a9528a309d7a258bcd66a`  
-Tree: `4b96dcf7be03a254253c3ef01686de35899aedf7`
-
-## Change
+### 14. Validate ASAR header framing — [#702](https://github.com/storytold/craft-anything/pull/702)
 
 Validate nested header lengths and ensure the complete declared header lies within the archive before parsing it.
 
-## Regression coverage
+**Regression coverage:** Inconsistent nested lengths and truncated archive headers.
 
-Inconsistent nested lengths and truncated archive headers.
+**Current head:** [`0b9f5d7c8b3799d087f23ca03ca1c6fee1b54f88`](https://github.com/Afloat16/craft-anything/commit/0b9f5d7c8b3799d087f23ca03ca1c6fee1b54f88). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692289599).
 
-## Validation
+**Previous-head CI:** [failure](https://github.com/storytold/craft-anything/actions/runs/41687774538) at `5862e25ba261301ba37c1152010fe91e52bf0997`.
 
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.
+**Files:** `crates/formats/src/asar.rs`, `crates/formats/tests/asar_header_bounds.rs`.
 
-Files:
-
-- [crates/formats/src/asar.rs](https://github.com/Afloat16/craft-anything/blob/e0010694cbf37bdd894a9528a309d7a258bcd66a/crates/formats/src/asar.rs)
-- [crates/formats/tests/asar_header_bounds.rs](https://github.com/Afloat16/craft-anything/blob/e0010694cbf37bdd894a9528a309d7a258bcd66a/crates/formats/tests/asar_header_bounds.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/e0010694cbf37bdd894a9528a309d7a258bcd66a/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/e0010694cbf37bdd894a9528a309d7a258bcd66a/docs/STATUS.md)
-
-### 15. Traverse ROMFS dot and empty root directories
-
-Branch: `bugfix/r3.12-romfs-root-directory-20261103b`  
-Head: `d2b4ec71bf85888c47930c222963db2c0418d831`  
-Tree: `b0638143da0c871957937d42142e3c7801c4d7a7`
-
-## Change
+### 15. Traverse ROMFS dot and empty root directories — [#703](https://github.com/storytold/craft-anything/pull/703)
 
 Traverse children for supported dot and empty root names so valid root layouts expose their contained files.
 
-## Regression coverage
-
-Root layout, recovered contents and entry-limit fixtures.
-
-## Validation
-
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.
+**Regression coverage:** Root layout, recovered contents and entry-limit fixtures.
 
 Scope: supported root-directory layouts; existing nested-directory handling is preserved.
 
-Files:
+**Current head:** [`2bef9409336d42f1a0f764848670dfd6b69fdb87`](https://github.com/Afloat16/craft-anything/commit/2bef9409336d42f1a0f764848670dfd6b69fdb87). **Current CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41692309447).
 
-- [crates/formats/src/fsread/romfs.rs](https://github.com/Afloat16/craft-anything/blob/d2b4ec71bf85888c47930c222963db2c0418d831/crates/formats/src/fsread/romfs.rs)
-- [crates/formats/tests/romfs_root_directory.rs](https://github.com/Afloat16/craft-anything/blob/d2b4ec71bf85888c47930c222963db2c0418d831/crates/formats/tests/romfs_root_directory.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/d2b4ec71bf85888c47930c222963db2c0418d831/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/d2b4ec71bf85888c47930c222963db2c0418d831/docs/STATUS.md)
+**Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687783673) at `61f722e4cc93ea908b2fcf03c6eb599fdb292ed7`.
 
-### 16. Report incomplete cramfs block output
+**Files:** `crates/formats/src/fsread/romfs.rs`, `crates/formats/tests/romfs_root_directory.rs`.
 
-Branch: `bugfix/r3.12-cramfs-block-lengths-20261103b`  
-Head: `49b87d98ff18f2a01411c083e9d8a379afc9943d`  
-Tree: `0fd9f66d7dfd40d41dc01487ec23ef3d94ea37c7`
-
-## Change
+### 16. Report incomplete cramfs block output — [#704](https://github.com/storytold/craft-anything/pull/704)
 
 Require full-sized decoded blocks and the exact final remainder before claiming complete file recovery.
 
-## Regression coverage
+**Regression coverage:** Short intermediate blocks, final block lengths and valid controls.
 
-Short intermediate blocks, final block lengths and valid controls.
+**Current head:** [`8328b4e549330a09b4eb787857089a5263d0966d`](https://github.com/Afloat16/craft-anything/commit/8328b4e549330a09b4eb787857089a5263d0966d). **Current CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41692327401).
 
-## Validation
+**Previous-head CI:** [failure](https://github.com/storytold/craft-anything/actions/runs/41687797277) at `c1eb80975e90b07ee012903b155843c58d732718`.
 
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.
+**Files:** `crates/formats/src/fsread/cramfs.rs`, `crates/formats/tests/cramfs_block_lengths.rs`.
 
-Files:
-
-- [crates/formats/src/fsread/cramfs.rs](https://github.com/Afloat16/craft-anything/blob/49b87d98ff18f2a01411c083e9d8a379afc9943d/crates/formats/src/fsread/cramfs.rs)
-- [crates/formats/tests/cramfs_block_lengths.rs](https://github.com/Afloat16/craft-anything/blob/49b87d98ff18f2a01411c083e9d8a379afc9943d/crates/formats/tests/cramfs_block_lengths.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/49b87d98ff18f2a01411c083e9d8a379afc9943d/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/49b87d98ff18f2a01411c083e9d8a379afc9943d/docs/STATUS.md)
-
-### 17. Preserve sparse ext positions across indirect levels
-
-Branch: `bugfix/r3.12-ext-sparse-indirect-20261103b`  
-Head: `dc86da3e15d599217c8662c90d48487ed66e0f77`  
-Tree: `cf1411f9f1426df26d12a29f209796d349a4b55e`
-
-## Change
+### 17. Preserve sparse ext positions across indirect levels — [#705](https://github.com/storytold/craft-anything/pull/705)
 
 Advance by the logical span of a missing indirect block so later data stays at the correct file offset.
 
-## Regression coverage
+**Regression coverage:** Missing indirect spans and later mapped data regressions.
 
-Missing indirect spans and later mapped data regressions.
+**Current head:** [`13d210d63b21c1edf93d7b02d3a2f15adde544e3`](https://github.com/Afloat16/craft-anything/commit/13d210d63b21c1edf93d7b02d3a2f15adde544e3). **Current CI:** [failure](https://github.com/storytold/craft-anything/actions/runs/41692378272).
 
-## Validation
+**Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687810980) at `562189ef24cbc2aa44df3013b285cdd13693b7b4`.
 
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.
+**Files:** `crates/formats/src/fsread/extfs.rs`, `crates/formats/tests/ext_sparse_indirect.rs`.
 
-Files:
-
-- [crates/formats/src/fsread/extfs.rs](https://github.com/Afloat16/craft-anything/blob/dc86da3e15d599217c8662c90d48487ed66e0f77/crates/formats/src/fsread/extfs.rs)
-- [crates/formats/tests/ext_sparse_indirect.rs](https://github.com/Afloat16/craft-anything/blob/dc86da3e15d599217c8662c90d48487ed66e0f77/crates/formats/tests/ext_sparse_indirect.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/dc86da3e15d599217c8662c90d48487ed66e0f77/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/dc86da3e15d599217c8662c90d48487ed66e0f77/docs/STATUS.md)
-
-### 18. Distinguish missing ext data from sparse holes
-
-Branch: `bugfix/r3.12-ext-missing-blocks-20261103b`  
-Head: `59b9f2ea006993970fe5a27cab99d94442927577`  
-Tree: `d6da5b41ce8918ea2820092ca9c4e9888b1c4424`
-
-## Change
+### 18. Distinguish missing ext data from sparse holes — [#706](https://github.com/storytold/craft-anything/pull/706)
 
 Report mapped data blocks beyond the captured image as unavailable instead of silently returning zero-filled bytes.
 
-## Regression coverage
-
-Out-of-image mapped blocks and real sparse-hole controls.
-
-## Validation
-
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.
+**Regression coverage:** Out-of-image mapped blocks and real sparse-hole controls.
 
 Scope: missing mapped data blocks. Indirect and extent metadata recovery remains separate roadmap work.
 
-Files:
+**Current head:** [`178d789785ffbba3dc7bbce71a1547fb2e904544`](https://github.com/Afloat16/craft-anything/commit/178d789785ffbba3dc7bbce71a1547fb2e904544). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692394230).
 
-- [crates/formats/src/fsread/extfs.rs](https://github.com/Afloat16/craft-anything/blob/59b9f2ea006993970fe5a27cab99d94442927577/crates/formats/src/fsread/extfs.rs)
-- [crates/formats/tests/ext_missing_blocks.rs](https://github.com/Afloat16/craft-anything/blob/59b9f2ea006993970fe5a27cab99d94442927577/crates/formats/tests/ext_missing_blocks.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/59b9f2ea006993970fe5a27cab99d94442927577/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/59b9f2ea006993970fe5a27cab99d94442927577/docs/STATUS.md)
+**Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687825216) at `3e17fe135982574bb80d6ff33f48c04a673746fb`.
 
-### 19. Keep PyInstaller modules within their PYZ archive
+**Files:** `crates/formats/src/fsread/extfs.rs`, `crates/formats/tests/ext_missing_blocks.rs`.
 
-Branch: `bugfix/r3.12-pyz-module-bounds-20261103b`  
-Head: `caefe67e5102f34483352944ce160f8a9a25e704`  
-Tree: `e8cb9eaa37a18535a8369cc1f6fe3ed7c0610bd3`
-
-## Change
+### 19. Keep PyInstaller modules within their PYZ archive — [#707](https://github.com/storytold/craft-anything/pull/707)
 
 Reject listed module payloads outside the PYZ archive rather than reading bytes from neighboring outer members.
 
-## Regression coverage
-
-A module starting at the PYZ end with a valid adjacent outer member.
-
-## Validation
-
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.
+**Regression coverage:** A module starting at the PYZ end with a valid adjacent outer member.
 
 Scope: module entries produced by the archive listing.
 
-Files:
+**Current head:** [`8612a9c73d08d3273589679e079d293c8c3d17d8`](https://github.com/Afloat16/craft-anything/commit/8612a9c73d08d3273589679e079d293c8c3d17d8). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41692411966).
 
-- [crates/formats/src/pyinstaller.rs](https://github.com/Afloat16/craft-anything/blob/caefe67e5102f34483352944ce160f8a9a25e704/crates/formats/src/pyinstaller.rs)
-- [crates/formats/tests/pyz_module_bounds.rs](https://github.com/Afloat16/craft-anything/blob/caefe67e5102f34483352944ce160f8a9a25e704/crates/formats/tests/pyz_module_bounds.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/caefe67e5102f34483352944ce160f8a9a25e704/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/caefe67e5102f34483352944ce160f8a9a25e704/docs/STATUS.md)
+**Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687886220) at `6e9b69c9b500ef4c6805404365df23ede2dfeee8`.
 
-### 20. Preserve JFFS2 sizes when recovery budgets are exhausted
+**Files:** `crates/formats/src/pyinstaller.rs`, `crates/formats/tests/pyz_module_bounds.rs`.
 
-Branch: `bugfix/r3.12-jffs2-unrecovered-size-20261103b`  
-Head: `077050320b0dc5a7a5fc0ef9d72655185f5848a0`  
-Tree: `94a3919f8c83b38aedc885d544e812d081148c17`
-
-## Change
+### 20. Preserve JFFS2 sizes when recovery budgets are exhausted — [#708](https://github.com/storytold/craft-anything/pull/708)
 
 Keep the latest inode logical size when per-file or total recovery budgets prevent retaining the file contents.
 
-## Regression coverage
-
-Per-file and total-budget exhaustion fixtures.
-
-## Validation
-
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. The independent shared WASM gate remains pending.
+**Regression coverage:** Per-file and total-budget exhaustion fixtures.
 
 Scope: recovery-budget failures; unsupported compression handling is unchanged.
 
-Files:
+**Current head:** [`1e4d6f36353d2da27f0f13f0957d9c8205b7809c`](https://github.com/Afloat16/craft-anything/commit/1e4d6f36353d2da27f0f13f0957d9c8205b7809c). **Current CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41692427030).
 
-- [crates/formats/src/fsread/jffs2.rs](https://github.com/Afloat16/craft-anything/blob/077050320b0dc5a7a5fc0ef9d72655185f5848a0/crates/formats/src/fsread/jffs2.rs)
-- [crates/formats/tests/jffs2_unrecovered_size.rs](https://github.com/Afloat16/craft-anything/blob/077050320b0dc5a7a5fc0ef9d72655185f5848a0/crates/formats/tests/jffs2_unrecovered_size.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/077050320b0dc5a7a5fc0ef9d72655185f5848a0/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/077050320b0dc5a7a5fc0ef9d72655185f5848a0/docs/STATUS.md)
+**Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687897097) at `9d4a307186b662fb46b2790ff26edcf63c262c6f`.
 
-### 21. Keep comments when adding the first JSON configuration value
+**Files:** `crates/formats/src/fsread/jffs2.rs`, `crates/formats/tests/jffs2_unrecovered_size.rs`.
 
-Branch: `bugfix/r3.12-jsonc-comment-only-20261103b`  
-Head: `35da589f43453bd1322f823f0f03fdec608510fb`  
-Tree: `d88664c487ec28091e7f0f69001ee95ce8a1475e`
-
-## Change
+### 21. Keep comments when adding the first JSON configuration value — [#709](https://github.com/storytold/craft-anything/pull/709)
 
 Preserve leading comments, a byte-order mark and newline style when inserting the first configuration value.
 
-## Regression coverage
+**Regression coverage:** Comment-only inputs, BOM and newline-style controls.
 
-Comment-only inputs, BOM and newline-style controls.
+**Current head:** [`8af65ca72d40c5284d15cf96e1ecc29ab41ca9cc`](https://github.com/Afloat16/craft-anything/commit/8af65ca72d40c5284d15cf96e1ecc29ab41ca9cc). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41693676646).
 
-## Validation
+**Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687903093) at `6a97e4fc7654ab295c1ce35729a60a0d46f144f7`.
 
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. The independent shared WASM gate remains pending.
+**Files:** `crates/formats/src/jsonc.rs`, `crates/formats/tests/regression_jsonc_comment_only.rs`.
 
-Files:
-
-- [crates/formats/src/jsonc.rs](https://github.com/Afloat16/craft-anything/blob/35da589f43453bd1322f823f0f03fdec608510fb/crates/formats/src/jsonc.rs)
-- [crates/formats/tests/regression_jsonc_comment_only.rs](https://github.com/Afloat16/craft-anything/blob/35da589f43453bd1322f823f0f03fdec608510fb/crates/formats/tests/regression_jsonc_comment_only.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/35da589f43453bd1322f823f0f03fdec608510fb/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/35da589f43453bd1322f823f0f03fdec608510fb/docs/STATUS.md)
-
-### 22. Remove every duplicate JSON configuration key
-
-Branch: `bugfix/r3.12-jsonc-duplicate-removal-20261103b`  
-Head: `a4ce5ea4cca6c56cee7bf860751ea7a3fd775736`  
-Tree: `592542a2f5ce7d3525d698e8b124daa11f685ab2`
-
-## Change
+### 22. Remove every duplicate JSON configuration key — [#710](https://github.com/storytold/craft-anything/pull/710)
 
 Remove every occurrence of the requested key while keeping valid separators and independent comments between entries.
 
-## Regression coverage
+**Regression coverage:** Adjacent duplicates, separators and retained line/block comments.
 
-Adjacent duplicates, separators and retained line/block comments.
+**Current head:** [`7a32fc5486c96358ae52a6f5494ca4f7b0244300`](https://github.com/Afloat16/craft-anything/commit/7a32fc5486c96358ae52a6f5494ca4f7b0244300). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41693809704).
 
-## Validation
+**Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687915897) at `bc10d3c99f543c254943b59852aa76f66c03a020`.
 
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. Shared WASM checks passed.
+**Files:** `crates/formats/src/jsonc.rs`, `crates/formats/tests/regression_jsonc_duplicate_removal.rs`.
 
-Files:
-
-- [crates/formats/src/jsonc.rs](https://github.com/Afloat16/craft-anything/blob/a4ce5ea4cca6c56cee7bf860751ea7a3fd775736/crates/formats/src/jsonc.rs)
-- [crates/formats/tests/regression_jsonc_duplicate_removal.rs](https://github.com/Afloat16/craft-anything/blob/a4ce5ea4cca6c56cee7bf860751ea7a3fd775736/crates/formats/tests/regression_jsonc_duplicate_removal.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/a4ce5ea4cca6c56cee7bf860751ea7a3fd775736/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/a4ce5ea4cca6c56cee7bf860751ea7a3fd775736/docs/STATUS.md)
-
-### 23. Keep UDP payloads within declared datagram lengths
-
-Branch: `bugfix/r3.12-udp-length-bounds-20261103b`  
-Head: `11f4e9ea85375e06204e98fac55bab9261602f61`  
-Tree: `99abd411769e4d29eb313fdedb080397d6d7ce3a`
-
-## Change
+### 23. Keep UDP payloads within declared datagram lengths — [#711](https://github.com/storytold/craft-anything/pull/711)
 
 Diagnose invalid or truncated datagrams and prevent trailing capture bytes from being interpreted as UDP payload or DNS data.
 
-## Regression coverage
-
-Invalid lengths, truncation, trailing padding and valid datagrams.
-
-## Validation
-
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. The independent shared WASM gate remains pending.
+**Regression coverage:** Invalid lengths, truncation, trailing padding and valid datagrams.
 
 Scope: ordinary UDP datagrams; IPv6 jumbograms are not added.
 
-Files:
+**Current head:** [`2f6533961eaeecfd8ca94337ffedd681a39b6acc`](https://github.com/Afloat16/craft-anything/commit/2f6533961eaeecfd8ca94337ffedd681a39b6acc). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41693826718).
 
-- [crates/formats/src/pcap.rs](https://github.com/Afloat16/craft-anything/blob/11f4e9ea85375e06204e98fac55bab9261602f61/crates/formats/src/pcap.rs)
-- [crates/formats/tests/regression_udp_length.rs](https://github.com/Afloat16/craft-anything/blob/11f4e9ea85375e06204e98fac55bab9261602f61/crates/formats/tests/regression_udp_length.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/11f4e9ea85375e06204e98fac55bab9261602f61/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/11f4e9ea85375e06204e98fac55bab9261602f61/docs/STATUS.md)
+**Previous-head CI:** [failure](https://github.com/storytold/craft-anything/actions/runs/41687928153) at `2d2baecfed3602167b3a03098f94af19aeaa4ecb`.
 
-### 24. Reject invalid TCP header lengths
+**Files:** `crates/formats/src/pcap.rs`, `crates/formats/tests/regression_udp_length.rs`.
 
-Branch: `bugfix/r3.12-tcp-header-bounds-20261103b`  
-Head: `d9a65e6f4d2db3dc288bb6cf3b2808bf74323d8d`  
-Tree: `8e7f449a8af37516de29f556f548b9cab59aa95a`
-
-## Change
+### 24. Reject invalid TCP header lengths — [#712](https://github.com/storytold/craft-anything/pull/712)
 
 Reject data offsets below the minimum header or beyond captured bytes before exposing a TCP payload.
 
-## Regression coverage
+**Regression coverage:** Undersized headers, offsets beyond capture and valid headers.
 
-Undersized headers, offsets beyond capture and valid headers.
+**Current head:** [`83487ac2fe99f0bc9dfab5230366bb6e7fd5e30d`](https://github.com/Afloat16/craft-anything/commit/83487ac2fe99f0bc9dfab5230366bb6e7fd5e30d). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41693841558).
 
-## Validation
+**Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687937314) at `7a4398fed392767d91240df2a2b309a712eb9a04`.
 
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. The independent shared WASM gate remains pending.
+**Files:** `crates/formats/src/pcap.rs`, `crates/formats/tests/regression_tcp_header_length.rs`.
 
-Files:
-
-- [crates/formats/src/pcap.rs](https://github.com/Afloat16/craft-anything/blob/d9a65e6f4d2db3dc288bb6cf3b2808bf74323d8d/crates/formats/src/pcap.rs)
-- [crates/formats/tests/regression_tcp_header_length.rs](https://github.com/Afloat16/craft-anything/blob/d9a65e6f4d2db3dc288bb6cf3b2808bf74323d8d/crates/formats/tests/regression_tcp_header_length.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/d9a65e6f4d2db3dc288bb6cf3b2808bf74323d8d/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/d9a65e6f4d2db3dc288bb6cf3b2808bf74323d8d/docs/STATUS.md)
-
-### 25. Respect DNS-over-TCP frame lengths
-
-Branch: `bugfix/r3.12-tcp-dns-framing-20261103b`  
-Head: `8cbfa44cd91470b0b1bfb27ac3d1c1e89a145fbe`  
-Tree: `2f819662cf4dd519bc5526e83486cc3b460225fe`
-
-## Change
+### 25. Respect DNS-over-TCP frame lengths — [#713](https://github.com/storytold/craft-anything/pull/713)
 
 Limit decoding to the first complete length-prefixed DNS message and diagnose truncated frames.
 
-## Regression coverage
-
-Incomplete frames, trailing data and valid first-message controls.
-
-## Validation
-
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. The independent shared WASM gate remains pending.
+**Regression coverage:** Incomplete frames, trailing data and valid first-message controls.
 
 Scope: one complete captured DNS/TCP message; stream reassembly is not added.
 
-Files:
+**Current head:** [`67f0cfb73ae21e2e8a9aff0bec5280792d967680`](https://github.com/Afloat16/craft-anything/commit/67f0cfb73ae21e2e8a9aff0bec5280792d967680). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41693932774).
 
-- [crates/formats/src/pcap.rs](https://github.com/Afloat16/craft-anything/blob/8cbfa44cd91470b0b1bfb27ac3d1c1e89a145fbe/crates/formats/src/pcap.rs)
-- [crates/formats/tests/regression_tcp_dns_framing.rs](https://github.com/Afloat16/craft-anything/blob/8cbfa44cd91470b0b1bfb27ac3d1c1e89a145fbe/crates/formats/tests/regression_tcp_dns_framing.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/8cbfa44cd91470b0b1bfb27ac3d1c1e89a145fbe/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/8cbfa44cd91470b0b1bfb27ac3d1c1e89a145fbe/docs/STATUS.md)
+**Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687948685) at `f8254f89da9cf67745f27f49c098a74e6f9e12c5`.
 
-### 26. Validate pcapng block framing
+**Files:** `crates/formats/src/pcap.rs`, `crates/formats/tests/regression_tcp_dns_framing.rs`.
 
-Branch: `bugfix/r3.12-pcapng-block-framing-20261103b`  
-Head: `533d404ff9234db41e15f11ac63c49c931326f02`  
-Tree: `928ef0e3f08ac9c8c0fb49b8ca57a302bfbfaf56`
-
-## Change
+### 26. Validate pcapng block framing — [#714](https://github.com/storytold/craft-anything/pull/714)
 
 Validate repeated block lengths and each supported fixed header before reading interfaces or packets; update section byte order only after validation.
 
-## Regression coverage
-
-Mismatched trailers, short supported blocks, both byte orders and valid capture controls.
-
-## Validation
-
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. The independent shared WASM gate remains pending.
+**Regression coverage:** Mismatched trailers, short supported blocks, both byte orders and valid capture controls.
 
 Remaining roadmap work: checked 32-bit arithmetic for captured lengths and section-relative interface ids.
 
-Files:
+**Current head:** [`d9ffd0cd0fd4467b042de22c9755dc665830610f`](https://github.com/Afloat16/craft-anything/commit/d9ffd0cd0fd4467b042de22c9755dc665830610f). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41693917149).
 
-- [crates/formats/src/pcap.rs](https://github.com/Afloat16/craft-anything/blob/533d404ff9234db41e15f11ac63c49c931326f02/crates/formats/src/pcap.rs)
-- [crates/formats/tests/regression_pcapng_framing.rs](https://github.com/Afloat16/craft-anything/blob/533d404ff9234db41e15f11ac63c49c931326f02/crates/formats/tests/regression_pcapng_framing.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/533d404ff9234db41e15f11ac63c49c931326f02/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/533d404ff9234db41e15f11ac63c49c931326f02/docs/STATUS.md)
+**Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687957586) at `f079d69c1672035ace96fb4e2aab52e188bf7803`.
 
-### 27. Keep TLS metadata within declared lengths
+**Files:** `crates/formats/src/pcap.rs`, `crates/formats/tests/regression_pcapng_framing.rs`.
 
-Branch: `bugfix/r3.12-tls-declared-bounds-20261103b`  
-Head: `b0decf6f3187770147f9f921a2b4f4656a280641`  
-Tree: `9474bd3608cad4d02a128fb1b2064574b9e06dc2`
-
-## Change
+### 27. Keep TLS metadata within declared lengths — [#715](https://github.com/storytold/craft-anything/pull/715)
 
 Bound nested record, handshake and extension slices before reading TLS hello metadata.
 
-## Regression coverage
+**Regression coverage:** Ten fixtures cover truncation, injected trailing bytes and valid SNI/ALPN and TLS 1.2 hellos.
 
-Ten fixtures cover truncation, injected trailing bytes and valid SNI/ALPN and TLS 1.2 hellos.
+**Current head:** [`a3f8763f4aa84cdeeba2dd0a05b1230b388dd241`](https://github.com/Afloat16/craft-anything/commit/a3f8763f4aa84cdeeba2dd0a05b1230b388dd241). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41693905229).
 
-## Validation
+**Previous-head CI:** [success](https://github.com/storytold/craft-anything/actions/runs/41687968387) at `140a75d2aa7f23fd831a419831f7d6f3c8006096`.
 
-Affected formats tests, strict Clippy and formatting passed. The combined 27-change formats run passed 563 tests with 0 ignored. The independent shared WASM gate remains pending.
+**Files:** `crates/formats/src/pcap.rs`, `crates/formats/tests/regression_tls_bounds.rs`.
 
-Files:
-
-- [crates/formats/src/pcap.rs](https://github.com/Afloat16/craft-anything/blob/b0decf6f3187770147f9f921a2b4f4656a280641/crates/formats/src/pcap.rs)
-- [crates/formats/tests/regression_tls_bounds.rs](https://github.com/Afloat16/craft-anything/blob/b0decf6f3187770147f9f921a2b4f4656a280641/crates/formats/tests/regression_tls_bounds.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/b0decf6f3187770147f9f921a2b4f4656a280641/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/b0decf6f3187770147f9f921a2b4f4656a280641/docs/STATUS.md)
-
-### 28. Preserve distinct response metadata in replay samples
-
-Branch: `bugfix/r3.11-standin-sample-metadata-20261103b`  
-Head: `ec385c38b69e021617bd2b93f226d891cefb0c9a`  
-Tree: `1a21e7cdb44bf234b626067b40ca9e64aede7568`
-
-## Change
+### 28. Preserve distinct response metadata in replay samples — [#716](https://github.com/storytold/craft-anything/pull/716)
 
 Consecutive samples compare all response fields, keeping distinct headers, content types and omitted-body metadata.
 
-## Regression coverage
+**Regression coverage:** Five regressions cover changing Location headers, MIME types, omitted-body reasons, cached 304 markers and identical-sample deduplication.
 
-Five regressions cover changing Location headers, MIME types, omitted-body reasons, cached 304 markers and identical-sample deduplication.
+**Current head:** [`53a902a772d30e78951e2b8af5e301f4e1738052`](https://github.com/Afloat16/craft-anything/commit/53a902a772d30e78951e2b8af5e301f4e1738052). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41693894074).
 
-## Validation
+**Previous-head CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41689978704) at `06f77d6b71f68bab669a982a892a0cbffdc90248`.
 
-Source and published files checked. Automated tests, formatting, Clippy and remaining gates are pending because the execution environment is unavailable.
+**Files:** `crates/analysis/src/standin.rs`, `crates/analysis/tests/regression_standin_sample_metadata.rs`.
 
-Files:
-
-- [crates/analysis/src/standin.rs](https://github.com/Afloat16/craft-anything/blob/ec385c38b69e021617bd2b93f226d891cefb0c9a/crates/analysis/src/standin.rs)
-- [crates/analysis/tests/regression_standin_sample_metadata.rs](https://github.com/Afloat16/craft-anything/blob/ec385c38b69e021617bd2b93f226d891cefb0c9a/crates/analysis/tests/regression_standin_sample_metadata.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/ec385c38b69e021617bd2b93f226d891cefb0c9a/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/ec385c38b69e021617bd2b93f226d891cefb0c9a/docs/STATUS.md)
-
-### 29. Apply replay body limits after redaction
-
-Branch: `bugfix/r3.11-standin-redacted-budget-20261103b`  
-Head: `b95862470c5e75af14f5bcd9247fc7a1c2cce9dd`  
-Tree: `33fb331d39a7fd659ec7ba2ab7ff7ea2c420ee3e`
-
-## Change
+### 29. Apply replay body limits after redaction — [#717](https://github.com/storytold/craft-anything/pull/717)
 
 Check the redacted text against each body and capture budget before retaining it or charging its bytes.
 
-## Regression coverage
-
-Four regressions cover expanding redactions, per-body and total limits, exact retained size and rejected-body budget accounting.
-
-## Validation
-
-Source and published files checked. Automated tests, formatting, Clippy and remaining gates are pending because the execution environment is unavailable.
+**Regression coverage:** Four regressions cover expanding redactions, per-body and total limits, exact retained size and rejected-body budget accounting.
 
 Scope: retained text bytes. Existing raw-input prechecks remain in place; temporary redaction allocations are not bounded by this change.
 
-Files:
+**Current head:** [`f6c86482cab1d888aacc8f932591585a7fd80a61`](https://github.com/Afloat16/craft-anything/commit/f6c86482cab1d888aacc8f932591585a7fd80a61). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41693880980).
 
-- [crates/analysis/src/standin.rs](https://github.com/Afloat16/craft-anything/blob/b95862470c5e75af14f5bcd9247fc7a1c2cce9dd/crates/analysis/src/standin.rs)
-- [crates/analysis/tests/regression_standin_redacted_budget.rs](https://github.com/Afloat16/craft-anything/blob/b95862470c5e75af14f5bcd9247fc7a1c2cce9dd/crates/analysis/tests/regression_standin_redacted_budget.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/b95862470c5e75af14f5bcd9247fc7a1c2cce9dd/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/b95862470c5e75af14f5bcd9247fc7a1c2cce9dd/docs/STATUS.md)
+**Previous-head CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41690055300) at `bc6dde7873027e4e744af2afcfc4ad6b0ea44dd1`.
 
-### 30. Create atomic-write temporary files exclusively
+**Files:** `crates/analysis/src/standin.rs`, `crates/analysis/tests/regression_standin_redacted_budget.rs`.
 
-Branch: `bugfix/r2.9-atomic-temp-creation-20261103b`  
-Head: `5f0f1ce228af21a6ccc6494f6dacf392357f56a1`  
-Tree: `2d5696bfc08ab757953679ce1cfedaed2059642a`
-
-## Change
+### 30. Create atomic-write temporary files exclusively — [#718](https://github.com/storytold/craft-anything/pull/718)
 
 Reserve temporary files exclusively with bounded collision retries, and only clean up a file reserved by the current write.
 
-## Regression coverage
+**Regression coverage:** One filesystem regression covers existing files, Unix symlinks, private and inherited permissions, exhausted retries and cleanup after rename failure.
 
-One filesystem regression covers existing files, Unix symlinks, private and inherited permissions, exhausted retries and cleanup after rename failure.
+**Current head:** [`fb8a7df04af3ba1b84414a997b0b3bde00d3b5e3`](https://github.com/Afloat16/craft-anything/commit/fb8a7df04af3ba1b84414a997b0b3bde00d3b5e3). **Current CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41693868110).
 
-## Validation
+**Previous-head CI:** [in_progress](https://github.com/storytold/craft-anything/actions/runs/41690070641) at `298797e039f29c87526e69ff0be4455dbf91acae`.
 
-Source and published files checked. Automated tests, formatting, Clippy and remaining gates are pending because the execution environment is unavailable.
-
-Files:
-
-- [crates/platform/src/fs.rs](https://github.com/Afloat16/craft-anything/blob/5f0f1ce228af21a6ccc6494f6dacf392357f56a1/crates/platform/src/fs.rs)
-- [crates/platform/tests/regression_atomic_temp_creation.rs](https://github.com/Afloat16/craft-anything/blob/5f0f1ce228af21a6ccc6494f6dacf392357f56a1/crates/platform/tests/regression_atomic_temp_creation.rs)
-- [docs/ROADMAP.md](https://github.com/Afloat16/craft-anything/blob/5f0f1ce228af21a6ccc6494f6dacf392357f56a1/docs/ROADMAP.md)
-- [docs/STATUS.md](https://github.com/Afloat16/craft-anything/blob/5f0f1ce228af21a6ccc6494f6dacf392357f56a1/docs/STATUS.md)
-
-## Link format
-
-Prefilled links use GitHub's documented `quick_pull`, `title` and `body` parameters:
-
-https://docs.github.com/en/pull-requests/reference/using-query-parameters-to-create-a-pull-request
+**Files:** `crates/platform/src/fs.rs`, `crates/platform/tests/regression_atomic_temp_creation.rs`.
