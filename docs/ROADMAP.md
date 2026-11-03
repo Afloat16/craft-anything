@@ -465,7 +465,7 @@ Owner: open · Status: in progress
 - [ ] Tell the builder about the stand-in backend in a website's brief, and start one from a
       recording
 - [ ] Stand-in backend: a 304 recorded with no body is replayed as a bare 304, which a fresh browser
-      can't use; say so or leave it out — claimed: Afloat16, branch fix/r3-11-standin-empty-304
+      can't use; say so or leave it out — claimed: Afloat16, branch bugfix/r3.11-standin-empty-304-20261103
 - [ ] Godot format 4 and IL2CPP metadata 38 and 39 are header-only; read their tables once a real
       file can be checked
 - [ ] Bun: take source maps and bytecode out as files; a standalone `.pyz`
