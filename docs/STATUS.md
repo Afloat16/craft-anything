@@ -127,11 +127,6 @@ not been rechecked for this change; Windows runtime validation remains on the ro
 
 The full workspace gates (`cargo xtask ci`) passed in [hosted CI for #541](https://github.com/storytold/craft-anything/actions/runs/41584228995).
 
-### Ignore script-shaped text inside HTML text elements
-
-HTML asset discovery skips script-shaped content in supported raw-text/RCDATA elements and consumes the
-remainder after plaintext. Synthetic fixtures cover every handled text element and real scripts outside it.
-
 ## Known limits
 
 - Locks: every mutex but the browser viewer's goes through `platform::sync`. A deadlock on one thread or across
@@ -191,3 +186,8 @@ remainder after plaintext. Synthetic fixtures cover every handled text element a
 ## Next
 
 See [ROADMAP.md](ROADMAP.md) for the ordered plan.
+
+## Ignore script-shaped text inside HTML text elements
+
+HTML asset discovery skips script-shaped content in supported raw-text/RCDATA elements and consumes the
+remainder after plaintext. Synthetic fixtures cover every handled text element and real scripts outside it.
