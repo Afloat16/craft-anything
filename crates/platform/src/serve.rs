@@ -163,10 +163,14 @@ fn valid_header(line: &str) -> bool {
     })
 }
 
-fn valid_percent_escapes(target: &str) -> bool {
+fn valid_target(target: &str) -> bool {
     let mut bytes = target.bytes();
     while let Some(b) = bytes.next() {
-        if b == b'%' && (!bytes.next().is_some_and(|b| b.is_ascii_hexdigit()) || !bytes.next().is_some_and(|b| b.is_ascii_hexdigit())) {
+        if b == b'%' {
+            if !bytes.next().is_some_and(|b| b.is_ascii_hexdigit()) || !bytes.next().is_some_and(|b| b.is_ascii_hexdigit()) {
+                return false;
+            }
+        } else if !b.is_ascii_alphanumeric() && !b"-._~!$&'()*+,;=:@/?".contains(&b) {
             return false;
         }
     }
@@ -236,9 +240,7 @@ fn handle(mut stream: TcpStream, root: &Path) -> std::io::Result<()> {
         || method.is_empty()
         || !method.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
         || !target.starts_with('/')
-        || target.contains('#')
-        || target.bytes().any(|b| b.is_ascii_control())
-        || !valid_percent_escapes(target)
+        || !valid_target(target)
         || !headers_valid
         || (version == "HTTP/1.1" && !host_seen)
     {

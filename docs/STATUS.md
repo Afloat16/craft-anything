@@ -190,9 +190,12 @@ See [ROADMAP.md](ROADMAP.md) for the ordered plan.
 ## Reject incomplete and oversized preview HTTP requests
 
 Static preview requires a complete, syntactically valid request head within 16 KiB and a read deadline before
-serving files. Request targets cannot contain fragments or malformed percent escapes, including in the
-query string; HTTP/1.1 requires exactly one valid Host field.
+serving files. Request targets accept only URI path/query characters and well-formed percent escapes;
+raw fragments, disallowed punctuation, controls and non-ASCII bytes are rejected before file access.
+HTTP/1.1 requires exactly one valid Host field.
 Loopback fixtures cover malformed/truncated/oversized requests, missing/duplicate/invalid Host fields,
 encoded-hash and valid GET controls, HTTP/1.0 compatibility, and an open incomplete request returning 408
 after the whole-head deadline. GET and HEAD regressions reject incomplete and non-hex query escapes while
-retaining valid escaped bytes, encoded percent signs and ordinary path resolution.
+retaining valid escaped bytes, encoded percent signs and ordinary path resolution. Another 62-request
+loopback matrix checks 13 invalid characters in both path and query and five valid controls per method,
+including all query punctuation, encoded braces and UTF-8 file names.

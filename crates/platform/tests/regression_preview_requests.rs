@@ -123,3 +123,32 @@ fn regression_request_targets_validate_query_percent_escapes() {
         }
     }
 }
+
+#[test]
+fn regression_request_targets_reject_non_uri_characters() {
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["index.html", "braces{ok}.html", "café.html"] {
+        std::fs::write(dir.path().join(name), "private-preview-content").unwrap();
+    }
+    let srv = serve_dir(dir.path()).unwrap();
+    for method in ["GET", "HEAD"] {
+        for invalid in ['{', '}', '[', ']', '\\', '^', '`', '|', '<', '>', '"', 'é', '\u{7f}'] {
+            for target in [format!("/index.html?value={invalid}"), format!("/index.html{invalid}")] {
+                let response = request(srv.port, &format!("{method} {target} HTTP/1.1\r\nHost: localhost\r\n\r\n"));
+                assert!(response.starts_with("HTTP/1.1 400"), "{method} {target:?}: {response:?}");
+                assert!(!response.contains("private-preview-content"));
+            }
+        }
+        for target in [
+            "/index.html?syntax=AZaz09-._~!$&'()*+,;=:@/?",
+            "/index.html?",
+            "/index.html?escaped=%7B%7D%5B%5D%5C%5E%60%7C%3C%3E%22",
+            "/braces%7Bok%7D.html?utf8=%C3%A9",
+            "/caf%C3%A9.html?single=%257B",
+        ] {
+            let response = request(srv.port, &format!("{method} {target} HTTP/1.1\r\nHost: localhost\r\n\r\n"));
+            assert!(response.starts_with("HTTP/1.1 200"), "{method} {target}: {response:?}");
+            assert_eq!(response.contains("private-preview-content"), method == "GET", "{method} {target}: {response:?}");
+        }
+    }
+}
