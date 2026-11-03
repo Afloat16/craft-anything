@@ -37,6 +37,9 @@ added an app the new rule rejected; both were green on their own branch.
 - It happened again with translations: #117 added UI strings and #115, merged right after it,
   added a check that every string has a Chinese translation, so `cargo xtask ci` failed on
   `main`. A PR that adds a check, or adds what a check covers, is tested on top of the other.
+  And again with a new catalog: #555 added "Pausing…" to every catalog there was, and #486 (Russian)
+  merged after it without it. A new language and a new UI string merged together need the string
+  in the new catalog too.
 
 **A dependency change merged without its lockfile.** Changes were staged with
 `git add -A crates apps docs`, which leaves out the root `Cargo.lock`, so a new dependency reached
@@ -87,6 +90,13 @@ CI the banner moved the layout under another test running beside it, and its cli
 **Fixtures that leak into each other.** A "nothing here" path sat beside a fake game folder in the
 same temp directory, and game detection walked up and found the game. Give each case its own
 `tempfile::tempdir()`.
+
+**A mock server closed on a partial request.** A loopback fixture read a request only once, then
+replied and closed. TCP can split even a short header; unread bytes made that close reset the
+connection. Consume the complete header before replying, with a size cap and an absolute deadline.
+Negative probes use loopback port zero so another fixture cannot acquire a released port.
+A controlled fragmented request reproduced the fixture defect; the old CI log did not preserve
+the probe's underlying error, so it does not establish that failure's cause.
 
 **Proving a refactor changed nothing.** Unit tests that check substrings can miss changed prompts.
 For a refactor that must keep output identical, dump the outputs for every combination before and
@@ -398,6 +408,11 @@ tool calls without matching results. The next model request then carried unpaire
 Every retained call needs a matching result, including an explicit non-execution result.
 Test the next serialized request as well as whether a tool ran.
 
+**A deferred request reset lost on failure.** Moving consumed-note bookkeeping out of the live
+builder loop saved the reset only after a successful turn. A failed or cancelled turn had already
+removed the note, so reopening kept the old unchanged-turn count. Persist deferred request state
+on terminal errors too, outside provider retries; keep the original outcome if that save also fails.
+
 **A filter written for one kind of text, run on another.** The stand-in's secret scan was written for
 API answers, then also ran on recorded scripts: `this.token=t` became `[dropped]` and the scripts
 broke, and "Basic Membership" lost a word. It also tested whole tokens, so a secret inside a URL or
@@ -492,3 +507,10 @@ naming a tool.
 branch; `git stash` keeps only tracked files, so a new file stayed in the tree and `git add -A`
 put it into the other PR. Use `git stash -u` (or commit the work in progress on its own branch),
 and read `git status` before `git add -A`.
+
+**Fence checks that disagreed about tool calls.** Suffix checks accepted malformed closing text,
+while requiring exactly three closing backticks rejected valid longer fences. Share one boundary
+parser between JSON recovery and ReAct: count the opener, require a standalone closing line at
+least that long, and reject an earlier matching close followed by more text. Shorter backtick
+lines inside a longer fence are content. Test both paths and the next HTTP request, including
+malformed suffixes and non-call JSON examples whose strings contain protocol markers.
