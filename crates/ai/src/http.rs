@@ -42,10 +42,11 @@ fn net_error(what: &str, e: ureq::Error) -> ToolError {
 pub fn status_error(what: &str, status: u16, body: &str) -> ToolError {
     let detail: String = serde_json::from_str::<Value>(body)
         .ok()
-        .and_then(|v| {
-            v.pointer("/error/message").and_then(Value::as_str).map(str::to_string).or_else(|| v.get("error").and_then(Value::as_str).map(str::to_string))
-        })
-        .unwrap_or_else(|| body.chars().take(300).collect());
+        .map(|value| response_detail(&value).unwrap_or_else(|| "The service didn't provide an error message.".into()))
+        .unwrap_or_else(|| body.chars().take(300).collect())
+        .chars()
+        .take(1000)
+        .collect();
     let (code, remediation) = match status {
         401 | 403 => (ErrorCode::NoPermission, "The API key was rejected. Check it in Settings → AI."),
         404 => (ErrorCode::BadSettings, "The model or address wasn't found. Check the model name and base URL."),
@@ -55,6 +56,44 @@ pub fn status_error(what: &str, status: u16, body: &str) -> ToolError {
         _ => (ErrorCode::BadInput, "The request was rejected; see the message."),
     };
     ToolError::new(code, format!("{what} answered {status}: {detail}")).with_remediation(remediation).with_details(serde_json::json!({"status": status}))
+}
+
+/// Read only the human-readable fields, never serialise an arbitrary provider payload.
+fn error_message(value: &Value) -> Option<&str> {
+    [
+        value.as_str(),
+        value.pointer("/error/message").and_then(Value::as_str),
+        value.get("message").and_then(Value::as_str),
+        value.get("error").and_then(Value::as_str),
+        value.get("detail").and_then(Value::as_str),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::trim)
+    .find(|message| !message.is_empty())
+}
+
+fn response_detail(value: &Value) -> Option<String> {
+    let outer = error_message(value);
+    let reason = value.pointer("/error/metadata/raw").and_then(|raw| match raw.as_str() {
+        Some(text) => match serde_json::from_str::<Value>(text) {
+            Ok(parsed) => error_message(&parsed).map(str::to_string),
+            // Broken structured metadata may contain headers: don't print it as a message.
+            Err(_) if text.trim_start().starts_with(['{', '[']) => None,
+            Err(_) => error_message(raw).map(str::to_string),
+        },
+        None => error_message(raw).map(str::to_string),
+    });
+    let Some(reason) = reason else { return outer.map(str::to_string) };
+    let provider = value.pointer("/error/metadata/provider_name").and_then(Value::as_str).map(str::trim).filter(|name| !name.is_empty());
+    let detail = match provider {
+        Some(name) => format!("{}: {reason}", name.chars().take(80).collect::<String>()),
+        None => reason.clone(),
+    };
+    match outer {
+        Some(message) if message != reason => Some(format!("{}: {detail}", message.chars().take(300).collect::<String>())),
+        _ => Some(detail),
+    }
 }
 
 /// POST JSON and return a reader over the (streamed) body; errors on non-2xx.
@@ -185,6 +224,57 @@ mod tests {
         })
         .unwrap();
         assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn provider_errors_include_the_nested_reason() {
+        let reason = "The selected model does not accept this request parameter.";
+        for raw in [
+            serde_json::json!({"error": {"message": reason}}),
+            serde_json::json!({"message": reason}),
+            serde_json::json!({"detail": reason}),
+            serde_json::json!({"error": {"message": " \t "}, "message": "\n", "detail": reason}),
+            serde_json::json!({"error": reason}),
+            serde_json::json!(serde_json::json!({"error": {"message": reason}}).to_string()),
+            serde_json::json!(reason),
+        ] {
+            let body = serde_json::json!({"error": {
+                "message": "Provider returned error",
+                "metadata": {"provider_name": "Example provider", "raw": raw}
+            }});
+            let error = status_error("OpenRouter", 400, &body.to_string());
+            assert_eq!(error.code, ErrorCode::BadInput);
+            assert_eq!(error.details.as_ref().unwrap()["status"], 400);
+            assert!(error.message.contains("Provider returned error"), "{error:?}");
+            assert!(error.message.contains(reason), "{error:?}");
+            assert!(error.message.contains("Example provider"), "{error:?}");
+            assert_eq!(error.remediation.as_deref(), Some("The request was rejected; see the message."));
+        }
+    }
+
+    #[test]
+    fn provider_details_are_bounded_and_do_not_dump_metadata() {
+        let outer = "Provider returned error";
+        for raw in [
+            serde_json::json!({"headers": {"authorization": "Bearer sk-test"}}),
+            serde_json::json!(r#"{"headers":{"authorization":"Bearer sk-test"}}"#),
+            serde_json::json!(r#"{"headers":{"authorization":"Bearer sk-test""#),
+            Value::Null,
+            serde_json::json!(" "),
+        ] {
+            let body = serde_json::json!({"error": {"message": outer, "metadata": {"raw": raw}}});
+            let error = status_error("OpenRouter", 400, &body.to_string());
+            assert_eq!(error.message, format!("OpenRouter answered 400: {outer}"));
+        }
+        let reason = "é".repeat(2000);
+        let body = serde_json::json!({"error": {"message": outer, "metadata": {"raw": {"message": reason}}}});
+        let error = status_error("OpenRouter", 400, &body.to_string());
+        assert!(error.message.contains('é'));
+        assert!(error.message.strip_prefix("OpenRouter answered 400: ").unwrap().chars().count() <= 1000);
+        let body = serde_json::json!({"error": {"message": outer, "metadata": {"raw": {"message": outer}}}});
+        assert_eq!(status_error("OpenRouter", 400, &body.to_string()).message.matches(outer).count(), 1);
+        let body = serde_json::json!({"error": {"metadata": {"raw": {"headers": {"authorization": "Bearer sk-test"}}}}});
+        assert_eq!(status_error("OpenRouter", 400, &body.to_string()).message, "OpenRouter answered 400: The service didn't provide an error message.");
     }
 
     #[test]

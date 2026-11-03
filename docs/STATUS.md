@@ -61,6 +61,15 @@ Checked with isolated registry and SDK fixtures and with a native Fedora install
 validation have not been run for this change. Windows and macOS detection retain their existing
 tests, without new live runs on those platforms.
 
+### Provider error messages
+
+HTTP failures include the provider's message from `error.metadata.raw`, when it contains a
+message, detail or string error. Object payloads, JSON-encoded strings and plain-text reasons
+are supported, with the provider's name when supplied. Displayed details are bounded; arbitrary
+structured metadata is not dumped. HTTP status classification and remediation are retained.
+Checked with synthetic response bodies, malformed metadata, duplicate reasons and Unicode
+length controls. No live API-key build or account-specific diagnosis was performed.
+
 ### Fixed during the audit
 
 Web tools couldn't launch a browser on Windows/macOS (Chrome/Edge are off PATH) or be pointed at
