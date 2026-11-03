@@ -595,6 +595,7 @@ Gaps found while using the app for real projects.
 
 - [ ] Keep the builder-availability smoke regression independent of live agent discovery.
       — claimed: Afloat16, branch test/r2.9-builder-discovery-fixture-20261104
+      Test fixture implemented with controlled discovery; automated validation remains pending.
 
 ### R2.10 Pinned builds
 Owner: maintainers · Status: in progress
