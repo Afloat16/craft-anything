@@ -4,7 +4,7 @@
 //! root (no `..`, symlinks resolved and re-checked), unknown extension-less paths fall back to
 //! `index.html` (single-page apps). It stops when the [`StaticServer`] is dropped.
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -125,20 +125,72 @@ pub fn resolve(root: &Path, url_path: &str) -> Option<PathBuf> {
     (real.starts_with(root) && real.is_file()).then_some(real)
 }
 
+fn request_head(mut stream: &TcpStream) -> Result<String, u16> {
+    const MAX_HEAD: usize = 16 * 1024;
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    stream.set_read_timeout(Some(Duration::from_millis(100))).map_err(|_| 400u16)?;
+    let mut bytes = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return Err(408);
+        }
+        let before = bytes.len();
+        match stream.read(&mut chunk) {
+            Ok(0) => return Err(400),
+            Ok(n) => bytes.extend_from_slice(chunk.get(..n).unwrap_or_default()),
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut | std::io::ErrorKind::Interrupted) => continue,
+            Err(_) => return Err(400),
+        }
+        let from = before.saturating_sub(3);
+        if let Some(end) = bytes.get(from..).and_then(|b| b.windows(4).position(|w| w == b"\r\n\r\n")).map(|i| from + i + 4) {
+            if end > MAX_HEAD {
+                return Err(431);
+            }
+            return bytes.get(..end).and_then(|b| std::str::from_utf8(b).ok()).map(String::from).ok_or(400);
+        }
+        if bytes.len() >= MAX_HEAD {
+            return Err(431);
+        }
+    }
+}
+
+fn valid_header(line: &str) -> bool {
+    line.split_once(':').is_some_and(|(name, value)| {
+        !name.is_empty()
+            && name.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+            && !value.bytes().any(|b| b.is_ascii_control() && b != b'\t')
+    })
+}
+
 fn handle(mut stream: TcpStream, root: &Path) -> std::io::Result<()> {
     stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     stream.set_write_timeout(Some(Duration::from_secs(20)))?;
-    let mut reader = BufReader::new((&stream).take(16 * 1024));
-    let mut line = String::new();
-    reader.read_line(&mut line)?;
-    // Drain the headers (bounded by `take`).
-    let mut h = String::new();
-    while reader.read_line(&mut h)? > 2 {
-        h.clear();
+    let head = match request_head(&stream) {
+        Ok(head) => head,
+        Err(status) => {
+            let reason = match status {
+                408 => "Request Timeout",
+                431 => "Request Header Fields Too Large",
+                _ => "Bad Request",
+            };
+            return stream.write_all(format!("HTTP/1.1 {status} {reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes());
+        }
+    };
+    let mut lines = head.split("\r\n");
+    let mut parts = lines.next().unwrap_or_default().split(' ');
+    let (method, target, version) = (parts.next().unwrap_or_default(), parts.next().unwrap_or_default(), parts.next().unwrap_or_default());
+    if parts.next().is_some()
+        || !matches!(version, "HTTP/1.0" | "HTTP/1.1")
+        || method.is_empty()
+        || !method.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+        || !target.starts_with('/')
+        || target.bytes().any(|b| b.is_ascii_control())
+        || !lines.take_while(|line| !line.is_empty()).all(valid_header)
+    {
+        return stream.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
     }
-    let mut parts = line.split_whitespace();
-    let (method, target) = (parts.next().unwrap_or_default(), parts.next().unwrap_or("/"));
     if method != "GET" && method != "HEAD" {
         return stream.write_all(b"HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
     }
