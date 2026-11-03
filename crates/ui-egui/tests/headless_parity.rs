@@ -72,6 +72,7 @@ const ACTIONS: &[Action] = &[
     a("stop_pin",            "close what a pin opened",                        Tool(&["project_pin_stop"])),
     a("add_pictures",        "pictures of the original for the builder",       Tool(&["rebuild_start"])),
     a("attach",              "attach pictures to the next message",            Pending { tool: None, why: "rebuild_note and rebuild_start take text; attachments with a message come next" }),
+    a("paste_pictures",      "attach pictures from the clipboard (Ctrl+V)",    UiOnly("the clipboard belongs to the app; headless callers name picture files")),
     a("raise_asset_budget",  "give a project another default budget for generated assets", Tool(&["project_assets_budget"])),
     a("set_generate_assets", "let a game's builder generate pictures and 3D models, or not", Tool(&["project_assets_allow"])),
     a("Project › Open folder", "show the project folder in the file manager",  Tool(&["project_open_folder"])),
@@ -142,7 +143,7 @@ const PLUMBING: &[(&str, &str)] = &[
     ("acted", "shows a button tool's result (toast, open the preview)"),
     ("engines_found", "a job's result"), ("engine_got", "a job's result"), ("ghidra_got", "a job's result"),
     ("ghidra_ready", "a query"), ("ghidra_missing", "a query"),
-    ("load_prefs", "startup"), ("log", "the log panel"), ("toast", "a message"),
+    ("load_prefs", "startup"), ("after_first_frames", "startup"), ("log", "the log panel"), ("toast", "a message"),
     ("settings_changed", "marks settings dirty; each setting has its row"), ("flush_settings", "saves settings"),
     ("refresh_view", "redraw data"), ("resolve_chat_evidence", "redraw data"), ("mark_dirty", "redraw data"),
     ("poll_conversation", "polling"), ("allow_for_project", "part of answer_consent"),
@@ -151,6 +152,7 @@ const PLUMBING: &[(&str, &str)] = &[
     ("builder_backend", "part of start_make"), ("need_builder", "part of start_make"), ("start_run", "part of start_make"), ("start_run_with", "part of start_run and continue_build"),
     ("resume", "part of follow_up"), ("poll_run", "polling"), ("launch", "part of start_run: RunSet::start, the queue rebuild_start uses too"),
     ("thumb_ready", "a job's result"), ("thumb", "drawing"), ("refresh_side_panel", "a view tally"),
+    ("previews", "drawing"), ("preview", "drawing"), ("preview_ready", "a job's result"),
 ];
 
 fn crate_dir() -> PathBuf {

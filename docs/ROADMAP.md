@@ -126,6 +126,17 @@ cheapest help we can give anyone, so nothing below should hold it up for long.
       path, not its name
 - [ ] Live-check #152 on Windows 11 with OpenCode from npm, and on a machine with the agent but no
       Node.js
+- [x] A start that dies before its window (a native driver crash leaves no dialog or log, #74, #104,
+      #33) is remembered: `starting` beside `desktop.log` is written before the window is asked for
+      and removed once it's open, and a start that finds it draws with WARP that once
+      (`apps/craft-anything/src/start_guard.rs`)
+- [ ] Live-check the start fallback on Windows: make a start die before its window (kill the
+      process at launch), start again, and see `desktop.log` say it drew without the graphics card
+      and log `drawing with` an adapter of type `Cpu` (WARP), and that the window opens
+- [ ] The software retry still lets wgpu start every DX12 adapter before `pick_adapter` runs, so a
+      driver that crashes while its device is created crashes the retry too. wgpu has no way to
+      skip hardware adapters; needs a different route (another renderer, or a helper that starts
+      the app with only WARP visible)
 - [ ] Add to `docs/releasing.md`: before publishing, a Deep build through Claude Code from the
       finished package, on a Mac and on Windows. Starting the CLI from the package (#91) doesn't
       show whether Claude Code accepts its tools
@@ -166,10 +177,18 @@ only when it's green and a maintainer has fully reviewed it, code as well as wor
       here any more: every job calls `storytold/craft-common-actions@main`, so a fix belongs there
 - [ ] STATUS.md's "Known limits" still says the project feed, game-engine and Ghidra installs and
       launching exist only in the desktop app, which R1.6 ended: update it
+- [x] A spinner on screen no longer makes the window redraw at the display's rate: egui's own asks
+      for a frame at once every frame, ours at the animation's pace (`widgets::Spinner`, #579)
+- [ ] Measure #579 on Windows 11 (0.3.0 portable): the app's CPU while idle, while a build runs and
+      during a website capture, before and after; and why a website capture is slow and sits for a
+      long time (no details were given, so nothing was changed for it)
 
 ### R5.3 A builder that can't make progress stops
 Owner: open · Status: todo
 Every round spends the person's money or quota. One that can't do anything shouldn't start.
+- [x] Preserve the interrupted request when an agent cannot restore its session: ACP starts a new
+      session, or a registered CLI adapter falls back to Plain (#552 review).
+      — claimed: Afloat16, branch bugfix/r5.3-interrupted-request-recovery-20261103
 - [x] A build stops and says why after two builder turns in a row that changed nothing in `app/`,
       on every backend (#44, #110, #417, #481). The count is saved in the project, so it holds
       across runs: a run ends at 7 checks (`max_rounds`) but check numbers carry on, so #44's check
@@ -187,8 +206,12 @@ Every round spends the person's money or quota. One that can't do anything shoul
       `agent.session_id()` is set, which API backends and OpenCode's plain adapter never set (read
       in the code, not run). So #148 didn't reach #142, which was OpenCode. Wait and send the turn
       again for them too, then close #142 — commit `f80a16a66834`
-- [ ] **decision** Whether a build gets a token or cost limit of its own, beyond rounds: #399 used
-      9.4M tokens in 19 minutes of the first stage, then failed to compile
+- [x] A builder step on an API backend stops after 25 failed build commands in a row (none
+      succeeding between), says so and keeps the project (`MAX_FAILED_BUILDS` in `agent.rs`, #399:
+      9.4M tokens in 19 minutes of the first stage, never compiled). Try again carries on
+- [ ] **decision** Whether a build gets a token or cost limit of its own, beyond rounds and that
+      stop (#399): a model that changes code without ever running a build isn't caught by it
+- [ ] Check live that the stop fires on a real API-backend build and the message reads well
 
 ### R5.4 Local models can build
 Owner: open · Status: todo
@@ -197,6 +220,12 @@ The built-in agent loop assumes a capable tool-calling model. Reports #24, #44, 
 been run live.
 - [ ] A live local build through Ollama, small target, to Ready or to a clear stop, and note in
       STATUS.md which models it worked with. Do this first: it shows which of the lines below matter
+- [x] A builder on a local model is offered 13 tools (about 10,000 characters of descriptions)
+      instead of 33-41 (23,000-30,000): the Build tools and the Core tools the brief names, not the
+      study set a model explores with instead of writing (#417, `LOCAL_BUILDER_CORE`). Measured as
+      text, not on a model; Ollama's default context (4k) was too small for the old list alone
+- [ ] Run #417's case live (Ollama, `qwen2.5-coder:14b`, "a scientific calculator") before and
+      after this: does it call `build_file_write` now? If it still doesn't, the model can't build
 - [ ] An assistant turn with no text sends `content: null` (`openai.rs`), which likely causes #403's
       `invalid message content type: <nil>`: send an empty string
 - [x] Understand a tool call a model writes as JSON in its text (#417; implementation `dfe9a4db2dcb3e27edbd67311cbb4202584e7af6`). The fallback protocol reads
@@ -212,13 +241,27 @@ been run live.
       may ignore anyway; LM Studio refused a 12.6k prompt on its 8k default (#73)
 - [x] A per-backend context budget in `[[ai.backends]]` (`LoopConfig::context_tokens` exists), for
       services whose real window differs from 150k (#374) — implementation: `6bd94b84828ec89b805cb8a246f557d0a778c037`
-- [ ] Find LM Studio on another port (#73)
+- [x] Find LM Studio on another port (#73): the port in its settings file (when it is there) and
+      the ports 1235-1239 are probed like the usual servers; OpenCode's own `baseURL`s were already
+      read (#83)
+- [ ] Check live that LM Studio on `--port 1235` is offered, and where its settings file is on
+      Windows, macOS and Linux (`LM_STUDIO_SETTINGS` is from memory of its folders, not verified)
 - [ ] See why Bionic or LM Studio can't be picked (#140)
+- [x] Do not select an embedding, ranking or transcription model as a chat backend when a local server has no chat models — claimed: Afloat16, branch bugfix/r5.4-nonchat-model-detection-20261103
 
 ### R5.5 API-key builds fail in words people can use
 Owner: open · Status: todo
+- [x] Bound accumulated data across all lines of one server-sent event, so short lines cannot
+      grow a streamed API response without limit
+      — claimed: Afloat16, branch bugfix/r5.5-bounded-sse-events-20261103
 - [x] Show the provider's own reason: #369 bought $10 of credit and got only "OpenRouter answered
       400: Provider returned error". Find the reason in the response body and show it — PR #542
+- [x] OpenRouter picks an upstream provider per request, and one without tool calling answered
+      "400: Provider returned error" (#369): a request with tools now sets
+      `provider.require_parameters`, and a 404 "no provider for these parameters" falls back to the
+      text protocol like any server that rejects tools
+- [ ] Check #369 live with Kimi K3 and a key limited to Kimi/Moonshot models (needs the person's
+      OpenRouter key): that the build starts, or that the error now names the provider's reason
 - [ ] A live API-key build (needs a key on the test machine)
 - [ ] Failure logs for the other ways an AI stops (API backends, MCP server start-up), like the
       ones agent CLIs write to `logs/` in the config folder
@@ -260,7 +303,7 @@ yet, and the quick start is how every new person begins.
 - [ ] fal bills pictures "by rounding up to the nearest megapixel"; estimates use the exact size.
       Confirm on a real invoice whether a 1024×1024 picture bills as 1 or 2 megapixels, then round
       in the table (needs a key)
-- [ ] A live extraction run with Kimi K3 (needs the person's OpenRouter key)
+- [ ] A live extraction run with Kimi K3.1 Pro (needs the person's OpenRouter key)
 
 **A second computer or another system:**
 - [ ] A live run of a project copied between two real computers with Claude Code (#451, #452); done
@@ -349,8 +392,9 @@ Owner: open · Status: in progress
 - [ ] OpenCode's plain adapter never passes our tool server, so its builder has none of our tools
       and hunts for a setting that doesn't exist (#481). Hand it the server, or build over ACP by
       default once that passes
-- [ ] Aider has no adapter, so the plain one hands it the prompt as a file name, and it can open a
-      browser sign-in nobody agreed to (#72). Give it an adapter, or stop offering it
+- [x] Aider has no adapter, so the plain one hands it the prompt as a file name, and it can open a
+      browser sign-in nobody agreed to (#72). Give it an adapter, or stop offering it — claimed: Afloat16, branch bugfix/r2.2-aider-recommendations-20261103
+- [ ] Add a non-interactive Aider adapter before recommending it again; detection currently leaves it out.
 - [ ] Codex (#499): in a chat the tool server has no active target, tools turned on with
       `enable_toolset` can't be called, The
       reporter attached a patch for chat continuity; look at that first
@@ -378,8 +422,16 @@ Owner: open · Status: in progress
       differs by agent: Claude Code asks our approval tool; OpenCode's builder runs with `--auto`;
       Hermes's `-z` turns its approvals off on every run, chats included. Clean room's approval
       rule doesn't reach an agent that never asks us
+- [x] Clean room outside builds (#564): a chat or question with Claude Code refuses the agent's own
+      file, shell and web tools outright (`--disallowedTools`), not through its defaults; an ACP chat
+      refuses them through an approver instead of a consent card (`docs/claude-code.md`)
 - [ ] Say on each adapter, as typed data, what it can be held to (asks us, its own sandbox,
-      nothing), and have runs act on that, once the decision above is made
+      nothing), in a build, a chat and a question, and have runs act on that, once the decision above
+      is made. Today Codex, Gemini CLI, OpenCode, Antigravity, Hermes and Maki are not held to
+      Clean room in a chat (their own sandbox, if any, is not established)
+- [ ] Check live that a Clean room chat with Claude Code can't read a file outside its folder, and
+      that an ACP chat in Clean room still reaches our tools (its permission requests for them are
+      allowed, only its own read/write/command/fetch are refused)
 - [ ] Check live what Hermes over ACP asks about: whether its file reads reach our approval policy
 - [ ] Maki's plain `maki -p` builder doesn't ask us before commands, and in Clean room its reads
       aren't checked (as with every agent that never asks us): say so in the approval decision
@@ -410,7 +462,7 @@ Owner: open · Status: in progress
       (#259, a guess at its cause)
 - [ ] macOS: `/Applications/Antigravity.app` ended up as the agent's command (#467); find what
       writes it (no code for it was found; maybe the file picker)
-- [ ] Windows: look in `%LOCALAPPDATA%\agy\bin` too (#62)
+- [x] Windows: look in `%LOCALAPPDATA%\agy\bin` too (#62) — claimed: Afloat16, branch bugfix/r2.2-antigravity-search-20261103
 - [ ] "Claude Code on <ssh host>" is offered for any SSH host, whether or not it has Claude Code
       (#62)
 - [ ] Gemini CLI's sign-in reportedly refuses individuals now (#400): check, and stop recommending
@@ -419,6 +471,13 @@ Owner: open · Status: in progress
 ### R2.4 Runtime study for apps and games (with consent)
 Owner: maintainers · Status: in progress
 - [ ] UI tree on Linux (AT-SPI)
+- [x] `apple_calls_observe`: the breakpoint callback is one valid line (it had a literal backslash
+      and `n` between statements, so lldb stopped before launching, #251), covers every breakpoint
+      instead of only the first, a failed lldb run is an error and not "0 calls", and names or
+      arguments with line breaks are refused (they'd add commands to lldb's command file). The
+      callback body was compiled with Python; lldb itself was not run
+- [ ] Run `apple_calls_observe` on a Mac against a small program with `lldb` (the #251 probe):
+      the hit for `alpha` is recorded, and a program lldb can't debug says so
 - [ ] Window capture tried on macOS and Linux (only Windows so far); games behind a launcher
 - [ ] Short scripted input sessions (enigo) to record screens of the original
 
@@ -435,8 +494,9 @@ Owner: open · Status: in progress
 - [ ] Make: a game whose request names a technology the stack table doesn't know (Phaser, Bevy…)
       still needs the default engine installed to start, though the builder is told to use what
       was named; ask the person, or let such a game start without an engine
-- [ ] The website check's "No built site found in app/dist, app/out or app/build yet" leaves out
-      plain HTML in `app/`, which `site_dir` accepts: name it too (#494)
+- [x] The website check's missing-site note names every place `site_dir` accepts (dist/, build/,
+      out/, or a plain index.html with no package.json) and the app's real place, "app/" or "the
+      project folder" (#494)
 
 ### R2.8 Clean room means clean room
 Owner: maintainers · Status: in progress
@@ -449,6 +509,12 @@ Gaps found while using the app for real projects.
 - [x] A prompt brought back with Up keeps its pictures (their paths are absolute, so they don't
       come back after the project is moved)
 - [ ] Change a project's builder from its page (a tool, so the CLI and MCP can too) — in PR #245
+- [x] Ctrl+V (Shift+Insert, Cmd+V) in a prompt box that takes pictures pastes a copied image (saved
+      as a PNG) or copied picture files; attachments show as square picture tiles, the whole
+      picture on hover, decoded on a worker
+- [ ] A picture over 20 MB dropped on a prompt box or picked in its dialog still shows as
+      attached, and the message then goes without it (`copy_pictures` skips it); refuse it when
+      it's added, as a paste does (`workspace::attachable_picture`)
 - [ ] When the builder decides a question, show the question and its choice as an answered card
       in the feed (the run sees only the tool call today; the builder's words say what it chose)
 - [ ] A question's own cost: a forked Claude Code session reports the whole session's running
@@ -478,6 +544,8 @@ Gaps found while using the app for real projects.
       check against DNS rebinding), streams large files instead of reading them into memory,
       sends no body for HEAD on a missing file, and caps open connections and the time a
       request may take to arrive (#597, #598, #600, #601, by Afloat16)
+- [x] The command palette stays where the wheel scrolls it; it follows the selection only when the
+      arrow keys or typing move it (#584)
 
 ### R2.10 Pinned builds
 Owner: maintainers · Status: in progress

@@ -417,7 +417,9 @@ impl AiHub {
         let model = match model.map(str::trim).filter(|m| !m.is_empty()) {
             Some(m) => m.to_string(),
             None => detect::chat_model(&models).ok_or_else(|| {
-                ToolError::new(ErrorCode::NotFound, format!("{address} has no models yet.")).with_remediation("Add a model on the server first, or name one.")
+                let reason = if models.is_empty() { "has no models yet" } else { "doesn't list a model that can chat" };
+                ToolError::new(ErrorCode::NotFound, format!("{address} {reason}."))
+                    .with_remediation("Load a chat model on the server first, or enter the name of a chat model you know is available.")
             })?,
         };
         let config = BackendConfig {
@@ -700,13 +702,13 @@ impl AiHub {
         use craft_anything_engine::Toolset;
         let deep = !self.engine.session().clean_room();
         let toolsets = if deep { self.engine.registry().toolsets() } else { vec![Toolset::Core, Toolset::Build] };
-        self.start_loop(entry, beginner, transcript, &toolsets)
+        self.start_loop(entry, beginner, transcript, &toolsets, true)
     }
 
     /// Start the asset extractor: our agent loop with the Build tools and the game archive tools.
     pub fn start_extractor(&self, entry: &BackendEntry, beginner: bool, transcript: Option<PathBuf>) -> Result<ApiConversation, ToolError> {
         use craft_anything_engine::Toolset;
-        self.start_loop(entry, beginner, transcript, &[Toolset::Core, Toolset::Build, Toolset::Formats])
+        self.start_loop(entry, beginner, transcript, &[Toolset::Core, Toolset::Build, Toolset::Formats], false)
     }
 
     fn start_loop(
@@ -715,6 +717,7 @@ impl AiHub {
         beginner: bool,
         transcript: Option<PathBuf>,
         toolsets: &[craft_anything_engine::Toolset],
+        lean_for_local: bool,
     ) -> Result<ApiConversation, ToolError> {
         let mut slot = self.build_model(entry)?;
         slot.max_turns = slot.max_turns.max(agent::BUILDER_MAX_TURNS);
@@ -722,7 +725,7 @@ impl AiHub {
         ApiConversation::start_with(
             host,
             vec![slot],
-            LoopConfig { beginner, prices: self.config().prices.clone(), transcript, ..LoopConfig::default() },
+            LoopConfig { beginner, prices: self.config().prices.clone(), transcript, lean_for_local, ..LoopConfig::default() },
             toolsets.iter().copied().collect(),
         )
     }
