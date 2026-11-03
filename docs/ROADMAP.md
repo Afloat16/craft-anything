@@ -616,6 +616,9 @@ Owner: open · Status: in progress
 - [ ] `native_publisher_show` hashes the file minus the signature fields, not section by section;
       a file with unusual gaps between sections can read as different
 
+- [ ] Enforce stand-in per-body and total byte budgets on the text that is actually retained after redaction.
+      — claimed: Afloat16, branch bugfix/r3.11-standin-redacted-budget-20261103b
+
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
 - [x] Parsers refuse what they used to half-read: binary plists keep objects inside their object
