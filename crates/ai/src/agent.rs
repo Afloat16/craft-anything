@@ -242,6 +242,8 @@ pub struct ModelSlot {
     pub local: bool,
     pub effort: Option<Effort>,
     pub max_turns: u32,
+    /// The backend's conversation budget; zero uses the local/cloud default.
+    pub context_tokens: u64,
 }
 
 /// Settings for one conversation.
@@ -251,8 +253,8 @@ pub struct LoopConfig {
     pub prices: BTreeMap<String, crate::config::Price>,
     /// Keep the conversation in this file after every step, and continue it when it's there.
     pub transcript: Option<std::path::PathBuf>,
-    /// Input tokens the conversation may grow to before it's trimmed; 0 = by model (local or
-    /// cloud, see [`crate::context`]).
+    /// Override the input tokens the conversation may grow to before it's trimmed. Zero uses
+    /// the active backend's budget, or its local/cloud default (see [`crate::context`]).
     pub context_tokens: u64,
 }
 
@@ -328,14 +330,7 @@ impl AgentLoop {
             turns += 1;
             let tools = self.tool_defs();
             let system = self.system.clone().unwrap_or_default();
-            if let Some((usage, cost)) = self.fit_context(&system) {
-                msg_usage.add(usage);
-                msg_cost = match (msg_cost, cost) {
-                    (Some(a), Some(b)) => Some(a + b),
-                    _ => None,
-                };
-            }
-            let Some(result) = self.one_turn(&system, &tools, effort) else { break };
+            let Some(result) = self.one_turn(&system, &tools, effort, &mut msg_usage, &mut msg_cost) else { break };
             self.last_input = result.usage.input_tokens + result.usage.cache_read_tokens + result.usage.cache_write_tokens;
             let (slot_name, local, model_id) = match self.chain.get(self.current) {
                 Some(s) => (s.name.clone(), s.local, result.model.clone()),
@@ -425,8 +420,10 @@ impl AgentLoop {
 
     /// Input tokens the conversation may take before room is made.
     fn context_budget(&self) -> u64 {
-        match self.cfg.context_tokens {
-            0 if self.chain.get(self.current).is_some_and(|s| s.local) => context::LOCAL_CONTEXT_TOKENS,
+        let slot = self.chain.get(self.current);
+        let configured = if self.cfg.context_tokens == 0 { slot.map(|s| s.context_tokens).unwrap_or(0) } else { self.cfg.context_tokens };
+        match configured {
+            0 if slot.is_some_and(|s| s.local) => context::LOCAL_CONTEXT_TOKENS,
             0 => context::CLOUD_CONTEXT_TOKENS,
             n => n,
         }
@@ -448,7 +445,8 @@ impl AgentLoop {
         let after = (context::estimate_tokens(&self.history) as f64 * scale) as u64;
         self.last_input = 0;
         self.host.journal("context", json!({"action": "trim", "blocks": trimmed, "tokens_before": size, "tokens_after": after, "budget": budget}));
-        if trimmed > 0 && after <= budget * 3 / 4 {
+        // floor(3 * budget / 4), without overflowing for a large configured budget.
+        if trimmed > 0 && after <= budget - budget.div_ceil(4) {
             return None;
         }
         let cut = context::cut_point(&self.history)?;
@@ -495,8 +493,23 @@ impl AgentLoop {
     }
 
     /// One model call, falling back along the chain when a backend fails before producing output.
-    fn one_turn(&mut self, system: &str, tools: &[ToolDef], effort: Effort) -> Option<crate::model::TurnResult> {
+    fn one_turn(
+        &mut self,
+        system: &str,
+        tools: &[ToolDef],
+        effort: Effort,
+        msg_usage: &mut Usage,
+        msg_cost: &mut Option<f64>,
+    ) -> Option<crate::model::TurnResult> {
         loop {
+            // A fallback can have a smaller window than the backend that just failed.
+            if let Some((usage, cost)) = self.fit_context(system) {
+                msg_usage.add(usage);
+                *msg_cost = match (*msg_cost, cost) {
+                    (Some(a), Some(b)) => Some(a + b),
+                    _ => None,
+                };
+            }
             let events = self.events.clone();
             let mut produced = false;
             let stop = self.stop.clone();
@@ -928,7 +941,7 @@ pub(crate) mod tests {
             ]),
             seen: seen.clone(),
         };
-        let slot = ModelSlot { name: "Fake".into(), model: Box::new(script), local: false, effort: None, max_turns: 10 };
+        let slot = ModelSlot { name: "Fake".into(), model: Box::new(script), local: false, effort: None, max_turns: 10, context_tokens: 0 };
         let mut c = ApiConversation::start(host.clone(), vec![slot], LoopConfig { beginner: true, ..LoopConfig::default() }).unwrap();
         c.send("How does it work?");
         assert!(c.is_busy());
@@ -977,7 +990,7 @@ pub(crate) mod tests {
             turns: VecDeque::from([look("a"), look("b"), Ok(summary), turn(vec![Block::Text { text: "done".into() }], StopReason::EndTurn)]),
             seen: seen.clone(),
         };
-        let slot = ModelSlot { name: "Fake".into(), model: Box::new(script), local: false, effort: None, max_turns: 10 };
+        let slot = ModelSlot { name: "Fake".into(), model: Box::new(script), local: false, effort: None, max_turns: 10, context_tokens: 0 };
         // Ordinary turns report 10 input tokens, over this budget, so room is made before the third.
         let cfg = || LoopConfig {
             transcript: Some(path.clone()),
@@ -1020,7 +1033,7 @@ pub(crate) mod tests {
         // A new conversation with the same file continues it.
         let seen2 = Arc::new(Mutex::new(Vec::new()));
         let script = Scripted { turns: VecDeque::from([turn(vec![Block::Text { text: "blue now".into() }], StopReason::EndTurn)]), seen: seen2.clone() };
-        let slot = ModelSlot { name: "Fake".into(), model: Box::new(script), local: false, effort: None, max_turns: 10 };
+        let slot = ModelSlot { name: "Fake".into(), model: Box::new(script), local: false, effort: None, max_turns: 10, context_tokens: 0 };
         let mut c = ApiConversation::start(host, vec![slot], LoopConfig { transcript: Some(path.clone()), ..LoopConfig::default() }).unwrap();
         assert!(c.resumed());
         c.send("Make it blue");
@@ -1047,7 +1060,7 @@ pub(crate) mod tests {
                 turns: VecDeque::from([look("a"), look("b"), summary, turn(vec![Block::Text { text: "done".into() }], StopReason::EndTurn)]),
                 seen: seen.clone(),
             };
-            let slot = ModelSlot { name: "Fake".into(), model: Box::new(script), local, effort: None, max_turns: 10 };
+            let slot = ModelSlot { name: "Fake".into(), model: Box::new(script), local, effort: None, max_turns: 10, context_tokens: 0 };
             let mut c = ApiConversation::start(host.clone(), vec![slot], LoopConfig { context_tokens: 5, ..LoopConfig::default() }).unwrap();
             c.send("Build it");
             let events = drain_until_done(&mut c, |_, _| {});
@@ -1067,6 +1080,116 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_large_backend_budget_can_trim_without_overflow() {
+        let budget = i64::MAX as u64;
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = dir.path().join("transcript.json");
+        let host = Arc::new(FakeHost { calls: Mutex::default(), journal: Mutex::default() });
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut history = vec![
+            Msg::user_text("Build it"),
+            Msg { role: Speaker::Assistant, blocks: vec![Block::ToolUse { id: "old".into(), name: "look".into(), input: json!({}) }] },
+            Msg { role: Speaker::User, blocks: vec![Block::ToolResult { tool_use_id: "old".into(), content: "x".repeat(1000), is_error: false }] },
+        ];
+        for _ in 0..context::KEEP_RECENT / 2 {
+            history.push(Msg { role: Speaker::Assistant, blocks: vec![Block::Text { text: "checked".into() }] });
+            history.push(Msg::user_text("continue"));
+        }
+        context::save(&transcript, &history).unwrap();
+        let mut first = turn(vec![Block::ToolUse { id: "new".into(), name: "look".into(), input: json!({}) }], StopReason::ToolUse).unwrap();
+        first.usage.input_tokens = budget + 1;
+        let script = Scripted { turns: VecDeque::from([Ok(first), turn(vec![Block::Text { text: "done".into() }], StopReason::EndTurn)]), seen: seen.clone() };
+        let slot = ModelSlot { name: "Large".into(), model: Box::new(script), local: false, effort: None, max_turns: 5, context_tokens: budget };
+        let mut conversation = ApiConversation::start(host.clone(), vec![slot], LoopConfig { transcript: Some(transcript), ..Default::default() }).unwrap();
+        assert!(conversation.resumed());
+        conversation.send("continue");
+        let events = drain_until_done(&mut conversation, |event, _| {
+            assert!(!matches!(event, AgentEvent::Error { .. }), "{event:?}");
+        });
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2, "trimming made enough room without a summary call");
+        assert!(matches!(&seen[1][2].blocks[0], Block::ToolResult { tool_use_id, content, .. } if tool_use_id == "old" && content.len() < 1000));
+        assert!(events.iter().any(|event| matches!(event, AgentEvent::TextDelta { text } if text == "done")), "{events:?}");
+        let journal = host.journal.lock().unwrap();
+        assert!(journal.iter().any(|(kind, entry)| kind == "context" && entry["budget"] == budget && entry["blocks"] == 1));
+    }
+
+    #[test]
+    fn backend_context_budgets_and_conversation_overrides() {
+        for (backend_budget, override_budget, local, summarises) in [
+            (5, 0, false, true),
+            (5, 0, true, true),
+            (0, 5, false, true),
+            (100, 5, false, true),
+            (5, 100, false, false),
+            (0, 0, false, false),
+            (0, 0, true, false),
+        ] {
+            let host = Arc::new(FakeHost { calls: Mutex::default(), journal: Mutex::default() });
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let look = |id: &str| turn(vec![Block::ToolUse { id: id.into(), name: "look".into(), input: json!({}) }], StopReason::ToolUse);
+            let mut turns = VecDeque::from([look("a"), look("b")]);
+            if summarises {
+                turns.push_back(turn(vec![Block::Text { text: "Earlier work kept.".into() }], StopReason::EndTurn));
+            }
+            turns.push_back(turn(vec![Block::Text { text: "done".into() }], StopReason::EndTurn));
+            let slot = ModelSlot {
+                name: "Configured".into(),
+                model: Box::new(Scripted { turns, seen: seen.clone() }),
+                local,
+                effort: None,
+                max_turns: 5,
+                context_tokens: backend_budget,
+            };
+            let mut conversation = ApiConversation::start(host, vec![slot], LoopConfig { context_tokens: override_budget, ..Default::default() }).unwrap();
+            conversation.send("Build it");
+            let events = drain_until_done(&mut conversation, |_, _| {});
+            let seen = seen.lock().unwrap();
+            assert_eq!(seen.len(), if summarises { 4 } else { 3 }, "backend {backend_budget}, override {override_budget}, local {local}");
+            if summarises {
+                assert!(seen[2].last().unwrap().text().contains("summary of the work so far"));
+                assert!(seen[3][0].text().contains("Earlier work kept."));
+            }
+            assert!(events.iter().any(|event| matches!(event, AgentEvent::TextDelta { text } if text == "done")), "{events:?}");
+            assert!(matches!(events.last(), Some(AgentEvent::TurnDone { input_tokens, .. }) if *input_tokens == if summarises { 40 } else { 30 }));
+        }
+    }
+
+    #[test]
+    fn fallback_refits_context_to_its_own_budget_and_accounts_for_the_summary() {
+        let host = Arc::new(FakeHost { calls: Mutex::default(), journal: Mutex::default() });
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let look = |id: &str| turn(vec![Block::ToolUse { id: id.into(), name: "look".into(), input: json!({}) }], StopReason::ToolUse);
+        let first = Scripted {
+            turns: VecDeque::from([look("a"), look("b"), Err(ToolError::new(ErrorCode::EngineMissing, "temporarily unavailable"))]),
+            seen: Arc::default(),
+        };
+        let fallback = Scripted {
+            turns: VecDeque::from([
+                turn(vec![Block::Text { text: "Earlier work kept.".into() }], StopReason::EndTurn),
+                turn(vec![Block::Text { text: "done".into() }], StopReason::EndTurn),
+            ]),
+            seen: seen.clone(),
+        };
+        let chain = vec![
+            ModelSlot { name: "Large".into(), model: Box::new(first), local: false, effort: None, max_turns: 5, context_tokens: 100 },
+            ModelSlot { name: "Small".into(), model: Box::new(fallback), local: false, effort: None, max_turns: 5, context_tokens: 5 },
+        ];
+        let mut conversation = ApiConversation::start(host.clone(), chain, LoopConfig::default()).unwrap();
+        conversation.send("Build it");
+        let events = drain_until_done(&mut conversation, |_, _| {});
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2, "the fallback summarises before answering");
+        assert!(seen[0].last().unwrap().text().contains("summary of the work so far"));
+        assert!(seen[1][0].text().contains("Earlier work kept."));
+        assert!(events.iter().any(|event| matches!(event, AgentEvent::TextDelta { text } if text == "done")), "{events:?}");
+        assert!(matches!(events.last(), Some(AgentEvent::TurnDone { input_tokens: 40, output_tokens: 20, backend, .. }) if backend == "Small"));
+        let journal = host.journal.lock().unwrap();
+        assert!(journal.iter().any(|(kind, entry)| kind == "context" && entry["budget"] == 5));
+        assert!(journal.iter().any(|(kind, entry)| kind == "model_turn" && entry["purpose"] == "context_summary" && entry["backend"] == "Small"));
+    }
+
+    #[test]
     fn fallback_chain_and_refusal() {
         let host = Arc::new(FakeHost { calls: Mutex::default(), journal: Mutex::default() });
         let failing = Scripted { turns: VecDeque::from([Err(ToolError::new(ErrorCode::EngineMissing, "down"))]), seen: Arc::default() };
@@ -1075,8 +1198,8 @@ pub(crate) mod tests {
             seen: Arc::default(),
         };
         let chain = vec![
-            ModelSlot { name: "A".into(), model: Box::new(failing), local: false, effort: None, max_turns: 5 },
-            ModelSlot { name: "B".into(), model: Box::new(refusing), local: true, effort: None, max_turns: 5 },
+            ModelSlot { name: "A".into(), model: Box::new(failing), local: false, effort: None, max_turns: 5, context_tokens: 0 },
+            ModelSlot { name: "B".into(), model: Box::new(refusing), local: true, effort: None, max_turns: 5, context_tokens: 0 },
         ];
         let mut c = ApiConversation::start(host, chain, LoopConfig::default()).unwrap();
         c.send("q");
