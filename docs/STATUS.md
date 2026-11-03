@@ -190,4 +190,7 @@ See [ROADMAP.md](ROADMAP.md) for the ordered plan.
 ## Reject incomplete and oversized preview HTTP requests
 
 Static preview requires a complete, syntactically valid request head within 16 KiB and a read deadline before
-serving files. Loopback fixtures cover malformed/truncated/oversized requests and a valid GET control.
+serving files. Request targets cannot contain fragments; HTTP/1.1 requires exactly one valid Host field.
+Loopback fixtures cover malformed/truncated/oversized requests, missing/duplicate/invalid Host fields,
+encoded-hash and valid GET controls, HTTP/1.0 compatibility, and an open incomplete request returning 408
+after the whole-head deadline.

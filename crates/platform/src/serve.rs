@@ -163,6 +163,34 @@ fn valid_header(line: &str) -> bool {
     })
 }
 
+fn valid_host(value: &str) -> bool {
+    let value = value.trim_matches([' ', '\t']);
+    let name_byte = |b: u8| b.is_ascii_alphanumeric() || b"-._~!$&'()*+,;=".contains(&b);
+    if let Some(literal) = value.strip_prefix('[') {
+        let Some((host, suffix)) = literal.split_once(']') else { return false };
+        let future = host.strip_prefix(['v', 'V']).and_then(|s| s.split_once('.')).is_some_and(|(version, address)| {
+            !version.is_empty() && version.bytes().all(|b| b.is_ascii_hexdigit()) && !address.is_empty() && address.bytes().all(|b| name_byte(b) || b == b':')
+        });
+        return (host.parse::<std::net::Ipv6Addr>().is_ok() || future)
+            && (suffix.is_empty() || suffix.strip_prefix(':').is_some_and(|port| port.bytes().all(|b| b.is_ascii_digit())));
+    }
+    let (host, port) = value.split_once(':').unwrap_or((value, ""));
+    if host.is_empty() || !port.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    let mut bytes = host.bytes();
+    while let Some(b) = bytes.next() {
+        if b == b'%' {
+            if !bytes.next().is_some_and(|b| b.is_ascii_hexdigit()) || !bytes.next().is_some_and(|b| b.is_ascii_hexdigit()) {
+                return false;
+            }
+        } else if !name_byte(b) {
+            return false;
+        }
+    }
+    true
+}
+
 fn handle(mut stream: TcpStream, root: &Path) -> std::io::Result<()> {
     stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
@@ -181,13 +209,27 @@ fn handle(mut stream: TcpStream, root: &Path) -> std::io::Result<()> {
     let mut lines = head.split("\r\n");
     let mut parts = lines.next().unwrap_or_default().split(' ');
     let (method, target, version) = (parts.next().unwrap_or_default(), parts.next().unwrap_or_default(), parts.next().unwrap_or_default());
+    let mut host_seen = false;
+    let headers_valid = lines.take_while(|line| !line.is_empty()).all(|line| {
+        if !valid_header(line) {
+            return false;
+        }
+        if let Some((name, value)) = line.split_once(':')
+            && name.eq_ignore_ascii_case("host")
+        {
+            return !std::mem::replace(&mut host_seen, true) && valid_host(value);
+        }
+        true
+    });
     if parts.next().is_some()
         || !matches!(version, "HTTP/1.0" | "HTTP/1.1")
         || method.is_empty()
         || !method.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
         || !target.starts_with('/')
+        || target.contains('#')
         || target.bytes().any(|b| b.is_ascii_control())
-        || !lines.take_while(|line| !line.is_empty()).all(valid_header)
+        || !headers_valid
+        || (version == "HTTP/1.1" && !host_seen)
     {
         return stream.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
     }
@@ -214,6 +256,32 @@ fn handle(mut stream: TcpStream, root: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_values_follow_uri_authority_syntax() {
+        for host in ["localhost", "localhost:", "127.0.0.1:80", "[::1]", "[::1]:80", "[v1.local:host]:80", "[VA.host]", "local%68ost", "\t localhost:80 \t"] {
+            assert!(valid_host(host), "{host}");
+        }
+        for host in [
+            "",
+            ":80",
+            "a b",
+            "user@localhost",
+            "localhost/",
+            "localhost#x",
+            "localhost:port",
+            "::1",
+            "[::1",
+            "[::1]extra",
+            "[v.host]",
+            "[v1.]",
+            "host%",
+            "host%2",
+            "host%GG",
+        ] {
+            assert!(!valid_host(host), "{host}");
+        }
+    }
 
     fn get(port: u16, path: &str) -> String {
         let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
