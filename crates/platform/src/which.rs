@@ -338,7 +338,7 @@ mod tests {
             std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
         let path = with_usual_dirs(None, Some(home.clone()), Some(local_data.clone()));
-        assert_eq!(which_in("agy", path.clone()), [program.clone()]);
+        assert_eq!(which_in("agy", path.clone()).as_slice(), std::slice::from_ref(&program));
         let dirs: Vec<_> = std::env::split_paths(path.as_ref().unwrap()).collect();
         assert!(!dirs.contains(&home.join("AppData").join("Local").join("agy").join("bin")));
         // A folder already in PATH retains its position and is not added again.
