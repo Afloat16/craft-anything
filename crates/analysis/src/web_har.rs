@@ -140,8 +140,29 @@ pub(crate) fn split_url(url: &str) -> (String, String, String, Vec<(String, Stri
     (scheme.to_ascii_lowercase(), host.to_ascii_lowercase(), if path.is_empty() { "/".into() } else { path.to_string() }, pairs, userinfo)
 }
 
+/// Decode a query name once for privacy checks; malformed escapes stay literal.
+fn decode_query_name(name: &str) -> String {
+    let mut decoded = Vec::with_capacity(name.len());
+    let mut bytes = name.as_bytes().iter().copied().peekable();
+    while let Some(b) = bytes.next() {
+        if b == b'%' {
+            let mut next = bytes.clone();
+            let hex = next.next().and_then(|hi| next.next().map(|lo| [hi, lo]));
+            if let Some(value) =
+                hex.filter(|h| h.iter().all(u8::is_ascii_hexdigit)).and_then(|h| std::str::from_utf8(&h).ok().and_then(|s| u8::from_str_radix(s, 16).ok()))
+            {
+                decoded.push(value);
+                bytes = next;
+                continue;
+            }
+        }
+        decoded.push(if b == b'+' { b' ' } else { b });
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
 pub(crate) fn is_credential_param(k: &str) -> bool {
-    let l = k.to_ascii_lowercase();
+    let l = decode_query_name(k).to_ascii_lowercase();
     CREDENTIAL_PARAMS.contains(&l.as_str()) || l.ends_with("_token") || l.ends_with("token") || l.contains("password") || l.contains("secret")
 }
 
