@@ -68,7 +68,9 @@ message, detail or string error. Object payloads, JSON-encoded strings and plain
 are supported, with the provider's name when supplied. Displayed details are bounded; arbitrary
 structured metadata is not dumped. HTTP status classification and remediation are retained.
 Checked with synthetic response bodies, malformed metadata, duplicate reasons and Unicode
-length controls. No live API-key build or account-specific diagnosis was performed.
+length controls. The affected crate's 220 tests and Clippy checks passed locally; [hosted CI](https://github.com/storytold/craft-anything/actions/runs/41585116952)
+also passed for the implementation in PR #542. No live API-key build or account-specific diagnosis
+was performed.
 
 ### Fixed during the audit
 
