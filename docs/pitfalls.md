@@ -239,12 +239,6 @@ edit, right before committing.
 
 ## Design
 
-**A candidate cap discarded a real dependency.** The esbuild module reader kept the first 4096
-resolved zero-argument calls, then filtered for known wrappers; ordinary local calls could fill
-the buffer before a real dependency appeared. Discover wrapper bindings first and count only
-recognised dependencies against their limit. Keep the buffer bounded, and test unrelated calls,
-forward declarations and more actual dependencies than the limit permits.
-
 **Reading literals and skipping the rest.** The Electron window reader skipped a spread inside
 `webPreferences`, so a window whose preferences came partly from another object was reported as
 "contextIsolation is not set; the default applies", which nobody had checked until a live run on
@@ -407,11 +401,22 @@ tool calls without matching results. The next model request then carried unpaire
 Every retained call needs a matching result, including an explicit non-execution result.
 Test the next serialized request as well as whether a tool ran.
 
+**A deferred request reset lost on failure.** Moving consumed-note bookkeeping out of the live
+builder loop saved the reset only after a successful turn. A failed or cancelled turn had already
+removed the note, so reopening kept the old unchanged-turn count. Persist deferred request state
+on terminal errors too, outside provider retries; keep the original outcome if that save also fails.
+
 **A filter written for one kind of text, run on another.** The stand-in's secret scan was written for
 API answers, then also ran on recorded scripts: `this.token=t` became `[dropped]` and the scripts
 broke, and "Basic Membership" lost a word. It also tested whole tokens, so a secret inside a URL or
 after `ref=` passed. Test a scrubber on what must survive as well as what must go, and on each
 kind of content it can receive.
+
+**A candidate cap discarded a real dependency.** The esbuild module reader kept the first 4096
+resolved zero-argument calls, then filtered for known wrappers; ordinary local calls could fill
+the buffer before a real dependency appeared. Discover wrapper bindings first and count only
+recognised dependencies against their limit. Keep the buffer bounded, and test unrelated calls,
+forward declarations and more actual dependencies than the limit permits.
 
 **A strict tool that sent an AI off to write its own.** `game_pak_extract` refused an output
 whose folder didn't exist and took one file per call; the extractor model hit that twice, then
