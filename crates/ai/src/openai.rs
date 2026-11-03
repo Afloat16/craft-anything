@@ -338,8 +338,14 @@ pub fn parse_react(text: &str) -> ReactStep {
     if let Some(step) = json_action(text) {
         return step;
     }
-    // A JSON answer or a code example is not a ReAct instruction embedded in its strings.
-    if text.trim_start().starts_with(['{', '[']) || text.trim_start().starts_with("```") {
+    // Preserve a whole fenced ReAct step, but do not treat markers inside a JSON answer or
+    // ordinary code example as instructions.
+    let lead = text.trim();
+    let fenced_protocol = lead.strip_prefix("```").and_then(|rest| rest.split_once('\n')).and_then(|(_, body)| body.strip_suffix("```")).is_some_and(|body| {
+        let body = body.trim_start();
+        ["Action:", "Thought:", "Final Answer:"].into_iter().any(|marker| body.starts_with(marker))
+    });
+    if lead.starts_with(['{', '[']) || (lead.starts_with("```") && !fenced_protocol) {
         return ReactStep::Text(text.trim().to_string());
     }
     if let Some(pos) = text.find("Final Answer:") {
@@ -488,6 +494,28 @@ mod tests {
             parse_react(r#"{"name":"look","arguments":{"text":"Final Answer: is a label"}}"#),
             ReactStep::Action { tool: "look".into(), input: json!({"text":"Final Answer: is a label"}) }
         );
+    }
+
+    #[test]
+    fn fenced_legacy_react_calls_still_parse() {
+        for text in [
+            "```\nAction: look\nAction Input: {\"path\":\"app\"}\n```",
+            "```text\nAction: look\nAction Input: {\"path\":\"app\"}\n```",
+            "```json\nThought: inspect the app\nAction: look\nAction Input: {\"path\":\"app\"}\n```",
+            " \n```\r\nAction: look\r\nAction Input: {\"path\":\"app\"}\r\n```\n ",
+        ] {
+            assert_eq!(parse_react(text), ReactStep::Action { tool: "look".into(), input: json!({"path": "app"}) }, "{text}");
+        }
+        for text in [
+            "```json\n{\"answer\":\"Action: look\\nAction Input: {}\"}\n```",
+            "```\n[\"Action: look\\nAction Input: {}\"]\n```",
+            "```python\nprint(\"Action: look\\nAction Input: {}\")\n```",
+            "```\nThis is an example.\nAction: look\nAction Input: {}\n```",
+            "```\nAction: look\nAction Input: {}",
+            "```\nAction: look\nAction Input: {}\n```\nThis is only an example.",
+        ] {
+            assert!(matches!(parse_react(text), ReactStep::Text(_)), "{text}");
+        }
     }
 
     #[test]

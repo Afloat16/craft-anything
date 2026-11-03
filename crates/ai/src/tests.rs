@@ -545,6 +545,35 @@ fn react_action_errors_still_reach_the_tool_loop() {
 }
 
 #[test]
+fn fenced_legacy_react_calls_still_execute() {
+    let replies = ["```text\nAction: core_session_show\nAction Input: {}\n```", "Final Answer: Nothing open."]
+        .map(|text| (200, "text/event-stream", chat_sse(&[json!({"choices":[{"delta":{"content":text},"finish_reason":"stop"}]})])));
+    let (url, seen) = mock(replies.into());
+    let (hub, _dir) = hub();
+    let config = BackendConfig {
+        name: "Local".into(),
+        kind: BackendKind::OpenaiCompatible,
+        model: "scripted".into(),
+        base_url: Some(url),
+        ssh_host: None,
+        enabled: true,
+    };
+    hub.add_backend_with(BackendEntry { config, options: BackendOptions { react_fallback: Some(true), ..Default::default() } }, None).unwrap();
+    let mut conversation = hub.start(Some("Local"), true).unwrap();
+    let events = run(&mut conversation, "status?");
+    assert_eq!(
+        events.iter().filter(|e| matches!(e, AgentEvent::ToolFinished { tool, ok: true, .. } if tool == "core_session_show")).count(),
+        1,
+        "the fenced legacy call must execute exactly once: {events:?}"
+    );
+    assert!(events.iter().any(|e| matches!(e, AgentEvent::TextDelta { text } if text == "Final Answer: Nothing open.")), "{events:?}");
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    let observation = seen[1].body["messages"].as_array().unwrap().last().unwrap()["content"].as_str().unwrap();
+    assert!(observation.starts_with("Observation:"), "{observation}");
+}
+
+#[test]
 fn json_text_recovery_preserves_non_actions_and_stop_reasons() {
     use crate::model::{Effort, Msg, Stop, StopReason, ToolDef, TurnRequest};
     let tools = [ToolDef { name: "look".into(), description: "Look at a file".into(), schema: json!({"type":"object"}) }];
