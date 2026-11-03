@@ -196,20 +196,23 @@ been run live.
       `invalid message content type: <nil>`: send an empty string
 - [x] Understand a tool call a model writes as JSON in its text (#417; implementation `dfe9a4db2dcb3e27edbd67311cbb4202584e7af6`). The fallback protocol reads
       only `Action:` and `Action Input:` lines, so anything else ends the turn with nothing done
+- [x] Preserve `length` and `content_filter` stop reasons on native tool-call streams; a parsed
+      call must not override truncation or refusal and execute tools. Pair other retained
+      unexecuted calls with results before the conversation continues — PR #544
 - [ ] Accept a tool argument of a near type, such as a list for a string, or answer so the model
       can correct it (#498)
 - [ ] Find how each local server is told its context size and set it, or stop with a plain message
       when the prompt won't fit. We assume 24k and send no `num_ctx`, which an OpenAI-style endpoint
       may ignore anyway; LM Studio refused a 12.6k prompt on its 8k default (#73)
-- [ ] A per-backend context budget in `[[ai.backends]]` (`LoopConfig::context_tokens` exists), for
-      services whose real window differs from 150k (#374)
+- [x] A per-backend context budget in `[[ai.backends]]` (`LoopConfig::context_tokens` exists), for
+      services whose real window differs from 150k (#374) — implementation: `6bd94b84828ec89b805cb8a246f557d0a778c037`
 - [ ] Find LM Studio on another port (#73)
 - [ ] See why Bionic or LM Studio can't be picked (#140)
 
 ### R5.5 API-key builds fail in words people can use
 Owner: open · Status: todo
-- [ ] Show the provider's own reason: #369 bought $10 of credit and got only "OpenRouter answered
-      400: Provider returned error". Find the reason in the response body and show it
+- [x] Show the provider's own reason: #369 bought $10 of credit and got only "OpenRouter answered
+      400: Provider returned error". Find the reason in the response body and show it — PR #542
 - [ ] A live API-key build (needs a key on the test machine)
 - [ ] Failure logs for the other ways an AI stops (API backends, MCP server start-up), like the
       ones agent CLIs write to `logs/` in the config folder
@@ -414,10 +417,12 @@ Gaps found while using the app for real projects.
 - [ ] Show a command's output while it runs: Claude Code reports a tool's result only when it
       ends, so a long `cargo build` is one quiet line until then. Watching the agent's child
       processes from outside could say what's running and for how long
-- [ ] The keep-awake helper once outlived a CLI `rebuild` on Windows by more than 9 minutes and held
-      the caller's output pipe; not reproduced in 8 more runs, where it ended with the CLI. Dropping
-      its guard only raises a flag (`RunningProcess::drop` waits only for `hands_off` programs), so
-      ending on time rests on the Job Object closing, and its time limit is 7 days
+- [x] Release the keep-awake helper before a rebuild reports `Finished`, waiting up to five seconds
+      for its supervised cleanup and logging a timeout. Real subprocess stand-ins checked on Linux (#541)
+      — claimed: Afloat16, branch bugfix/r2.9-keep-awake-cleanup-20261103
+- [ ] Recheck keep-awake cleanup with a real Windows CLI `rebuild`: the helper once outlived it by
+      more than 9 minutes and held the caller's output pipe; not reproduced in 8 more runs. The
+      bounded cleanup change has been checked with Linux stand-ins, not this Windows incident
 - [ ] Find why a site capture lost its browser ("the WebSocket is closed", 419 ms into
       `web_site_capture` for a second page, seen once; the same capture passed 41 s earlier)
 - [ ] Claude Code's own extras: its Ultracode switch (a setting, not an effort level; the
@@ -464,8 +469,10 @@ Owner: open · Status: in progress
 - [ ] Stand-in backend: writes that change later reads (recorded answers are replayed as they are)
 - [ ] Tell the builder about the stand-in backend in a website's brief, and start one from a
       recording
-- [ ] Stand-in backend: a 304 recorded with no body is replayed as a bare 304, which a fresh browser
-      can't use; say so or leave it out
+- [x] Stand-in backend: retain 304 samples without a usable cached body for diagnostics, skip them
+      during replay, and report `cached_body_unavailable` when the best matching group has no
+      usable answer. Build results count them; cached bodies still answer as 200 (#543)
+      — claimed: Afloat16, branch bugfix/r3.11-standin-empty-304-20261103
 - [ ] Godot format 4 and IL2CPP metadata 38 and 39 are header-only; read their tables once a real
       file can be checked
 - [ ] Bun: take source maps and bytecode out as files; a standalone `.pyz`
