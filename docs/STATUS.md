@@ -127,12 +127,6 @@ not been rechecked for this change; Windows runtime validation remains on the ro
 
 The full workspace gates (`cargo xtask ci`) passed in [hosted CI for #541](https://github.com/storytold/craft-anything/actions/runs/41584228995).
 
-### Keep quoted HTML attribute values out of the script inventory
-
-HTML scanning consumes ordinary tags and their quoted values before searching for dependencies. Public-API
-fixtures cover quoted examples, attribute overflow and literal less-than text; the attribute retention cap is
-unchanged.
-
 ## Known limits
 
 - Locks: every mutex but the browser viewer's goes through `platform::sync`. A deadlock on one thread or across
@@ -192,3 +186,9 @@ unchanged.
 ## Next
 
 See [ROADMAP.md](ROADMAP.md) for the ordered plan.
+
+## Keep quoted HTML attribute values out of the script inventory
+
+HTML scanning consumes ordinary tags and their quoted values before searching for dependencies. Public-API
+fixtures cover quoted examples, attribute overflow and literal less-than text; the attribute retention cap is
+unchanged.
