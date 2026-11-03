@@ -127,12 +127,6 @@ not been rechecked for this change; Windows runtime validation remains on the ro
 
 The full workspace gates (`cargo xtask ci`) passed in [hosted CI for #541](https://github.com/storytold/craft-anything/actions/runs/41584228995).
 
-### Do not identify malformed object identifiers as valid algorithms
-
-DER object identifiers with incomplete, overlong or nonminimal encodings are reported as invalid instead of as
-a known prefix. Synthetic OID cases and the certificate suite cover the correction; no new signed-file corpus
-was used.
-
 ## Known limits
 
 - Locks: every mutex but the browser viewer's goes through `platform::sync`. A deadlock on one thread or across
@@ -192,3 +186,9 @@ was used.
 ## Next
 
 See [ROADMAP.md](ROADMAP.md) for the ordered plan.
+
+## Do not identify malformed object identifiers as valid algorithms
+
+DER object identifiers with incomplete, overlong or nonminimal encodings are reported as invalid instead of as
+a known prefix. Synthetic OID cases and the certificate suite cover the correction; no new signed-file corpus
+was used.
