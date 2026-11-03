@@ -287,7 +287,39 @@ impl AgentAdapter for ClaudeCode {
             p.session_id = Some(id.to_string());
         }
         match s("type").as_str() {
+            "system" if s("subtype") == "init" => {
+                let failed = v.get("mcp_servers").and_then(Value::as_array).and_then(|servers| {
+                    servers.iter().find(|server| {
+                        server.get("name").and_then(Value::as_str) == Some(MCP_NAME)
+                            && matches!(server.get("status").and_then(Value::as_str), Some("failed" | "needs-auth"))
+                    })
+                });
+                if let Some(server) = failed {
+                    p.failure = Some(TurnFailure::new(FailureKind::ToolsUnavailable));
+                    let status = server.get("status").and_then(Value::as_str).unwrap_or_default();
+                    out.push(AgentEvent::Error {
+                        message: format!("Craft Anything's tools did not start in Claude Code (server status: {status})."),
+                        remediation: Some(
+                            "Check the Craft Anything CLI and the agent failure log, then start a new build attempt after fixing the tool connection.".into(),
+                        ),
+                        log: None,
+                    });
+                }
+            }
             "assistant" => {
+                if let Some(code) = v.get("error").and_then(Value::as_str) {
+                    let failure = TurnFailure::claude(code);
+                    p.failure = Some(failure);
+                    let why = v.pointer("/message/content").map(content_text).unwrap_or_else(|| code.to_string());
+                    let (message, hint) = claude_code_failure(&why);
+                    let remediation = hint.or_else(|| match failure.kind {
+                        FailureKind::Authentication => self.sign_in_fix(),
+                        FailureKind::Billing => Some("Check the account's credits, plan and spending limit before trying again.".into()),
+                        FailureKind::Configuration => Some("Check the chosen model and Claude Code settings before trying again.".into()),
+                        _ => None,
+                    });
+                    return vec![AgentEvent::Error { message, remediation, log: None }];
+                }
                 for b in v.pointer("/message/content").and_then(Value::as_array).cloned().unwrap_or_default() {
                     match b.get("type").and_then(Value::as_str).unwrap_or_default() {
                         "text" => out.push(AgentEvent::TextDelta { text: b.get("text").and_then(Value::as_str).unwrap_or_default().to_string() }),
@@ -332,6 +364,7 @@ impl AgentAdapter for ClaudeCode {
                         log: None,
                     });
                 } else if v.get("is_error").and_then(Value::as_bool).unwrap_or(false) {
+                    p.failure.get_or_insert(TurnFailure::new(FailureKind::Unknown));
                     let why = if s("result").is_empty() { s("subtype") } else { s("result") };
                     let (message, remediation) = claude_code_failure(&why);
                     out.push(AgentEvent::Error { message, remediation, log: None });
@@ -640,12 +673,23 @@ impl AgentAdapter for GeminiCli {
         &["gemini-cli", "gemini"]
     }
 
+    /// Gemini CLI reads its message from stdin and appends `-p` to it, so a long one can't pass
+    /// Windows' command-line limit, which is 8,191 characters through npm's `gemini.cmd`.
+    fn prompt_on_stdin(&self) -> bool {
+        true
+    }
+
+    fn stdin_text(&self, preamble: &str, prompt: &str) -> String {
+        format!("{preamble}{prompt}")
+    }
+
     fn args(&self, cx: &ArgsCx) -> Vec<String> {
         let mut a = cx.options.args.clone();
         if let Some(m) = &cx.options.cli_model {
             a.extend(["-m".into(), m.clone()]);
         }
-        a.extend(["--output-format".into(), "stream-json".into(), "-p".into(), format!("{}{}", cx.preamble, cx.prompt)]);
+        // An empty `-p` keeps it headless and adds nothing to the message on stdin (see `stdin_text`).
+        a.extend(["--output-format".into(), "stream-json".into(), "-p".into(), String::new()]);
         a
     }
 
