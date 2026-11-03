@@ -114,11 +114,18 @@ fn utf8_len(r: &Reader<'_>, at: usize) -> Option<(usize, usize)> {
 
 fn utf8_string(r: &Reader<'_>, at: usize, end: usize) -> Option<String> {
     let (_chars, n1) = utf8_len(r, at)?;
-    let (bytes, n2) = utf8_len(r, at.checked_add(n1)?)?;
+    let (mut bytes, n2) = utf8_len(r, at.checked_add(n1)?)?;
     let start = at.checked_add(n1 + n2)?;
-    let terminator = start.checked_add(bytes)?;
-    if terminator >= end || r.u8(terminator)? != 0 {
-        return None;
+    // Older AAPT keeps only the low 15 length bits; probe matching lengths inside this pool.
+    loop {
+        let terminator = start.checked_add(bytes)?;
+        if terminator >= end {
+            return None;
+        }
+        if r.u8(terminator)? == 0 {
+            break;
+        }
+        bytes = bytes.checked_add(0x8000)?;
     }
     let b = r.slice(start, bytes.min(MAX_STRING * 4))?;
     Some(String::from_utf8_lossy(b).into_owned())
