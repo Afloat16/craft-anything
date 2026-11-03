@@ -723,7 +723,24 @@ impl Worker {
                 if let Some(a) = &keeper {
                     self.keep_session(ws, a.as_ref());
                 }
-                let reply = reply?;
+                let reply = match reply {
+                    Ok(reply) => reply,
+                    Err(error) => {
+                        // Consumed instructions start a fresh attempt even if this turn fails
+                        // or is cancelled. The provider retry loop has ended; stop any remaining
+                        // work before touching the record, and retain the original failure.
+                        agent.stop();
+                        drop(agent);
+                        if self.reset_progress_after_notes
+                            && let Err(reset_error) = self.progress_after_notes(ws)
+                        {
+                            self.emit(RunEvent::Agent(AgentEvent::Status {
+                                text: format!("The new request couldn't reset the unchanged-turn count ({}).", reset_error.message),
+                            }));
+                        }
+                        return Err(error);
+                    }
+                };
                 if !reply.trim().is_empty() {
                     ws.manifest.last_reply = reply.trim().to_string();
                 }
@@ -741,11 +758,7 @@ impl Worker {
                 // must not make Try again repeat work that only needs its checks.
                 // A consumed note starts another attempt, but its record I/O must not
                 // interrupt a live builder or enter the provider retry path.
-                progress = BuildProgress::load(&ws.root)?;
-                if std::mem::take(&mut self.reset_progress_after_notes) {
-                    progress.reset();
-                    progress.save(&ws.root)?;
-                }
+                progress = self.progress_after_notes(ws)?;
                 if let Some(fingerprint) = self.progress_fingerprint(ws, &mut progress, &mut progress_available, &mut fingerprints)? {
                     progress.after_turn(fingerprint);
                     progress.save(&ws.root)?;
@@ -824,6 +837,18 @@ impl Worker {
         ws.set_status(Status::Ready, summary.clone())?;
         self.emit(RunEvent::Step { step: Step::Done, text: summary.clone() });
         Ok(summary)
+    }
+
+    /// Read progress after the turn has ended. A consumed request resets the allowance on
+    /// success, failure or cancellation; a failed save never acknowledges the pending reset.
+    fn progress_after_notes(&mut self, ws: &Workspace) -> Result<BuildProgress, ToolError> {
+        let mut progress = BuildProgress::load(&ws.root)?;
+        if self.reset_progress_after_notes {
+            progress.reset();
+            progress.save(&ws.root)?;
+            self.reset_progress_after_notes = false;
+        }
+        Ok(progress)
     }
 
     /// File scanning is an optional guard, not a prerequisite for building or checking. Once

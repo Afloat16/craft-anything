@@ -276,3 +276,7 @@ The reset is saved after the successful turn and its `awaiting_check` recovery s
 persisted. Multiple consumed notes coalesce into one reset; blank notes do not reset the count.
 A broken or inaccessible progress record still returns its actual error at that safe boundary,
 without starting another provider request or losing the finished builder reply.
+If the turn fails or is cancelled after consuming a note, its reset is saved before the run ends
+so reopening keeps the new request's full allowance. The original failure or cancellation remains
+the result; a reset that cannot be saved is reported separately and never overwrites a broken
+or newer record. Scripted turns cover both outcomes, blank notes and unreadable records.

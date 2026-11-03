@@ -144,3 +144,117 @@ fn consumed_note_progress_errors_preserve_the_completed_turn() {
         assert!(BuildProgress::load(&ws.root).is_err(), "do not discard or repair an unreadable record implicitly");
     }
 }
+
+#[test]
+fn consumed_note_resets_survive_failed_and_cancelled_turns() {
+    use crate::agent::{ApiConversation, EngineHost, LoopConfig, ModelSlot};
+    use crate::model::{ChatModel, Delta, Stop, TurnRequest, TurnResult};
+    use std::sync::atomic::AtomicUsize;
+
+    struct InterruptedNote {
+        notes: Arc<Mutex<Vec<Note>>>,
+        notes_dir: PathBuf,
+        progress: PathBuf,
+        text: &'static str,
+        record: &'static str,
+        cancelled: bool,
+        stop: CancelToken,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl ChatModel for InterruptedNote {
+        fn turn(&mut self, _: &TurnRequest<'_>, _: &mut dyn FnMut(Delta), _: &Stop) -> Result<TurnResult, ToolError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.notes.lock().unwrap().push(Note { id: 73, text: self.text.into(), shown: self.text.into(), pictures: Vec::new() });
+            notes::hand_over(&self.notes_dir, 73, self.text).unwrap();
+            assert_eq!(notes::claim(&self.notes_dir), [self.text]);
+            if !self.record.is_empty() {
+                std::fs::write(&self.progress, self.record).unwrap();
+            }
+            if self.cancelled {
+                self.stop.cancel();
+                Err(ToolError::cancelled())
+            } else {
+                Err(ToolError::new(ErrorCode::NoPermission, "fixture sign-in required").with_remediation("Sign in to the fixture provider."))
+            }
+        }
+
+        fn model(&self) -> String {
+            "scripted".into()
+        }
+    }
+
+    for cancelled in [false, true] {
+        for text in ["Keep the header blue", "   "] {
+            for record in ["", "{ broken progress", r#"{"version":2,"fingerprint":null,"unchanged_turns":1}"#] {
+                let dir = tempfile::tempdir().unwrap();
+                let mut ws = Workspace::create(dir.path(), "Interrupted note", "Build an app", TargetRef::None).unwrap();
+                std::fs::create_dir_all(ws.capture_dir()).unwrap();
+                std::fs::create_dir_all(ws.app_dir()).unwrap();
+                std::fs::write(ws.app_dir().join("app.txt"), "previous app files").unwrap();
+                ws.manifest.stack = "Rust (console)".into();
+                ws.manifest.last_reply = "Previous completed turn".into();
+                ws.save().unwrap();
+                let mut progress = BuildProgress::default();
+                progress.before_turn(ws.app_fingerprint(&CancelToken::default()).unwrap());
+                progress.unchanged_turns = 1;
+                progress.save(&ws.root).unwrap();
+                let mut worker = check_worker(&ws, false);
+                let (tx, rx) = std::sync::mpsc::channel();
+                worker.tx = tx;
+                let calls = Arc::new(AtomicUsize::new(0));
+                let model = InterruptedNote {
+                    notes: worker.notes.clone(),
+                    notes_dir: notes::notes_dir(&ws.inbox_dir()),
+                    progress: ws.root.join(BUILD_PROGRESS_FILE),
+                    text,
+                    record,
+                    cancelled,
+                    stop: worker.stop.clone(),
+                    calls: calls.clone(),
+                };
+                let slot = ModelSlot { name: "Scripted".into(), model: Box::new(model), local: true, effort: None, max_turns: 10, context_tokens: 0 };
+                let api = ApiConversation::start(Arc::new(EngineHost(worker.engine.clone())), vec![slot], LoopConfig::default()).unwrap();
+                let entry = crate::BackendEntry {
+                    config: crate::BackendConfig {
+                        name: "Scripted".into(),
+                        kind: BackendKind::OpenaiCompatible,
+                        model: "scripted".into(),
+                        base_url: None,
+                        ssh_host: None,
+                        enabled: true,
+                    },
+                    options: Default::default(),
+                };
+                let opts = RunOptions { continuing: true, ..RunOptions::default() };
+                let error = worker.run(&mut ws, entry, Some(api), None, &opts).unwrap_err();
+                assert_eq!(calls.load(Ordering::SeqCst), 1, "an interrupted request must not be sent again");
+                if cancelled {
+                    assert_eq!(error.code, ErrorCode::Cancelled, "retain cancellation even when the progress record is unreadable");
+                } else {
+                    assert_eq!(error.code, ErrorCode::ProgramFailed);
+                    assert_eq!(error.message, "Scripted: fixture sign-in required");
+                    assert_eq!(error.remediation.as_deref(), Some("Sign in to the fixture provider."));
+                }
+                let saved = Workspace::open(&ws.root).unwrap();
+                assert!(!saved.manifest.awaiting_check, "an interrupted turn is not a completed build");
+                assert_eq!(saved.manifest.last_reply, "Previous completed turn");
+                let events: Vec<_> = rx.try_iter().collect();
+                assert_eq!(events.iter().filter(|event| matches!(event, RunEvent::Note { .. })).count(), 1);
+                assert!(worker.notes.lock().unwrap().is_empty());
+                assert!(!notes::was_read(&notes::notes_dir(&ws.inbox_dir()), 73));
+                if record.is_empty() {
+                    let recovered = BuildProgress::load(&saved.root).unwrap();
+                    assert_eq!(recovered.fingerprint, progress.fingerprint, "the interrupted turn does not change the comparison baseline");
+                    assert_eq!(recovered.unchanged_turns, u32::from(text.trim().is_empty()), "a consumed new request survives reopening");
+                } else {
+                    assert_eq!(std::fs::read_to_string(ws.root.join(BUILD_PROGRESS_FILE)).unwrap(), record, "never replace a broken or newer record");
+                    let reported = events
+                        .iter()
+                        .any(|event| matches!(event, RunEvent::Agent(AgentEvent::Status { text }) if text.contains("couldn't reset the unchanged-turn count")));
+                    assert_eq!(reported, !text.trim().is_empty(), "report a failed reset separately from the original failure");
+                }
+            }
+        }
+    }
+}
