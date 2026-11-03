@@ -668,10 +668,12 @@ Owner: open · Status: in progress
       PYZ, JSON config edits (comments kept, every duplicate key removed), and UDP, TCP, DNS over
       TCP, pcapng and TLS lengths (#688–#715, by Afloat16)
 
-- [ ] Carry partial reference-scan coverage into the combined Java parser changes.
-      — claimed: Afloat16, branch bugfix/r3.12-java-reference-completeness-20261104
-      The decoder and class-reference regressions passed in #692 at e7cd6da;
-      validation of the combined parser revision remains pending.
+- [ ] Address the combined parser review: preserve partial Java reference coverage,
+      enforce DEX signed 32-bit LEB128 limits, recover legacy AAPT UTF-8 lengths within
+      their pool, and distinguish missing ext indirect metadata from sparse holes.
+      — claimed: Afloat16, branch bugfix/r3.12-parser-review-followups-20261104
+      Java's original follow-up passed #692 CI; validation of this combined follow-up
+      and the new DEX, Android string-pool and ext regressions remains pending.
 
 ### R3.13 Web inspection correctness
 Owner: open · Status: in progress
