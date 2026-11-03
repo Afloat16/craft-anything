@@ -127,11 +127,6 @@ not been rechecked for this change; Windows runtime validation remains on the ro
 
 The full workspace gates (`cargo xtask ci`) passed in [hosted CI for #541](https://github.com/storytold/craft-anything/actions/runs/41584228995).
 
-### Report indexed source map columns in generated-file coordinates
-
-Indexed source-map lookups report generated columns in the outer generated-file coordinates. Nonzero offsets
-and nested first/later-line cases are checked with synthetic maps; no browser debugger integration was run.
-
 ## Known limits
 
 - Locks: every mutex but the browser viewer's goes through `platform::sync`. A deadlock on one thread or across
@@ -191,3 +186,8 @@ and nested first/later-line cases are checked with synthetic maps; no browser de
 ## Next
 
 See [ROADMAP.md](ROADMAP.md) for the ordered plan.
+
+## Report indexed source map columns in generated-file coordinates
+
+Indexed source-map lookups report generated columns in the outer generated-file coordinates. Nonzero offsets
+and nested first/later-line cases are checked with synthetic maps; no browser debugger integration was run.
