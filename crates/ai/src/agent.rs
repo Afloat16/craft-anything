@@ -8,7 +8,7 @@ use crate::context;
 use crate::model::{Block, ChatModel, Delta, Effort, Msg, Speaker, Stop, StopReason, ToolDef, TurnRequest, Usage};
 use crate::price::{self, Meter};
 use crate::prompt;
-use crate::{AgentEvent, Conversation};
+use crate::{AgentEvent, Conversation, TurnFailure};
 use craft_anything_engine::{CallOptions, Caller, CancelToken, Consent, Engine, Registry, ToolOutput, Toolset};
 use craft_anything_evidence::{ErrorCode, ToolError};
 use craft_anything_platform::sync::Mutex;
@@ -272,6 +272,7 @@ pub struct AgentLoop {
     pub meter: Meter,
     /// The last turn's real input size (tokens), 0 before the first or after making room.
     last_input: u64,
+    failure: Arc<Mutex<Option<TurnFailure>>>,
 }
 
 impl AgentLoop {
@@ -296,16 +297,26 @@ impl AgentLoop {
 
     /// Handle one user message to completion.
     pub fn handle(&mut self, text: &str) {
+        self.handle_turn(Some(text));
+    }
+
+    /// A retry has no new user message: keep completed tool calls and their results, then
+    /// continue the failed model request using the same history.
+    fn handle_turn(&mut self, text: Option<&str>) {
         self.stop.reset();
         let cancel = CancelToken::default();
         *self.cancel.lock().unwrap_or_else(PoisonError::into_inner) = cancel.clone();
-        self.host.journal("user_message", json!({"text": crate::journal_text(text)}));
+        if let Some(text) = text {
+            self.host.journal("user_message", json!({"text": crate::journal_text(text)}));
+        }
         if self.system.is_none() {
             self.emit(AgentEvent::Status { text: "Reading the investigation so far…".into() });
             let inv = self.host.investigation();
             self.system = Some(prompt::system_prompt(self.cfg.beginner, self.host.clean_room(), &inv));
         }
-        context::push_user_text(&mut self.history, text);
+        if let Some(text) = text {
+            context::push_user_text(&mut self.history, text);
+        }
         let configured = self.chain.get(self.current).and_then(|s| s.effort);
         let effort = prompt::choose_effort(configured);
         let max_turns = self.chain.get(self.current).map(|s| s.max_turns).unwrap_or(DEFAULT_MAX_TURNS).max(1);
@@ -527,6 +538,7 @@ impl AgentLoop {
                         self.emit(AgentEvent::Status { text: format!("{name} failed ({}). Trying {next}…", e.message) });
                         continue;
                     }
+                    *self.failure.lock().unwrap_or_else(PoisonError::into_inner) = Some(TurnFailure::from_api(&e));
                     self.emit(AgentEvent::Error { message: format!("{name}: {}", e.message), remediation: e.remediation, log: None });
                     return None;
                 }
@@ -648,7 +660,7 @@ fn wait_answer(rx: &Receiver<bool>, stop: &Stop) -> Option<bool> {
 
 /// A conversation with an API backend: a worker thread runs [`AgentLoop`].
 pub struct ApiConversation {
-    to_worker: Sender<String>,
+    to_worker: Sender<Option<String>>,
     events: Receiver<AgentEvent>,
     busy: Arc<AtomicBool>,
     stop: Stop,
@@ -656,6 +668,7 @@ pub struct ApiConversation {
     waiters: Waiters,
     queued: Vec<AgentEvent>,
     resumed: bool,
+    failure: Arc<Mutex<Option<TurnFailure>>>,
 }
 
 impl ApiConversation {
@@ -669,11 +682,12 @@ impl ApiConversation {
             return Err(ToolError::unavailable("No AI backend could be started.").with_remediation("Add one in Settings → AI."));
         }
         let (etx, erx) = std::sync::mpsc::channel();
-        let (wtx, wrx) = std::sync::mpsc::channel::<String>();
+        let (wtx, wrx) = std::sync::mpsc::channel::<Option<String>>();
         let busy = Arc::new(AtomicBool::new(false));
         let stop = Stop::default();
         let cancel = Arc::new(Mutex::new(CancelToken::default()));
         let waiters: Waiters = Arc::default();
+        let failure: Arc<Mutex<Option<TurnFailure>>> = Arc::default();
         // A kept conversation continues where it stopped.
         let history = cfg.transcript.as_deref().and_then(context::load).unwrap_or_default();
         let resumed = !history.is_empty();
@@ -691,13 +705,14 @@ impl ApiConversation {
             cancel: cancel.clone(),
             meter: Meter::default(),
             last_input: 0,
+            failure: failure.clone(),
         };
         let busy2 = busy.clone();
         std::thread::Builder::new()
             .name("ai-agent".into())
             .spawn(move || {
                 while let Ok(text) = wrx.recv() {
-                    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| agent.handle(&text)));
+                    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| agent.handle_turn(text.as_deref())));
                     if r.is_err() {
                         let _ = etx.send(AgentEvent::Error {
                             message: "The assistant hit a bug and stopped safely.".into(),
@@ -709,19 +724,18 @@ impl ApiConversation {
                 }
             })
             .map_err(|e| ToolError::internal(format!("couldn't start the AI worker: {e}")))?;
-        Ok(ApiConversation { to_worker: wtx, events: erx, busy, stop, cancel, waiters, queued: Vec::new(), resumed })
+        Ok(ApiConversation { to_worker: wtx, events: erx, busy, stop, cancel, waiters, queued: Vec::new(), resumed, failure })
     }
 
     /// It continues a conversation kept in its transcript file.
     pub fn resumed(&self) -> bool {
         self.resumed
     }
-}
 
-impl Conversation for ApiConversation {
-    fn send(&mut self, text: &str) {
+    fn submit(&mut self, text: Option<String>) {
+        *self.failure.lock().unwrap_or_else(PoisonError::into_inner) = None;
         self.busy.store(true, Ordering::SeqCst);
-        if self.to_worker.send(text.to_string()).is_err() {
+        if self.to_worker.send(text).is_err() {
             self.busy.store(false, Ordering::SeqCst);
             self.queued.push(AgentEvent::Error {
                 message: "The assistant isn't running any more.".into(),
@@ -729,6 +743,20 @@ impl Conversation for ApiConversation {
                 log: None,
             });
         }
+    }
+}
+
+impl Conversation for ApiConversation {
+    fn send(&mut self, text: &str) {
+        self.submit(Some(text.to_string()));
+    }
+
+    fn retry(&mut self, _text: &str) {
+        self.submit(None);
+    }
+
+    fn last_failure(&self) -> Option<TurnFailure> {
+        *self.failure.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     fn poll(&mut self) -> Vec<AgentEvent> {
