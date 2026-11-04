@@ -13,6 +13,7 @@ workspace clippy, layers, fmt and the secret scan of all history were clean. Chi
 | SQLite payload limits | Capped records retain column positions, disclose partial TEXT and BLOB values, omit incomplete BLOB hashes, and report partial coverage with read notes | Hand-built overflow-page regressions for five oversized records (including WITHOUT ROWID in declaration order) and two controls; table and index engine coverage and limitation regressions |
 | SQLite added columns | Short records include missing trailing fields using literal column defaults, or NULL when absent; unsupported default expressions produce NULL with a row note. Stored fields and records longer than the schema retain their values. Defaults are filled before restoring rowid aliases | Nine hand-built parser regressions and an engine tool test cover added-column defaults, rewritten records and short records with a rowid alias, including a missing alias field |
 | OpenCode models and thinking | OpenCode V2 locally and over SSH; Settings → AI lists only that instance's enabled chat models and supported Low/Medium/High/Xhigh/Max variants. Selection is validated and saved through UI, CLI and `ai_models_list` / `ai_model_set`. Explicit-selection execution is refused until native MCP integration exists; local ACP runs require clearing the selection. See [OpenCode](opencode.md). | Stand-in catalogue/process, persistence, remote-command and UI tests; local live catalogue checks (34 models, all five depths represented). Regression checks reject native chat/builds before process I/O with ACP on/off, local/SSH and model-only/depth-only/combined selections. No live SSH host or paid generation used |
+| Claude desktop app without Claude Code | When the `claude` command isn't found but the Claude desktop app is (Windows: the Store package's `claude-desktop` app alias or the older installer's `AnthropicClaude` folder; macOS: `Claude.app`), the builder dialog under "No coding agent was found" and `ai detect` (on stderr) say the desktop app is installed but building needs Claude Code, installed apart (#259). Typed as `DetectHint` from `AiHub::detect_hints` | A regression finds the app in temp folders laid out as each Windows installer leaves it, and nothing on Linux; a UI test shows the hint in the dialog. On Windows 10 the real Store package's alias was found. Not checked: macOS, the older installer, and a computer with no `claude` installed |
 | Missing program paths | A program started by its path (a saved agent program, for one) that has no file there is reported with that path, as possibly moved by an update, with reason `path_missing`, instead of "isn't installed or isn't on your PATH"; a bare name still speaks of PATH. A relative path is looked up where the program starts (on Unix, its working folder), so a script there whose interpreter is missing isn't called a path with no file. It stays a missing program (`EngineMissing`), so builder turns aren't retried (#721) | A regression starts a program at a path with no file on Windows 10 and checks the message, remediation and reason, with a bare-name control; on Linux (Docker), a relative script with a missing interpreter started in its folder, through `Process` and `Launch`. Not checked: a real Codex desktop update, or the app's Settings screen with a stale path |
 | Mach-O Objective-C pointers | Chained offsets mapped only into file-empty `__PAGEZERO` reach the image-base fallback; pointer candidates must be backed by file bytes | Synthetic thin and fat Mach-O regression, plain-pointer and authenticated-rebase controls, null and unmapped-pointer checks. Real binaries were not checked for this correction |
 | Apple app graphs | Selecting a macOS bundle recognises its root-relative `Contents/Info.plist` and retains its service/extension type; nested XPC bundles appear in `services` and as `xpc-service` graph nodes, including their executables when hosted in frameworks | Synthetic inventory tests, including parent-directory and flat bundle layouts, selected services/extensions, framework-hosted service executables, and bare-program controls. Ordinary selected directories with `Contents/Info.plist` need an Apple bundle suffix; archives retain layout-based recognition. Framework libraries and dylibs stay excluded from executables. Real app bundles were not checked for this correction |
@@ -51,6 +52,7 @@ workspace clippy, layers, fmt and the secret scan of all history were clean. Chi
 | SQLite database files (`db_sqlite_show`) | A rowid alias column (`INTEGER PRIMARY KEY`, including the table-constraint form) shows the rowid; `DESC`, non-`INTEGER` and composite keys keep their stored values | Hand-built fixtures; generated files compared with the official SQLite library |
 | SQLite WITHOUT ROWID tables | Read from the index b-tree, interior records and overflow included; rows in primary-key order, values in declaration order, `rowid` null | Hand-built fixtures; generated files compared with the official SQLite library |
 | Builder discovery smoke fixture | The missing-builder smoke fixture controls discovery state and supplies a synthetic result. | All original warning, modal, action and build-availability assertions are retained. Source inspection only; automated validation has not yet run for this change. |
+| Parser review follow-ups | Java reference scans retain partial coverage; DEX signed LEB128 enforces 32-bit values; legacy AAPT strings stay inside their pool with a shared recovery probe limit; missing classic ext indirect metadata is not recovered as zeros. | Shared-budget revision `29c48e03` passed [full Linux CI](https://github.com/storytold/craft-anything/actions/runs/41762780268). The merge with main `41d2175e` awaits a new CI run. Extent-tree metadata handling is unchanged. |
 
 ### Builder retry policy
 
@@ -115,15 +117,18 @@ validation. Hub and headless tool selections share a strict disk-based save that
 settings changes and refuses damaged files or changed backends. Regression tests cover both entry
 points. Rejected or cancelled model validation emits a terminal turn event so headless chat exits.
 
-### Linux Unreal setup
+### Unreal setup
 
 Unreal installations registered in `~/.config/Epic/UnrealEngine/Install.ini` are found on Linux.
 A valid absolute `UE_ROOT` selects an installation explicitly; an invalid override falls back to
 registered installations. The version comes from `Engine/Build/Build.version`, and C++ readiness
 checks for the selected engine's bundled Clang, not an unrelated system compiler or another
 installation's SDK. The Linux requirements summary (`Builder::needs` for Unreal) now describes
-the bundled Clang toolchain. The guided installer still shows Visual Studio instructions when
-Clang is missing; platform-specific guidance in that flow remains a follow-up.
+the bundled Clang toolchain. The guided installer now gives Linux-specific guidance: it names the
+bundled Clang and points at the engine's `Engine/Build/BatchFiles/Linux/SetupToolchain.sh` (or `Setup.sh`
+for a source build) when Clang is missing. On macOS, the status line and requirements summary now
+name Xcode, matching the guided step. The guidance strings are unit-tested; no live Unreal
+install or macOS run was performed for this copy change.
 
 Checked with isolated registry and SDK fixtures and with a native Fedora install of Unreal
 5.8.4. On Windows, Visual Studio C++ readiness also checks instances registered in

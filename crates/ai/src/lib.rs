@@ -194,6 +194,17 @@ pub fn default_builder<'a>(backends: &'a [BackendConfig], chosen: Option<&str>) 
         .or_else(|| on().find(|b| b.kind != BackendKind::AgentCli))
 }
 
+/// Whether `name` is a saved AI that is switched on. One saved but switched off is not set up:
+/// it's offered again when found, so it can be turned on (#423).
+pub fn is_on(backends: &[BackendConfig], name: &str) -> bool {
+    backends.iter().any(|b| b.enabled && b.name == name)
+}
+
+/// The found AIs that aren't already set up and on.
+pub fn leave_out_set_up(found: Vec<Detected>, backends: &[BackendConfig]) -> Vec<Detected> {
+    found.into_iter().filter(|d| !is_on(backends, &d.suggestion.name)).collect()
+}
+
 /// What a backend does in a crew.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -408,8 +419,12 @@ impl AiHub {
     /// Look for keys, local servers and agent CLIs (runs quickly; network probes are bounded).
     /// Things already configured (by name) are left out.
     pub fn detect(&self) -> Vec<Detected> {
-        let have: Vec<String> = self.backends().into_iter().map(|b| b.name).collect();
-        detect::detect_all().into_iter().filter(|d| !have.contains(&d.suggestion.name)).collect()
+        leave_out_set_up(detect::detect_all(), &self.backends())
+    }
+
+    /// Why a coding agent people expect may not be found (only the Claude desktop app, say).
+    pub fn detect_hints(&self) -> Vec<detect::DetectHint> {
+        detect::hints()
     }
 
     /// Host aliases from `~/.ssh/config`, for the "run on another machine" picker.
@@ -522,9 +537,20 @@ impl AiHub {
     /// The program an agent app runs (`None` or empty: found by its usual name, on PATH and in the
     /// usual install folders). Returns false when there was no such backend.
     pub fn set_command(&self, name: &str, command: Option<&str>) -> Result<bool, ToolError> {
+        let command = command.map(str::trim).filter(|c| !c.is_empty());
         let mut cfg = self.config_to_change()?;
         let Some(b) = cfg.backends.iter_mut().find(|b| b.config.name == name) else { return Ok(false) };
-        b.options.command = command.map(str::trim).filter(|c| !c.is_empty()).map(str::to_string);
+        // A folder can't be started, and on a Mac an app is one (#467: the file picker returned
+        // `Antigravity.app`). Another computer's path isn't looked at here.
+        let local = b.config.ssh_host.as_deref().is_none_or(|h| h.trim().is_empty());
+        if let Some(c) = command
+            && local
+            && std::path::Path::new(c).is_dir()
+        {
+            return Err(ToolError::invalid(format!("{c} is a folder, so it can't be the agent's program. On a Mac an app is a folder."))
+                .with_remediation("Pick the agent's command-line program instead, such as `agy`, or clear the program to use the usual one."));
+        }
+        b.options.command = command.map(str::to_string);
         self.save_config(&cfg)?;
         Ok(true)
     }
