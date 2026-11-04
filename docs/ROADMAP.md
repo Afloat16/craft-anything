@@ -740,15 +740,14 @@ Owner: open · Status: in progress
 
 ### R3.11 Single-file apps, game files and stand-in backends
 Owner: open · Status: in progress
-- [ ] Validate the remaining loopback fixture corrections for complete and fragmented request
+- [x] Validate the remaining loopback fixture corrections for complete and fragmented request
       headers, negative probes and stand-in cancellation on the current main
       — claimed: Afloat16, branch test/loopback-fixture-stability-20261103
-      Revision `35a32fdb` passed [CI](https://github.com/storytold/craft-anything/actions/runs/41759650153).
+      Revision `cd468aca`, synchronized with main `41d2175e`, passed
+      [full Linux CI](https://github.com/storytold/craft-anything/actions/runs/41765850311).
       The fragmented-header regression withholds the final byte until the next read and keeps
-      the existing request and response assertions. It, the request-encoding, negative-probe
-      and cancellation checks passed in [CI for `d2dd401`](https://github.com/storytold/craft-anything/actions/runs/41763091740).
-      That run stopped at the shared builder-discovery smoke test, fixed on main by
-      [#773](https://github.com/storytold/craft-anything/pull/773). This merge awaits CI.
+      the existing request and response assertions. The request-encoding, negative-probe,
+      cancellation and builder-discovery smoke checks passed in the same run.
 - [x] Verify stand-in session cleanup by the original answerer's lifetime rather than polling a
       released port that another listener may reuse
       — claimed: Afloat16, branch test/r3.11-standin-session-lifetime-20261103
