@@ -23,6 +23,7 @@ pub mod model_tools;
 pub mod openai;
 pub mod price;
 pub mod prompt;
+pub mod providers;
 pub mod rebuild;
 pub mod ssh;
 
@@ -77,6 +78,14 @@ impl BackendKind {
             BackendKind::Gemini => openai::GEMINI_MODELS,
             BackendKind::OpenaiCompatible => &[],
             BackendKind::AgentCli => &["claude-code", "codex", "copilot", "gemini-cli", "opencode", "antigravity", "hermes", "maki"],
+        }
+    }
+
+    /// A coding agent run as a program, rather than an HTTP API.
+    pub fn is_harness(self) -> bool {
+        match self {
+            BackendKind::AgentCli => true,
+            BackendKind::Anthropic | BackendKind::Openai | BackendKind::Openrouter | BackendKind::Gemini | BackendKind::OpenaiCompatible => false,
         }
     }
 
@@ -164,6 +173,13 @@ pub fn model_in_use(config: &BackendConfig, options: Option<&BackendOptions>) ->
         BackendKind::AgentCli => cli_agents::adapter_for(&config.model).model_in_use(options),
         _ => Some(config.model.clone()),
     }
+}
+
+/// The variable that moves an agent app's own folder (its sign-in, settings and sessions), when
+/// it has one: Claude Code's `CLAUDE_CONFIG_DIR`. `None` for the others, which
+/// [`BackendOptions::config_dir`] doesn't apply to.
+pub fn folder_var(config: &BackendConfig) -> Option<&'static str> {
+    (config.kind == BackendKind::AgentCli).then(|| cli_agents::adapter_for(&config.model).folder_var()).flatten()
 }
 
 /// The backend that builds when none is named: the Builder role's choice while it's on, else an
@@ -513,6 +529,30 @@ impl AiHub {
         Ok(true)
     }
 
+    /// The folder an agent app keeps its sign-in, settings and sessions in ([`folder_var`]), so
+    /// each AI can be another account (`None` or empty: its usual one). A full path or one under
+    /// `~/`; over SSH it's a folder on that computer. Returns false when there was no such backend.
+    pub fn set_config_dir(&self, name: &str, dir: Option<&str>) -> Result<bool, ToolError> {
+        let dir = dir.map(str::trim).filter(|d| !d.is_empty());
+        let mut cfg = self.config_to_change()?;
+        let Some(b) = cfg.backends.iter_mut().find(|b| b.config.name == name) else { return Ok(false) };
+        if let Some(d) = dir {
+            if folder_var(&b.config).is_none() {
+                return Err(ToolError::invalid(format!("{name} doesn't keep a folder of its own.")).with_remediation("A folder is for Claude Code."));
+            }
+            // A relative folder would move with whatever folder the agent is started in.
+            let remote = b.config.ssh_host.as_deref().is_some_and(|h| !h.trim().is_empty());
+            let full = d == "~" || d.starts_with("~/") || if remote { d.starts_with('/') } else { std::path::Path::new(d).is_absolute() };
+            if !full {
+                return Err(ToolError::invalid(format!("{d:?} isn't a full path."))
+                    .with_remediation("Give the whole path, or one starting with ~/ for the home folder."));
+            }
+        }
+        b.options.config_dir = dir.map(str::to_string);
+        self.save_config(&cfg)?;
+        Ok(true)
+    }
+
     /// Each backend's options (an agent app's program and model…), by name.
     pub fn options(&self) -> std::collections::BTreeMap<String, BackendOptions> {
         self.config().backends.into_iter().map(|b| (b.config.name, b.options)).collect()
@@ -658,8 +698,12 @@ impl AiHub {
     pub fn has_key(&self, name: &str) -> bool {
         self.config().get(name).is_some_and(|b| {
             let base = b.config.base_url.as_deref().unwrap_or("");
-            if b.config.kind == BackendKind::OpenaiCompatible && openai::is_opencode_go(base) {
-                return self.keys.resolve(name, b.config.kind).is_some() || go_env_key(base).is_some();
+            if b.config.kind == BackendKind::OpenaiCompatible {
+                // A local server holds no key; a hosted one is only ready once its key is somewhere.
+                if openai::is_opencode_go(base) || providers::of_base(base).is_some() {
+                    return self.keys.resolve(name, b.config.kind).is_some() || go_env_key(base).is_some() || providers::env_key(base).is_some();
+                }
+                return true;
             }
             !b.config.kind.needs_key() || self.keys.resolve(name, b.config.kind).is_some()
         })
@@ -680,9 +724,14 @@ impl AiHub {
 
     fn key_for(&self, e: &BackendEntry) -> Result<String, ToolError> {
         let base = e.config.base_url.as_deref().unwrap_or("");
-        self.keys.resolve(&e.config.name, e.config.kind).or_else(|| go_env_key(base)).ok_or_else(|| {
-            let var =
-                if openai::is_opencode_go(base) { "OPENCODEGO_API_KEY or OPENCODE_GO_API_KEY" } else { keys::env_var(e.config.kind).unwrap_or("an API key") };
+        self.keys.resolve(&e.config.name, e.config.kind).or_else(|| go_env_key(base).or_else(|| providers::env_key(base))).ok_or_else(|| {
+            let var = if openai::is_opencode_go(base) {
+                "OPENCODEGO_API_KEY or OPENCODE_GO_API_KEY"
+            } else if e.config.kind == BackendKind::OpenaiCompatible {
+                providers::of_base(base).map_or("an API key", |p| p.key_env)
+            } else {
+                keys::env_var(e.config.kind).unwrap_or("an API key")
+            };
             ToolError::new(ErrorCode::BadSettings, format!("{} has no API key.", e.config.name))
                 .with_remediation(format!("Add the key in Settings → AI, or set {var}."))
         })
@@ -725,7 +774,7 @@ impl AiHub {
             BackendKind::Gemini => Box::new(openai::OpenAi::gemini(base, self.key_for(e)?, &c.model)),
             BackendKind::OpenaiCompatible => {
                 let base = base.unwrap_or("http://127.0.0.1:11434/v1");
-                let key = self.keys.get(&c.name).or_else(|| go_env_key(base));
+                let key = self.keys.get(&c.name).or_else(|| go_env_key(base).or_else(|| providers::env_key(base)));
                 let mut o = compatible_client(&c.name, base, key, &c.model, &self.session_id());
                 o.react = e.options.react_fallback.unwrap_or(false);
                 Box::new(o)
@@ -843,7 +892,7 @@ impl AiHub {
                     return Err(ToolError::unavailable("Listing models on a remote server isn't supported yet.").with_remediation("Type the model name."));
                 }
                 let b = base.unwrap_or("http://127.0.0.1:11434/v1");
-                let key = self.keys.get(&e.config.name).or_else(|| go_env_key(b));
+                let key = self.keys.get(&e.config.name).or_else(|| go_env_key(b).or_else(|| providers::env_key(b)));
                 if openai::is_opencode_go(b) {
                     // The chat base ends in /openai/v1; the model list answers at /v1 instead.
                     return compatible_client(&e.config.name, &opencode_go_models_base(b), key, "", "").list_models(t);
@@ -860,7 +909,7 @@ impl AiHub {
         let e = self.entry(name)?;
         let start = Instant::now();
         if e.config.kind == BackendKind::AgentCli {
-            let program = e.options.command.clone().unwrap_or_else(|| cli_agents::program_for(&e.config.model));
+            let program = cli_agents::program_of(&e.config, &e.options);
             let p = match e.config.ssh_host.as_deref().filter(|h| !h.trim().is_empty()) {
                 Some(h) => craft_anything_platform::Process::new("ssh").args(ssh::ssh_args(h, &[program.clone(), "--version".into()])),
                 None => craft_anything_platform::Process::new(&program).arg("--version"),
@@ -957,7 +1006,7 @@ fn reach(e: &BackendEntry, key: Option<String>) -> Result<u64, String> {
         }
         BackendKind::OpenaiCompatible => {
             let b = base.unwrap_or("http://127.0.0.1:11434/v1");
-            let key = key.or_else(|| go_env_key(b));
+            let key = key.or_else(|| go_env_key(b).or_else(|| providers::env_key(b)));
             if openai::is_opencode_go(b) {
                 // The list answers at /v1, not under the chat path's /openai/v1. A key is still
                 // required here, so "reachable" never means "callable without one".
@@ -971,7 +1020,7 @@ fn reach(e: &BackendEntry, key: Option<String>) -> Result<u64, String> {
             }
         }
         BackendKind::AgentCli => {
-            let program = e.options.command.clone().unwrap_or_else(|| cli_agents::program_for(&e.config.model));
+            let program = cli_agents::program_of(&e.config, &e.options);
             craft_anything_platform::which(&program).map(|_| ()).ok_or_else(|| format!("{program} isn't on PATH"))
         }
     };

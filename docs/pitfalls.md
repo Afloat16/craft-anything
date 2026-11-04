@@ -45,6 +45,9 @@ added an app the new rule rejected; both were green on their own branch.
   And again with a new catalog: #555 added "Pausing…" to every catalog there was, and #486 (Russian)
   merged after it without it. A new language and a new UI string merged together need the string
   in the new catalog too.
+  And with a layout change: #687 moved coding agents onto their own tab of what Detect found, and
+  #664, merged next, tested a button on that list without picking the tab. Checking that two PRs
+  merge cleanly isn't checking that their tests pass together: run the UI tests on the merge.
 
 **A dependency change merged without its lockfile.** Changes were staged with
 `git add -A crates apps docs`, which leaves out the root `Cargo.lock`, so a new dependency reached
@@ -54,6 +57,17 @@ whenever a `Cargo.toml` changed.
 **A superseded PR on someone else's branch.** Rebasing it means force-pushing their branch. Replay it
 on a new branch, open a new PR that says it supersedes the old one, and comment on the old one.
 Don't close or rewrite other people's work without asking.
+
+**Review fixes pushed to a PR that had already merged.** #686 was merged hours before its review
+comments were acted on; the fixes went to its branch and the threads were answered "Fixed", while
+`main` had the code without them. Read `gh pr view --json state,headRefOid` before pushing to a PR's
+branch, and land anything late in a new PR from `main`.
+
+**A report checked against main, not the release it ran.** #736 (a build looping on an empty `app/`)
+was read against main, where the stop after two unchanged turns already existed, so it looked fixed.
+The reporter ran v0.3.0, which had neither that stop (#557) nor the empty-folder note (#749); both
+merged the day after it shipped. Before calling a report fixed or still open, find the release it
+names (`git merge-base --is-ancestor <fix> <release tag>`), and check the message text it quotes.
 
 ## Tests
 
@@ -116,6 +130,17 @@ the probe's underlying error, so it does not establish that failure's cause.
 **Proving a refactor changed nothing.** Unit tests that check substrings can miss changed prompts.
 For a refactor that must keep output identical, dump the outputs for every combination before and
 after and compare them byte for byte (done for every brief across 162 combinations in R1.1).
+
+**A Windows-only test that no check ran.** #748 added a second Antigravity folder to the search
+path; the Windows test that counts those folders wasn't updated, and `main` stayed green because CI
+runs on Ubuntu, where `cfg(windows)` tests don't compile. When a change touches a list a
+`cfg(windows)` (or macOS) test checks, grep for it and run it on that system, or say in the PR that
+you couldn't.
+
+**A step moved to a worker, its test still counting frames.** #720 moved the picture size check
+off the UI thread; a UI test that added pictures, ran three frames and then looked kept passing on
+fast machines and failed in CI on unrelated PRs. When work moves to a worker, grep the tests that
+call it and make them `wait` for the result, not `run_steps(n)`.
 
 ## Building and running
 
@@ -262,6 +287,13 @@ instead breaks desktops whose monitors are on the discrete card. Draw on the GPU
 screen, read from the connected displays, and keep wgpu's environment variables as the override;
 when a window is slow to open, check which adapter `desktop.log` says it drew with.
 
+**A Metal version taken from the OS, not from the compiler.** wgpu-hal picks the Metal shading
+language from the macOS version alone; on a 2012 iMac under OpenCore Legacy Patcher, macOS 15 asked
+for `metal3.2`, the compiler stopped at 3.1, every shader failed and the window never opened (#742,
+upstream #10687). Our `[patch]` of wgpu-hal probes the compiler (`vendor/wgpu-hal/CRAFT_ANYTHING.md`).
+The advice on a lost device named `CRAFT_ANYTHING_RENDERER`, which only Windows reads: check that
+advice names only settings the platform actually reads. Not run on the reporter's Mac.
+
 **A Mac app that couldn't find Claude Code, and offered a GitHub key instead.** An app opened from
 the Dock gets the system's short `PATH`, not the shell's, so `claude` in `~/.local/bin` wasn't
 found; "Built by" then fell back to "Claude Code on github.com-work", an `~/.ssh/config` alias
@@ -296,6 +328,12 @@ reads files itself (`pending`, `secrets`, `layers`, `locks`, `tools --check`…)
 at the wrong tree (the cargo commands `ci` runs use the folder they're started in). Give every
 worktree its own `CARGO_TARGET_DIR`, and rebuild `xtask` (or delete it from `target/`) after
 sharing one.
+
+**A helper stopped only by a destructor.** The keep-awake helper was stopped when its guard was
+dropped; closing the desktop app during a build ended the process without dropping it, and the
+PowerShell loop kept the computer awake (its time limit was a week). A helper that outlives a
+crash is a leak: have it watch the process it serves and end by itself (`caffeinate -w`, a loop
+that checks the PID), and test by killing the owner, not by dropping the guard.
 
 **Stopping a long run leaves children behind** unless every program goes through
 `craft_anything_platform::process`. After stopping one, check that its child processes are gone.
@@ -568,6 +606,13 @@ three more times. Anything a project keeps must still work where the folder goes
 points to as well (`agent-session.jsonl`), tell "not here" apart from a failure by a typed signal
 (`Conversation::session_lost`), and never retry what can't succeed.
 
+**An installer that downloaded what was already there.** Ghidra was found only on PATH and at two
+Linux folders, so an unzipped copy in Downloads, Program Files or a Homebrew cask was missed, and
+the install then downloaded the same release again (#740). Install folders are a search, not a
+list: scan the folders people keep such things in (`KnownRoot`, by folder name, a set number of
+levels down), and make an install use a copy already found outside our store. Test each layout
+(unzipped, cask, capitalised name) with temp folders, not the machine the test runs on.
+
 ## Agent tooling
 
 **Shared CLI efforts reached Claude unchanged.** Keep CLI-only levels available for agents, but
@@ -688,3 +733,10 @@ opencode-session under settings::config_dir() when the first request was made, s
 tests left a file on the developer's machine and two runs could collide. Anything we persist goes
 through the hub's stores (AiHub::with_stores, Session::isolated), which tests point at a temp
 folder; production code never writes under the real config folder by hand.
+
+**A per-probe walk repeated expensive work on the same bytes.** CRC cpio verification was bounded
+inside one archive, but a firmware scan could rediscover overlapping, trailerless archives and
+sum the same payload repeatedly. Count checksum byte visits across the whole scan, poll its
+cancellation callback inside long sums, and distinguish skipped verification from a mismatch.
+Test overlapping candidates with correct checksums and a complete nested archive so a structural
+trailer cannot turn unchecked data into a high-confidence result.
