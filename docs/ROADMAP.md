@@ -671,13 +671,12 @@ Owner: open · Status: in progress
       PYZ, JSON config edits (comments kept, every duplicate key removed), and UDP, TCP, DNS over
       TCP, pcapng and TLS lengths (#688–#715, by Afloat16)
 
-- [ ] Address the combined parser review: preserve partial Java reference coverage,
+- [x] Address the combined parser review: preserve partial Java reference coverage,
       enforce DEX signed 32-bit LEB128 limits, recover legacy AAPT UTF-8 lengths within
       their pool with a shared recovery probe limit, and distinguish missing ext indirect
       metadata from sparse holes.
       — claimed: Afloat16, branch bugfix/r3.12-parser-review-followups-main-20261104
-      Combined revision `fc5c886a` passed [full Linux CI](https://github.com/storytold/craft-anything/actions/runs/41759561479).
-      Five additional regressions for the shared UTF-8 recovery budget await automated validation.
+      Shared-budget revision `29c48e03` passed [full Linux CI](https://github.com/storytold/craft-anything/actions/runs/41762780268).
 
 ### R3.13 Web inspection correctness
 Owner: open · Status: in progress
