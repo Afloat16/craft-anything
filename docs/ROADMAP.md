@@ -673,10 +673,11 @@ Owner: open · Status: in progress
 
 - [ ] Address the combined parser review: preserve partial Java reference coverage,
       enforce DEX signed 32-bit LEB128 limits, recover legacy AAPT UTF-8 lengths within
-      their pool, and distinguish missing ext indirect metadata from sparse holes.
+      their pool with a shared recovery probe limit, and distinguish missing ext indirect
+      metadata from sparse holes.
       — claimed: Afloat16, branch bugfix/r3.12-parser-review-followups-main-20261104
-      Java's original follow-up passed #692 CI; validation of this combined follow-up
-      and the new DEX, Android string-pool and ext regressions remains pending.
+      Combined revision `fc5c886a` passed [full Linux CI](https://github.com/storytold/craft-anything/actions/runs/41759561479).
+      Five additional regressions for the shared UTF-8 recovery budget await automated validation.
 
 ### R3.13 Web inspection correctness
 Owner: open · Status: in progress
