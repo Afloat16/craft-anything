@@ -809,6 +809,7 @@ Owner: open · Status: in progress
 
 - [ ] Enforce stand-in per-body and total byte budgets on the text that is actually retained after redaction.
       — claimed: Afloat16, branch bugfix/r3.11-standin-redacted-budget-20261103b
+      Implementation and regression fixtures added; automated validation remains pending.
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
