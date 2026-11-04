@@ -618,8 +618,8 @@ Owner: open · Status: in progress
 
 ### R3.11 Single-file apps, game files and stand-in backends
 Owner: open · Status: in progress
-- [ ] Validate the remaining loopback fixture corrections for complete request headers,
-      negative probes and stand-in cancellation on the current main
+- [ ] Validate the remaining loopback fixture corrections for complete and fragmented request
+      headers, negative probes and stand-in cancellation on the current main
       — claimed: Afloat16, branch test/loopback-fixture-stability-20261103
 - [x] Verify stand-in session cleanup by the original answerer's lifetime rather than polling a
       released port that another listener may reuse
