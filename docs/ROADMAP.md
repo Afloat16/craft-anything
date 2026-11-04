@@ -654,6 +654,8 @@ Gaps found while using the app for real projects.
 - [x] Agent paragraphs with glossary terms and long file links wrap together without pushing
       their card or later messages under the sidebar (#523); Project and Ask bounds checked at two sizes
       — claimed: carl-dourado, branch hotfix/r2.9-523-message-width
+- [x] Create atomic-write temporary files exclusively with short names distinct from the destination and private Unix permissions from creation.
+      — claimed: Afloat16, branch bugfix/r2.9-atomic-temp-creation-20261103b
 - [x] A prompt brought back with Up keeps its pictures (their paths are absolute, so they don't
       come back after the project is moved)
 - [ ] Change a project's builder from its page (a tool, so the CLI and MCP can too) — in PR #245
@@ -782,6 +784,23 @@ Owner: open · Status: in progress
 
 ### R3.11 Single-file apps, game files and stand-in backends
 Owner: open · Status: in progress
+- [ ] Validate the combined retained-body budget, response-metadata and loopback fixture fixes
+      with atomic temporary-file creation on a current-main snapshot, preserving all 24 replay
+      regressions and the full repository gate
+      — claimed: Afloat16, branch test/r3.11-merge-validation-20261104
+      Fork-only integration validation for upstream #717, #716, #767 and #718; individual
+      upstream PRs retain their review and landing order.
+      The capacity-duplicate regression now expects no omitted sample at either byte budget:
+      its exact duplicate costs no retained bytes. Its body, missing-304 evidence and remaining-
+      budget assertions are unchanged. Combined execution remains pending.
+- [x] Validate the remaining loopback fixture corrections for complete and fragmented request
+      headers, negative probes and stand-in cancellation on the current main
+      — claimed: Afloat16, branch test/loopback-fixture-stability-20261103
+      Revision `cd468aca`, synchronized with main `41d2175e`, passed
+      [full Linux CI](https://github.com/storytold/craft-anything/actions/runs/41765850311).
+      The fragmented-header regression withholds the final byte until the next read and keeps
+      the existing request and response assertions. The request-encoding, negative-probe,
+      cancellation and builder-discovery smoke checks passed in the same run.
 - [x] Verify stand-in session cleanup by the original answerer's lifetime rather than polling a
       released port that another listener may reuse
       — claimed: Afloat16, branch test/r3.11-standin-session-lifetime-20261103
@@ -797,8 +816,20 @@ Owner: open · Status: in progress
 - [ ] Bun: take source maps and bytecode out as files; a standalone `.pyz`
 - [ ] `native_source_folder_write` uses the built-in decompiler only: use Ghidra in Deep mode when
       it's there
+- [x] Keep stand-in response samples distinct when headers, content types or body-availability metadata differ.
+      Compare header names without case and ignore ordering between different names, preserving each name's value order.
+      At the sample cap, a usable answer can replace an unavailable 304 for the same path, query and request key;
+      other requests keep their missing-body evidence. Refused bodies cannot replace that evidence.
+      Revision `f79dc0bd` passed [full Linux CI](https://github.com/storytold/craft-anything/actions/runs/41793241151):
+      all five original metadata regressions and nine header and capacity regressions passed.
+      — claimed: Afloat16, branch bugfix/r3.11-standin-sample-metadata-20261103b
 - [ ] `native_publisher_show` hashes the file minus the signature fields, not section by section;
       a file with unusual gaps between sections can read as different
+- [x] Enforce stand-in per-body and total byte budgets on the text that is actually retained after redaction;
+      deduplicate consecutive samples before charging the capture budget.
+      — claimed: Afloat16, branch bugfix/r3.11-standin-redacted-budget-20261103b
+      Revision `d601bc4e` passed [full Linux CI](https://github.com/storytold/craft-anything/actions/runs/41788735130):
+      all four retained-budget regressions and six deduplication regressions passed.
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
