@@ -421,6 +421,9 @@ Owner: maintainers · Status: in progress
 
 ### R2.2 More coding agents
 Owner: open · Status: in progress
+- [ ] Keep the model-discovery process fixture independent of a newly written executable,
+      preserving selected-program, working-directory, malformed-output, exit-error and deadline checks.
+      — claimed: Afloat16, branch test/r2.2-model-discovery-fixture-20261104
 - [x] A saved agent program path that no longer exists (Codex desktop moves its CLI to a new
       build folder on every update) says so and names the path, instead of "isn't installed or
       isn't on your PATH" (#721); it stays a missing program, so a builder turn isn't retried
