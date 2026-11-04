@@ -2,6 +2,8 @@ use craft_anything_ai::rebuild::builder_backend;
 use craft_anything_ai::{AiConfig, BackendConfig, BackendEntry, BackendKind};
 use craft_anything_evidence::ErrorCode;
 
+/// Build a named selection beside an enabled fallback, so rejection cannot pass
+/// merely because the configuration has no usable backend.
 fn configuration(kind: BackendKind, enabled: bool) -> AiConfig {
     let mut cfg = AiConfig::default();
     for (name, kind, enabled) in [("Available", BackendKind::AgentCli, true), ("Selected", kind, enabled)] {
