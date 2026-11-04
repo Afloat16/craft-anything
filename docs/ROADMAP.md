@@ -782,6 +782,12 @@ Owner: open · Status: in progress
 
 ### R3.11 Single-file apps, game files and stand-in backends
 Owner: open · Status: in progress
+- [ ] Validate the combined retained-body budget, response-metadata and loopback fixture fixes
+      with atomic temporary-file creation on a current-main snapshot, preserving every existing
+      regression assertion and the full repository gate
+      — claimed: Afloat16, branch test/r3.11-merge-validation-20261104
+      Fork-only integration validation for upstream #717, #716, #767 and #718; individual
+      upstream PRs retain their review and landing order.
 - [x] Verify stand-in session cleanup by the original answerer's lifetime rather than polling a
       released port that another listener may reuse
       — claimed: Afloat16, branch test/r3.11-standin-session-lifetime-20261103
