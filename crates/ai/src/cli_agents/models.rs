@@ -306,21 +306,25 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn discovery_reads_the_selected_program_in_the_project_and_reports_errors() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let program = dir.path().join("fake agent");
-        let script = "#!/bin/sh\n[ \"$1 $2\" = 'api model.list' ] || exit 9\ncat models.json\n";
-        std::fs::write(&program, script).unwrap();
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let script = dir.path().join("api");
+        // Execute an existing interpreter; the fixture file is read as data, never executed.
+        std::os::unix::fs::symlink("/bin/sh", &program).unwrap();
+        std::fs::write(&script, "#!/bin/sh\n[ \"$0 $1\" = 'api model.list' ] || exit 9\ncat models.json\n").unwrap();
         let options = BackendOptions { command: Some(program.display().to_string()), ..Default::default() };
         let data = json!({"data":[model("project-only",true,"chat", &["high"])]});
         std::fs::write(dir.path().join("models.json"), data.to_string()).unwrap();
         assert_eq!(discover(&config(), &options, Some(dir.path()), &Stop::default()).unwrap()[0].id, "test/project-only");
+        let non_executable = dir.path().join("not executable");
+        std::fs::write(&non_executable, "not a program").unwrap();
+        let unusable = BackendOptions { command: Some(non_executable.display().to_string()), ..Default::default() };
+        assert!(discover(&config(), &unusable, Some(dir.path()), &Stop::default()).is_err());
         std::fs::write(dir.path().join("models.json"), "invalid").unwrap();
         assert_eq!(discover(&config(), &options, Some(dir.path()), &Stop::default()).unwrap_err().code, ErrorCode::GarbledOutput);
-        std::fs::write(&program, "#!/bin/sh\nexit 7\n").unwrap();
+        std::fs::write(&script, "#!/bin/sh\nexit 7\n").unwrap();
         assert!(discover(&config(), &options, Some(dir.path()), &Stop::default()).is_err());
-        std::fs::write(&program, "#!/bin/sh\nsleep 5\n").unwrap();
+        std::fs::write(&script, "#!/bin/sh\nsleep 5\n").unwrap();
         let err = query_process(&config(), &options, Some(dir.path())).unwrap().timeout(Duration::from_millis(50)).run_checked().unwrap_err();
         assert_eq!(err.code, ErrorCode::TimedOut);
     }
