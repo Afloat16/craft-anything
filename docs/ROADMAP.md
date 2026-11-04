@@ -621,6 +621,9 @@ Owner: open · Status: in progress
 - [ ] Validate the remaining loopback fixture corrections for complete and fragmented request
       headers, negative probes and stand-in cancellation on the current main
       — claimed: Afloat16, branch test/loopback-fixture-stability-20261103
+      Revision `35a32fdb` passed [CI](https://github.com/storytold/craft-anything/actions/runs/41759650153).
+      The fragmented-header regression withholds the final byte until the next read; its new
+      revision is submitted for CI, with the prior request and response assertions retained.
 - [x] Verify stand-in session cleanup by the original answerer's lifetime rather than polling a
       released port that another listener may reuse
       — claimed: Afloat16, branch test/r3.11-standin-session-lifetime-20261103
