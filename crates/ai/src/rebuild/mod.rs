@@ -1235,7 +1235,13 @@ pub fn project_builder<'a>(cfg: &crate::AiConfig, ws: &'a Workspace) -> Option<&
 /// enabled AI backend (which builds with our own agent loop and the Build tools).
 pub fn builder_backend(cfg: &crate::AiConfig, named: Option<&str>) -> Result<crate::BackendEntry, ToolError> {
     let found = match named {
-        Some(n) => cfg.get(n).cloned(),
+        Some(n) => match cfg.get(n) {
+            Some(entry) if !entry.config.enabled => {
+                return Err(ToolError::new(ErrorCode::BadSettings, format!("The AI backend '{n}' is turned off."))
+                    .with_remediation("Turn it on in Settings → AI, or choose an enabled backend with --backend."));
+            }
+            entry => entry.cloned(),
+        },
         None => {
             cfg.backend_for(Role::Builder).or_else(|| cfg.enabled().find(|b| b.config.kind == BackendKind::AgentCli)).or_else(|| cfg.enabled().next()).cloned()
         }
