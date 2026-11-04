@@ -817,6 +817,9 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
+- [ ] Keep DNS answer names inside their declared RDATA, including compressed names and MX
+      exchanges, and report malformed records as incomplete instead of inventing answer values
+      — claimed: Afloat16, branch bugfix/r3.12-dns-rdata-names-20261104
 - [x] Parsers refuse what they used to half-read: binary plists keep objects inside their object
       area and reject unrepresentable widths, base64 (plists, source maps) refuses damaged tails
       and incomplete quanta through one shared decoder, OIDs must be minimally encoded, and string
