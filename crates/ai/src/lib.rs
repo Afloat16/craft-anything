@@ -81,6 +81,14 @@ impl BackendKind {
         }
     }
 
+    /// A coding agent run as a program, rather than an HTTP API.
+    pub fn is_harness(self) -> bool {
+        match self {
+            BackendKind::AgentCli => true,
+            BackendKind::Anthropic | BackendKind::Openai | BackendKind::Openrouter | BackendKind::Gemini | BackendKind::OpenaiCompatible => false,
+        }
+    }
+
     pub fn needs_key(self) -> bool {
         matches!(self, BackendKind::Anthropic | BackendKind::Openai | BackendKind::Openrouter | BackendKind::Gemini)
     }
@@ -165,6 +173,13 @@ pub fn model_in_use(config: &BackendConfig, options: Option<&BackendOptions>) ->
         BackendKind::AgentCli => cli_agents::adapter_for(&config.model).model_in_use(options),
         _ => Some(config.model.clone()),
     }
+}
+
+/// The variable that moves an agent app's own folder (its sign-in, settings and sessions), when
+/// it has one: Claude Code's `CLAUDE_CONFIG_DIR`. `None` for the others, which
+/// [`BackendOptions::config_dir`] doesn't apply to.
+pub fn folder_var(config: &BackendConfig) -> Option<&'static str> {
+    (config.kind == BackendKind::AgentCli).then(|| cli_agents::adapter_for(&config.model).folder_var()).flatten()
 }
 
 /// The backend that builds when none is named: the Builder role's choice while it's on, else an
@@ -510,6 +525,30 @@ impl AiHub {
         let mut cfg = self.config_to_change()?;
         let Some(b) = cfg.backends.iter_mut().find(|b| b.config.name == name) else { return Ok(false) };
         b.options.command = command.map(str::trim).filter(|c| !c.is_empty()).map(str::to_string);
+        self.save_config(&cfg)?;
+        Ok(true)
+    }
+
+    /// The folder an agent app keeps its sign-in, settings and sessions in ([`folder_var`]), so
+    /// each AI can be another account (`None` or empty: its usual one). A full path or one under
+    /// `~/`; over SSH it's a folder on that computer. Returns false when there was no such backend.
+    pub fn set_config_dir(&self, name: &str, dir: Option<&str>) -> Result<bool, ToolError> {
+        let dir = dir.map(str::trim).filter(|d| !d.is_empty());
+        let mut cfg = self.config_to_change()?;
+        let Some(b) = cfg.backends.iter_mut().find(|b| b.config.name == name) else { return Ok(false) };
+        if let Some(d) = dir {
+            if folder_var(&b.config).is_none() {
+                return Err(ToolError::invalid(format!("{name} doesn't keep a folder of its own.")).with_remediation("A folder is for Claude Code."));
+            }
+            // A relative folder would move with whatever folder the agent is started in.
+            let remote = b.config.ssh_host.as_deref().is_some_and(|h| !h.trim().is_empty());
+            let full = d == "~" || d.starts_with("~/") || if remote { d.starts_with('/') } else { std::path::Path::new(d).is_absolute() };
+            if !full {
+                return Err(ToolError::invalid(format!("{d:?} isn't a full path."))
+                    .with_remediation("Give the whole path, or one starting with ~/ for the home folder."));
+            }
+        }
+        b.options.config_dir = dir.map(str::to_string);
         self.save_config(&cfg)?;
         Ok(true)
     }
@@ -870,7 +909,7 @@ impl AiHub {
         let e = self.entry(name)?;
         let start = Instant::now();
         if e.config.kind == BackendKind::AgentCli {
-            let program = e.options.command.clone().unwrap_or_else(|| cli_agents::program_for(&e.config.model));
+            let program = cli_agents::program_of(&e.config, &e.options);
             let p = match e.config.ssh_host.as_deref().filter(|h| !h.trim().is_empty()) {
                 Some(h) => craft_anything_platform::Process::new("ssh").args(ssh::ssh_args(h, &[program.clone(), "--version".into()])),
                 None => craft_anything_platform::Process::new(&program).arg("--version"),
@@ -981,7 +1020,7 @@ fn reach(e: &BackendEntry, key: Option<String>) -> Result<u64, String> {
             }
         }
         BackendKind::AgentCli => {
-            let program = e.options.command.clone().unwrap_or_else(|| cli_agents::program_for(&e.config.model));
+            let program = cli_agents::program_of(&e.config, &e.options);
             craft_anything_platform::which(&program).map(|_| ()).ok_or_else(|| format!("{program} isn't on PATH"))
         }
     };
