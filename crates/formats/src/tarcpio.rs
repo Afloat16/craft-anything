@@ -70,18 +70,16 @@ fn octal(f: &[u8]) -> Option<u64> {
         }
         return Some(v);
     }
-    let s: Vec<u8> = f.iter().copied().filter(|&b| b != 0 && b != b' ').collect();
-    if s.is_empty() {
-        return Some(0);
-    }
+    let padding = |&b: &u8| b == 0 || b == b' ';
+    let mut digits = f.iter().copied().skip_while(padding).peekable();
     let mut v = 0u64;
-    for b in s {
+    while let Some(b) = digits.next_if(|b| !padding(b)) {
         if !(b'0'..=b'7').contains(&b) {
             return None;
         }
         v = v.checked_mul(8)?.checked_add(u64::from(b - b'0'))?;
     }
-    Some(v)
+    digits.all(|b| padding(&b)).then_some(v)
 }
 
 /// True when a 512-byte block is a tar header with a correct checksum.
@@ -118,7 +116,7 @@ pub fn tar(data: &[u8], max_members: usize) -> Option<Listing> {
     let mut pax_link: Option<String> = None;
     let mut pax_size: Option<u64> = None;
     // Every iteration advances by at least one block, so the walk is bounded by the input size.
-    loop {
+    'headers: loop {
         let Some(h) = r.slice(pos, BLOCK) else {
             out.warnings.push(format!("archive ends inside a header at {pos:#x}"));
             out.length = data.len() as u64;
@@ -164,14 +162,35 @@ pub fn tar(data: &[u8], max_members: usize) -> Option<Listing> {
                 }
             }
             b'x' => {
-                if let Some(b) = body {
-                    for (k, v) in pax_records(b) {
-                        match k.as_str() {
-                            "path" => pax_path = Some(v),
-                            "linkpath" => pax_link = Some(v),
-                            "size" => pax_size = v.parse().ok(),
+                if let Some(mut remaining) = body {
+                    for _ in 0..256 {
+                        if remaining.is_empty() {
+                            break;
+                        }
+                        let Some((key, value, rest)) = pax_record(remaining) else {
+                            out.warnings.push(format!("invalid pax record at {pos:#x}"));
+                            out.length = pos as u64;
+                            break 'headers;
+                        };
+                        match key {
+                            b"path" | b"linkpath" => {
+                                if value.len() > MAX_NAME {
+                                    out.warnings.push(format!("pax name exceeds {MAX_NAME} bytes at {pos:#x}"));
+                                    out.length = pos as u64;
+                                    break 'headers;
+                                }
+                                let slot = if key == b"path" { &mut pax_path } else { &mut pax_link };
+                                *slot = Some(String::from_utf8_lossy(value).into_owned());
+                            }
+                            b"size" => pax_size = std::str::from_utf8(value).ok().and_then(|s| s.parse().ok()),
                             _ => {}
                         }
+                        remaining = rest;
+                    }
+                    if !remaining.is_empty() {
+                        out.warnings.push(format!("pax record limit reached at {pos:#x}"));
+                        out.length = pos as u64;
+                        break 'headers;
                     }
                 }
             }
@@ -228,27 +247,20 @@ pub fn tar(data: &[u8], max_members: usize) -> Option<Listing> {
     Some(out)
 }
 
-/// Parse pax extended header records (`<len> <key>=<value>\n`).
-fn pax_records(b: &[u8]) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    let mut i = 0usize;
-    while i < b.len() && out.len() < 256 {
-        let rest = b.get(i..).unwrap_or(&[]);
-        let Some(sp) = rest.iter().position(|&c| c == b' ') else { break };
-        let Some(len) = std::str::from_utf8(rest.get(..sp).unwrap_or(&[])).ok().and_then(|s| s.parse::<usize>().ok()) else { break };
-        if len <= sp + 1 {
-            break;
-        }
-        let Some(rec) = rest.get(sp + 1..len) else { break };
-        let rec = rec.strip_suffix(b"\n").unwrap_or(rec);
-        if let Some(eq) = rec.iter().position(|&c| c == b'=') {
-            let k = String::from_utf8_lossy(rec.get(..eq).unwrap_or(&[])).into_owned();
-            let v = String::from_utf8_lossy(rec.get(eq + 1..).unwrap_or(&[])).into_owned();
-            out.push((k, v));
-        }
-        i += len;
+/// Read one length-prefixed pax record, borrowing even unknown keys and values from the header.
+fn pax_record(data: &[u8]) -> Option<(&[u8], &[u8], &[u8])> {
+    let sp = data.iter().position(|&byte| byte == b' ')?;
+    let digits = data.get(..sp)?;
+    if !digits.iter().all(u8::is_ascii_digit) {
+        return None;
     }
-    out
+    let len: usize = std::str::from_utf8(digits).ok()?.parse().ok()?;
+    let field = data.get(sp + 1..len)?.strip_suffix(b"\n")?;
+    let eq = field.iter().position(|&byte| byte == b'=')?;
+    if eq == 0 {
+        return None;
+    }
+    Some((field.get(..eq)?, field.get(eq + 1..)?, data.get(len..)?))
 }
 
 fn hex_field(f: &[u8]) -> Option<u64> {
@@ -448,7 +460,7 @@ mod tests {
             let _ = tar(&n, 10);
             let _ = cpio(&n, 10);
         }
-        assert!(pax_records(b"12 path=abc\n").len() == 1);
-        assert!(pax_records(b"9999999999999999999999 x").is_empty());
+        assert!(pax_record(b"12 path=abc\n").is_some());
+        assert!(pax_record(b"9999999999999999999999 x").is_none());
     }
 }
