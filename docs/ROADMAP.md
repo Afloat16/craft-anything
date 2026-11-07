@@ -1124,6 +1124,8 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
+- [ ] Bound rejected packet records, validate timestamp fractions and check pcapng section-local interfaces.
+      — claimed: Afloat16, branch bugfix/r3.12-capture-timing-framing
 - [x] Require a complete DNS question's type and class fields before retaining it, and keep
       truncated questions out of packet inventories while reporting the incomplete message
       — claimed: Afloat16, branch bugfix/r3.12-dns-question-class-review-20261104
