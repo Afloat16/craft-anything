@@ -35,6 +35,8 @@ pub enum SourceMapError {
     BadMappings(usize),
     #[error("source map has more than {0} segments")]
     TooManySegments(usize),
+    #[error("source map section {0} has an invalid offset")]
+    BadSectionOffset(usize),
     #[error("source map sections nest deeper than {0}")]
     TooDeep(usize),
 }
@@ -114,8 +116,10 @@ impl SourceMap {
         let idx = segs.partition_point(|s| s.generated_column <= column);
         let Some(best) = idx.checked_sub(1).and_then(|i| segs.get(i)) else { return Vec::new() };
         let col = best.generated_column;
-        segs.iter()
-            .filter(|s| s.generated_column == col)
+        let start = segs.partition_point(|s| s.generated_column < col);
+        segs.get(start..idx)
+            .unwrap_or_default()
+            .iter()
             .filter_map(|s| {
                 let (src, l, c, n) = s.original?;
                 Some(OriginalPosition {
@@ -177,15 +181,20 @@ fn from_value(v: &Value, depth: usize, limits: Limits, budget: &mut usize) -> Re
         ..Default::default()
     };
     if let Some(sections) = v.get("sections").and_then(Value::as_array) {
-        for s in sections {
-            let line = s.pointer("/offset/line").and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok()).unwrap_or(0);
-            let col = s.pointer("/offset/column").and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok()).unwrap_or(0);
-            // Only inline maps; a `url` section would need a fetch, which a parser never does.
-            if let Some(m) = s.get("map") {
-                let sub = from_value(m, depth + 1, limits, budget)?;
-                map.segments = map.segments.saturating_add(sub.segments);
-                map.sections.push((line, col, sub));
-            }
+        for (i, s) in sections.iter().enumerate() {
+            let coordinate = |path| s.pointer(path).and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok()).ok_or(SourceMapError::BadSectionOffset(i));
+            let line = coordinate("/offset/line")?;
+            let col = coordinate("/offset/column")?;
+            let sub = if let Some(m) = s.get("map") {
+                from_value(m, depth + 1, limits, budget)?
+            } else if s.get("url").is_some_and(Value::is_string) {
+                // We cannot fetch an external map, but its range still ends the previous section.
+                SourceMap::default()
+            } else {
+                continue;
+            };
+            map.segments = map.segments.saturating_add(sub.segments);
+            map.sections.push((line, col, sub));
         }
         map.sections.sort_by_key(|(l, c, _)| (*l, *c));
         return Ok(map);
@@ -349,6 +358,41 @@ mod tests {
         let map = parse(m, Limits::default()).unwrap();
         assert_eq!(map.original_positions(1, 3)[0].source.as_deref(), Some("b.js"));
         assert_eq!(map.all_sources(), vec!["a.js", "b.js"]);
+    }
+
+    #[test]
+    fn invalid_section_offsets_do_not_map_to_zero() {
+        for offset in [r#"{"line":0}"#, r#"{"column":0}"#, r#"{"line":-1,"column":0}"#, r#"{"line":0,"column":4294967296}"#] {
+            let m = format!(r#"{{"version":3,"sections":[{{"offset":{offset},"map":{{"version":3,"mappings":"AAAA"}}}}]}}"#);
+            assert!(parse(m.as_bytes(), Limits::default()).is_err(), "{offset}");
+        }
+    }
+
+    #[test]
+    fn external_section_ends_the_previous_mapping() {
+        let m = br#"{"version":3,"sections":[
+            {"offset":{"line":0,"column":0},"map":{"version":3,"sources":["a.js"],"mappings":"AAAA;AAAA"}},
+            {"offset":{"line":0,"column":4},"url":"unavailable.map"},
+            {"offset":{"line":2,"column":0},"map":{"version":3,"sources":["b.js"],"mappings":"AAAA"}}]}"#;
+        let map = parse(m, Limits::default()).unwrap();
+        assert_eq!(map.original_positions(0, 3)[0].source.as_deref(), Some("a.js"));
+        assert!(map.original_positions(0, 4).is_empty());
+        assert!(map.original_positions(1, 0).is_empty());
+        assert_eq!(map.original_positions(2, 0)[0].source.as_deref(), Some("b.js"));
+        assert_eq!(map.all_sources(), ["a.js", "b.js"]);
+    }
+
+    #[test]
+    fn lookup_keeps_all_mappings_at_the_last_matching_column() {
+        let m = br#"{"version":3,"sources":["one","two"],"mappings":"CAAA,EAAA,A,ACAA,E"}"#;
+        let map = parse(m, Limits::default()).unwrap();
+        assert!(map.original_positions(0, 0).is_empty());
+        for col in [3, 4] {
+            let positions = map.original_positions(0, col);
+            assert_eq!(positions.iter().map(|p| p.source_index).collect::<Vec<_>>(), [0, 1]);
+            assert!(positions.iter().all(|p| p.generated_column == 3));
+        }
+        assert!(map.original_positions(0, 5).is_empty());
     }
 
     #[test]
