@@ -1147,6 +1147,8 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
+- [ ] Keep tar octal digits contiguous and reject negative GNU binary sizes instead of reading them as positive values.
+      — claimed: Afloat16, branch bugfix/r3.12-tar-octal-fields
 - [x] Require a complete DNS question's type and class fields before retaining it, and keep
       truncated questions out of packet inventories while reporting the incomplete message
       — claimed: Afloat16, branch bugfix/r3.12-dns-question-class-review-20261104
