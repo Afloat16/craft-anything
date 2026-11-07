@@ -52,12 +52,15 @@ pub fn read(data: &[u8], off: usize) -> Option<Tlv> {
         (usize::from(l0), 2usize)
     } else {
         let n = usize::from(l0 & 0x7f);
-        if n == 0 || n > 4 {
+        if n == 0 || n > 4 || *data.get(off.checked_add(2)?)? == 0 {
             return None;
         }
         let mut v = 0usize;
         for i in 0..n {
             v = v.checked_mul(256)?.checked_add(usize::from(*data.get(off.checked_add(2 + i)?)?))?;
+        }
+        if v < 128 {
+            return None;
         }
         (v, 2 + n)
     };
@@ -383,6 +386,21 @@ mod tests {
         let certs = pkcs7_certificates(&p7);
         assert_eq!(certs, vec![cert.as_slice()]);
         assert!(count_nodes(&p7) > 10);
+    }
+
+    #[test]
+    fn der_lengths_use_the_shortest_encoding() {
+        for (header, len, valid) in [
+            (&[0x04, 0x7f][..], 127, true),
+            (&[0x04, 0x81, 0x7f], 127, false),
+            (&[0x04, 0x81, 0x80], 128, true),
+            (&[0x04, 0x82, 0x00, 0x80], 128, false),
+            (&[0x04, 0x82, 0x01, 0x00], 256, true),
+        ] {
+            let mut data = header.to_vec();
+            data.resize(header.len() + len, 0);
+            assert_eq!(read(&data, 0).map(|t| t.len), valid.then_some(len));
+        }
     }
 
     #[test]
