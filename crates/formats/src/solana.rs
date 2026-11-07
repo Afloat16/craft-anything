@@ -541,6 +541,7 @@ fn read_str(table: &[u8], idx: u32) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// Preserve the relocation itself when either its symbol extent or its linked string table is invalid.
     #[test]
     fn relocations_do_not_borrow_symbol_names() {
         let original = craft_anything_testkit::sbpf::program();
