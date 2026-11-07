@@ -654,6 +654,7 @@ mod tests {
     use super::*;
     use craft_anything_testkit::formats as fx;
 
+    /// The output inventory limit applies to retained functions, not the local groups within one retained function.
     #[test]
     fn local_counts_include_groups_after_ten_thousand() {
         // One valid () -> () function containing 10,001 runs of one i32 local.
