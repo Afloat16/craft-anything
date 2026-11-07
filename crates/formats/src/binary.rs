@@ -775,6 +775,7 @@ fn collect_symbols(file: &object::File<'_>, b: &mut Binary) {
 mod tests {
     use super::*;
 
+    /// A section and a fallback segment both map two bytes of a four-byte file extent.
     #[test]
     fn file_padding_is_not_a_virtual_address() {
         let mut bin = Binary::raw(Arch::X86, 0x1000, 2, 4);
