@@ -1185,6 +1185,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-pe-optional-header-framing-20261105
 - [x] Keep PE resource metadata within the resource directory.
       — claimed: Afloat16, branch bugfix/r3.12-pe-resource-directory-boundary-20261105
+- [ ] Require complete sBPF ELF records and resolve symbol references within their linked tables.
+      — claimed: Afloat16, branch bugfix/r3.12-sbpf-table-records
 - [x] Keep Go function tables and names within their section.
       — claimed: Afloat16, branch bugfix/r3.12-go-pclntab-section-boundary-20261105
 - [x] Preserve complete Unicode characters in shortened .NET strings.
