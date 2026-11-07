@@ -1148,7 +1148,7 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Count WebAssembly locals across all declaration groups in retained function bodies.
+- [x] Count WebAssembly locals across all declaration groups in retained function bodies.
       — claimed: Afloat16, branch bugfix/r3.12-wasm-locals
 - [x] Require a complete DNS question's type and class fields before retaining it, and keep
       truncated questions out of packet inventories while reporting the incomplete message
