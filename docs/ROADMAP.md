@@ -1255,7 +1255,7 @@ Owner: open · Status: in progress
 
 ### R3.13 Web inspection correctness
 Owner: open · Status: in progress
-- [ ] Read HAR captures with the permitted UTF-8 byte order mark.
+- [x] Read HAR captures with the permitted UTF-8 byte order mark.
       — claimed: Afloat16, branch bugfix/r3.13-har-bom-bounds-20261107
 - [x] The HTML scanner finds script preloads in `rel` token lists, decodes asset URLs once (numeric
       and named references), keeps script and title text through lookalike closing tags, and skips
