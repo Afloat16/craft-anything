@@ -217,6 +217,7 @@ only when it's green and a maintainer has fully reviewed it, code as well as wor
 - [ ] `website_tools::tests::a_browser_that_exits_at_once_is_reported_at_once` (engine) failed once
       on Windows with the whole engine suite running (66 s under load) and passes alone, three
       times in a row. Find what it times
+      — claimed: Afloat16, branch test/r5.2-browser-startup-measurement
 - [ ] `a_helper_is_judged_by_whether_it_runs` (ai crate) sometimes fails when several crates'
       tests run at once and passes alone: it writes a script and runs it straight away, which a
       busy machine can refuse while another test's child still holds the file open
@@ -254,6 +255,7 @@ only when it's green and a maintainer has fully reviewed it, code as well as wor
       them; they name this line now — claimed: kuseidos, branch docs/r5.2-deny-points-at-its-own-roadmap-line
 - [ ] Check whether the release workflows still run actions that target Node.js 20. None is named
       here any more: every job calls `storytold/craft-common-actions@main`, so a fix belongs there
+      — claimed: Afloat16, branch docs/r5.2-release-actions-runtime-audit
 - [x] Correct STATUS.md's obsolete GUI-only limit: document the shared project feed, engine
       setup, launch and preview tools, with their consent and lifetime limits — PR #1014
       — claimed: Codex, branch docs/r5.2-headless-status
