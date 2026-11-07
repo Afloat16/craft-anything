@@ -1133,8 +1133,6 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Keep address and service records attached to their owner and validate the record's wire fields.
-      — claimed: Afloat16, branch bugfix/r3.12-dns-record-evidence
 - [x] Require a complete DNS question's type and class fields before retaining it, and keep
       truncated questions out of packet inventories while reporting the incomplete message
       — claimed: Afloat16, branch bugfix/r3.12-dns-question-class-review-20261104
@@ -1238,6 +1236,8 @@ Owner: open · Status: in progress
       exchanges, and report malformed records as incomplete instead of inventing answer values,
       while preserving legal empty DNS UPDATE RRset prerequisites
       — claimed: Afloat16, branch bugfix/r3.12-dns-rdata-names-review-20261104
+- [x] Keep address and service records attached to their owner and validate the record's wire fields.
+      — claimed: Afloat16, branch bugfix/r3.12-dns-record-evidence
 
 ### R3.13 Web inspection correctness
 Owner: open · Status: in progress
