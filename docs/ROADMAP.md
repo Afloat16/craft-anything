@@ -1147,8 +1147,6 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Validate DER algorithm identifiers, signature and key bit strings, and name fields before using them as certificate verification inputs.
-      — claimed: Afloat16, branch bugfix/r3.12-der-verification-fields
 - [x] Require a complete DNS question's type and class fields before retaining it, and keep
       truncated questions out of packet inventories while reporting the incomplete message
       — claimed: Afloat16, branch bugfix/r3.12-dns-question-class-review-20261104
@@ -1202,6 +1200,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-tensor-zero-dimension-product-20261105
 - [x] Find APK signatures through valid ZIP comments and framed central directories.
       — claimed: Afloat16, branch bugfix/r3.12-apk-sign-eocd-comment-boundary-20261105
+- [x] Validate DER algorithm identifiers, signature and key bit strings, and name fields before using them as certificate verification inputs.
+      — claimed: Afloat16, branch bugfix/r3.12-der-verification-fields
 - [x] Keep Mach-O load-command facts within their command.
       — claimed: Afloat16, branch bugfix/r3.12-macho-load-command-framing-20261105
 - [x] Keep Mach-O function starts within their declared payload.
