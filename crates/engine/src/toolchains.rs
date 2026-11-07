@@ -82,15 +82,7 @@ fn matching_files(dir: &Path, pattern: &str) -> Vec<PathBuf> {
         });
     }
     let file = dir.join(pattern);
-    let metadata = file.metadata().ok()?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if metadata.permissions().mode() & 0o111 == 0 {
-            return None;
-        }
-    }
-    metadata.is_file().then_some(file).into_iter().collect()
+    file.is_file().then_some(file).into_iter().collect()
 }
 
 fn scan_entries(dir: &Path, candidate: impl Fn(std::fs::DirEntry) -> std::io::Result<Option<PathBuf>>) -> Vec<PathBuf> {
