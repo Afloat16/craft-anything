@@ -258,6 +258,7 @@ impl<'a> Elf<'a> {
         self.r.cstr(o, max)
     }
 
+    /// Find a GNU build ID inside the note region, including the padded owner name in its bounds.
     fn notes(&self, off: u64, size: u64, out: &mut Option<String>) {
         let mut pos = 0u64;
         let r = self.r;
@@ -622,6 +623,7 @@ mod tests {
     use super::*;
     use craft_anything_testkit::flutter as fx;
 
+    /// Keep the backing bytes intact while varying only the note's declared extent.
     #[test]
     fn a_build_id_cannot_borrow_bytes_from_the_next_region() {
         let note = b"\x04\0\0\0\x04\0\0\0\x03\0\0\0GNU\0\x12\x34\x56\x78";
