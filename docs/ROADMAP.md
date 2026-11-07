@@ -1147,8 +1147,6 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Match ZIP local and central names, compression methods and encryption flags before decoding an entry.
-      — claimed: Afloat16, branch bugfix/r3.12-zip-local-identity
 - [x] Require a complete DNS question's type and class fields before retaining it, and keep
       truncated questions out of packet inventories while reporting the incomplete message
       — claimed: Afloat16, branch bugfix/r3.12-dns-question-class-review-20261104
@@ -1175,6 +1173,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-capture-timing-framing
 - [x] Keep ZIP directory entries within the declared directory.
       — claimed: Afloat16, branch bugfix/r3.12-zip-directory-bounds-20261105
+- [x] Match ZIP local and central names, compression methods and encryption flags before decoding an entry.
+      — claimed: Afloat16, branch bugfix/r3.12-zip-local-identity
 - [x] Refuse split ZIP archives without their other volumes.
       — claimed: Afloat16, branch bugfix/r3.12-zip-multidisk-20261105
 - [x] Check Unity bundle blocks against their declared output lengths.
