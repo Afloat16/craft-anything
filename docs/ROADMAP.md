@@ -799,6 +799,7 @@ Owner: open · Status: in progress
       added it; the test runs only on Windows, which CI doesn't)
 - [ ] CI runs the tests on Ubuntu only, so `cfg(windows)` tests (search paths, consoles, Job
       Objects) are checked only on contributors' machines: run them on a Windows runner too
+      — claimed: Afloat16, branch test/r2.2-windows-platform-ci
 - [ ] "Claude Code on <ssh host>" is offered for any SSH host, whether or not it has Claude Code
       (#62)
 - [ ] Gemini CLI's sign-in reportedly refuses individuals now (#400): check, and stop recommending
