@@ -1074,7 +1074,7 @@ Owner: open · Status: todo
 Owner: open · Status: in progress
 - [ ] Unity: sounds out (the stored stream, usually FSB5; PCM ones as WAV)
 - [ ] Unity: crunched textures (DXT1Crunched, DXT5Crunched; two of the games checked use them)
-- [ ] Unity: the float formats (RHalf, RGHalf, RGBAHalf, RFloat, RGFloat, RGBAFloat)
+- [x] Unity: the float formats (RHalf, RGHalf, RGBAHalf, RFloat, RGFloat, RGBAFloat)
       — claimed: Afloat16, branch feature/r3.9-unity-float-textures
 - [ ] Unreal 5 and Oodle: IoStore packages, unversioned properties and Oodle-compressed paks
 - [ ] Game files: save pictures from IoStore containers (needs the Unreal 5 support above)
