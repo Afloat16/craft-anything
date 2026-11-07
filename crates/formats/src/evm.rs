@@ -315,7 +315,7 @@ fn cbor_item(b: &[u8], pos: &mut usize, depth: u32) -> Option<Value> {
             Some(if major == 3 { Value::from(String::from_utf8_lossy(s).into_owned()) } else { Value::from(bytes_value(s)) })
         }
         4 => {
-            let n = usize::try_from(cbor_arg(b, pos, info)?).ok()?.min(64);
+            let n = usize::try_from(cbor_arg(b, pos, info)?).ok().filter(|&n| n <= 64)?;
             let mut items = Vec::new();
             for _ in 0..n {
                 items.push(cbor_item(b, pos, depth + 1)?);
@@ -327,7 +327,7 @@ fn cbor_item(b: &[u8], pos: &mut usize, depth: u32) -> Option<Value> {
             Some(Value::Array(items))
         }
         5 => {
-            let n = usize::try_from(cbor_arg(b, pos, info)?).ok()?.min(32);
+            let n = usize::try_from(cbor_arg(b, pos, info)?).ok().filter(|&n| n <= 32)?;
             let mut m = Map::new();
             for _ in 0..n {
                 let k = match cbor_item(b, pos, depth + 1)? {
@@ -687,6 +687,27 @@ mod tests {
         assert_eq!(m.compiler.as_deref(), Some("solc 0.8.19"));
         assert!(m.ipfs.unwrap().starts_with("Qm"));
         assert_eq!(r.analysed_size + m.length, code.len());
+    }
+
+    #[test]
+    fn oversized_cbor_counts_cannot_hide_runtime_bytes() {
+        for (tag, limit) in [(0x98, 64), (0xb8, 32)] {
+            // Metadata candidate: {"x": <array or map>}.
+            let mut cbor = vec![0xa1, 0x61, b'x', tag, limit];
+            for i in 0..limit {
+                if tag == 0xb8 {
+                    cbor.extend_from_slice(&[0x61, b'A' + i]); // one-character map key
+                }
+                cbor.push(0);
+            }
+            let len = cbor.len() as u16;
+            cbor.extend_from_slice(&len.to_be_bytes());
+            assert!(split_metadata(&cbor).1.is_some());
+
+            // Declare one more child than is present. The complete payload stays in the code.
+            cbor[4] += 1;
+            assert_eq!(split_metadata(&cbor), (cbor.len(), None));
+        }
     }
 
     #[test]
