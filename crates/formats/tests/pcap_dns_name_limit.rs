@@ -149,3 +149,51 @@ fn root_name_rdata_remains_valid() {
         assert_eq!(dns.answers[1].value, "203.0.113.1");
     }
 }
+
+#[test]
+fn dns_label_escapes_distinguish_wire_names_in_question_and_answer_owners() {
+    let mut message = vec![0, 1, 0x81, 0x80, 0, 2, 0, 1, 0, 0, 0, 0];
+    message.extend(b"\x03a.b\x03\\\x00\xff\x00\x00\x01\x00\x01");
+    message.extend(b"\x01a\x01b\x03\\\x00\xff\x00\x00\x01\x00\x01");
+    message.extend([0xc0, 12, 0, 1, 0, 1, 0, 0, 0, 0, 0, 4, 1, 2, 3, 4]);
+    let dns = decode(101, &ipv4_pkt(17, [1; 4], [2; 4], &udp(53, 100, &message))).dns.unwrap();
+    assert!(!dns.incomplete);
+    assert_eq!(dns.questions[0].name, r"a\.b.\\\000\255");
+    assert_eq!(dns.questions[1].name, r"a.b.\\\000\255");
+    assert_eq!(dns.answers[0].name, dns.questions[0].name);
+}
+
+#[test]
+fn internet_address_record_widths_follow_the_record_class() {
+    for (rtype, size) in [(1, 4usize), (28, 16)] {
+        for len in [0, size - 1, size + 1] {
+            let dns = name_rdata_then_a(0x8180, 1, 60, rtype, &vec![0; len]);
+            assert!(dns.incomplete);
+            assert!(dns.answers.is_empty());
+        }
+        for class in [254, 255] {
+            let dns = name_rdata_then_a(0x2800, class, 0, rtype, &[]);
+            assert!(!dns.incomplete);
+            assert_eq!(dns.answers.len(), 2);
+        }
+        let other = name_rdata_then_a(0x8180, 3, 60, rtype, &vec![0; size]);
+        assert_eq!(other.answers[0].value, format!("<{size} bytes>"));
+        let good = name_rdata_then_a(0x8180, 1, 60, rtype, &vec![0; size]);
+        assert_eq!(good.answers[0].value, if rtype == 1 { "0.0.0.0" } else { "::" });
+    }
+}
+
+#[test]
+fn mdns_cache_flush_bit_preserves_internet_address_semantics() {
+    let mut message = craft_anything_testkit::pcap::dns_response();
+    let n = message.len();
+    message[n - 12..n - 10].copy_from_slice(&0x8001u16.to_be_bytes());
+    for invalid in [false, true] {
+        if invalid {
+            message[n - 6..n - 4].copy_from_slice(&3u16.to_be_bytes());
+        }
+        let dns = decode(101, &ipv4_pkt(17, [1; 4], [2; 4], &udp(5353, 5353, &message))).dns.unwrap();
+        assert_eq!(dns.incomplete, invalid);
+        assert_eq!(dns.answers.len(), usize::from(!invalid));
+    }
+}

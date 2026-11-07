@@ -100,3 +100,36 @@ fn complete_hello_metadata_is_unchanged() {
     assert_eq!(hello.supported_versions, ["TLS 1.3", "TLS 1.2"]);
     assert!(!hello.partial);
 }
+
+#[test]
+fn only_repeated_byte_grease_versions_are_ignored() {
+    let mut record = client_hello("example.test");
+    let end = record.len();
+    for (grease, unknown) in [(0x0a0au16, 0x1a2au16), (0xfafa, 0xea0a)] {
+        record[end - 4..end - 2].copy_from_slice(&grease.to_be_bytes());
+        record[end - 2..].copy_from_slice(&unknown.to_be_bytes());
+        assert_eq!(decoded(&record).tls.unwrap().supported_versions, [format!("{unknown:#06x}")]);
+    }
+}
+
+#[test]
+fn invalid_mandatory_vectors_cannot_supply_client_hello_extensions() {
+    for (session_len, suites_len, compression_len, valid) in [(33u8, 2u16, 1u8, false), (0, 3, 1, false), (0, 0, 1, false), (0, 2, 0, false), (32, 2, 1, true)]
+    {
+        let template = client_hello("example.test");
+        let mut record = template[..43].to_vec();
+        record.push(session_len);
+        record.extend(vec![0; usize::from(session_len)]);
+        record.extend(suites_len.to_be_bytes());
+        record.extend(&[0x13, 0x01, 0x13][..usize::from(suites_len)]);
+        record.push(compression_len);
+        record.extend(vec![0; usize::from(compression_len)]);
+        record.extend(&template[50..]);
+        let len = record.len();
+        record[3..5].copy_from_slice(&((len - 5) as u16).to_be_bytes());
+        record[6..9].copy_from_slice(&((len - 9) as u32).to_be_bytes()[1..]);
+        let hello = decoded(&record).tls.unwrap();
+        assert_eq!(hello.partial, !valid);
+        assert_eq!(hello.sni.as_deref(), valid.then_some("example.test"));
+    }
+}

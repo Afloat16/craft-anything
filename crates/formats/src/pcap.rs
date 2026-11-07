@@ -10,9 +10,10 @@ use crate::FormatError;
 use crate::bytes::Reader;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fmt::Write as _;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-/// Most frames and rejected simple packet blocks read from one capture.
+/// Most packet records (including rejected blocks) read from one capture.
 pub const MAX_PACKETS: u64 = 5_000_000;
 /// Most flows tracked; later flows are counted but get no id.
 pub const MAX_FLOWS: usize = 100_000;
@@ -90,7 +91,9 @@ pub struct Capture<'a> {
     pub truncated: bool,
     count: u64,
     rejected_simple_blocks: u64,
-    rejected_simple_reported: bool,
+    rejected_packet_lengths: u64,
+    rejected_interfaces: u64,
+    rejections_reported: bool,
 }
 
 fn rd_u16(r: &Reader<'_>, le: bool, off: usize) -> Option<u16> {
@@ -129,7 +132,9 @@ impl<'a> Capture<'a> {
             truncated: false,
             count: 0,
             rejected_simple_blocks: 0,
-            rejected_simple_reported: false,
+            rejected_packet_lengths: 0,
+            rejected_interfaces: 0,
+            rejections_reported: false,
         };
         let classic = |le: bool, nanos: bool| -> Result<(Kind, String, Interface), FormatError> {
             let major = rd_u16(&r, le, 4).ok_or_else(|| FormatError::Truncated("pcap header".into()))?;
@@ -173,7 +178,7 @@ impl<'a> Capture<'a> {
     }
 
     fn packet_limit_reached(&mut self) -> bool {
-        if self.count.saturating_add(self.rejected_simple_blocks) < MAX_PACKETS {
+        if self.count + self.rejected_simple_blocks + self.rejected_packet_lengths + self.rejected_interfaces < MAX_PACKETS {
             return false;
         }
         if !self.truncated && self.pos < self.data.len() {
@@ -183,20 +188,33 @@ impl<'a> Capture<'a> {
         true
     }
 
-    fn report_rejected_simple_blocks(&mut self) {
-        if self.rejected_simple_blocks > 0 && !self.rejected_simple_reported {
-            let n = self.rejected_simple_blocks;
-            let suffix = if n == 1 { "" } else { "s" };
-            self.warnings.push(format!("skipped {n} simple packet block{suffix} with inconsistent captured lengths"));
-            self.rejected_simple_reported = true;
+    fn report_rejected_blocks(&mut self) {
+        if self.rejections_reported {
+            return;
         }
+        for (n, kind, why) in [
+            (self.rejected_simple_blocks, "simple packet", "inconsistent captured lengths"),
+            (self.rejected_packet_lengths, "packet", "captured lengths beyond the block"),
+            (self.rejected_interfaces, "packet", "undeclared interfaces"),
+        ] {
+            if n > 0 {
+                let suffix = if n == 1 { "" } else { "s" };
+                self.warnings.push(format!("skipped {n} {kind} block{suffix} with {why}"));
+            }
+        }
+        self.rejections_reported = true;
     }
 
     fn ts(&self, iface: usize, units: u64) -> Option<u64> {
         let (base, exp) = self.interfaces.get(iface).map(|i| i.tsresol).unwrap_or((10, 6));
         let offset_s = self.interfaces.get(iface).map(|i| i.tsoffset).unwrap_or(0);
         let ns = if base == 10 {
-            if exp <= 9 { u128::from(units) * 10u128.pow(u32::from(9 - exp)) } else { u128::from(units) / 10u128.checked_pow(u32::from(exp - 9))? }
+            if exp <= 9 {
+                u128::from(units) * 10u128.pow(u32::from(9 - exp))
+            } else {
+                // A divisor beyond u64::MAX makes every representable tick count round down to zero.
+                u128::from(10u64.checked_pow(u32::from(exp - 9)).map_or(0, |divisor| units / divisor))
+            }
         } else {
             (u128::from(units) * 1_000_000_000) >> exp.min(127)
         };
@@ -204,11 +222,11 @@ impl<'a> Capture<'a> {
         u64::try_from(adjusted).ok()
     }
 
-    fn frame(&mut self, iface: usize, ts_units: u64, data: &'a [u8], original_len: u32) -> Frame<'a> {
+    fn frame(&mut self, iface: usize, ts_ns: Option<u64>, data: &'a [u8], original_len: u32) -> Frame<'a> {
         self.count += 1;
         Frame {
             number: self.count,
-            ts_ns: self.ts(iface, ts_units),
+            ts_ns,
             interface: iface,
             link_type: self.interfaces.get(iface).map(|i| i.link_type).unwrap_or(u32::MAX),
             original_len,
@@ -229,8 +247,9 @@ impl<'a> Capture<'a> {
             return self.stop(format!("record at offset {p} claims {incl} bytes past the end of the file"));
         };
         self.pos = p + 16 + body.len();
-        let units = u64::from(sec) * if nanos { 1_000_000_000 } else { 1_000_000 } + u64::from(frac);
-        Some(self.frame(0, units, body, orig))
+        let per_second = if nanos { 1_000_000_000 } else { 1_000_000 };
+        let ts = (frac < per_second).then(|| u64::from(sec) * 1_000_000_000 + u64::from(frac) * if nanos { 1 } else { 1_000 });
+        Some(self.frame(0, ts, body, orig))
     }
 
     fn next_ng(&mut self, mut le: bool) -> Option<Frame<'a>> {
@@ -323,16 +342,16 @@ impl<'a> Capture<'a> {
                         )
                     };
                     let (Some(iface), Some(hi), Some(lo), Some(cap), Some(orig)) = (iface, hi, lo, cap, orig) else { continue };
-                    let Some(data) = usize::try_from(cap).ok().filter(|&c| body + 20 + c <= body_end).and_then(|c| r.slice(body + 20, c)) else {
-                        self.warnings.push(format!("packet block at offset {p} claims more bytes than it holds; skipped"));
+                    let Some(data) = self.data.get(body + 20..body_end).and_then(|bytes| bytes.get(..cap as usize)) else {
+                        self.rejected_packet_lengths += 1;
                         continue;
                     };
-                    let iface = self.section_base + iface;
-                    if iface >= self.interfaces.len() {
-                        self.warnings.push(format!("packet block at offset {p} names an undeclared interface; skipped"));
+                    let Some(iface) = self.section_base.checked_add(iface).filter(|&i| i < self.interfaces.len()) else {
+                        self.rejected_interfaces += 1;
                         continue;
-                    }
-                    return Some(self.frame(iface, (u64::from(hi) << 32) | u64::from(lo), data, orig));
+                    };
+                    let ts = self.ts(iface, (u64::from(hi) << 32) | u64::from(lo));
+                    return Some(self.frame(iface, ts, data, orig));
                 }
                 3 => {
                     let Some(orig) = rd_u32(&r, le, body) else { continue };
@@ -346,6 +365,7 @@ impl<'a> Capture<'a> {
                     }
                     let Some(data) = r.slice(body + 4, cap) else { continue };
                     if iface >= self.interfaces.len() {
+                        self.rejected_interfaces += 1;
                         continue;
                     }
                     // Simple packet blocks carry no timestamp.
@@ -378,7 +398,7 @@ impl<'a> Iterator for Capture<'a> {
             }
         };
         if frame.is_none() {
-            self.report_rejected_simple_blocks();
+            self.report_rejected_blocks();
         }
         frame
     }
@@ -852,7 +872,18 @@ fn dns_name(msg: &[u8], mut off: usize) -> Option<(String, usize, bool)> {
                 if !out.is_empty() {
                     out.push('.');
                 }
-                out.extend(label.iter().map(|&c| if c.is_ascii_graphic() { char::from(c) } else { '?' }));
+                for &c in label {
+                    match c {
+                        b'.' | b'\\' => {
+                            out.push('\\');
+                            out.push(char::from(c));
+                        }
+                        c if c.is_ascii_graphic() => out.push(char::from(c)),
+                        _ => {
+                            let _ = write!(out, "\\{c:03}");
+                        }
+                    }
+                }
                 off += 1 + usize::from(l);
             }
             _ => return None,
@@ -902,15 +933,21 @@ fn dns(msg: &[u8], d: &mut Decoded, label: &'static str) {
                 out.incomplete = true;
                 break;
             };
+            // mDNS uses the high class bit as the cache-flush flag.
+            let internet = class == 1 || (label == "mdns" && class == 0x8001);
             let value = match (rt, rd.len()) {
-                (1, 4) => Ipv4Addr::new(
+                (1, 4) if internet => Ipv4Addr::new(
                     rd.first().copied().unwrap_or(0),
                     rd.get(1).copied().unwrap_or(0),
                     rd.get(2).copied().unwrap_or(0),
                     rd.get(3).copied().unwrap_or(0),
                 )
                 .to_string(),
-                (28, 16) => Ipv6Addr::from(<[u8; 16]>::try_from(rd).unwrap_or([0; 16])).to_string(),
+                (28, 16) if internet => Ipv6Addr::from(<[u8; 16]>::try_from(rd).unwrap_or([0; 16])).to_string(),
+                (1 | 28, _) if internet => {
+                    out.incomplete = true;
+                    break;
+                }
                 (2 | 5 | 12 | 15, _) => {
                     // RFC 2136 prerequisites can name an RRset without carrying its value.
                     if rd.is_empty() && opcode == 5 && matches!(class, 254 | 255) && ttl == 0 {
@@ -981,19 +1018,28 @@ pub fn strip_userinfo(target: &str) -> String {
 
 fn tcp_app(p: &[u8], d: &mut Decoded) {
     let head = p.get(..p.len().min(16 << 10)).unwrap_or(p);
-    let line_end = head.windows(2).position(|w| w == b"\r\n").unwrap_or(head.len().min(2048));
-    let line = String::from_utf8_lossy(head.get(..line_end.min(2048)).unwrap_or(&[])).into_owned();
-    if let Some(rest) = line.strip_prefix("HTTP/1.") {
-        let status = rest.split(' ').nth(1).and_then(|s| s.parse().ok());
+    let Some(line_end) = head.windows(2).position(|w| w == b"\r\n") else {
+        tls(p, d);
+        return;
+    };
+    let line = String::from_utf8_lossy(head.get(..line_end).unwrap_or(&[]));
+    let version = |v: &str| matches!(v.as_bytes(), [b'H', b'T', b'T', b'P', b'/', b'1', b'.', b'0'..=b'9']);
+    let mut parts = line.splitn(3, ' ');
+    let fields = (parts.next(), parts.next(), parts.next());
+    if let (Some(v), Some(code), Some(reason)) = fields
+        && version(v)
+        && matches!(code.as_bytes(), [b'1'..=b'5', b'0'..=b'9', b'0'..=b'9'])
+        && reason.bytes().all(|b| b == b'\t' || !b.is_ascii_control())
+    {
         d.protocols.push("http");
-        d.http =
-            Some(Http { kind: "response", method: None, target: None, status, version: format!("HTTP/1.{}", rest.chars().next().unwrap_or('?')), host: None });
+        d.http = Some(Http { kind: "response", method: None, target: None, status: code.parse().ok(), version: v.to_string(), host: None });
         return;
     }
-    let mut parts = line.splitn(3, ' ');
-    if let (Some(m), Some(t), Some(v)) = (parts.next(), parts.next(), parts.next())
+    if let (Some(m), Some(t), Some(v)) = fields
         && METHODS.contains(&m)
-        && v.starts_with("HTTP/1.")
+        && !t.is_empty()
+        && !t.bytes().any(|b| b.is_ascii_control())
+        && version(v)
     {
         let mut remaining = head.get(line_end + 2..).unwrap_or(&[]);
         let mut host = None;
@@ -1037,7 +1083,7 @@ fn tls(p: &[u8], d: &mut Decoded) {
         0x0302 => "TLS 1.1".into(),
         0x0303 => "TLS 1.2".into(),
         0x0304 => "TLS 1.3".into(),
-        v if v & 0x0f0f == 0x0a0a => "GREASE".into(),
+        v if v == v.swap_bytes() && v & 0xf == 0xa => "GREASE".into(),
         v => format!("{v:#06x}"),
     };
     let mut hello = TlsHello {
@@ -1057,18 +1103,18 @@ fn tls(p: &[u8], d: &mut Decoded) {
     let hello_end = handshake_end.min(record_end_available);
     let r = Reader::new(p.get(..hello_end).unwrap_or(&[]));
     // Every variable-length field must fit inside this handshake, not merely the packet.
-    let skip8 = |off: usize| {
-        let n = usize::from(r.u8(off)?);
+    let skip8 = |off: usize, lengths: std::ops::RangeInclusive<u8>| {
+        let n = usize::from(r.u8(off).filter(|n| lengths.contains(n))?);
         r.slice(off + 1, n)?;
         Some(off + 1 + n)
     };
-    let skip16 = |off: usize| {
-        let n = usize::from(r.u16_be(off)?);
+    let skip_suites = |off: usize| {
+        let n = usize::from(r.u16_be(off).filter(|n| *n >= 2 && *n % 2 == 0)?);
         r.slice(off + 2, n)?;
         Some(off + 2 + n)
     };
     // Record header (5) + handshake header (4) + client_version (2) + random (32).
-    let Some(off) = skip8(5 + 4 + 2 + 32).and_then(skip16).and_then(skip8) else {
+    let Some(off) = skip8(5 + 4 + 2 + 32, 0..=32).and_then(skip_suites).and_then(|off| skip8(off, 1..=255)) else {
         hello.partial = true;
         d.tls = Some(hello);
         return;
@@ -1508,6 +1554,31 @@ mod tests {
         assert!(cap.next().is_none());
         assert!(cap.truncated);
         assert_eq!(cap.pos, data.len() - valid.len());
+    }
+
+    #[test]
+    fn enhanced_and_obsolete_rejections_share_the_scan_budget() {
+        let mut data = pcapng(&[]);
+        for kind in [2, 6] {
+            let mut bad_interface = [0; 20];
+            bad_interface[0] = 1;
+            let mut bad_length = [0; 20];
+            bad_length[12] = 4;
+            data.extend(craft_anything_testkit::pcap::block(kind, &bad_interface));
+            data.extend(craft_anything_testkit::pcap::block(kind, &bad_length));
+        }
+        let valid = craft_anything_testkit::pcap::block(6, &[0; 20]);
+        data.extend(&valid);
+        let mut cap = Capture::new(&data).unwrap();
+        cap.count = MAX_PACKETS - 4;
+        assert!(cap.next().is_none());
+        assert!(cap.truncated);
+        assert_eq!(cap.pos, data.len() - valid.len());
+        assert_eq!(cap.warnings.len(), 3);
+        assert!(cap.warnings.iter().any(|w| w.contains("2 packet blocks with captured lengths")));
+        assert!(cap.warnings.iter().any(|w| w.contains("2 packet blocks with undeclared interfaces")));
+        assert!(cap.next().is_none());
+        assert_eq!(cap.warnings.len(), 3);
     }
 
     #[test]
