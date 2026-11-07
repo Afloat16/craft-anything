@@ -1147,6 +1147,8 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
+- [ ] Validate the size and location of the ZIP64 end record before consuming its fixed fields or extensible data.
+      — claimed: Afloat16, branch bugfix/r3.12-zip64-record-extent
 - [x] Require a complete DNS question's type and class fields before retaining it, and keep
       truncated questions out of packet inventories while reporting the incomplete message
       — claimed: Afloat16, branch bugfix/r3.12-dns-question-class-review-20261104
