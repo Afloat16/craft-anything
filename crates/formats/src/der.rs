@@ -380,23 +380,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reads_synthetic_certificate() {
-        let cert = craft_anything_testkit::android::certificate_der("Craft Test", "Craft Org");
-        let info = certificate(&cert).unwrap();
-        assert_eq!(info.subject, "CN=Craft Test, O=Craft Org");
-        assert_eq!(info.issuer, "CN=Craft Test, O=Craft Org");
-        assert_eq!(info.serial, "0102030405");
-        assert_eq!(info.signature_algorithm, "sha256WithRSAEncryption");
-        assert_eq!(info.public_key_algorithm, "rsaEncryption");
-        assert_eq!(info.version, 3);
-        assert_eq!(info.not_before, "250101000000Z");
-        let p7 = craft_anything_testkit::android::pkcs7_der(&cert);
-        let certs = pkcs7_certificates(&p7);
-        assert_eq!(certs, vec![cert.as_slice()]);
-        assert!(count_nodes(&p7) > 10);
-    }
-
-    #[test]
     fn verifier_checks_the_fields_before_exposing_their_bytes() {
         let cert = craft_anything_testkit::android::certificate_der("Subject", "Org");
         let outer = children(&cert, &read(&cert, 0).unwrap());
@@ -416,6 +399,23 @@ mod tests {
         // A NULL followed by an OID is not an AlgorithmIdentifier.
         let misplaced = [0x30, 5, 0x05, 0, 0x06, 1, 0x2a];
         assert!(seq_alg_oid(&misplaced, &read(&misplaced, 0).unwrap()).is_none());
+    }
+
+    #[test]
+    fn reads_synthetic_certificate() {
+        let cert = craft_anything_testkit::android::certificate_der("Craft Test", "Craft Org");
+        let info = certificate(&cert).unwrap();
+        assert_eq!(info.subject, "CN=Craft Test, O=Craft Org");
+        assert_eq!(info.issuer, "CN=Craft Test, O=Craft Org");
+        assert_eq!(info.serial, "0102030405");
+        assert_eq!(info.signature_algorithm, "sha256WithRSAEncryption");
+        assert_eq!(info.public_key_algorithm, "rsaEncryption");
+        assert_eq!(info.version, 3);
+        assert_eq!(info.not_before, "250101000000Z");
+        let p7 = craft_anything_testkit::android::pkcs7_der(&cert);
+        let certs = pkcs7_certificates(&p7);
+        assert_eq!(certs, vec![cert.as_slice()]);
+        assert!(count_nodes(&p7) > 10);
     }
 
     #[test]
