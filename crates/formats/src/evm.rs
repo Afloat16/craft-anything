@@ -298,6 +298,7 @@ fn cbor_arg(b: &[u8], pos: &mut usize, info: u8) -> Option<u64> {
     }
 }
 
+/// Decode one bounded metadata item. An incomplete or unsupported value invalidates the metadata trailer.
 fn cbor_item(b: &[u8], pos: &mut usize, depth: u32) -> Option<Value> {
     if depth > 4 {
         return None;
@@ -672,6 +673,7 @@ mod tests {
     use super::*;
     use craft_anything_testkit::formats as fx;
 
+    /// A plausible trailer length alone must not remove instructions from the analyzed bytecode.
     #[test]
     fn incomplete_cbor_must_not_shorten_the_analyzed_contract() {
         // A nested array declares 65 integers but supplies just 64. The top-level map
