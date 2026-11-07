@@ -876,6 +876,7 @@ Owner: open · Status: in progress
       working directory, preserving virtualenv paths for relative project placements — PR #950
 - [ ] Extend launch recipes beyond conventional root entrypoints: Python package scripts, Go
       `cmd/` layouts, and Java build outputs; build checks already use their toolchain commands
+      — Go command layouts claimed: Afloat16, branch feature/r2.7-go-command-layouts
 - [ ] Audit relative project placements in build, option-run and Play paths too: runtime window
       capture now normalizes its request paths, but earlier runner paths can still be relative
 - [x] "player" alone doesn't make a request a game: a video or music player is an app (#953)
