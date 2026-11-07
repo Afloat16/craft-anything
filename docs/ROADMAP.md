@@ -1124,8 +1124,6 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Bound rejected packet records, validate timestamp fractions and check pcapng section-local interfaces.
-      — claimed: Afloat16, branch bugfix/r3.12-capture-timing-framing
 - [x] Require a complete DNS question's type and class fields before retaining it, and keep
       truncated questions out of packet inventories while reporting the incomplete message
       — claimed: Afloat16, branch bugfix/r3.12-dns-question-class-review-20261104
@@ -1148,6 +1146,8 @@ Owner: open · Status: in progress
 - [x] Reject incomplete simple packet block payloads.
       — claimed: Afloat16, branch bugfix/r3.12-pcapng-simple-block-length-20261105
       Count rejected lengths against the packet scan limit and summarize them once at the end of the walk.
+- [x] Bound rejected packet records, validate timestamp fractions and check pcapng section-local interfaces.
+      — claimed: Afloat16, branch bugfix/r3.12-capture-timing-framing
 - [x] Keep ZIP directory entries within the declared directory.
       — claimed: Afloat16, branch bugfix/r3.12-zip-directory-bounds-20261105
 - [x] Refuse split ZIP archives without their other volumes.
