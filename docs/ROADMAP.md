@@ -874,9 +874,10 @@ Owner: open · Status: in progress
       from the same process that supplied the picture, without falling back to unrelated names — PR #950
 - [x] Shared toolchain commands make project-local executables absolute before changing the
       working directory, preserving virtualenv paths for relative project placements — PR #950
-- [ ] Extend launch recipes beyond conventional root entrypoints: Python package scripts, Go
-      `cmd/` layouts, and Java build outputs; build checks already use their toolchain commands
-      — Go command layouts claimed: Afloat16, branch feature/r2.7-go-command-layouts
+- [x] Launch a Go project with one `cmd/<name>/main.go` as a package when the root has no
+      `main.go` — claimed: Afloat16, branch feature/r2.7-go-command-layouts
+- [ ] Extend launch recipes to Python package scripts and Java build outputs; build checks already
+      use their toolchain commands
 - [ ] Audit relative project placements in build, option-run and Play paths too: runtime window
       capture now normalizes its request paths, but earlier runner paths can still be relative
 - [x] "player" alone doesn't make a request a game: a video or music player is an app (#953)
