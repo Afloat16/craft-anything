@@ -316,7 +316,7 @@ pub fn inspect(data: &[u8]) -> Result<SolanaProgram, FormatError> {
     // First pass: read the header fields; names come from the string table afterwards.
     for i in 0..e_shnum {
         let Some(o) = i.checked_mul(shentsize).and_then(|x| x.checked_add(shoff)) else { break };
-        let Some(record) = r.slice(o, 64) else {
+        let Some(record) = r.slice(o, shentsize) else {
             warnings.push("the ELF section header table is truncated".into());
             break;
         };
@@ -559,6 +559,22 @@ mod tests {
         let report = inspect(&elf).unwrap();
         assert!(report.sections.is_empty());
         assert!(report.warnings.iter().any(|s| s.contains("truncated")));
+    }
+
+    #[test]
+    fn sbpf_extended_section_header_requires_its_padding() {
+        let mut elf = craft_anything_testkit::sbpf::program();
+        elf.truncate(64);
+        elf[40..48].copy_from_slice(&64u64.to_le_bytes());
+        elf[58..60].copy_from_slice(&72u16.to_le_bytes());
+        elf[60..62].copy_from_slice(&1u16.to_le_bytes());
+        elf[62..64].copy_from_slice(&0u16.to_le_bytes());
+        elf.resize(136, 0);
+        assert_eq!(inspect(&elf).unwrap().sections.len(), 1);
+
+        let report = inspect(&elf[..128]).unwrap();
+        assert!(report.sections.is_empty());
+        assert!(report.warnings.iter().any(|warning| warning.contains("truncated")));
     }
 
     #[test]
