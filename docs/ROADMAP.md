@@ -1147,6 +1147,8 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
+- [ ] Use the sorted section and segment boundaries during source-map position lookups so repeated symbolication visits only matching positions.
+      — claimed: Afloat16, branch bugfix/r3.12-source-map-lookup-work
 - [x] Require a complete DNS question's type and class fields before retaining it, and keep
       truncated questions out of packet inventories while reporting the incomplete message
       — claimed: Afloat16, branch bugfix/r3.12-dns-question-class-review-20261104
