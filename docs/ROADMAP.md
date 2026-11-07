@@ -1147,6 +1147,8 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
+- [ ] Validate DER algorithm identifiers, signature and key bit strings, and name fields before using them as certificate verification inputs.
+      — claimed: Afloat16, branch bugfix/r3.12-der-verification-fields
 - [x] Require a complete DNS question's type and class fields before retaining it, and keep
       truncated questions out of packet inventories while reporting the incomplete message
       — claimed: Afloat16, branch bugfix/r3.12-dns-question-class-review-20261104
