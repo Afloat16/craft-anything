@@ -875,6 +875,7 @@ Owner: open · Status: in progress
       — claimed: justinjohn0306, branch bugfix/953-player-not-a-game
 - [ ] Game words can't tell these apart from games: "a low level disk tool", "an MPEG 2 player",
       "a single player app for movies". Telling them apart needs more than a list of words
+      — claimed: Afloat16, branch bugfix/r2.7-media-and-system-apps
 
 ### R2.8 Clean room means clean room
 Owner: maintainers · Status: in progress
