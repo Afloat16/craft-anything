@@ -873,8 +873,8 @@ Owner: open · Status: in progress
       capture now normalizes its request paths, but earlier runner paths can still be relative
 - [x] "player" alone doesn't make a request a game: a video or music player is an app (#953)
       — claimed: justinjohn0306, branch bugfix/953-player-not-a-game
-- [ ] Game words can't tell these apart from games: "a low level disk tool", "an MPEG 2 player",
-      "a single player app for movies". Telling them apart needs more than a list of words
+- [x] System-tool and media-player phrases keep the app target: "a low level disk tool",
+      "an MPEG 2 player" and "a single player app for movies". Independent game cues still apply
       — claimed: Afloat16, branch bugfix/r2.7-media-and-system-apps
 
 ### R2.8 Clean room means clean room

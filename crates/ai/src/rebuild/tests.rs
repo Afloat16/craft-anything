@@ -75,6 +75,13 @@ fn the_word_player_alone_is_not_a_game() {
         "a 12 player scoreboard",
         "a music app with two playerctl shortcuts",
         "a low-level disk tool",
+        "a low level disk tool",
+        "a high level system monitor",
+        "An MPEG 2 player",
+        "An MPEG  2-player",
+        "a single player app for movies",
+        "a single-player application for music",
+        "a single playerctl shortcut",
         "a multilevel menu",
     ] {
         assert_eq!(choose(request, &TargetRef::None).0, "app", "{request}");
@@ -96,6 +103,9 @@ fn the_word_player_alone_is_not_a_game() {
         "A game with one player",
         "A level editor",
         "Build a (level editor)",
+        "a low level tool with a level editor",
+        "a game with an MPEG 2 player",
+        "a single player app for chess",
         "Make this:\nlevel editor",
     ] {
         assert_eq!(choose(request, &TargetRef::None).0, "game", "{request}");
