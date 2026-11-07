@@ -270,6 +270,16 @@ struct RawSection {
     sh_entsize: u64,
 }
 
+impl RawSection {
+    /// Complete, file-backed records within this section, at its declared stride.
+    fn entries<'a>(&self, data: &'a [u8], min_size: usize) -> Option<std::slice::ChunksExact<'a, u8>> {
+        let stride = usize::try_from(self.sh_entsize).ok().filter(|&n| n >= min_size)?;
+        let tail = data.get(usize::try_from(self.sh_offset).ok()?..)?;
+        let size = usize::try_from(self.sh_size).unwrap_or(usize::MAX).min(tail.len());
+        Some(tail.get(..size)?.chunks_exact(stride))
+    }
+}
+
 /// Parse a Solana / classic-eBPF ELF. Returns the structure even when the machine type is not
 /// `EM_BPF` (with `is_sbpf == false`) so callers can give a clean "not an sBPF program" message.
 pub fn inspect(data: &[u8]) -> Result<SolanaProgram, FormatError> {
@@ -308,18 +318,24 @@ pub fn inspect(data: &[u8]) -> Result<SolanaProgram, FormatError> {
     let (sbpf_version, version_note) = sbpf_version_from_flags(e_flags);
 
     // Section headers.
-    let shentsize = usize::from(e_shentsize).max(64);
-    let shoff = usize::try_from(e_shoff).unwrap_or(usize::MAX);
+    let shentsize = usize::from(e_shentsize);
+    let table = usize::try_from(e_shoff).ok().and_then(|o| data.get(o..)).unwrap_or_default();
     let mut raw_sections: Vec<RawSection> = Vec::new();
     // First pass: read the header fields; names come from the string table afterwards.
-    for i in 0..e_shnum {
-        let Some(o) = i.checked_mul(shentsize).and_then(|x| x.checked_add(shoff)) else { break };
+    if e_shnum != 0 && shentsize < 64 {
+        return Err(FormatError::Malformed("short ELF64 section header stride".into()));
+    }
+    for header in table.chunks_exact(shentsize.max(1)).take(e_shnum) {
+        let r = Reader::new(header);
         let (Some(name_idx), Some(sh_type), Some(sh_flags), Some(sh_addr), Some(sh_offset), Some(sh_size), Some(sh_link), Some(sh_entsize)) =
-            (r.u32_le(o), r.u32_le(o + 4), r.u64_le(o + 8), r.u64_le(o + 16), r.u64_le(o + 24), r.u64_le(o + 32), r.u32_le(o + 40), r.u64_le(o + 56))
+            (r.u32_le(0), r.u32_le(4), r.u64_le(8), r.u64_le(16), r.u64_le(24), r.u64_le(32), r.u32_le(40), r.u64_le(56))
         else {
             break;
         };
         raw_sections.push(RawSection { name: String::new(), name_idx, sh_type, sh_flags, sh_addr, sh_offset, sh_size, sh_link, sh_entsize });
+    }
+    if raw_sections.len() < e_shnum {
+        warnings.push("section header table extends past the file".into());
     }
     // The section-name string table, then fill in each section's name.
     let shstr = raw_sections.get(e_shstrndx).and_then(|s| str_table(data, s.sh_offset, s.sh_size));
@@ -356,13 +372,13 @@ pub fn inspect(data: &[u8]) -> Result<SolanaProgram, FormatError> {
         }
         let dynamic = s.sh_type == 11;
         let strtab = raw_sections.get(s.sh_link as usize).and_then(|st| str_table(data, st.sh_offset, st.sh_size));
-        let entsize = if s.sh_entsize >= 24 { s.sh_entsize as usize } else { 24 };
-        let count = (s.sh_size as usize) / entsize;
-        let base = usize::try_from(s.sh_offset).unwrap_or(usize::MAX);
-        for i in 0..count.min(MAX_SYMBOLS) {
-            let Some(o) = i.checked_mul(entsize).and_then(|x| x.checked_add(base)) else { break };
-            let (Some(st_name), Some(st_info), Some(st_shndx), Some(st_value), Some(st_size)) =
-                (r.u32_le(o), r.u8(o + 4), r.u16_le(o + 6), r.u64_le(o + 8), r.u64_le(o + 16))
+        let Some(entries) = s.entries(data, 24) else { continue };
+        for entry in entries.take(MAX_SYMBOLS) {
+            if symbols.len() == MAX_SYMBOLS {
+                break;
+            }
+            let r = Reader::new(entry);
+            let (Some(st_name), Some(st_info), Some(st_shndx), Some(st_value), Some(st_size)) = (r.u32_le(0), r.u8(4), r.u16_le(6), r.u64_le(8), r.u64_le(16))
             else {
                 break;
             };
@@ -378,9 +394,6 @@ pub fn inspect(data: &[u8]) -> Result<SolanaProgram, FormatError> {
                 _ => "notype",
             };
             symbols.push(SbpfSymbol { name, value: st_value, size: st_size, kind, global: (st_info >> 4) != 0, defined: st_shndx != 0, dynamic });
-            if symbols.len() >= MAX_SYMBOLS {
-                break;
-            }
         }
     }
 
@@ -392,29 +405,29 @@ pub fn inspect(data: &[u8]) -> Result<SolanaProgram, FormatError> {
         if !is_rela && !is_rel {
             continue;
         }
-        let symtab = raw_sections.get(s.sh_link as usize);
+        let symtab = raw_sections.get(s.sh_link as usize).filter(|st| matches!(st.sh_type, 2 | 11));
         let strtab = symtab.and_then(|st| raw_sections.get(st.sh_link as usize)).and_then(|st| str_table(data, st.sh_offset, st.sh_size));
-        let symtab_off = symtab.map(|st| st.sh_offset).unwrap_or(0);
-        let symtab_ent = symtab.map(|st| if st.sh_entsize >= 24 { st.sh_entsize as usize } else { 24 }).unwrap_or(24);
-        let entsize = if is_rela { 24usize } else { 16 };
-        let count = (s.sh_size as usize) / entsize;
-        let base = usize::try_from(s.sh_offset).unwrap_or(usize::MAX);
-        for i in 0..count.min(MAX_RELOCS) {
-            let Some(o) = i.checked_mul(entsize).and_then(|x| x.checked_add(base)) else { break };
-            let (Some(r_offset), Some(r_info)) = (r.u64_le(o), r.u64_le(o + 8)) else { break };
-            let addend = if is_rela { r.u64_le(o + 16).map(|v| v as i64).unwrap_or(0) } else { 0 };
+        let sym_entries = symtab.and_then(|st| st.entries(data, 24));
+        let Some(entries) = s.entries(data, if is_rela { 24 } else { 16 }) else { continue };
+        for entry in entries.take(MAX_RELOCS.saturating_sub(relocations.len())) {
+            let r = Reader::new(entry);
+            let (Some(r_offset), Some(r_info)) = (r.u64_le(0), r.u64_le(8)) else { break };
+            let addend = if is_rela {
+                let Some(v) = r.u64_le(16) else { break };
+                v as i64
+            } else {
+                0
+            };
             let sym_idx = (r_info >> 32) as usize;
             let type_id = (r_info & 0xffff_ffff) as u32;
-            // Resolve the referenced symbol name from the relocation's symbol table.
-            let sym_name = {
-                let so = usize::try_from(symtab_off).ok().and_then(|b| sym_idx.checked_mul(symtab_ent).and_then(|x| x.checked_add(b)));
-                so.and_then(|so| r.u32_le(so)).and_then(|n| strtab.as_ref().and_then(|t| read_str(t, n))).unwrap_or_default()
-            };
+            let sym_name = sym_entries
+                .clone()
+                .and_then(|mut entries| entries.nth(sym_idx))
+                .and_then(|entry| Reader::new(entry).u32_le(0))
+                .and_then(|n| strtab.as_ref().and_then(|t| read_str(t, n)))
+                .unwrap_or_default();
             let symbol_hash = (!sym_name.is_empty()).then(|| murmur3_32(sym_name.as_bytes(), 0));
             relocations.push(SbpfReloc { offset: r_offset, type_id, type_name: reloc_type_name(type_id), symbol: sym_name, addend, symbol_hash });
-            if relocations.len() >= MAX_RELOCS {
-                break;
-            }
         }
     }
 
@@ -526,7 +539,7 @@ fn str_table(data: &[u8], off: u64, size: u64) -> Option<Vec<u8>> {
 fn read_str(table: &[u8], idx: u32) -> Option<String> {
     let start = usize::try_from(idx).ok()?;
     let rest = table.get(start..)?;
-    let end = rest.iter().position(|&b| b == 0).unwrap_or(rest.len());
+    let end = rest.iter().position(|&b| b == 0)?;
     Some(String::from_utf8_lossy(rest.get(..end)?).into_owned())
 }
 
@@ -597,6 +610,101 @@ mod tests {
         assert!(sc.known);
         assert_eq!(sc.hash, murmur3_32(b"sol_log_", 0));
         assert_eq!(sc.call_sites, vec![craft_anything_testkit::sbpf::TEXT_VADDR + 8]);
+    }
+
+    // The shared program fixture stores six ELF64 section headers after the section bodies.
+    fn fixture_header(elf: &[u8], section: usize) -> usize {
+        Reader::new(elf).u64_le(40).unwrap() as usize + section * 64
+    }
+
+    #[test]
+    fn section_headers_never_wrap_file_offsets() {
+        let mut elf = craft_anything_testkit::sbpf::program();
+        elf[40..48].copy_from_slice(&u64::MAX.to_le_bytes());
+        let p = inspect(&elf).unwrap();
+        assert!(p.sections.is_empty());
+        assert!(!p.warnings.is_empty());
+
+        let mut elf = craft_anything_testkit::sbpf::program();
+        elf[58..60].copy_from_slice(&32u16.to_le_bytes());
+        assert!(inspect(&elf).is_err());
+    }
+
+    #[test]
+    fn short_symbol_strides_do_not_invent_symbols() {
+        let mut elf = craft_anything_testkit::sbpf::program();
+        let sh = fixture_header(&elf, 3); // .dynsym
+        for stride in [0u64, 1, 8, 23, u64::MAX] {
+            elf[sh + 56..sh + 64].copy_from_slice(&stride.to_le_bytes());
+            let p = inspect(&elf).unwrap();
+            assert!(p.symbols.is_empty());
+            assert_eq!(p.relocations.len(), 1);
+            assert!(p.relocations[0].symbol.is_empty());
+            assert!(p.syscalls.is_empty());
+        }
+    }
+
+    #[test]
+    fn relocations_cannot_resolve_names_past_the_symbol_table() {
+        let mut elf = craft_anything_testkit::sbpf::program();
+        let sh = fixture_header(&elf, 3); // keep only the null symbol
+        elf[sh + 32..sh + 40].copy_from_slice(&24u64.to_le_bytes());
+        let p = inspect(&elf).unwrap();
+        assert_eq!(p.relocations.len(), 1);
+        assert_eq!(p.relocations[0].symbol_hash, None);
+        assert!(p.relocations[0].symbol.is_empty());
+        assert!(p.syscalls.is_empty());
+    }
+
+    #[test]
+    fn rela_needs_the_complete_addend_but_rel_does_not() {
+        let mut elf = craft_anything_testkit::sbpf::program();
+        let sh = fixture_header(&elf, 4);
+        let off = elf.len();
+        elf[sh + 24..sh + 32].copy_from_slice(&(off as u64).to_le_bytes());
+        elf.extend_from_slice(&8u64.to_le_bytes());
+        elf.extend_from_slice(&((1u64 << 32) | 10).to_le_bytes());
+        assert!(inspect(&elf).unwrap().relocations.is_empty());
+
+        elf.extend_from_slice(&(-7i64).to_le_bytes());
+        assert_eq!(inspect(&elf).unwrap().relocations[0].addend, -7);
+        elf.truncate(off + 16);
+        elf[sh + 4..sh + 8].copy_from_slice(&9u32.to_le_bytes()); // SHT_REL
+        elf[sh + 32..sh + 40].copy_from_slice(&16u64.to_le_bytes());
+        elf[sh + 56..sh + 64].copy_from_slice(&16u64.to_le_bytes());
+        let p = inspect(&elf).unwrap();
+        assert_eq!(p.relocations[0].symbol, "sol_log_");
+        assert_eq!(p.relocations[0].addend, 0);
+    }
+
+    #[test]
+    fn padded_relocation_rows_advance_to_the_next_declared_record() {
+        let mut elf = craft_anything_testkit::sbpf::program();
+        let sh = fixture_header(&elf, 4);
+        let off = elf.len();
+        elf[sh + 24..sh + 32].copy_from_slice(&(off as u64).to_le_bytes());
+        elf[sh + 32..sh + 40].copy_from_slice(&64u64.to_le_bytes());
+        elf[sh + 56..sh + 64].copy_from_slice(&32u64.to_le_bytes());
+        for address in [24u64, 88] {
+            elf.extend_from_slice(&address.to_le_bytes());
+            elf.extend_from_slice(&((1u64 << 32) | 10).to_le_bytes());
+            elf.extend_from_slice(&(-3i64).to_le_bytes());
+            elf.extend_from_slice(&[0xff; 8]);
+        }
+        let p = inspect(&elf).unwrap();
+        let rows: Vec<_> = p.relocations.iter().map(|r| (r.offset, r.symbol.as_str(), r.addend)).collect();
+        assert_eq!(rows, [(24, "sol_log_", -3), (88, "sol_log_", -3)]);
+    }
+
+    #[test]
+    fn names_must_terminate_inside_the_string_table() {
+        let mut elf = craft_anything_testkit::sbpf::program();
+        let sh = fixture_header(&elf, 2); // .dynstr ends just before sol_log_'s terminator
+        elf[sh + 32..sh + 40].copy_from_slice(&9u64.to_le_bytes());
+        let p = inspect(&elf).unwrap();
+        assert!(p.syscalls.is_empty());
+        assert!(p.relocations[0].symbol.is_empty());
+        assert!(p.symbols.iter().all(|s| s.name.is_empty()));
     }
 
     #[test]
