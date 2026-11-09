@@ -1512,8 +1512,9 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-binary-pointer
 - [x] Keep same-named imported functions attached to their own library and preserve an explicitly recorded pointer slot.
       — claimed: Afloat16, branch bugfix/r3.12-import-library-slots-20261109
-- [ ] Preserve a unique versioned ELF import slot when relocation records omit the library name (follow-up to #1365).
+- [x] Preserve a unique versioned ELF import slot when relocation records omit the library name (follow-up to #1365).
       — claimed: Afloat16, branch bugfix/r3.12-elf-versioned-import-slot-fallback-20261109
+      — completed: 1179870c55203d946bb8a7412b9b8f1088352fe3
 - [x] Keep Mach-O load-command facts within their command.
       — claimed: Afloat16, branch bugfix/r3.12-macho-load-command-framing-20261105
 - [x] Resolve Mach-O UNIXTHREAD entry points from a complete state record for the image CPU, including later state records.
