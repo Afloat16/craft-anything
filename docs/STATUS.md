@@ -1,14 +1,14 @@
 # Status
 
 What works today and how it was checked. The plan, owners and order of work are in
-[ROADMAP.md](ROADMAP.md). Last updated 2026-11-05. The baseline audit on 2026-10-23 from `main` had 923 tests passing;
+[ROADMAP.md](ROADMAP.md). Last updated 2026-11-09. The baseline audit on 2026-10-23 from `main` had 923 tests passing;
 workspace clippy, layers, fmt and the secret scan of all history were clean. Chinese UI checks are listed separately below.
 
 ## What works, and how it was checked
 
 | Area | State | Verified by |
 |---|---|---|
-| Concatenated XZ streams | Decode every XZ stream in order, accept four-byte stream padding, and apply one combined declared/output budget. Footer/index framing is checked before decoding. | Reference streams plus generated empty streams cover concatenation, exact limits, truncation, invalid padding, checksum damage and malformed index integers/sizes. |
+| Concatenated XZ streams | Decode every XZ stream in order, accept four-byte stream padding, and apply one combined declared/output budget. Footer/index framing is checked before decoding. | Reference streams plus generated empty streams cover concatenation, exact limits, truncation, invalid padding, checksum damage and malformed index integers/sizes. Verified source `cd5d8c70`: [formats tests, fmt and clippy](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895411); [layers, locks, secrets, wasm and unchanged Cargo.lock](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663); [unchanged-code regression failures](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582). |
 | PyInstaller PYZ resources | Legacy data members unpack with their original bytes and names. Empty namespace packages are listed as metadata. Older namespaces with code still unpack as packages. | List- and dictionary-form PYZ fixtures with mixed member types. |
 | Binary property-list object types | Accepts compatible version-zero minor signatures and rejects unsupported major versions, invalid simple/date markers and unrepresentable non-string dictionary keys. | Typed binary fixtures with valid null, string-key and date controls. |
 | Limited string scans | The earliest printable strings are retained in address order across narrow and UTF-16LE encodings. | Interleaved binary fixture with every result limit from zero to four. |
