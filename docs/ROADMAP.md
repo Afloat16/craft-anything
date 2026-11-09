@@ -1259,8 +1259,7 @@ Owner: open · Status: todo
       tests cover both parsers and the helper
       — claimed: AlexJoaquimPereira, branch bugfix/r3.3-engine-line-cap
 - [ ] `adb` `parse_ps` reads its header line before the 64 KiB cap, so a hostile header can
-      materialize a full token list; cap it like the body lines
-
+      materialize a full token list; cap it like the body lines — claimed: Afloat16, branch bugfix/r3.3-cap-adb-process-header
 ### R3.9 Game assets out
 Owner: open · Status: in progress
 - [ ] Unity: sounds out (the stored stream, usually FSB5; PCM ones as WAV)
