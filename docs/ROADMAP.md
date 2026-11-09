@@ -1361,6 +1361,8 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
+- [ ] Advance ELF core NT_FILE path cursors by complete original byte strings, even when a displayed path is lossy or capped.
+      — claimed: Afloat16, branch bugfix/r3.12-elf-core-path-cursor-20261109
 - [x] Extract legacy PyInstaller PYZ data as raw files and report modern namespace packages without fabricating bytecode.
       — claimed: Afloat16, branch bugfix/r3.12-pyz-member-kinds
 - [x] Bound rejected ASAR names by the archive listing limit.
