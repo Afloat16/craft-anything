@@ -1361,7 +1361,7 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Recognize GNU sparse PAX metadata and report unsupported reconstruction instead of returning packed extents as complete files.
+- [x] Recognize GNU sparse PAX metadata and report unsupported reconstruction instead of returning packed extents as complete files.
       — claimed: Afloat16, branch bugfix/r3.12-tar-pax-sparse-20261109
 - [x] Extract legacy PyInstaller PYZ data as raw files and report modern namespace packages without fabricating bytecode.
       — claimed: Afloat16, branch bugfix/r3.12-pyz-member-kinds

@@ -8,6 +8,7 @@ workspace clippy, layers, fmt and the secret scan of all history were clean. Chi
 
 | Area | State | Verified by |
 |---|---|---|
+| GNU sparse tar members | PAX sparse metadata marks a member as unsupported instead of presenting stored extents as a complete regular file. Original sparse names remain visible. | Synthetic sparse 0.0, 0.1 and 1.0 records cover payload alignment, original names, intervening extensions and unaffected following files. |
 | PyInstaller PYZ resources | Legacy data members unpack with their original bytes and names. Empty namespace packages are listed as metadata. Older namespaces with code still unpack as packages. | List- and dictionary-form PYZ fixtures with mixed member types. |
 | Binary property-list object types | Accepts compatible version-zero minor signatures and rejects unsupported major versions, invalid simple/date markers and unrepresentable non-string dictionary keys. | Typed binary fixtures with valid null, string-key and date controls. |
 | Limited string scans | The earliest printable strings are retained in address order across narrow and UTF-16LE encodings. | Interleaved binary fixture with every result limit from zero to four. |

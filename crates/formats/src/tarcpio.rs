@@ -118,6 +118,7 @@ pub fn tar(data: &[u8], max_members: usize) -> Option<Listing> {
     let mut pax_path: Option<String> = None;
     let mut pax_link: Option<String> = None;
     let mut pax_size: Option<u64> = None;
+    let mut pax_sparse = false;
     // Every iteration advances by at least one block, so the walk is bounded by the input size.
     'headers: loop {
         let Some(h) = r.slice(pos, BLOCK) else {
@@ -175,14 +176,17 @@ pub fn tar(data: &[u8], max_members: usize) -> Option<Listing> {
                             out.length = pos as u64;
                             break 'headers;
                         };
+                        if key.starts_with(b"GNU.sparse.") {
+                            pax_sparse = true;
+                        }
                         match key {
-                            b"path" | b"linkpath" => {
+                            b"path" | b"linkpath" | b"GNU.sparse.name" => {
                                 if value.len() > MAX_NAME {
                                     out.warnings.push(format!("pax name exceeds {MAX_NAME} bytes at {pos:#x}"));
                                     out.length = pos as u64;
                                     break 'headers;
                                 }
-                                let slot = if key == b"path" { &mut pax_path } else { &mut pax_link };
+                                let slot = if key == b"linkpath" { &mut pax_link } else { &mut pax_path };
                                 *slot = Some(String::from_utf8_lossy(value).into_owned());
                             }
                             b"size" => pax_size = std::str::from_utf8(value).ok().and_then(|s| s.parse().ok()),
@@ -206,7 +210,7 @@ pub fn tar(data: &[u8], max_members: usize) -> Option<Listing> {
                 let joined = if prefix.is_empty() { base } else { format!("{prefix}/{base}") };
                 let name = pax_path.take().or(long_name.take()).unwrap_or(joined);
                 let link = pax_link.take().or(long_link.take()).or_else(|| Some(text(h.get(157..257).unwrap_or(&[])))).filter(|l| !l.is_empty());
-                let kind = match typeflag {
+                let mut kind = match typeflag {
                     b'0' | 0 | b'7' => {
                         if name.ends_with('/') {
                             MemberKind::Dir
@@ -221,6 +225,10 @@ pub fn tar(data: &[u8], max_members: usize) -> Option<Listing> {
                     b'6' => MemberKind::Fifo,
                     _ => MemberKind::Other,
                 };
+                if std::mem::take(&mut pax_sparse) {
+                    kind = MemberKind::Other;
+                    out.warnings.push(format!("{name}: GNU sparse reconstruction is unsupported; stored extents are not the complete file"));
+                }
                 let mode = h.get(100..108).and_then(octal).and_then(|m| u32::try_from(m).ok()).unwrap_or(0);
                 if body.is_none() && kind == MemberKind::File {
                     out.warnings.push(format!("{name}: data runs past the end of the input"));
@@ -446,6 +454,67 @@ pub fn member_data<'a>(data: &'a [u8], m: &Member) -> Option<&'a [u8]> {
 mod tests {
     use super::*;
     use craft_anything_testkit::firmware as fx;
+
+    fn sparse_pax_record(key: &str, value: &str) -> Vec<u8> {
+        let field = format!(" {key}={value}\n");
+        let mut length = field.len() + 1;
+        loop {
+            let actual = field.len() + length.to_string().len();
+            if actual == length {
+                return format!("{length}{field}").into_bytes();
+            }
+            length = actual;
+        }
+    }
+
+    #[test]
+    fn gnu_sparse_pax_members_are_not_regular_file_bytes() {
+        for fields in [
+            vec![("GNU.sparse.size", "100"), ("GNU.sparse.numblocks", "1"), ("GNU.sparse.offset", "50"), ("GNU.sparse.numbytes", "3")],
+            vec![("GNU.sparse.size", "100"), ("GNU.sparse.map", "50,3"), ("GNU.sparse.name", "original.bin")],
+            vec![("GNU.sparse.major", "1"), ("GNU.sparse.minor", "0"), ("GNU.sparse.realsize", "100"), ("GNU.sparse.name", "original.bin")],
+        ] {
+            let metadata: Vec<u8> = fields.iter().flat_map(|(key, value)| sparse_pax_record(key, value)).collect();
+            let version_one = fields.iter().any(|(key, _)| *key == "GNU.sparse.major");
+            let mut sparse_body = if version_one { b"1\n50\n3\n".to_vec() } else { Vec::new() };
+            if version_one {
+                sparse_body.resize(512, 0);
+            }
+            sparse_body.extend_from_slice(b"abc");
+            let data = fx::tar_entries(&[
+                ("metadata", b'x', &metadata, ""),
+                ("stored-name", b'0', &sparse_body, ""),
+                ("normal", b'0', b"ordinary", ""),
+            ]);
+            let listing = tar(&data, 10).unwrap();
+            assert!(listing.complete, "{:?}", listing.warnings);
+            assert_eq!(listing.members.len(), 2);
+            assert_eq!(listing.members[0].kind, MemberKind::Other);
+            let named = fields.iter().any(|(key, _)| *key == "GNU.sparse.name");
+            assert_eq!(listing.members[0].name, if named { "original.bin" } else { "stored-name" });
+            assert_eq!(listing.members[1].kind, MemberKind::File);
+            assert_eq!(member_data(&data, &listing.members[1]).unwrap(), b"ordinary");
+            assert_eq!(listing.warnings.len(), 1);
+            assert!(listing.warnings[0].contains("sparse reconstruction is unsupported"));
+        }
+    }
+
+    #[test]
+    fn sparse_metadata_survives_other_extension_headers() {
+        let sparse = sparse_pax_record("GNU.sparse.map", "0,3");
+        let path = sparse_pax_record("path", "renamed");
+        let data = fx::tar_entries(&[
+            ("sparse", b'x', &sparse, ""),
+            ("name", b'L', b"long-name\0", ""),
+            ("path", b'x', &path, ""),
+            ("header", b'0', b"abc", ""),
+            ("next", b'0', b"ok", ""),
+        ]);
+        let listing = tar(&data, 10).unwrap();
+        assert_eq!(listing.members[0].name, "renamed");
+        assert_eq!(listing.members[0].kind, MemberKind::Other);
+        assert_eq!(listing.members[1].kind, MemberKind::File);
+    }
 
     #[test]
     fn walks_tar() {
