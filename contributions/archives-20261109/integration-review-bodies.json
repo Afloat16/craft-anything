@@ -1,7 +1,7 @@
 {
   "repository": "storytold/craft-anything",
   "purpose": "Updated bodies after ordinary merges of upstream main, retaining both parents.",
-  "ready_count": 7,
+  "ready_count": 8,
   "merged_primary_count": 6,
   "entries": [
     {
@@ -330,16 +330,16 @@
       "merged": false,
       "branch": "feature/r3.12-zip-lzma-20261109",
       "current_head": "fc220b1a29572e2b2c17ed2b948e915c54fa6de6",
-      "verified_source_sha": "a298987d966e4e58f84afd6ed81d46d88dd4ec69",
-      "ready": false,
-      "body": "## Problem\nZIP entries using LZMA method 14 are listed but cannot be read. Their property header and optional end-marker framing differ from standalone .lzma files, so passing the bytes to the existing standalone decoder would not work.\n\n## Change\nRead the ZIP-specific property header, select the decoder's size/end-marker mode from general-purpose bit 1, and bound the decoder dictionary and output. Require complete consumption and retain the existing decoded-size and CRC checks. No dependency is added.\n\nFormat reference: [PKWARE APPNOTE section 5.8](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT).\n\n## Validation\nAdded generated full ZIP fixtures for both framing modes, zero literals, limits, mismatched size/CRC, damaged properties, oversized dictionaries, truncated and trailing streams.\n\nExact source commit `a298987d966e4e58f84afd6ed81d46d88dd4ec69` passed formatting, all 1043 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `zip_lzma_reads_size_delimited_and_end_marked_streams` and `zip_lzma_rejects_bad_properties_without_unbounded_dictionaries`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386).\n\nBranch head `fc220b1a29572e2b2c17ed2b948e915c54fa6de6` merges upstream `cdc8a880f1e60bce757ebac59e3f7983f084a1f8` with both parents retained. [Exact-head verification](https://github.com/Afloat16/claude-mem/actions/runs/42653593224) is in progress; the successful checks above refer to the earlier verified source.\n\nRoadmap: R3.12.",
+      "verified_source_sha": "fc220b1a29572e2b2c17ed2b948e915c54fa6de6",
+      "ready": true,
+      "body": "## Problem\nZIP entries using LZMA method 14 are listed but cannot be read. Their property header and optional end-marker framing differ from standalone .lzma files, so passing the bytes to the existing standalone decoder would not work.\n\n## Change\nRead the ZIP-specific property header, select the decoder's size/end-marker mode from general-purpose bit 1, and bound the decoder dictionary and output. Require complete consumption and retain the existing decoded-size and CRC checks. No dependency is added.\n\nFormat reference: [PKWARE APPNOTE section 5.8](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT).\n\n## Validation\nAdded generated full ZIP fixtures for both framing modes, zero literals, limits, mismatched size/CRC, damaged properties, oversized dictionaries, truncated and trailing streams.\n\nExact source commit `fc220b1a29572e2b2c17ed2b948e915c54fa6de6` passed formatting, the complete formats test suite, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `zip_lzma_reads_size_delimited_and_end_marked_streams` and `zip_lzma_rejects_bad_properties_without_unbounded_dictionaries`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135).\n\nBranch head `fc220b1a29572e2b2c17ed2b948e915c54fa6de6` merges upstream `cdc8a880f1e60bce757ebac59e3f7983f084a1f8` with both parents retained; the exact merged source passed the verification above.\n\nRoadmap: R3.12.",
       "published_review_body": null,
       "prepared_body_role": "Prepared update; published text is recorded separately and may differ in wording, counts or retained bot footer.",
       "last_verified_source": {
-        "sha": "a298987d966e4e58f84afd6ed81d46d88dd4ec69",
+        "sha": "fc220b1a29572e2b2c17ed2b948e915c54fa6de6",
         "status": "success",
-        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
-        "passed_tests": 1043,
+        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135",
+        "passed_tests": null,
         "confirmed_steps": [
           "Archive 6 formatting",
           "Archive 6 regression tests",
@@ -357,20 +357,20 @@
         {
           "name": "Archive 6 regression tests",
           "source_sha": "fc220b1a29572e2b2c17ed2b948e915c54fa6de6",
-          "status": "in_progress",
-          "conclusion": null
+          "status": "completed",
+          "conclusion": "success"
         },
         {
           "name": "Archive 6 clippy",
           "source_sha": "fc220b1a29572e2b2c17ed2b948e915c54fa6de6",
-          "status": "pending",
-          "conclusion": null
+          "status": "completed",
+          "conclusion": "success"
         },
         {
           "name": "Archive 6 L0 gates",
           "source_sha": "fc220b1a29572e2b2c17ed2b948e915c54fa6de6",
-          "status": "pending",
-          "conclusion": null
+          "status": "completed",
+          "conclusion": "success"
         }
       ],
       "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42653593224",
@@ -474,13 +474,13 @@
         {
           "name": "Archive 9 formatting",
           "source_sha": "5d18e4ee2a33fc75e84d2322160b0a02100b755f",
-          "status": "pending",
-          "conclusion": null
+          "status": "completed",
+          "conclusion": "success"
         },
         {
           "name": "Archive 9 regression tests",
           "source_sha": "5d18e4ee2a33fc75e84d2322160b0a02100b755f",
-          "status": "pending",
+          "status": "in_progress",
           "conclusion": null
         },
         {
