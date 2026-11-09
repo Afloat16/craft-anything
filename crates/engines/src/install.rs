@@ -463,11 +463,7 @@ mod tests {
     fn assert_gnu_metadata_refused_before_writes(kind: u8, cut_short: bool, expected: ErrorCode) {
         use craft_anything_testkit::firmware as fx;
         let long = vec![b'n'; 4097];
-        let mut tar = fx::tar_entries(&[
-            ("pkg/bin/tool", b'0', b"replacement", ""),
-            ("././@LongLink", kind, &long, ""),
-            ("pkg/later", b'0', b"later", ""),
-        ]);
+        let mut tar = fx::tar_entries(&[("pkg/bin/tool", b'0', b"replacement", ""), ("././@LongLink", kind, &long, ""), ("pkg/later", b'0', b"later", "")]);
         if cut_short {
             tar.truncate(3 * 512 + 16);
         }
