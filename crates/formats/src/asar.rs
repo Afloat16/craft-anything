@@ -148,10 +148,7 @@ fn walk(files: &Value, prefix: &str, depth: usize, max: usize, out: &mut AsarArc
                 integrity: None,
             });
         } else {
-            let size = node
-                .get("size")
-                .and_then(Value::as_u64)
-                .ok_or_else(|| AsarError::BadJson(format!("file at {path:?} has no unsigned size")))?;
+            let size = node.get("size").and_then(Value::as_u64).ok_or_else(|| AsarError::BadJson(format!("file at {path:?} has no unsigned size")))?;
             let unpacked = match node.get("unpacked") {
                 None => false,
                 Some(value) => value.as_bool().ok_or_else(|| AsarError::BadJson(format!("unpacked at {path:?} is not a boolean")))?,
@@ -249,7 +246,6 @@ mod tests {
         assert!(archive.entries.is_empty());
         assert!(archive.truncated);
     }
-
 
     fn archive_header(value: Value) -> Vec<u8> {
         let json = serde_json::to_vec(&value).unwrap();
