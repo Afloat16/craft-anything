@@ -3,7 +3,7 @@
   "fork": "Afloat16/craft-anything",
   "base": "1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1",
   "published_independent_changes": 10,
-  "upstream_pull_requests_created": 7,
+  "upstream_pull_requests_created": 10,
   "merged": 0,
   "deduplication_scope": "Full text of 927 upstream pull requests and 206 historical user pull requests was reviewed by the parent task; candidate-specific matches were checked against current production paths.",
   "baseline": {
@@ -714,6 +714,17 @@
           "docs/STATUS.md"
         ],
         "source_files_unchanged": true
+      },
+      "upstream_pull_request": {
+        "number": 1381,
+        "url": "https://github.com/storytold/craft-anything/pull/1381",
+        "state": "open",
+        "merged": false,
+        "head_sha": "89f119772b205bf63dc99fae7744cccbaafc6c09",
+        "head_branch": "bugfix/r3.12-standalone-lzma-budget-20261109",
+        "body": "## Problem\nThe standalone .lzma reader used default decoder options. Its capped output sink was reached only after the decoder flushed an internal dictionary, so small output budgets could still require large dictionary growth or processing of a damaged tail first.\n\n## Change\nRead the standalone size header before decoding, reject declared output above the budget, and bound the decoder's internal dictionary as well as the output sink. Preserve the decoder's 4 KiB minimum window and accept oversized dictionary properties for small valid streams.\n\nThis fixes the public standalone reader; the existing Unity raw-piece helper already has its own bounds and is unchanged.\n\n## Validation\nAdded public-reader regressions for declared sizes, dictionary properties, exact/zero budgets and an over-budget stream with a damaged tail.\n\nExact source commit `5da8880d3b56785498cf0c09ae46f300f070322d` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226892150). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `standalone_lzma_checks_declared_sizes_before_decoding` and `standalone_lzma_stops_before_a_large_window_reaches_a_damaged_tail`. The same regression cases pass in this branch.\n\nThe same source revision passed `cargo xtask layers`, `cargo xtask locks`, `cargo xtask secrets`, and `cargo xtask wasm`; Cargo.lock stayed unchanged. See the `Archive 7 L0 gates` step in [supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663). The final follow-up updates ROADMAP and STATUS only; production and regression-test bytes are unchanged.\n\nRoadmap: R3.12.",
+        "created_at": "2026-11-09T15:23:44Z",
+        "draft": false
       }
     },
     {
@@ -735,8 +746,8 @@
         "gnu_long_names_keep_exact_limits_and_short_terminated_values"
       ],
       "deduplication": "GNU LongName/LongLink identity truncation; earlier #1135 is numeric fields, #1136 PAX record framing and #1246 PAX extent/name recovery.",
-      "body": "## Problem\nGNU LongName and LongLink metadata was cut to 4096 bytes before conversion to text. A longer member name or link target therefore appeared under a different, truncated identity, which could collide with a real shorter member.\n\n## Change\nInspect the declared metadata without copying past the name budget. Accept complete identities at the limit, including size-delimited names and early NUL termination. Stop with a warning on an oversized identity or incomplete extension body, preserving earlier members.\n\n## Validation\nAdded long-name and long-link fixtures beyond and exactly at the limit, earlier-member recovery, and short terminated names in padded extension data.\n\nExact source commit `de2c63908909cab675887103921ed2601b1bae9b` passed formatting, the complete formats test suite, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `oversized_gnu_names_do_not_alias_their_truncated_prefix`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).\n\nBranch head `ffe055c297b98df5ac7c329f74d0bd86807a83bd` adds only ROADMAP and STATUS verification notes after the tested source commit; source and test files are unchanged.\n\nRoadmap: R3.12.",
-      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-tar-long-identities-20261109?expand=1&title=Preserve%20GNU%20tar%20member%20identities%20at%20the%20long-name%20limit&body=%23%23%20Problem%0AGNU%20LongName%20and%20LongLink%20metadata%20was%20cut%20to%204096%20bytes%20before%20conversion%20to%20text.%20A%20longer%20member%20name%20or%20link%20target%20therefore%20appeared%20under%20a%20different%2C%20truncated%20identity%2C%20which%20could%20collide%20with%20a%20real%20shorter%20member.%0A%0A%23%23%20Change%0AInspect%20the%20declared%20metadata%20without%20copying%20past%20the%20name%20budget.%20Accept%20complete%20identities%20at%20the%20limit%2C%20including%20size-delimited%20names%20and%20early%20NUL%20termination.%20Stop%20with%20a%20warning%20on%20an%20oversized%20identity%20or%20incomplete%20extension%20body%2C%20preserving%20earlier%20members.%0A%0A%23%23%20Validation%0AAdded%20long-name%20and%20long-link%20fixtures%20beyond%20and%20exactly%20at%20the%20limit%2C%20earlier-member%20recovery%2C%20and%20short%20terminated%20names%20in%20padded%20extension%20data.%0A%0AExact%20source%20commit%20%60de2c63908909cab675887103921ed2601b1bae9b%60%20passed%20formatting%2C%20the%20complete%20formats%20test%20suite%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42640688213%2Fjob%2F129240669663).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60oversized_gnu_names_do_not_alias_their_truncated_prefix%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ALayers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20an%20unchanged%20Cargo.lock%20also%20passed%20for%20this%20exact%20revision%20in%20%5Bthe%20supplementary%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42640688213%2Fjob%2F129240669663).%0A%0ABranch%20head%20%60ffe055c297b98df5ac7c329f74d0bd86807a83bd%60%20adds%20only%20ROADMAP%20and%20STATUS%20verification%20notes%20after%20the%20tested%20source%20commit%3B%20source%20and%20test%20files%20are%20unchanged.%0A%0ARoadmap%3A%20R3.12.",
+      "body": "## Problem\nGNU LongName and LongLink metadata was cut to 4096 bytes before conversion to text. A longer member name or link target therefore appeared under a different, truncated identity, which could collide with a real shorter member.\n\n## Change\nInspect the declared metadata without copying past the name budget. Accept complete identities at the limit, including size-delimited names and early NUL termination. Stop with a warning on an oversized identity or incomplete extension body, preserving earlier members.\n\n## Validation\nAdded long-name and long-link fixtures beyond and exactly at the limit, earlier-member recovery, and short terminated names in padded extension data.\n\nExact source commit `de2c63908909cab675887103921ed2601b1bae9b` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `oversized_gnu_names_do_not_alias_their_truncated_prefix`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).\n\nBranch head `ffe055c297b98df5ac7c329f74d0bd86807a83bd` adds only ROADMAP and STATUS verification notes after the tested source commit; source and test files are unchanged.\n\nRoadmap: R3.12.",
+      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-tar-long-identities-20261109?expand=1&title=Preserve%20GNU%20tar%20member%20identities%20at%20the%20long-name%20limit&body=%23%23%20Problem%0AGNU%20LongName%20and%20LongLink%20metadata%20was%20cut%20to%204096%20bytes%20before%20conversion%20to%20text.%20A%20longer%20member%20name%20or%20link%20target%20therefore%20appeared%20under%20a%20different%2C%20truncated%20identity%2C%20which%20could%20collide%20with%20a%20real%20shorter%20member.%0A%0A%23%23%20Change%0AInspect%20the%20declared%20metadata%20without%20copying%20past%20the%20name%20budget.%20Accept%20complete%20identities%20at%20the%20limit%2C%20including%20size-delimited%20names%20and%20early%20NUL%20termination.%20Stop%20with%20a%20warning%20on%20an%20oversized%20identity%20or%20incomplete%20extension%20body%2C%20preserving%20earlier%20members.%0A%0A%23%23%20Validation%0AAdded%20long-name%20and%20long-link%20fixtures%20beyond%20and%20exactly%20at%20the%20limit%2C%20earlier-member%20recovery%2C%20and%20short%20terminated%20names%20in%20padded%20extension%20data.%0A%0AExact%20source%20commit%20%60de2c63908909cab675887103921ed2601b1bae9b%60%20passed%20formatting%2C%20all%20952%20formats%20tests%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42640688213%2Fjob%2F129240669663).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60oversized_gnu_names_do_not_alias_their_truncated_prefix%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ALayers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20an%20unchanged%20Cargo.lock%20also%20passed%20for%20this%20exact%20revision%20in%20%5Bthe%20supplementary%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42640688213%2Fjob%2F129240669663).%0A%0ABranch%20head%20%60ffe055c297b98df5ac7c329f74d0bd86807a83bd%60%20adds%20only%20ROADMAP%20and%20STATUS%20verification%20notes%20after%20the%20tested%20source%20commit%3B%20source%20and%20test%20files%20are%20unchanged.%0A%0ARoadmap%3A%20R3.12.",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-tar-long-identities-20261109",
       "validation": {
         "status": "success",
@@ -769,7 +780,8 @@
           "oversized_gnu_names_do_not_alias_their_truncated_prefix"
         ],
         "baseline_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582",
-        "fork_validation_state": "closed"
+        "fork_validation_state": "closed",
+        "passed_tests": 952
       },
       "revisions": [
         {
@@ -873,6 +885,17 @@
           "docs/STATUS.md"
         ],
         "source_files_unchanged": true
+      },
+      "upstream_pull_request": {
+        "number": 1382,
+        "url": "https://github.com/storytold/craft-anything/pull/1382",
+        "state": "open",
+        "merged": false,
+        "head_sha": "764269976093b101de197c9c5b2bf2a1f4418109",
+        "head_branch": "bugfix/r3.12-tar-pax-sparse-20261109",
+        "body": "## Problem\nGNU PAX sparse archives store extents (and, in version 1.0, a sparse map) instead of the full logical file. The tar walker ignored the sparse metadata and listed these bytes as an ordinary file, allowing extraction of incorrect contents.\n\n## Change\nRecognize GNU.sparse metadata, retain GNU.sparse.name when present, and mark the member unsupported with an explicit reconstruction warning. Carry this state across extension headers and clear it after the member, so following ordinary files remain readable.\n\n## Validation\nAdded original synthetic sparse 0.0/0.1/1.0 fixtures, member alignment and following-file controls, plus intervening GNU/PAX extensions.\n\nExact source commit `daaeb4fe6c2db3f805fb9b02f9fbdfe55d80eb4a` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895529). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `gnu_sparse_pax_members_are_not_regular_file_bytes` and `sparse_metadata_survives_other_extension_headers`. The same regression cases pass in this branch.\n\nThe same source revision passed `cargo xtask layers`, `cargo xtask locks`, `cargo xtask secrets`, and `cargo xtask wasm`; Cargo.lock stayed unchanged. See the `Archive 9 L0 gates` step in [supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663). The final follow-up updates ROADMAP and STATUS only; production and regression-test bytes are unchanged.\n\nRoadmap: R3.12.",
+        "created_at": "2026-11-09T15:23:58Z",
+        "draft": false
       }
     },
     {
@@ -940,6 +963,17 @@
           "docs/STATUS.md"
         ],
         "source_files_unchanged": true
+      },
+      "upstream_pull_request": {
+        "number": 1383,
+        "url": "https://github.com/storytold/craft-anything/pull/1383",
+        "state": "open",
+        "merged": false,
+        "head_sha": "a7ae344995a3b2b7c4c36a8f57d3569182cdebcf",
+        "head_branch": "feature/r3.12-xz-concatenation-20261109",
+        "body": "## Problem\nThe existing XZ decoder expects EOF immediately after one footer. It rejects valid standalone .xz files containing concatenated streams or the standard four-byte stream padding.\n\n## Change\nFind stream boundaries backwards using checksummed footers and indexes, then decode each bounded stream in order through one capped sink. Validate index integer encodings, aggregate declared output and padding alignment. No search for magic bytes inside compressed payloads is needed.\n\nFormat reference: [XZ file format sections 2 and 4](https://tukaani.org/xz/xz-file-format.txt).\n\n## Validation\nAdded reference/generated fixtures for multiple and empty streams, padding, exact/insufficient aggregate budgets, truncated later members, damaged checksums and malformed index fields. This retains the existing backing decoder; it does not add a separate hard bound to that decoder's internal XZ block allocation.\n\nExact source commit `cd5d8c7006070db9b220d9397346de9cecd89900` passed formatting, all 953 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895411). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `xz_concatenated_streams_and_padding_share_one_budget`. The same regression cases pass in this branch.\n\nThe same source revision passed `cargo xtask layers`, `cargo xtask locks`, `cargo xtask secrets`, and `cargo xtask wasm`; Cargo.lock stayed unchanged. See the `Archive 10 L0 gates` step in [supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663). The final follow-up updates ROADMAP and STATUS only; production and regression-test bytes are unchanged.\n\nRoadmap: R3.12.",
+        "created_at": "2026-11-09T15:24:07Z",
+        "draft": false
       }
     }
   ],
@@ -948,7 +982,9 @@
     "tested_repository": "Afloat16/craft-anything",
     "format_run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430",
     "supplementary_run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42640688213",
-    "supplementary_status": "in_progress",
-    "scope": "Each workflow checks out the listed exact source SHA. Format jobs run formatting, all formats tests and all-targets clippy. Supplementary job validates revised archive 8, then layers, locks, secrets and wasm for ten source heads."
-  }
+    "supplementary_status": "success",
+    "scope": "Each workflow checks out the listed exact source SHA. Format jobs run formatting, all formats tests and all-targets clippy. Supplementary job validates revised archive 8, then layers, locks, secrets and wasm for ten source heads.",
+    "supplementary_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663"
+  },
+  "open_upstream_pull_requests": 10
 }
