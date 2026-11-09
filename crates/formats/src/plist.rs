@@ -479,7 +479,7 @@ fn tokenize(text: &str) -> Result<Vec<Tok>, FormatError> {
         }
         match rest.find('<') {
             None => {
-                if !rest.trim().is_empty() {
+                if !rest.is_empty() {
                     toks.push(Tok::Text(decode_entities(rest)));
                 }
                 break;
@@ -503,7 +503,12 @@ fn tokenize(text: &str) -> Result<Vec<Tok>, FormatError> {
             rest = r.get(e + 3..).unwrap_or("");
             continue;
         }
-        if rest.starts_with("<?") || rest.starts_with("<!") {
+        if let Some(r) = rest.strip_prefix("<?") {
+            let end = r.find("?>").ok_or_else(|| FormatError::Truncated("processing instruction".into()))?;
+            rest = r.get(end + 2..).unwrap_or("");
+            continue;
+        }
+        if rest.starts_with("<!") {
             let e = rest.find('>').ok_or_else(|| FormatError::Truncated("declaration".into()))?;
             rest = rest.get(e + 1..).unwrap_or("");
             continue;
@@ -552,8 +557,8 @@ impl Xml {
         }
     }
 
-    fn skip_text(&mut self) {
-        while matches!(self.peek(), Some(Tok::Text(_))) {
+    fn skip_space(&mut self) {
+        while matches!(self.peek(), Some(Tok::Text(t)) if t.bytes().all(|b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'))) {
             self.pos += 1;
         }
     }
@@ -563,14 +568,14 @@ impl Xml {
         if depth > MAX_DEPTH || self.nodes > MAX_NODES {
             return Err(FormatError::TooLarge("plist nesting or size limit".into()));
         }
-        self.skip_text();
+        self.skip_space();
         match self.next() {
             Some(Tok::Empty(n)) => Ok(match n.as_str() {
                 "true" => Value::Bool(true),
                 "false" => Value::Bool(false),
                 "dict" => Value::Dict(Vec::new()),
                 "array" => Value::Array(Vec::new()),
-                "string" | "key" => Value::String(String::new()),
+                "string" => Value::String(String::new()),
                 "data" => Value::Data(Vec::new()),
                 other => return Err(FormatError::Malformed(format!("unexpected <{other}/>"))),
             }),
@@ -595,18 +600,16 @@ impl Xml {
                     let t = self.text_until("data")?;
                     base64_decode(&t).map(Value::Data).ok_or_else(|| FormatError::Malformed("bad base64 in <data>".into()))
                 }
-                "true" => {
-                    self.text_until("true")?;
-                    Ok(Value::Bool(true))
-                }
-                "false" => {
-                    self.text_until("false")?;
-                    Ok(Value::Bool(false))
+                "true" | "false" => {
+                    if !self.text_until(&n)?.is_empty() {
+                        return Err(FormatError::Malformed(format!("<{n}> must be empty")));
+                    }
+                    Ok(Value::Bool(n == "true"))
                 }
                 "array" => {
                     let mut out = Vec::new();
                     loop {
-                        self.skip_text();
+                        self.skip_space();
                         if matches!(self.peek(), Some(Tok::Close(c)) if c == "array") {
                             self.pos += 1;
                             return Ok(Value::Array(out));
@@ -620,7 +623,7 @@ impl Xml {
                 "dict" => {
                     let mut out = Vec::new();
                     loop {
-                        self.skip_text();
+                        self.skip_space();
                         match self.next() {
                             Some(Tok::Close(c)) if c == "dict" => return Ok(Value::Dict(out)),
                             Some(Tok::Open(k)) if k == "key" => {
@@ -650,6 +653,9 @@ impl Xml {
 /// than turning into replacement characters that tokenize into garbage element
 /// names.
 fn decode_utf16_xml(data: &[u8], big_endian: bool) -> Result<String, FormatError> {
+    if !data.len().is_multiple_of(2) {
+        return Err(FormatError::Truncated("UTF-16 code unit".into()));
+    }
     let r = Reader::new(data);
     let mut units = Vec::with_capacity(data.len() / 2);
     let mut off = 0;
@@ -669,26 +675,71 @@ pub fn parse_xml(data: &[u8]) -> Result<Value, FormatError> {
     let text = match data {
         [0xFF, 0xFE, rest @ ..] => decode_utf16_xml(rest, false)?,
         [0xFE, 0xFF, rest @ ..] => decode_utf16_xml(rest, true)?,
-        _ => String::from_utf8_lossy(data).into_owned(),
+        _ => std::str::from_utf8(data.strip_prefix(b"\xef\xbb\xbf").unwrap_or(data))
+            .map_err(|_| FormatError::Malformed("invalid UTF-8 in XML plist".into()))?
+            .to_owned(),
     };
     let toks = tokenize(&text)?;
     let mut x = Xml { toks, pos: 0, nodes: 0 };
-    x.skip_text();
-    match x.peek() {
-        Some(Tok::Open(n)) if n == "plist" => {
-            x.pos += 1;
-            let v = x.value(0)?;
-            Ok(v)
-        }
-        Some(Tok::Open(_)) | Some(Tok::Empty(_)) => x.value(0),
-        _ => Err(FormatError::Malformed("no <plist> element".into())),
+    x.skip_space();
+    let wrapped = matches!(x.peek(), Some(Tok::Open(n)) if n == "plist");
+    if wrapped {
+        x.pos += 1;
     }
+    let value = x.value(0)?;
+    x.skip_space();
+    if wrapped {
+        if !matches!(x.next(), Some(Tok::Close(n)) if n == "plist") {
+            return Err(FormatError::Malformed("expected </plist> after its value".into()));
+        }
+        x.skip_space();
+    }
+    if x.peek().is_some() {
+        return Err(FormatError::Malformed("unexpected content after the plist value".into()));
+    }
+    Ok(value)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use craft_anything_testkit::apple as fx;
+
+    #[test]
+    fn xml_has_one_complete_root_with_only_markup_space_around_values() {
+        for invalid in [
+            "<plist><true/>",
+            "<plist><true/></dict>",
+            "<plist><true/><false/></plist>",
+            "<plist><true/></plist><dict/>",
+            "<false/>junk",
+            "text<true/>",
+            "<array>junk<true/></array>",
+            "<dict><key>x</key>garbage<true/></dict>",
+            "<true>no</true>",
+            "<false>yes</false>",
+            "<array><key/></array>",
+        ] {
+            assert!(parse_xml(invalid.as_bytes()).is_err(), "{invalid}");
+        }
+        let xml = b"<?example content > <false/> ?>\n<plist><dict><key/><string>  </string></dict></plist><!-- end -->";
+        assert_eq!(parse_xml(xml).unwrap().get("").and_then(Value::as_str), Some("  "));
+        assert_eq!(parse_xml(b" <true></true> ").unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn xml_rejects_partial_code_units_and_preserves_the_utf8_bom() {
+        assert_eq!(parse_xml(b"\xef\xbb\xbf<string>ok</string>").unwrap().as_str(), Some("ok"));
+        assert!(parse_xml(b"<string>\xff</string>").is_err());
+        for be in [false, true] {
+            let mut bytes = if be { vec![0xfe, 0xff] } else { vec![0xff, 0xfe] };
+            for unit in "<true/>".encode_utf16() {
+                bytes.extend(if be { unit.to_be_bytes() } else { unit.to_le_bytes() });
+            }
+            bytes.push(0);
+            assert!(parse_xml(&bytes).is_err());
+        }
+    }
 
     #[test]
     fn xml_char_refs_require_plain_digits() {
