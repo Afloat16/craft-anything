@@ -121,17 +121,48 @@ pub fn config_qualifiers(r: &Reader<'_>, off: usize) -> (String, String) {
         q.push(format!("mcc{mcc}"));
     }
     if let Some(mnc) = get16(6).filter(|&v| v != 0) {
-        q.push(format!("mnc{mnc}"));
+        q.push(format!("mnc{}", if mnc == u16::MAX { 0 } else { mnc }));
     }
     let lang = if size >= 12 { r.slice(off + 8, 2).map(|b| unpack_code(b, b'a')).unwrap_or_default() } else { String::new() };
     let region = if size >= 12 { r.slice(off + 10, 2).map(|b| unpack_code(b, b'0')).unwrap_or_default() } else { String::new() };
-    let mut locale = lang.clone();
-    if !region.is_empty() {
-        locale.push_str(&format!("-r{region}"));
-    }
+    let tag = |pos: usize, width: usize| -> Option<&str> {
+        if pos.checked_add(width)? > size {
+            return None;
+        }
+        let bytes = r.slice(off.checked_add(pos)?, width)?;
+        let text = bytes.split(|&b| b == 0).next()?;
+        (!text.is_empty() && text.iter().all(u8::is_ascii_alphanumeric)).then(|| std::str::from_utf8(text).ok()).flatten()
+    };
+    let script = tag(36, 4).filter(|_| get8(52).unwrap_or(0) == 0);
+    let variant = tag(40, 8);
+    let number = tag(53, 8);
+    let locale = if !lang.is_empty() && (script.is_some() || variant.is_some() || number.is_some()) {
+        let mut parts = vec!["b", &lang];
+        parts.extend(script);
+        if !region.is_empty() {
+            parts.push(&region);
+        }
+        parts.extend(variant);
+        if let Some(n) = number {
+            parts.extend(["u", "nu", n]);
+        }
+        parts.join("+")
+    } else if !lang.is_empty() && !region.is_empty() {
+        format!("{lang}-r{region}")
+    } else {
+        lang
+    };
     if !locale.is_empty() {
         q.push(locale.clone());
     }
+    let axis = |q: &mut Vec<String>, v: Option<u8>, mask, names: &[(u8, &str)]| {
+        if let Some(key) = v.map(|n| n & mask)
+            && let Some((_, name)) = names.iter().find(|(value, _)| *value == key)
+        {
+            q.push((*name).to_owned());
+        }
+    };
+    axis(&mut q, get8(19), 0x03, &[(1, "neuter"), (2, "feminine"), (3, "masculine")]);
     if let Some(sl) = get8(28) {
         match sl & 0xc0 {
             0x40 => q.push("ldltr".into()),
@@ -162,6 +193,9 @@ pub fn config_qualifiers(r: &Reader<'_>, off: usize) -> (String, String) {
             _ => {}
         }
     }
+    axis(&mut q, get8(48), 0x03, &[(1, "notround"), (2, "round")]);
+    axis(&mut q, get8(49), 0x03, &[(1, "nowidecg"), (2, "widecg")]);
+    axis(&mut q, get8(49), 0x0c, &[(4, "lowdr"), (8, "highdr")]);
     match get8(12) {
         Some(1) => q.push("port".into()),
         Some(2) => q.push("land".into()),
@@ -203,12 +237,14 @@ pub fn config_qualifiers(r: &Reader<'_>, off: usize) -> (String, String) {
         Some(3) => q.push("finger".into()),
         _ => {}
     }
+    axis(&mut q, get8(18), 0x03, &[(1, "keysexposed"), (2, "keyshidden"), (3, "keyssoft")]);
     match get8(16) {
         Some(1) => q.push("nokeys".into()),
         Some(2) => q.push("qwerty".into()),
         Some(3) => q.push("12key".into()),
         _ => {}
     }
+    axis(&mut q, get8(18), 0x0c, &[(4, "navexposed"), (8, "navhidden")]);
     match get8(17) {
         Some(1) => q.push("nonav".into()),
         Some(2) => q.push("dpad".into()),
