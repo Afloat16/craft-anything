@@ -413,7 +413,6 @@ mod tests {
         out
     }
 
-
     fn zip_lzma_member(plain: &[u8], end_marker: bool) -> Vec<u8> {
         let mut encoded = Vec::new();
         let size = if end_marker { None } else { Some(plain.len() as u64) };
