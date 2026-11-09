@@ -1323,7 +1323,7 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Use a verified Info-ZIP Unicode Path extra field when listing a member stored under a legacy filename.
+- [x] Use a verified Info-ZIP Unicode Path extra field when listing a member stored under a legacy filename.
       — claimed: Afloat16, branch feature/r3.12-zip-unicode-path
 - [x] Bound rejected ASAR names by the archive listing limit.
       — claimed: Afloat16, branch bugfix/r3.12-asar-limit-bounds-20261107
