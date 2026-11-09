@@ -8,6 +8,7 @@ workspace clippy, layers, fmt and the secret scan of all history were clean. Chi
 
 | Area | State | Verified by |
 |---|---|---|
+| Unity LZ4 match expansion | Long overlapping LZ4 matches copy the repeating run in growing blocks. | Exact output against liblz4 1.9.4 fixtures and release-mode timings on three four-MiB inputs. |
 | Binary property-list object types | Accepts compatible version-zero minor signatures and rejects unsupported major versions, invalid simple/date markers and unrepresentable non-string dictionary keys. | Typed binary fixtures with valid null, string-key and date controls. |
 | ASAR listings | Rejected unsafe names count toward the listing limit alongside retained entries. | Synthetic regression `invalid_names_consume_the_listing_budget` in the formats crate. |
 | HAR input | Captures with a leading UTF-8 byte order mark parse like the same capture without it. | Synthetic regression `reads_a_har_with_a_utf8_bom` in the formats crate. |

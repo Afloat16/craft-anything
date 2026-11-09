@@ -189,11 +189,14 @@ pub fn lz4_block(input: &[u8], out_len: usize) -> Result<Vec<u8>, DecompressErro
         if out.len() + len > out_len {
             return Err(DecompressError::TooLarge);
         }
-        // The match may overlap what it writes, so it's copied a byte at a time.
+        // Each copied run extends the same repeating pattern, so it can
+        // supply the next run even when the match overlaps its destination.
         let start = out.len() - offset;
-        for k in 0..len {
-            let b = out[start + k];
-            out.push(b);
+        let mut remaining = len;
+        while remaining > 0 {
+            let count = remaining.min(out.len() - start);
+            out.extend_from_within(start..start + count);
+            remaining -= count;
         }
     }
     if out.len() != out_len {
@@ -222,6 +225,21 @@ mod tests {
         for n in 0..64u8 {
             let junk: Vec<u8> = (0..n).map(|k| k.wrapping_mul(37).wrapping_add(n)).collect();
             let _ = lz4_block(&junk, 100);
+        }
+    }
+
+    #[test]
+    fn long_lz4_matches_repeat_the_entire_offset_pattern() {
+        for pattern in [&b"x"[..], &b"abc"[..], &b"01234567"[..]] {
+            let mut block = vec![((pattern.len() as u8) << 4) | 15];
+            block.extend_from_slice(pattern);
+            block.extend_from_slice(&(pattern.len() as u16).to_le_bytes());
+            block.extend_from_slice(&[255, 255, 7, 0x50]);
+            block.extend_from_slice(b"final");
+            let mut expected = pattern.to_vec();
+            expected.extend(pattern.iter().copied().cycle().take(19 + 255 + 255 + 7));
+            expected.extend_from_slice(b"final");
+            assert_eq!(lz4_block(&block, expected.len()).unwrap(), expected);
         }
     }
 
