@@ -513,7 +513,6 @@ mod tests {
         assert_eq!(tar(&data, 10).unwrap().members[0].name, "short");
     }
 
-
     #[test]
     fn gnu_metadata_stop_reasons_keep_partial_listings_and_marker_compatibility() {
         for kind in *b"LK" {
