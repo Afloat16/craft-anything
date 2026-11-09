@@ -66,4 +66,4 @@ The ordinary merge commits preserve both parents and all upstream changes. Their
 
 ## Follow-up after merge
 
-The GNU tar identity contribution #1362 has merged. Its installer follow-up, **Refuse incomplete tar engine installs after GNU metadata stops**, is tracked separately and does not add to the ten planned contributions. The unchanged-production baseline reproduces four failures while two compatibility controls pass. Source `3e588c5589ee56ab50004dd0e87cc47f4f2455da` has verification status **in_progress**. [Verification](https://github.com/Afloat16/claude-mem/actions/runs/42649935938).
+The GNU tar identity contribution #1362 has merged. Its installer follow-up, **Refuse incomplete tar engine installs after GNU metadata stops**, is tracked separately and does not add to the ten planned contributions. The unchanged-production baseline reproduces four failures while two compatibility controls pass. Source `3e588c5589ee56ab50004dd0e87cc47f4f2455da` has verification status **success**. [Verification](https://github.com/Afloat16/claude-mem/actions/runs/42649935938).
