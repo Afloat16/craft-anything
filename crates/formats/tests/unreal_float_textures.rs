@@ -19,10 +19,7 @@ fn decoded_package(format: &str, width: i32, height: i32, bytes: &[u8]) -> Vec<u
 fn cooked_half_and_full_precision_formats_reach_the_pixel_decoder() {
     let half: Vec<_> = [0x3800u16, 0x3400, 0x3c00, 0x3800].into_iter().flat_map(u16::to_le_bytes).collect();
     let full: Vec<_> = [0.5f32, 0.25, 1.0, 0.5].into_iter().flat_map(f32::to_le_bytes).collect();
-    for (names, bytes, stride) in [
-        (["PF_R16F", "PF_G16R16F", "PF_FloatRGBA"], &half, 2),
-        (["PF_R32_FLOAT", "PF_G32R32F", "PF_A32B32G32R32F"], &full, 4),
-    ] {
+    for (names, bytes, stride) in [(["PF_R16F", "PF_G16R16F", "PF_FloatRGBA"], &half, 2), (["PF_R32_FLOAT", "PF_G32R32F", "PF_A32B32G32R32F"], &full, 4)] {
         for (name, (channels, expected)) in names.into_iter().zip([(1, [188, 188, 188, 255]), (2, [188, 137, 0, 255]), (4, [188, 137, 255, 128])]) {
             assert_eq!(pixels::size(unreal_texture::layout(name).unwrap(), 1, 1), Some(channels * stride));
             assert_eq!(decoded_package(name, 1, 1, &bytes[..channels * stride]), expected);
