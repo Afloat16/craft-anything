@@ -1,0 +1,605 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-11-09T14:38:00Z",
+  "repository": "storytold/craft-anything",
+  "fork": "Afloat16/craft-anything",
+  "scope": "Ten independent other-format contributions",
+  "state": "source_uploaded_validation_in_progress",
+  "counts": {
+    "source_branches": 10,
+    "new_tests": 48,
+    "upstream_pull_requests_created": 0,
+    "merged_pull_requests": 0
+  },
+  "creation_limit": {
+    "status": 403,
+    "reason": "Resource not accessible by integration",
+    "fallback": "Complete prefilled upstream compare links; one independent branch per improvement."
+  },
+  "deduplication": {
+    "upstream_history_count": 927,
+    "author_history_count": 206,
+    "author": "Afloat16",
+    "latest": {
+      "checked": "2026-11-09T14:29:00Z",
+      "latest_pr": 1357,
+      "main": "ef9f33f99025839bcc95d0a4d4282526d7c9e062",
+      "new_prs": [
+        {
+          "number": 1357,
+          "title": "Keep parentheses around Swift optional function types (R3.12)",
+          "user": "Chr0mium24"
+        },
+        {
+          "number": 1356,
+          "title": "Name Swift allocating initialisers init outside classes (R3.12)",
+          "user": "Chr0mium24"
+        },
+        {
+          "number": 1355,
+          "title": "Name the right generic parameter in Swift associated types (R3.12)",
+          "user": "Chr0mium24"
+        },
+        {
+          "number": 1354,
+          "title": "Read the kind letter of Swift addressors (R3.12)",
+          "user": "Chr0mium24"
+        },
+        {
+          "number": 1353,
+          "title": "Decode Swift protocols named in a protocol list (R3.12)",
+          "user": "Chr0mium24"
+        }
+      ],
+      "touched_since_base": [
+        "crates/ai/src/cli_agents/adapters.rs",
+        "crates/ai/src/cli_agents/mod.rs",
+        "crates/formats/src/swift_demangle.rs",
+        "crates/formats/tests/swift_demangle_addressors.rs",
+        "crates/formats/tests/swift_demangle_existentials.rs",
+        "docs/ROADMAP.md",
+        "docs/STATUS.md",
+        "docs/claude-code.md"
+      ],
+      "duplicates": []
+    }
+  },
+  "full_gate": {
+    "java": {
+      "head": "e0dbc3a5b60b140f26f3622f34c11035e3c1cb7d",
+      "run": 42629757277,
+      "job": 129202695799,
+      "result": "success",
+      "url": "https://github.com/Afloat16/craft-anything/actions/runs/42629757277"
+    },
+    "combined": {
+      "head": "fd86f9ee3825eef7717acba3e829ce735fde2775",
+      "run": 42634690588,
+      "job": 129219621618,
+      "result": "in_progress",
+      "url": "https://github.com/Afloat16/craft-anything/actions/runs/42634690588"
+    }
+  },
+  "baseline_verification": {
+    "head": "ebd0ef71ece645d70eddfcfd994dd2ad7153f778",
+    "test_functions": 46,
+    "result": "pending",
+    "note": "Production files are unchanged at 3f4c54b. Unity integer coverage uses the two existing-API tests; the other two tests refer to newly added Layout variants and are excluded from this baseline branch."
+  },
+  "items": [
+    {
+      "n": 1,
+      "key": "java",
+      "title": "Reject Java constants that exceed the constant-pool slots (R3.12)",
+      "branch": "bugfix/r3.12-java-wide-pool-slot-20261109",
+      "head": "e0dbc3a5b60b140f26f3622f34c11035e3c1cb7d",
+      "source_head": "e0dbc3a5b60b140f26f3622f34c11035e3c1cb7d",
+      "source_tested_sha": "e0dbc3a5b60b140f26f3622f34c11035e3c1cb7d",
+      "base": "3f4c54bdd4066f9c6bd1708c215ac64bf776927a",
+      "tree": "76a9f6636a230ddb55a7b4b6a57c345a20d9175c",
+      "files": [
+        "crates/formats/src/java_class.rs",
+        "crates/formats/tests/java_constant_pool_slots.rs"
+      ],
+      "source_blobs": {
+        "crates/formats/src/java_class.rs": "f7704efd17f54686b18637ca67c19c6632ad398e",
+        "crates/formats/tests/java_constant_pool_slots.rs": "b7cc52132fbfa819accd76804c80ce403dc5f29c"
+      },
+      "new_tests": 4,
+      "test_files": [
+        "java_constant_pool_slots"
+      ],
+      "problem": "A Long or Double in the final declared pool slot was accepted without its required second slot. At constant_pool_count = 65535 the u16 cursor overflowed while advancing past that entry.",
+      "change": "Check the next pool index before retaining each constant. Reject a wide entry whose reserved slot does not fit, while preserving correctly formed maximum-size pools.",
+      "coverage": "Long and Double entries at ordinary and maximum u16 boundaries, valid two-slot tail entries, ordinary constants and an existing class fixture.",
+      "related_prs": [
+        691,
+        1342
+      ],
+      "deduplication": "Earlier Java work covered bytecode-wide opcodes and method descriptors; this change validates constant-pool slot accounting.",
+      "format_references": [],
+      "ci": [
+        {
+          "key": "java",
+          "job_id": 129213811541,
+          "run_id": 42633003467,
+          "url": "https://github.com/Afloat16/claude-mem/actions/runs/42633003467/job/129213811541",
+          "log_chars": 181256,
+          "suites": 89,
+          "totals": {
+            "passed": 957,
+            "failed": 0,
+            "ignored": 0
+          },
+          "source_ref": "ref: e0dbc3a5b60b140f26f3622f34c11035e3c1cb7d",
+          "conclusion": "success"
+        }
+      ],
+      "upstream_pr_url": null,
+      "merged": false,
+      "publication_status": "source_committed_to_fork",
+      "verification_status": "independent_checks_passed",
+      "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-java-wide-pool-slot-20261109",
+      "prefilled_compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-java-wide-pool-slot-20261109?expand=1&title=Reject%20Java%20constants%20that%20exceed%20the%20constant-pool%20slots%20(R3.12)&body=%23%23%20Roadmap%0A%0AR3.12%3A%20Reject%20Java%20Long%20and%20Double%20constants%20without%20their%20reserved%20constant-pool%20slot%2C%20including%20the%20maximum%20u16%20pool%20boundary.%0A%0A%23%23%20Problem%0A%0AA%20Long%20or%20Double%20in%20the%20final%20declared%20pool%20slot%20was%20accepted%20without%20its%20required%20second%20slot.%20At%20constant_pool_count%20%3D%2065535%20the%20u16%20cursor%20overflowed%20while%20advancing%20past%20that%20entry.%0A%0A%23%23%20Change%0A%0ACheck%20the%20next%20pool%20index%20before%20retaining%20each%20constant.%20Reject%20a%20wide%20entry%20whose%20reserved%20slot%20does%20not%20fit%2C%20while%20preserving%20correctly%20formed%20maximum-size%20pools.%0A%0A%23%23%20Verification%0A%0A4%20new%20integration%20tests%20cover%20long%20and%20Double%20entries%20at%20ordinary%20and%20maximum%20u16%20boundaries%2C%20valid%20two-slot%20tail%20entries%2C%20ordinary%20constants%20and%20an%20existing%20class%20fixture.%20The%20fixtures%20use%20synthetic%20bytes.%0A%0AThe%20exact%20source%20head%20passed%20957%20formats-crate%20tests%2C%20%60cargo%20fmt%20--all%20--check%60%20and%20formats-crate%20Clippy%20with%20warnings%20denied%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42633003467%2Fjob%2F129213811541%0A%0A%23%23%20Related%20work%0A%0AEarlier%20Java%20work%20covered%20bytecode-wide%20opcodes%20and%20method%20descriptors%3B%20this%20change%20validates%20constant-pool%20slot%20accounting.%0A",
+      "body": "## Roadmap\n\nR3.12: Reject Java Long and Double constants without their reserved constant-pool slot, including the maximum u16 pool boundary.\n\n## Problem\n\nA Long or Double in the final declared pool slot was accepted without its required second slot. At constant_pool_count = 65535 the u16 cursor overflowed while advancing past that entry.\n\n## Change\n\nCheck the next pool index before retaining each constant. Reject a wide entry whose reserved slot does not fit, while preserving correctly formed maximum-size pools.\n\n## Verification\n\n4 new integration tests cover long and Double entries at ordinary and maximum u16 boundaries, valid two-slot tail entries, ordinary constants and an existing class fixture. The fixtures use synthetic bytes.\n\nThe exact source head passed 957 formats-crate tests, `cargo fmt --all --check` and formats-crate Clippy with warnings denied: https://github.com/Afloat16/claude-mem/actions/runs/42633003467/job/129213811541\n\n## Related work\n\nEarlier Java work covered bytecode-wide opcodes and method descriptors; this change validates constant-pool slot accounting.\n"
+    },
+    {
+      "n": 2,
+      "key": "godot",
+      "title": "Keep embedded Godot pack reads before the trailer (R3.12)",
+      "branch": "bugfix/r3.12-godot-trailer-boundary-20261109",
+      "head": "9744a0569a7c51d8938ce645e52f9a66965fb1e2",
+      "source_head": "9744a0569a7c51d8938ce645e52f9a66965fb1e2",
+      "source_tested_sha": "9744a0569a7c51d8938ce645e52f9a66965fb1e2",
+      "base": "3f4c54bdd4066f9c6bd1708c215ac64bf776927a",
+      "tree": "fbb9f99d97497aaebd593278e0b87aff0c6c3627",
+      "files": [
+        "crates/formats/src/godot_pck.rs",
+        "crates/formats/tests/godot_trailer_boundary.rs"
+      ],
+      "source_blobs": {
+        "crates/formats/src/godot_pck.rs": "df9da2349f280fbe613bd3a0f38d24ba58608228",
+        "crates/formats/tests/godot_trailer_boundary.rs": "0e8b1a295cb6e43ac2ccff53d92ab4131a62436b"
+      },
+      "new_tests": 4,
+      "test_files": [
+        "crates/formats/tests/godot_trailer_boundary.rs"
+      ],
+      "problem": "The embedded PCK directory and member reader used the executable's complete length as the pack boundary. This let damaged entries consume the twelve-byte embedded-pack trailer as table fields or member data.",
+      "change": "Exclude the embedded trailer from directory parsing and stored-member reads, mark members crossing that boundary unreadable, and enforce it when an entry is passed directly to the reader.",
+      "coverage": "PCK versions 1, 2 and 3; member ranges in the footer, directory counts and records crossing it, direct reads of forged entries, and valid embedded/standalone packs.",
+      "related_prs": [
+        1146,
+        1217
+      ],
+      "deduplication": "Earlier Godot contributions covered installation and process paths; this change bounds the embedded PCK parser and extractor.",
+      "format_references": [],
+      "ci": [
+        {
+          "key": "godot",
+          "job_id": 129213811429,
+          "run_id": 42633003467,
+          "url": "https://github.com/Afloat16/claude-mem/actions/runs/42633003467/job/129213811429",
+          "log_chars": 181167,
+          "suites": 89,
+          "totals": {
+            "passed": 957,
+            "failed": 0,
+            "ignored": 0
+          },
+          "source_ref": "ref: 9744a0569a7c51d8938ce645e52f9a66965fb1e2",
+          "conclusion": "success"
+        }
+      ],
+      "upstream_pr_url": null,
+      "merged": false,
+      "publication_status": "source_committed_to_fork",
+      "verification_status": "independent_checks_passed",
+      "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-godot-trailer-boundary-20261109",
+      "prefilled_compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-godot-trailer-boundary-20261109?expand=1&title=Keep%20embedded%20Godot%20pack%20reads%20before%20the%20trailer%20(R3.12)&body=%23%23%20Roadmap%0A%0AR3.12%3A%20Keep%20embedded%20Godot%20pack%20tables%20and%20member%20reads%20before%20the%20executable's%20pack%20trailer.%0A%0A%23%23%20Problem%0A%0AThe%20embedded%20PCK%20directory%20and%20member%20reader%20used%20the%20executable's%20complete%20length%20as%20the%20pack%20boundary.%20This%20let%20damaged%20entries%20consume%20the%20twelve-byte%20embedded-pack%20trailer%20as%20table%20fields%20or%20member%20data.%0A%0A%23%23%20Change%0A%0AExclude%20the%20embedded%20trailer%20from%20directory%20parsing%20and%20stored-member%20reads%2C%20mark%20members%20crossing%20that%20boundary%20unreadable%2C%20and%20enforce%20it%20when%20an%20entry%20is%20passed%20directly%20to%20the%20reader.%0A%0A%23%23%20Verification%0A%0A4%20new%20integration%20tests%20cover%20pCK%20versions%201%2C%202%20and%203%3B%20member%20ranges%20in%20the%20footer%2C%20directory%20counts%20and%20records%20crossing%20it%2C%20direct%20reads%20of%20forged%20entries%2C%20and%20valid%20embedded%2Fstandalone%20packs.%20The%20fixtures%20use%20synthetic%20bytes.%0A%0AThe%20exact%20source%20head%20passed%20957%20formats-crate%20tests%2C%20%60cargo%20fmt%20--all%20--check%60%20and%20formats-crate%20Clippy%20with%20warnings%20denied%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42633003467%2Fjob%2F129213811429%0A%0A%23%23%20Related%20work%0A%0AEarlier%20Godot%20contributions%20covered%20installation%20and%20process%20paths%3B%20this%20change%20bounds%20the%20embedded%20PCK%20parser%20and%20extractor.%0A",
+      "body": "## Roadmap\n\nR3.12: Keep embedded Godot pack tables and member reads before the executable's pack trailer.\n\n## Problem\n\nThe embedded PCK directory and member reader used the executable's complete length as the pack boundary. This let damaged entries consume the twelve-byte embedded-pack trailer as table fields or member data.\n\n## Change\n\nExclude the embedded trailer from directory parsing and stored-member reads, mark members crossing that boundary unreadable, and enforce it when an entry is passed directly to the reader.\n\n## Verification\n\n4 new integration tests cover pCK versions 1, 2 and 3; member ranges in the footer, directory counts and records crossing it, direct reads of forged entries, and valid embedded/standalone packs. The fixtures use synthetic bytes.\n\nThe exact source head passed 957 formats-crate tests, `cargo fmt --all --check` and formats-crate Clippy with warnings denied: https://github.com/Afloat16/claude-mem/actions/runs/42633003467/job/129213811429\n\n## Related work\n\nEarlier Godot contributions covered installation and process paths; this change bounds the embedded PCK parser and extractor.\n"
+    },
+    {
+      "n": 3,
+      "key": "node",
+      "title": "Bound retained metadata when listing Node SEA programs (R3.12)",
+      "branch": "bugfix/r3.12-node-sea-retained-budget-20261109",
+      "head": "b8f989a9ab8627c95c01f8337a8d8fd3d9a95bd0",
+      "source_head": "b8f989a9ab8627c95c01f8337a8d8fd3d9a95bd0",
+      "source_tested_sha": null,
+      "base": "3f4c54bdd4066f9c6bd1708c215ac64bf776927a",
+      "tree": "357eefc74e8c629b1fb45d6b9a97bafb3e691f49",
+      "files": [
+        "crates/formats/src/node_sea.rs",
+        "crates/formats/tests/node_sea_metadata_budget.rs"
+      ],
+      "source_blobs": {
+        "crates/formats/src/node_sea.rs": "02d3f6a770d609f4f2a44910eed7b9c40074bab6",
+        "crates/formats/tests/node_sea_metadata_budget.rs": "274a5809f139e481c5c42e5dac8d18ad80efd3bf"
+      },
+      "new_tests": 7,
+      "test_files": [
+        "crates/formats/tests/node_sea_metadata_budget.rs"
+      ],
+      "problem": "SEA parsing retained every declared asset and argument before applying the output entry cap. Argument strings and asset keys could also expand without a shared decoded text budget.",
+      "change": "Retain only the bounded asset/argument inventory and at most 8 MiB of decoded metadata text, including replacement-character expansion. Omit oversized fields whole, preserve declared totals, mark truncation, and continue validating every skipped binary field.",
+      "coverage": "Entry limits including empty arguments, oversized paths/keys, invalid UTF-8 expansion, malformed bytes after the retained prefix and ordinary metadata.",
+      "related_prs": [],
+      "deduplication": "No matching Node SEA retained-inventory or decoded-text budget change appeared in the checked histories.",
+      "format_references": [],
+      "ci": [],
+      "upstream_pr_url": null,
+      "merged": false,
+      "publication_status": "source_committed_to_fork",
+      "verification_status": "pending",
+      "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-node-sea-retained-budget-20261109",
+      "prefilled_compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-node-sea-retained-budget-20261109?expand=1&title=Bound%20retained%20metadata%20when%20listing%20Node%20SEA%20programs%20(R3.12)&body=%23%23%20Roadmap%0A%0AR3.12%3A%20Bound%20retained%20Node%20SEA%20asset%20and%20argument%20metadata%20while%20still%20validating%20the%20complete%20blob%20layout.%0A%0A%23%23%20Problem%0A%0ASEA%20parsing%20retained%20every%20declared%20asset%20and%20argument%20before%20applying%20the%20output%20entry%20cap.%20Argument%20strings%20and%20asset%20keys%20could%20also%20expand%20without%20a%20shared%20decoded%20text%20budget.%0A%0A%23%23%20Change%0A%0ARetain%20only%20the%20bounded%20asset%2Fargument%20inventory%20and%20at%20most%208%20MiB%20of%20decoded%20metadata%20text%2C%20including%20replacement-character%20expansion.%20Omit%20oversized%20fields%20whole%2C%20preserve%20declared%20totals%2C%20mark%20truncation%2C%20and%20continue%20validating%20every%20skipped%20binary%20field.%0A%0A%23%23%20Verification%0A%0A7%20new%20integration%20tests%20cover%20entry%20limits%20including%20empty%20arguments%2C%20oversized%20paths%2Fkeys%2C%20invalid%20UTF-8%20expansion%2C%20malformed%20bytes%20after%20the%20retained%20prefix%20and%20ordinary%20metadata.%20The%20fixtures%20use%20synthetic%20bytes.%0A%0AVerification%20of%20the%20current%20source%20head%20is%20in%20progress%3B%20no%20passing%20CI%20result%20is%20claimed%20yet.%0A%0A%23%23%20Related%20work%0A%0ANo%20matching%20Node%20SEA%20retained-inventory%20or%20decoded-text%20budget%20change%20appeared%20in%20the%20checked%20histories.%0A",
+      "body": "## Roadmap\n\nR3.12: Bound retained Node SEA asset and argument metadata while still validating the complete blob layout.\n\n## Problem\n\nSEA parsing retained every declared asset and argument before applying the output entry cap. Argument strings and asset keys could also expand without a shared decoded text budget.\n\n## Change\n\nRetain only the bounded asset/argument inventory and at most 8 MiB of decoded metadata text, including replacement-character expansion. Omit oversized fields whole, preserve declared totals, mark truncation, and continue validating every skipped binary field.\n\n## Verification\n\n7 new integration tests cover entry limits including empty arguments, oversized paths/keys, invalid UTF-8 expansion, malformed bytes after the retained prefix and ordinary metadata. The fixtures use synthetic bytes.\n\nVerification of the current source head is in progress; no passing CI result is claimed yet.\n\n## Related work\n\nNo matching Node SEA retained-inventory or decoded-text budget change appeared in the checked histories.\n"
+    },
+    {
+      "n": 4,
+      "key": "il2cpp",
+      "title": "Respect the UTF-8 output budget for IL2CPP literals (R3.12)",
+      "branch": "bugfix/r3.12-il2cpp-literal-byte-budget-20261109",
+      "head": "d81b7d5705461ef4425c33a03de4252f5f096f13",
+      "source_head": "d81b7d5705461ef4425c33a03de4252f5f096f13",
+      "source_tested_sha": null,
+      "base": "3f4c54bdd4066f9c6bd1708c215ac64bf776927a",
+      "tree": "41ab84c413b564d450694107cceda409e06eccc4",
+      "files": [
+        "crates/formats/src/il2cpp.rs",
+        "crates/formats/tests/il2cpp_literal_budget.rs"
+      ],
+      "source_blobs": {
+        "crates/formats/src/il2cpp.rs": "a1d22e9c07d7e1c9c366e5e398d4374c69b6be1d",
+        "crates/formats/tests/il2cpp_literal_budget.rs": "2c755868472be56eb6aaffb937ef3e9b5a82837a"
+      },
+      "new_tests": 4,
+      "test_files": [
+        "crates/formats/tests/il2cpp_literal_budget.rs"
+      ],
+      "problem": "Literal extraction limited input bytes, then used lossy UTF-8 conversion. Replacement characters could make the returned string larger than the advertised maximum, and a cut multi-byte character could be reported as damaged text.",
+      "change": "Build literal text within the output byte budget, preserve Unicode boundaries and charge the full replacement-character width. Keep the completeness flag tied to consumed original bytes.",
+      "coverage": "ASCII and empty values, multi-byte UTF-8 across every short boundary, invalid bytes, incomplete input sequences and replacement expansion.",
+      "related_prs": [
+        1325
+      ],
+      "deduplication": "The existing IL2CPP owner checks validate declaring types. This change bounds literal text output.",
+      "format_references": [],
+      "ci": [
+        {
+          "key": "il2cpp",
+          "job_id": 129213811596,
+          "run_id": 42633003467,
+          "url": "https://github.com/Afloat16/claude-mem/actions/runs/42633003467/job/129213811596",
+          "log_chars": 177961,
+          "suites": 89,
+          "totals": {
+            "passed": 957,
+            "failed": 0,
+            "ignored": 0
+          },
+          "source_ref": "ref: a5297a81d7a395be06b0746cccc3ccda00994daf",
+          "conclusion": "formatting_failed_tests_and_clippy_passed"
+        }
+      ],
+      "upstream_pr_url": null,
+      "merged": false,
+      "publication_status": "source_committed_to_fork",
+      "verification_status": "pending",
+      "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-il2cpp-literal-byte-budget-20261109",
+      "prefilled_compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-il2cpp-literal-byte-budget-20261109?expand=1&title=Respect%20the%20UTF-8%20output%20budget%20for%20IL2CPP%20literals%20(R3.12)&body=%23%23%20Roadmap%0A%0AR3.12%3A%20Keep%20shortened%20IL2CPP%20literals%20within%20their%20UTF-8%20output%20budget%20without%20inventing%20a%20partial%20character.%0A%0A%23%23%20Problem%0A%0ALiteral%20extraction%20limited%20input%20bytes%2C%20then%20used%20lossy%20UTF-8%20conversion.%20Replacement%20characters%20could%20make%20the%20returned%20string%20larger%20than%20the%20advertised%20maximum%2C%20and%20a%20cut%20multi-byte%20character%20could%20be%20reported%20as%20damaged%20text.%0A%0A%23%23%20Change%0A%0ABuild%20literal%20text%20within%20the%20output%20byte%20budget%2C%20preserve%20Unicode%20boundaries%20and%20charge%20the%20full%20replacement-character%20width.%20Keep%20the%20completeness%20flag%20tied%20to%20consumed%20original%20bytes.%0A%0A%23%23%20Verification%0A%0A4%20new%20integration%20tests%20cover%20aSCII%20and%20empty%20values%2C%20multi-byte%20UTF-8%20across%20every%20short%20boundary%2C%20invalid%20bytes%2C%20incomplete%20input%20sequences%20and%20replacement%20expansion.%20The%20fixtures%20use%20synthetic%20bytes.%0A%0AThe%20previous%20source%20head%20%60a5297a81d7a395be06b0746cccc3ccda00994daf%60%20passed%20957%20formats-crate%20tests%20and%20Clippy.%20Its%20formatting%20difference%20has%20been%20corrected%3B%20verification%20of%20the%20current%20head%20is%20pending.%20Previous%20result%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42633003467%2Fjob%2F129213811596%0A%0A%23%23%20Related%20work%0A%0AThe%20existing%20IL2CPP%20owner%20checks%20validate%20declaring%20types.%20This%20change%20bounds%20literal%20text%20output.%0A",
+      "body": "## Roadmap\n\nR3.12: Keep shortened IL2CPP literals within their UTF-8 output budget without inventing a partial character.\n\n## Problem\n\nLiteral extraction limited input bytes, then used lossy UTF-8 conversion. Replacement characters could make the returned string larger than the advertised maximum, and a cut multi-byte character could be reported as damaged text.\n\n## Change\n\nBuild literal text within the output byte budget, preserve Unicode boundaries and charge the full replacement-character width. Keep the completeness flag tied to consumed original bytes.\n\n## Verification\n\n4 new integration tests cover aSCII and empty values, multi-byte UTF-8 across every short boundary, invalid bytes, incomplete input sequences and replacement expansion. The fixtures use synthetic bytes.\n\nThe previous source head `a5297a81d7a395be06b0746cccc3ccda00994daf` passed 957 formats-crate tests and Clippy. Its formatting difference has been corrected; verification of the current head is pending. Previous result: https://github.com/Afloat16/claude-mem/actions/runs/42633003467/job/129213811596\n\n## Related work\n\nThe existing IL2CPP owner checks validate declaring types. This change bounds literal text output.\n"
+    },
+    {
+      "n": 5,
+      "key": "unity_integer",
+      "title": "Decode Unity R16 and RG16 textures (R3.9)",
+      "branch": "feature/r3.9-unity-integer-textures-20261109",
+      "head": "540b4947aa1bc7a7195d67eabcbff5582b8a3127",
+      "source_head": "540b4947aa1bc7a7195d67eabcbff5582b8a3127",
+      "source_tested_sha": "540b4947aa1bc7a7195d67eabcbff5582b8a3127",
+      "base": "3f4c54bdd4066f9c6bd1708c215ac64bf776927a",
+      "tree": "52dae92ebb6727f126dcc5c38f20b361ad739ebd",
+      "files": [
+        "crates/formats/src/pixels.rs",
+        "crates/formats/src/unity_texture.rs",
+        "crates/formats/tests/unity_integer_textures.rs"
+      ],
+      "source_blobs": {
+        "crates/formats/src/pixels.rs": "e21225d9d6836fde1139a884babad9f8c48afed8",
+        "crates/formats/src/unity_texture.rs": "4629b3a3f1b2deb708dc151a2a20d57ad65aa12a",
+        "crates/formats/tests/unity_integer_textures.rs": "3ef32e8dff0211a0f3676724cc98655b4095512a"
+      },
+      "new_tests": 4,
+      "test_files": [
+        "crates/formats/tests/unity_integer_textures.rs"
+      ],
+      "problem": "The texture exporter rejected Unity's R16 and RG16 formats even though they can be decoded using the existing bounded pixel pipeline.",
+      "change": "Add little-endian unsigned R16 grayscale decoding and RG16's two eight-bit red/green channels. Preserve Unity row inversion, first-mip handling and output allocation limits.",
+      "coverage": "Unsigned extrema and quantization boundaries, red/green channel order, Unity row inversion, first-mip length, truncated pixels, zero/huge dimensions and output budgets.",
+      "related_prs": [],
+      "deduplication": "Existing float-texture support uses different layouts; this adds the missing integer formats.",
+      "format_references": [
+        "https://docs.unity.com/en-us/engine/6000.0/script-reference/unityengine/textureformat/r16",
+        "https://docs.unity.com/en-us/engine/6000.0/script-reference/unityengine/textureformat/rg16"
+      ],
+      "ci": [
+        {
+          "key": "unity_integer",
+          "job_id": 129213811395,
+          "run_id": 42633003467,
+          "url": "https://github.com/Afloat16/claude-mem/actions/runs/42633003467/job/129213811395",
+          "log_chars": 160891,
+          "suites": 89,
+          "totals": {
+            "passed": 957,
+            "failed": 0,
+            "ignored": 0
+          },
+          "source_ref": "ref: 540b4947aa1bc7a7195d67eabcbff5582b8a3127",
+          "conclusion": "success"
+        }
+      ],
+      "upstream_pr_url": null,
+      "merged": false,
+      "publication_status": "source_committed_to_fork",
+      "verification_status": "independent_checks_passed",
+      "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:feature/r3.9-unity-integer-textures-20261109",
+      "prefilled_compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:feature/r3.9-unity-integer-textures-20261109?expand=1&title=Decode%20Unity%20R16%20and%20RG16%20textures%20(R3.9)&body=%23%23%20Roadmap%0A%0AR3.9%3A%20Unity%3A%20decode%20R16%20and%20RG16%20texture%20pixels%20through%20the%20shared%20bounded%20PNG%20export%20path.%0A%0A%23%23%20Problem%0A%0AThe%20texture%20exporter%20rejected%20Unity's%20R16%20and%20RG16%20formats%20even%20though%20they%20can%20be%20decoded%20using%20the%20existing%20bounded%20pixel%20pipeline.%0A%0A%23%23%20Change%0A%0AAdd%20little-endian%20unsigned%20R16%20grayscale%20decoding%20and%20RG16's%20two%20eight-bit%20red%2Fgreen%20channels.%20Preserve%20Unity%20row%20inversion%2C%20first-mip%20handling%20and%20output%20allocation%20limits.%0A%0A%23%23%20Verification%0A%0A4%20new%20integration%20tests%20cover%20unsigned%20extrema%20and%20quantization%20boundaries%2C%20red%2Fgreen%20channel%20order%2C%20Unity%20row%20inversion%2C%20first-mip%20length%2C%20truncated%20pixels%2C%20zero%2Fhuge%20dimensions%20and%20output%20budgets.%20The%20fixtures%20use%20synthetic%20bytes.%0A%0AThe%20exact%20source%20head%20passed%20957%20formats-crate%20tests%2C%20%60cargo%20fmt%20--all%20--check%60%20and%20formats-crate%20Clippy%20with%20warnings%20denied%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42633003467%2Fjob%2F129213811395%0A%0A%23%23%20Related%20work%0A%0AExisting%20float-texture%20support%20uses%20different%20layouts%3B%20this%20adds%20the%20missing%20integer%20formats.%0A%0AFormat%20references%3A%0A-%20https%3A%2F%2Fdocs.unity.com%2Fen-us%2Fengine%2F6000.0%2Fscript-reference%2Funityengine%2Ftextureformat%2Fr16%0A-%20https%3A%2F%2Fdocs.unity.com%2Fen-us%2Fengine%2F6000.0%2Fscript-reference%2Funityengine%2Ftextureformat%2Frg16%0A",
+      "body": "## Roadmap\n\nR3.9: Unity: decode R16 and RG16 texture pixels through the shared bounded PNG export path.\n\n## Problem\n\nThe texture exporter rejected Unity's R16 and RG16 formats even though they can be decoded using the existing bounded pixel pipeline.\n\n## Change\n\nAdd little-endian unsigned R16 grayscale decoding and RG16's two eight-bit red/green channels. Preserve Unity row inversion, first-mip handling and output allocation limits.\n\n## Verification\n\n4 new integration tests cover unsigned extrema and quantization boundaries, red/green channel order, Unity row inversion, first-mip length, truncated pixels, zero/huge dimensions and output budgets. The fixtures use synthetic bytes.\n\nThe exact source head passed 957 formats-crate tests, `cargo fmt --all --check` and formats-crate Clippy with warnings denied: https://github.com/Afloat16/claude-mem/actions/runs/42633003467/job/129213811395\n\n## Related work\n\nExisting float-texture support uses different layouts; this adds the missing integer formats.\n\nFormat references:\n- https://docs.unity.com/en-us/engine/6000.0/script-reference/unityengine/textureformat/r16\n- https://docs.unity.com/en-us/engine/6000.0/script-reference/unityengine/textureformat/rg16\n"
+    },
+    {
+      "n": 6,
+      "key": "dex",
+      "title": "Preserve DEX boundaries when member or handler lists are capped (R3.12)",
+      "branch": "bugfix/r3.12-dex-capped-table-alignment-20261109",
+      "head": "149f060b9959e8906327e799088728820659513c",
+      "source_head": "149f060b9959e8906327e799088728820659513c",
+      "source_tested_sha": "149f060b9959e8906327e799088728820659513c",
+      "base": "3f4c54bdd4066f9c6bd1708c215ac64bf776927a",
+      "tree": "b79d038ebfd18c5313264810bf8a08ee26773296",
+      "files": [
+        "crates/formats/src/dex.rs",
+        "crates/formats/tests/dex_capped_table_boundaries.rs"
+      ],
+      "source_blobs": {
+        "crates/formats/src/dex.rs": "c4076dfc8288253eba25456cefbec1a204e0e2e7",
+        "crates/formats/tests/dex_capped_table_boundaries.rs": "246429757875bede5cd782755c815a29c0d587f2"
+      },
+      "new_tests": 5,
+      "test_files": [
+        "crates/formats/tests/dex_capped_table_boundaries.rs"
+      ],
+      "problem": "A capped class-data group left its unread records at the cursor, then interpreted them as the following group. Capped or incomplete typed-handler lists could likewise turn their remaining bytes into a fabricated catch-all address.",
+      "change": "Return retained class members as incomplete before crossing an unconsumed group, and read a catch-all only after every declared typed handler was decoded.",
+      "coverage": "Over-cap and exact-cap class members; oversized, truncated, empty and exact-cap typed-handler lists with real catch-all controls.",
+      "related_prs": [
+        688,
+        690,
+        693,
+        694,
+        766
+      ],
+      "deduplication": "Earlier DEX work covered LEB values, MUTF-8, register lists and array widths. This change preserves record alignment when retention limits are reached.",
+      "format_references": [],
+      "ci": [
+        {
+          "key": "dex",
+          "job_id": 129213811327,
+          "run_id": 42633003467,
+          "url": "https://github.com/Afloat16/claude-mem/actions/runs/42633003467/job/129213811327",
+          "log_chars": 161052,
+          "suites": 89,
+          "totals": {
+            "passed": 958,
+            "failed": 0,
+            "ignored": 0
+          },
+          "source_ref": "ref: 149f060b9959e8906327e799088728820659513c",
+          "conclusion": "success"
+        }
+      ],
+      "upstream_pr_url": null,
+      "merged": false,
+      "publication_status": "source_committed_to_fork",
+      "verification_status": "independent_checks_passed",
+      "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-dex-capped-table-alignment-20261109",
+      "prefilled_compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-dex-capped-table-alignment-20261109?expand=1&title=Preserve%20DEX%20boundaries%20when%20member%20or%20handler%20lists%20are%20capped%20(R3.12)&body=%23%23%20Roadmap%0A%0AR3.12%3A%20Stop%20capped%20DEX%20member%20and%20handler%20lists%20from%20interpreting%20unread%20records%20as%20the%20following%20field%20or%20a%20catch-all.%0A%0A%23%23%20Problem%0A%0AA%20capped%20class-data%20group%20left%20its%20unread%20records%20at%20the%20cursor%2C%20then%20interpreted%20them%20as%20the%20following%20group.%20Capped%20or%20incomplete%20typed-handler%20lists%20could%20likewise%20turn%20their%20remaining%20bytes%20into%20a%20fabricated%20catch-all%20address.%0A%0A%23%23%20Change%0A%0AReturn%20retained%20class%20members%20as%20incomplete%20before%20crossing%20an%20unconsumed%20group%2C%20and%20read%20a%20catch-all%20only%20after%20every%20declared%20typed%20handler%20was%20decoded.%0A%0A%23%23%20Verification%0A%0A5%20new%20integration%20tests%20cover%20over-cap%20and%20exact-cap%20class%20members%3B%20oversized%2C%20truncated%2C%20empty%20and%20exact-cap%20typed-handler%20lists%20with%20real%20catch-all%20controls.%20The%20fixtures%20use%20synthetic%20bytes.%0A%0AThe%20exact%20source%20head%20passed%20958%20formats-crate%20tests%2C%20%60cargo%20fmt%20--all%20--check%60%20and%20formats-crate%20Clippy%20with%20warnings%20denied%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42633003467%2Fjob%2F129213811327%0A%0A%23%23%20Related%20work%0A%0AEarlier%20DEX%20work%20covered%20LEB%20values%2C%20MUTF-8%2C%20register%20lists%20and%20array%20widths.%20This%20change%20preserves%20record%20alignment%20when%20retention%20limits%20are%20reached.%0A",
+      "body": "## Roadmap\n\nR3.12: Stop capped DEX member and handler lists from interpreting unread records as the following field or a catch-all.\n\n## Problem\n\nA capped class-data group left its unread records at the cursor, then interpreted them as the following group. Capped or incomplete typed-handler lists could likewise turn their remaining bytes into a fabricated catch-all address.\n\n## Change\n\nReturn retained class members as incomplete before crossing an unconsumed group, and read a catch-all only after every declared typed handler was decoded.\n\n## Verification\n\n5 new integration tests cover over-cap and exact-cap class members; oversized, truncated, empty and exact-cap typed-handler lists with real catch-all controls. The fixtures use synthetic bytes.\n\nThe exact source head passed 958 formats-crate tests, `cargo fmt --all --check` and formats-crate Clippy with warnings denied: https://github.com/Afloat16/claude-mem/actions/runs/42633003467/job/129213811327\n\n## Related work\n\nEarlier DEX work covered LEB values, MUTF-8, register lists and array widths. This change preserves record alignment when retention limits are reached.\n"
+    },
+    {
+      "n": 7,
+      "key": "arsc",
+      "title": "Keep Android resource children inside their parent chunks (R3.12)",
+      "branch": "bugfix/r3.12-arsc-parent-chunk-boundaries-20261109",
+      "head": "ea680eeb9e9267e54e304448596fd947cc18f3d5",
+      "source_head": "ea680eeb9e9267e54e304448596fd947cc18f3d5",
+      "source_tested_sha": null,
+      "base": "3f4c54bdd4066f9c6bd1708c215ac64bf776927a",
+      "tree": "442bed5db8f97c03fe2c83be05bd8e97402cd6de",
+      "files": [
+        "crates/formats/src/arsc.rs",
+        "crates/formats/tests/arsc_parent_chunk_boundaries.rs"
+      ],
+      "source_blobs": {
+        "crates/formats/src/arsc.rs": "97bae1b4e83073a3bb0f62c3d505cf5d49caeb6a",
+        "crates/formats/tests/arsc_parent_chunk_boundaries.rs": "a42546a00967c3e11e0b278c1eecb8b079006f4e"
+      },
+      "new_tests": 7,
+      "test_files": [
+        "crates/formats/tests/arsc_parent_chunk_boundaries.rs"
+      ],
+      "problem": "A resource child could fit the physical input while crossing the size declared by its enclosing table or package. String-pool offsets, library records and short child headers could therefore borrow unrelated bytes.",
+      "change": "Bound each reader to its declared parent, require complete package/known-child headers, keep package string pools inside the package payload, and retain only complete fixed-width library records.",
+      "coverage": "Table/package crossings, escaped package pools, retained earlier entries, sibling library data, short headers, truncated bag parents and both legacy 284-byte and current 288-byte package headers.",
+      "related_prs": [
+        698,
+        722,
+        1336
+      ],
+      "deduplication": "PR #698 bounded a string pool by its own chunk. This change enforces the enclosing table/package and sibling-child boundaries; it does not replace that pool implementation.",
+      "format_references": [
+        "https://android.googlesource.com/platform/frameworks/base.git/+/6e40a6e78d3a721f5b5c62993a5825190b6cb691/include/utils/ResourceTypes.h"
+      ],
+      "ci": [],
+      "upstream_pr_url": null,
+      "merged": false,
+      "publication_status": "source_committed_to_fork",
+      "verification_status": "pending",
+      "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-arsc-parent-chunk-boundaries-20261109",
+      "prefilled_compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-arsc-parent-chunk-boundaries-20261109?expand=1&title=Keep%20Android%20resource%20children%20inside%20their%20parent%20chunks%20(R3.12)&body=%23%23%20Roadmap%0A%0AR3.12%3A%20Keep%20Android%20resource%20packages%2C%20child%20chunks%20and%20library%20records%20inside%20their%20enclosing%20declared%20ranges.%0A%0A%23%23%20Problem%0A%0AA%20resource%20child%20could%20fit%20the%20physical%20input%20while%20crossing%20the%20size%20declared%20by%20its%20enclosing%20table%20or%20package.%20String-pool%20offsets%2C%20library%20records%20and%20short%20child%20headers%20could%20therefore%20borrow%20unrelated%20bytes.%0A%0A%23%23%20Change%0A%0ABound%20each%20reader%20to%20its%20declared%20parent%2C%20require%20complete%20package%2Fknown-child%20headers%2C%20keep%20package%20string%20pools%20inside%20the%20package%20payload%2C%20and%20retain%20only%20complete%20fixed-width%20library%20records.%0A%0A%23%23%20Verification%0A%0A7%20new%20integration%20tests%20cover%20table%2Fpackage%20crossings%2C%20escaped%20package%20pools%2C%20retained%20earlier%20entries%2C%20sibling%20library%20data%2C%20short%20headers%2C%20truncated%20bag%20parents%20and%20both%20legacy%20284-byte%20and%20current%20288-byte%20package%20headers.%20The%20fixtures%20use%20synthetic%20bytes.%0A%0AVerification%20of%20the%20current%20source%20head%20is%20in%20progress%3B%20no%20passing%20CI%20result%20is%20claimed%20yet.%0A%0A%23%23%20Related%20work%0A%0APR%20%23698%20bounded%20a%20string%20pool%20by%20its%20own%20chunk.%20This%20change%20enforces%20the%20enclosing%20table%2Fpackage%20and%20sibling-child%20boundaries%3B%20it%20does%20not%20replace%20that%20pool%20implementation.%0A%0AFormat%20references%3A%0A-%20https%3A%2F%2Fandroid.googlesource.com%2Fplatform%2Fframeworks%2Fbase.git%2F%2B%2F6e40a6e78d3a721f5b5c62993a5825190b6cb691%2Finclude%2Futils%2FResourceTypes.h%0A",
+      "body": "## Roadmap\n\nR3.12: Keep Android resource packages, child chunks and library records inside their enclosing declared ranges.\n\n## Problem\n\nA resource child could fit the physical input while crossing the size declared by its enclosing table or package. String-pool offsets, library records and short child headers could therefore borrow unrelated bytes.\n\n## Change\n\nBound each reader to its declared parent, require complete package/known-child headers, keep package string pools inside the package payload, and retain only complete fixed-width library records.\n\n## Verification\n\n7 new integration tests cover table/package crossings, escaped package pools, retained earlier entries, sibling library data, short headers, truncated bag parents and both legacy 284-byte and current 288-byte package headers. The fixtures use synthetic bytes.\n\nVerification of the current source head is in progress; no passing CI result is claimed yet.\n\n## Related work\n\nPR #698 bounded a string pool by its own chunk. This change enforces the enclosing table/package and sibling-child boundaries; it does not replace that pool implementation.\n\nFormat references:\n- https://android.googlesource.com/platform/frameworks/base.git/+/6e40a6e78d3a721f5b5c62993a5825190b6cb691/include/utils/ResourceTypes.h\n"
+    },
+    {
+      "n": 8,
+      "key": "wasm",
+      "title": "Bound WebAssembly metadata across repeated custom sections (R3.12)",
+      "branch": "bugfix/r3.12-wasm-custom-inventory-budget-20261109",
+      "head": "6425e7b64a8e95f1b5b14632835442bd024b8855",
+      "source_head": "6425e7b64a8e95f1b5b14632835442bd024b8855",
+      "source_tested_sha": null,
+      "base": "3f4c54bdd4066f9c6bd1708c215ac64bf776927a",
+      "tree": "a1e1e414ce13dbf36c22a9dabafa27899190c3ed",
+      "files": [
+        "crates/formats/src/wasm.rs",
+        "crates/formats/tests/wasm_custom_inventory_budget.rs"
+      ],
+      "source_blobs": {
+        "crates/formats/src/wasm.rs": "6c4701eb9b3ae715471225820b58e5b46850d543",
+        "crates/formats/tests/wasm_custom_inventory_budget.rs": "b38036346898ffae67c23d3b156c864d6d268674"
+      },
+      "new_tests": 5,
+      "test_files": [
+        "crates/formats/tests/wasm_custom_inventory_budget.rs"
+      ],
+      "problem": "Every repeated name or producers custom section received a new allowance. Their combined retained inventories could exceed MAX_ITEMS, and the existing local cutoffs silently omitted metadata without setting the report's truncation flag.",
+      "change": "Share the function-name, producer-field and producer-value limits across the entire module. Permit updates to retained function names at the cap and report both local and global omissions.",
+      "coverage": "Repeated function-name sections, updates at the cap, producer values and empty fields across sections, each local cutoff and an ordinary module fixture.",
+      "related_prs": [
+        1126
+      ],
+      "deduplication": "PR #1126 validates custom debug/source-map strings. This change bounds retained name and producer inventories across repeated sections.",
+      "format_references": [],
+      "ci": [],
+      "upstream_pr_url": null,
+      "merged": false,
+      "publication_status": "source_committed_to_fork",
+      "verification_status": "pending",
+      "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-wasm-custom-inventory-budget-20261109",
+      "prefilled_compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-wasm-custom-inventory-budget-20261109?expand=1&title=Bound%20WebAssembly%20metadata%20across%20repeated%20custom%20sections%20(R3.12)&body=%23%23%20Roadmap%0A%0AR3.12%3A%20Apply%20WebAssembly%20name%20and%20producer%20inventory%20limits%20across%20repeated%20custom%20sections%20and%20report%20truncation.%0A%0A%23%23%20Problem%0A%0AEvery%20repeated%20name%20or%20producers%20custom%20section%20received%20a%20new%20allowance.%20Their%20combined%20retained%20inventories%20could%20exceed%20MAX_ITEMS%2C%20and%20the%20existing%20local%20cutoffs%20silently%20omitted%20metadata%20without%20setting%20the%20report's%20truncation%20flag.%0A%0A%23%23%20Change%0A%0AShare%20the%20function-name%2C%20producer-field%20and%20producer-value%20limits%20across%20the%20entire%20module.%20Permit%20updates%20to%20retained%20function%20names%20at%20the%20cap%20and%20report%20both%20local%20and%20global%20omissions.%0A%0A%23%23%20Verification%0A%0A5%20new%20integration%20tests%20cover%20repeated%20function-name%20sections%2C%20updates%20at%20the%20cap%2C%20producer%20values%20and%20empty%20fields%20across%20sections%2C%20each%20local%20cutoff%20and%20an%20ordinary%20module%20fixture.%20The%20fixtures%20use%20synthetic%20bytes.%0A%0AVerification%20of%20the%20current%20source%20head%20is%20in%20progress%3B%20no%20passing%20CI%20result%20is%20claimed%20yet.%0A%0A%23%23%20Related%20work%0A%0APR%20%231126%20validates%20custom%20debug%2Fsource-map%20strings.%20This%20change%20bounds%20retained%20name%20and%20producer%20inventories%20across%20repeated%20sections.%0A",
+      "body": "## Roadmap\n\nR3.12: Apply WebAssembly name and producer inventory limits across repeated custom sections and report truncation.\n\n## Problem\n\nEvery repeated name or producers custom section received a new allowance. Their combined retained inventories could exceed MAX_ITEMS, and the existing local cutoffs silently omitted metadata without setting the report's truncation flag.\n\n## Change\n\nShare the function-name, producer-field and producer-value limits across the entire module. Permit updates to retained function names at the cap and report both local and global omissions.\n\n## Verification\n\n5 new integration tests cover repeated function-name sections, updates at the cap, producer values and empty fields across sections, each local cutoff and an ordinary module fixture. The fixtures use synthetic bytes.\n\nVerification of the current source head is in progress; no passing CI result is claimed yet.\n\n## Related work\n\nPR #1126 validates custom debug/source-map strings. This change bounds retained name and producer inventories across repeated sections.\n"
+    },
+    {
+      "n": 9,
+      "key": "unity_metadata",
+      "title": "Validate Unity serialized metadata ranges before reading (R3.12)",
+      "branch": "bugfix/r3.12-unity-metadata-range-20261109",
+      "head": "de9d7444f5098a3e6c27b32f3b5249d4bb2743fc",
+      "source_head": "de9d7444f5098a3e6c27b32f3b5249d4bb2743fc",
+      "source_tested_sha": "de9d7444f5098a3e6c27b32f3b5249d4bb2743fc",
+      "base": "3f4c54bdd4066f9c6bd1708c215ac64bf776927a",
+      "tree": "b528eb4d7898ff888a38272353a99901d7ec6a6d",
+      "files": [
+        "crates/formats/src/unity_serialized.rs",
+        "crates/formats/tests/unity_metadata_range.rs"
+      ],
+      "source_blobs": {
+        "crates/formats/src/unity_serialized.rs": "f4e242dd32c1261746e03493517c643521ae1a2c",
+        "crates/formats/tests/unity_metadata_range.rs": "483be68e8a1bf45d39b1fc4ae81108251d9baca7"
+      },
+      "new_tests": 4,
+      "test_files": [
+        "crates/formats/tests/unity_metadata_range.rs"
+      ],
+      "problem": "The metadata reader accepted a header offset beyond a short input and read past the declared metadata region into object bytes. The string reader could panic on an impossible starting offset.",
+      "change": "Validate metadata offset and size with checked arithmetic against the object-data boundary, declared file length and available input. Parse only the resulting metadata slice.",
+      "coverage": "Every prefix before the metadata end, shortened declared metadata, arithmetic overflow and impossible public Header ranges, plus equality of full-file and exact-prefix results.",
+      "related_prs": [
+        890
+      ],
+      "deduplication": "PR #890 validates serialized object extents. This change validates the separate metadata header and reader range.",
+      "format_references": [],
+      "ci": [
+        {
+          "key": "unity_metadata",
+          "job_id": 129213811357,
+          "run_id": 42633003467,
+          "url": "https://github.com/Afloat16/claude-mem/actions/runs/42633003467/job/129213811357",
+          "log_chars": 161145,
+          "suites": 89,
+          "totals": {
+            "passed": 957,
+            "failed": 0,
+            "ignored": 0
+          },
+          "source_ref": "ref: de9d7444f5098a3e6c27b32f3b5249d4bb2743fc",
+          "conclusion": "success"
+        }
+      ],
+      "upstream_pr_url": null,
+      "merged": false,
+      "publication_status": "source_committed_to_fork",
+      "verification_status": "independent_checks_passed",
+      "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-unity-metadata-range-20261109",
+      "prefilled_compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-unity-metadata-range-20261109?expand=1&title=Validate%20Unity%20serialized%20metadata%20ranges%20before%20reading%20(R3.12)&body=%23%23%20Roadmap%0A%0AR3.12%3A%20Validate%20Unity%20serialized%20metadata%20offsets%20and%20lengths%20before%20reading%20so%20short%20inputs%20cannot%20panic%20or%20borrow%20object%20bytes.%0A%0A%23%23%20Problem%0A%0AThe%20metadata%20reader%20accepted%20a%20header%20offset%20beyond%20a%20short%20input%20and%20read%20past%20the%20declared%20metadata%20region%20into%20object%20bytes.%20The%20string%20reader%20could%20panic%20on%20an%20impossible%20starting%20offset.%0A%0A%23%23%20Change%0A%0AValidate%20metadata%20offset%20and%20size%20with%20checked%20arithmetic%20against%20the%20object-data%20boundary%2C%20declared%20file%20length%20and%20available%20input.%20Parse%20only%20the%20resulting%20metadata%20slice.%0A%0A%23%23%20Verification%0A%0A4%20new%20integration%20tests%20cover%20every%20prefix%20before%20the%20metadata%20end%2C%20shortened%20declared%20metadata%2C%20arithmetic%20overflow%20and%20impossible%20public%20Header%20ranges%2C%20plus%20equality%20of%20full-file%20and%20exact-prefix%20results.%20The%20fixtures%20use%20synthetic%20bytes.%0A%0AThe%20exact%20source%20head%20passed%20957%20formats-crate%20tests%2C%20%60cargo%20fmt%20--all%20--check%60%20and%20formats-crate%20Clippy%20with%20warnings%20denied%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42633003467%2Fjob%2F129213811357%0A%0A%23%23%20Related%20work%0A%0APR%20%23890%20validates%20serialized%20object%20extents.%20This%20change%20validates%20the%20separate%20metadata%20header%20and%20reader%20range.%0A",
+      "body": "## Roadmap\n\nR3.12: Validate Unity serialized metadata offsets and lengths before reading so short inputs cannot panic or borrow object bytes.\n\n## Problem\n\nThe metadata reader accepted a header offset beyond a short input and read past the declared metadata region into object bytes. The string reader could panic on an impossible starting offset.\n\n## Change\n\nValidate metadata offset and size with checked arithmetic against the object-data boundary, declared file length and available input. Parse only the resulting metadata slice.\n\n## Verification\n\n4 new integration tests cover every prefix before the metadata end, shortened declared metadata, arithmetic overflow and impossible public Header ranges, plus equality of full-file and exact-prefix results. The fixtures use synthetic bytes.\n\nThe exact source head passed 957 formats-crate tests, `cargo fmt --all --check` and formats-crate Clippy with warnings denied: https://github.com/Afloat16/claude-mem/actions/runs/42633003467/job/129213811357\n\n## Related work\n\nPR #890 validates serialized object extents. This change validates the separate metadata header and reader range.\n"
+    },
+    {
+      "n": 10,
+      "key": "unreal_float",
+      "title": "Decode Unreal floating-point texture formats (R3.9)",
+      "branch": "feature/r3.9-unreal-float-textures-20261109",
+      "head": "75b507c0b96fe22c8f8a1e517c31ef6cee207a01",
+      "source_head": "75b507c0b96fe22c8f8a1e517c31ef6cee207a01",
+      "source_tested_sha": null,
+      "base": "3f4c54bdd4066f9c6bd1708c215ac64bf776927a",
+      "tree": "fe2d87b7170304ca19a754e8c4115510b07da06d",
+      "files": [
+        "crates/formats/src/unreal_texture.rs",
+        "crates/formats/tests/unreal_float_textures.rs"
+      ],
+      "source_blobs": {
+        "crates/formats/src/unreal_texture.rs": "4080cd1adde84d5584539654d1f93bdb343f9b52",
+        "crates/formats/tests/unreal_float_textures.rs": "05085bde81a77edf387f64422ad82ad8bff1742c"
+      },
+      "new_tests": 4,
+      "test_files": [
+        "crates/formats/tests/unreal_float_textures.rs"
+      ],
+      "problem": "Cooked Unreal textures with supported half- and full-precision channel layouts were reported as unsupported because their pixel-format names were not mapped to the shared float decoder.",
+      "change": "Route scalar, red/green and RGBA half/full precision formats, including the filtered half aliases, through the bounded pixel reader. RGB converts from linear values to 8-bit sRGB; alpha stays linear and values are clipped for PNG output.",
+      "coverage": "Cooked package fixtures reaching all six channel layouts, filtered aliases, negative/non-finite values, alpha behavior, stored row order, short mips, zero/huge dimensions and output budgets.",
+      "related_prs": [],
+      "deduplication": "The existing float decoder was connected to Unity formats. This adds Unreal format dispatch and cooked-package regression coverage.",
+      "format_references": [
+        "https://dev.epicgames.com/documentation/en-us/unreal-engine/API/Runtime/Core/EPixelFormat",
+        "https://dev.epicgames.com/documentation/en-us/unreal-engine/API/Runtime/Engine/ETextureRenderTargetFormat"
+      ],
+      "ci": [
+        {
+          "key": "unreal_float",
+          "job_id": 129213811079,
+          "run_id": 42633003467,
+          "url": "https://github.com/Afloat16/claude-mem/actions/runs/42633003467/job/129213811079",
+          "log_chars": 162365,
+          "suites": 89,
+          "totals": {
+            "passed": 957,
+            "failed": 0,
+            "ignored": 0
+          },
+          "source_ref": "ref: 5b17be5ae2a00e9e93959793ed254335a8177d76",
+          "conclusion": "formatting_failed_tests_and_clippy_passed"
+        }
+      ],
+      "upstream_pr_url": null,
+      "merged": false,
+      "publication_status": "source_committed_to_fork",
+      "verification_status": "pending",
+      "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:feature/r3.9-unreal-float-textures-20261109",
+      "prefilled_compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:feature/r3.9-unreal-float-textures-20261109?expand=1&title=Decode%20Unreal%20floating-point%20texture%20formats%20(R3.9)&body=%23%23%20Roadmap%0A%0AR3.9%3A%20Unreal%3A%20decode%20cooked%20half-%20and%20full-precision%20floating-point%20textures%20with%20the%20shared%20bounded%20pixel%20reader.%0A%0A%23%23%20Problem%0A%0ACooked%20Unreal%20textures%20with%20supported%20half-%20and%20full-precision%20channel%20layouts%20were%20reported%20as%20unsupported%20because%20their%20pixel-format%20names%20were%20not%20mapped%20to%20the%20shared%20float%20decoder.%0A%0A%23%23%20Change%0A%0ARoute%20scalar%2C%20red%2Fgreen%20and%20RGBA%20half%2Ffull%20precision%20formats%2C%20including%20the%20filtered%20half%20aliases%2C%20through%20the%20bounded%20pixel%20reader.%20RGB%20converts%20from%20linear%20values%20to%208-bit%20sRGB%3B%20alpha%20stays%20linear%20and%20values%20are%20clipped%20for%20PNG%20output.%0A%0A%23%23%20Verification%0A%0A4%20new%20integration%20tests%20cover%20cooked%20package%20fixtures%20reaching%20all%20six%20channel%20layouts%2C%20filtered%20aliases%2C%20negative%2Fnon-finite%20values%2C%20alpha%20behavior%2C%20stored%20row%20order%2C%20short%20mips%2C%20zero%2Fhuge%20dimensions%20and%20output%20budgets.%20The%20fixtures%20use%20synthetic%20bytes.%0A%0AThe%20previous%20source%20head%20%605b17be5ae2a00e9e93959793ed254335a8177d76%60%20passed%20957%20formats-crate%20tests%20and%20Clippy.%20Its%20formatting%20difference%20has%20been%20corrected%3B%20verification%20of%20the%20current%20head%20is%20pending.%20Previous%20result%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42633003467%2Fjob%2F129213811079%0A%0A%23%23%20Related%20work%0A%0AThe%20existing%20float%20decoder%20was%20connected%20to%20Unity%20formats.%20This%20adds%20Unreal%20format%20dispatch%20and%20cooked-package%20regression%20coverage.%0A%0AFormat%20references%3A%0A-%20https%3A%2F%2Fdev.epicgames.com%2Fdocumentation%2Fen-us%2Funreal-engine%2FAPI%2FRuntime%2FCore%2FEPixelFormat%0A-%20https%3A%2F%2Fdev.epicgames.com%2Fdocumentation%2Fen-us%2Funreal-engine%2FAPI%2FRuntime%2FEngine%2FETextureRenderTargetFormat%0A",
+      "body": "## Roadmap\n\nR3.9: Unreal: decode cooked half- and full-precision floating-point textures with the shared bounded pixel reader.\n\n## Problem\n\nCooked Unreal textures with supported half- and full-precision channel layouts were reported as unsupported because their pixel-format names were not mapped to the shared float decoder.\n\n## Change\n\nRoute scalar, red/green and RGBA half/full precision formats, including the filtered half aliases, through the bounded pixel reader. RGB converts from linear values to 8-bit sRGB; alpha stays linear and values are clipped for PNG output.\n\n## Verification\n\n4 new integration tests cover cooked package fixtures reaching all six channel layouts, filtered aliases, negative/non-finite values, alpha behavior, stored row order, short mips, zero/huge dimensions and output budgets. The fixtures use synthetic bytes.\n\nThe previous source head `5b17be5ae2a00e9e93959793ed254335a8177d76` passed 957 formats-crate tests and Clippy. Its formatting difference has been corrected; verification of the current head is pending. Previous result: https://github.com/Afloat16/claude-mem/actions/runs/42633003467/job/129213811079\n\n## Related work\n\nThe existing float decoder was connected to Unity formats. This adds Unreal format dispatch and cooked-package regression coverage.\n\nFormat references:\n- https://dev.epicgames.com/documentation/en-us/unreal-engine/API/Runtime/Core/EPixelFormat\n- https://dev.epicgames.com/documentation/en-us/unreal-engine/API/Runtime/Engine/ETextureRenderTargetFormat\n"
+    }
+  ]
+}
