@@ -241,19 +241,6 @@ mod tests {
     }
 
     #[test]
-    fn zstandard_members_can_contain_multiple_frames() {
-        let frame = fx::ZSTD_FIXTURE;
-        let plain = fx::ZSTD_PLAIN;
-        let skip = [0x50, 0x2a, 0x4d, 0x18, 3, 0, 0, 0, 1, 2, 3];
-        let input = [frame, &skip, frame].concat();
-        let expected = [plain, plain].concat();
-        assert_eq!(zstd(&input, expected.len() as u64).unwrap(), expected);
-        assert_eq!(zstd(&input, plain.len() as u64), Err(DecompressError::TooLarge));
-        assert!(zstd(&[frame, &skip[..9]].concat(), u64::MAX).is_err());
-        assert!(zstd(&[frame, &frame[..5]].concat(), u64::MAX).is_err());
-    }
-
-    #[test]
     fn xz_round_trip() {
         let c = fx::XZ_FIXTURE;
         assert_eq!(xz(c, 1 << 20).unwrap(), fx::XZ_PLAIN);
@@ -293,6 +280,19 @@ mod tests {
         for len in 0..c.len() {
             let _ = zstd(&c[..len], 1 << 20);
         }
+    }
+
+    #[test]
+    fn zstandard_members_can_contain_multiple_frames() {
+        let frame = fx::ZSTD_FIXTURE;
+        let plain = fx::ZSTD_PLAIN;
+        let skip = [0x50, 0x2a, 0x4d, 0x18, 3, 0, 0, 0, 1, 2, 3];
+        let input = [frame, &skip, frame].concat();
+        let expected = [plain, plain].concat();
+        assert_eq!(zstd(&input, expected.len() as u64).unwrap(), expected);
+        assert_eq!(zstd(&input, plain.len() as u64), Err(DecompressError::TooLarge));
+        assert!(zstd(&[frame, &skip[..9]].concat(), u64::MAX).is_err());
+        assert!(zstd(&[frame, &frame[..5]].concat(), u64::MAX).is_err());
     }
 
     #[test]

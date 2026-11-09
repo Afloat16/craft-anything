@@ -1323,14 +1323,14 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [x] Decode all frames of concatenated Zstandard members and account for their combined output.
-      — claimed: Afloat16, branch bugfix/r3.12-zstandard-multiple-frames
 - [x] Bound rejected ASAR names by the archive listing limit.
       — claimed: Afloat16, branch bugfix/r3.12-asar-limit-bounds-20261107
 - [x] Keep .NET bundle member reads before the manifest.
       — claimed: Afloat16, branch bugfix/r3.12-dotnet-data-bounds-20261107
 - [x] Check the decoded byte count for packed files whose manifest declares their original size.
       — claimed: Afloat16, branch bugfix/r3.12-packed-member-size
+- [x] Decode all frames of concatenated Zstandard members and account for their combined output.
+      — claimed: Afloat16, branch bugfix/r3.12-zstandard-multiple-frames
 - [x] SQLite TEXT values cut at the 4 KiB cap can end in a spurious U+FFFD when the cut lands
       inside a character; cut at a UTF-8/UTF-16 boundary and keep the `truncated` flag
       — tests cover a UTF-8 character, a UTF-16 surrogate pair and a UTF-16 continuation-like
