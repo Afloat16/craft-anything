@@ -503,13 +503,13 @@ fn method_list(data: &[u8], b: &Binary, list: u64, kind: &'static str, out: &mut
     let (Some(ent_flags), Some(count)) = (r.u32_le(0), r.u32_le(4)) else { return };
     let relative = ent_flags & 0x8000_0000 != 0;
     let entsize = u64::from(ent_flags & 0xfffc);
-    if entsize == 0 {
+    if entsize < if relative { 12 } else { 24 } {
         return;
     }
     for i in 0..u64::from(count).min(MAX_METHODS as u64) {
         let Some(e) = i.checked_mul(entsize).and_then(|offset| list.checked_add(8)?.checked_add(offset)) else { break };
+        let Some(raw) = b.read(data, e, entsize as usize).filter(|bytes| bytes.len() as u64 == entsize) else { break };
         if relative {
-            let Some(raw) = b.read(data, e, 12) else { break };
             let rr = Reader::new(raw);
             let rel = |o: usize| rr.u32_le(o).and_then(|v| e.checked_add(o as u64).map(|a| a.wrapping_add(i64::from(v as i32) as u64)));
             let name_field = rel(0);
