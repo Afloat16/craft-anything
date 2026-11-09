@@ -59,7 +59,7 @@ fn repeated_name_sections_share_a_limit_but_can_update_retained_functions() {
     assert!(complete.validation.valid);
     assert!(!complete.truncated);
     assert_eq!(complete.functions[0].name.as_deref(), Some("kept"));
-    names(&mut bytes, &[(MAX_ITEMS, "omitted"), (0, "updated")]);
+    names(&mut bytes, &[(0, "updated"), (MAX_ITEMS, "omitted")]);
     let report = inspect(&bytes).unwrap();
     assert!(report.validation.valid);
     assert!(report.parse_error.is_none());
@@ -104,9 +104,10 @@ fn existing_per_section_limits_are_reported_as_truncation() {
         assert!(report.truncated, "{fields} fields with {values} values");
     }
     let mut bytes = b"\0asm\x01\0\0\0".to_vec();
-    let mut subsections = Vec::new();
-    for _ in 0..65 {
-        subsections.extend([0, 2, 1, b'm']);
+    let mut subsections = vec![0, 2, 1, b'm'];
+    // Name subsection IDs must increase, including unknown extension IDs.
+    for id in 20..84 {
+        subsections.extend([id, 0]);
     }
     custom(&mut bytes, "name", &subsections);
     let report = inspect(&bytes).unwrap();
