@@ -1361,7 +1361,7 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Validate gzip packed-member trailers and decode concatenated members within one output budget.
+- [x] Validate gzip packed-member trailers and decode concatenated members within one output budget.
       — claimed: Afloat16, branch bugfix/r3.12-packed-gzip-integrity-20261109
 - [x] Extract legacy PyInstaller PYZ data as raw files and report modern namespace packages without fabricating bytecode.
       — claimed: Afloat16, branch bugfix/r3.12-pyz-member-kinds
