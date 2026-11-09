@@ -485,10 +485,7 @@ mod tests {
                 if terminated {
                     long.push(0);
                 }
-                let data = fx::tar_entries(&[
-                    ("././@LongLink", kind, &long, ""),
-                    ("short", if kind == b'K' { b'2' } else { b'0' }, b"", "fallback"),
-                ]);
+                let data = fx::tar_entries(&[("././@LongLink", kind, &long, ""), ("short", if kind == b'K' { b'2' } else { b'0' }, b"", "fallback")]);
                 let listing = tar(&data, 10).unwrap();
                 assert!(listing.complete, "{:?}", listing.warnings);
                 let member = &listing.members[0];
