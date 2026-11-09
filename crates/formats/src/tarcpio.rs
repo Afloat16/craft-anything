@@ -607,7 +607,11 @@ mod tests {
     fn gnu_metadata_requires_its_complete_padded_record() {
         let body = b"next\0";
         for kind in *b"LK" {
-            let data = fx::tar_entries(&[("before", b'0', b"kept", ""), ("././@LongLink", kind, body, ""), ("fallback", if kind == b'L' { b'0' } else { b'2' }, b"", "fallback")]);
+            let data = fx::tar_entries(&[
+                ("before", b'0', b"kept", ""),
+                ("././@LongLink", kind, body, ""),
+                ("fallback", if kind == b'L' { b'0' } else { b'2' }, b"", "fallback"),
+            ]);
             for padding in [0, 1, BLOCK - body.len() - 1] {
                 let short = &data[..3 * BLOCK + body.len() + padding];
                 let listing = tar(short, 10).unwrap();
