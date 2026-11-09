@@ -1,7 +1,7 @@
 # Status
 
 What works today and how it was checked. The plan, owners and order of work are in
-[ROADMAP.md](ROADMAP.md). Last updated 2026-11-05. The baseline audit on 2026-10-23 from `main` had 923 tests passing;
+[ROADMAP.md](ROADMAP.md). Last updated 2026-11-09. The baseline audit on 2026-10-23 from `main` had 923 tests passing;
 workspace clippy, layers, fmt and the secret scan of all history were clean. Chinese UI checks are listed separately below.
 
 ## What works, and how it was checked
@@ -14,7 +14,7 @@ workspace clippy, layers, fmt and the secret scan of all history were clean. Chi
 | ASAR listings | Rejected unsafe names count toward the listing limit alongside retained entries. | Synthetic regression `invalid_names_consume_the_listing_budget` in the formats crate. |
 | HAR input | Captures with a leading UTF-8 byte order mark parse like the same capture without it. | Synthetic regression `reads_a_har_with_a_utf8_bom` in the formats crate. |
 | HAR response byte totals | The network summary totals received body bytes and decoded content bytes separately. Each total reports how many entries lack its measurement. A known zero-byte transfer stays zero. | Compressed, cached and unknown-size response fixtures. |
-| Tar metadata fields | Reject negative GNU base-256 encodings in unsigned fields and stop before an oversized GNU long name or link can become a truncated identity. | Numeric-field controls plus GNU long-name/link fixtures at and beyond the name limit, with terminated and size-delimited names and preserved earlier members. |
+| Tar metadata fields | Reject negative GNU base-256 encodings in unsigned fields and stop before an oversized GNU long name or link can become a truncated identity. | Numeric-field controls plus GNU long-name/link fixtures at and beyond the name limit, with terminated and size-delimited names and preserved earlier members. Verified source `de2c6390`: [formats tests, fmt and clippy](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663); [layers, locks, secrets, wasm and unchanged Cargo.lock](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663); [unchanged-code regression failure](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582). |
 | .NET single-file bundles | Entries crossing from the payload into the manifest are reported as unreadable. | Synthetic regression `a_member_cannot_borrow_bytes_from_the_manifest` in the formats crate. |
 | Watched descendant regression | A guarded Rust parent starts the heartbeat child in its inherited process group/job. No shell quoting is involved. The watched launch is stopped before missing startup markers can fail an assertion | macOS regressions pass for descendant shutdown, startup-timeout cleanup and direct ignored-fixture runs without guards. Windows execution of this replacement remains pending; the prior shell fixture failed there. The platform suite still has the separately tracked preview-connection fixture failure |
 | Disabled chat backends | Naming a backend that is off refuses chat and either side of compare with a settings error and guidance, before API or coding-agent setup | Isolated hub regressions for disabled API and agent backends, both compare positions, and enabled/automatic controls. Invalid tunnel settings detect API setup before the guard. No live provider or agent was used |
