@@ -540,9 +540,14 @@ fn parse_object(data: &[u8], slice_offset: u64) -> Result<Binary, FormatError> {
     b.sections.clear();
     b.slice_offset = slice_offset;
     b.image_base = file.relative_address_base();
-    b.entry = match file.entry() {
-        0 => None,
-        e => Some(e),
+    // The PE enrichment validates image-base arithmetic before publishing its entry.
+    b.entry = if format == Format::Pe {
+        None
+    } else {
+        match file.entry() {
+            0 => None,
+            e => Some(e),
+        }
     };
     for s in file.sections().take(MAX_SECTIONS) {
         let name = s.name().unwrap_or("").to_string();
