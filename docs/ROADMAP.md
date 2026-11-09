@@ -1361,8 +1361,6 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Require complete Objective-C method record strides before reading absolute or relative method fields.
-      — claimed: Afloat16, branch bugfix/r3.12-objc-method-record-stride-20261109
 - [x] Extract legacy PyInstaller PYZ data as raw files and report modern namespace packages without fabricating bytecode.
       — claimed: Afloat16, branch bugfix/r3.12-pyz-member-kinds
 - [x] Bound rejected ASAR names by the archive listing limit.
@@ -1505,6 +1503,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-macho-zerofill-section-data
 - [x] Keep native address translations and reads inside both the mapped range and its file-backed bytes.
       — claimed: Afloat16, branch bugfix/r3.12-binary-padding
+- [x] Require complete Objective-C method record strides before reading absolute or relative method fields.
+      — claimed: Afloat16, branch bugfix/r3.12-objc-method-record-stride-20261109
 - [x] Keep Mach-O function starts within their declared payload.
       — claimed: Afloat16, branch bugfix/r3.12-macho-function-starts-payload-boundary-20261105
 - [x] A Mach-O executable's entry point comes from the segment whose file bytes hold its
