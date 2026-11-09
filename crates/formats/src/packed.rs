@@ -205,17 +205,13 @@ mod tests {
         assert!(read_stored(b"\x1f\x8b\x08\x04", &entry(0, 4, Compression::Gzip), 100).is_err());
     }
 
-
     #[test]
     fn gzip_members_require_complete_valid_trailers() {
         let original = craft_anything_testkit::firmware::gzip(b"payload", None);
         for trailer_byte in [original.len() - 8, original.len() - 4] {
             let mut damaged = original.clone();
             damaged[trailer_byte] ^= 1;
-            assert!(matches!(
-                read_stored(&damaged, &entry(0, damaged.len() as u64, Compression::Gzip), 100),
-                Err(FormatError::Malformed(_))
-            ));
+            assert!(matches!(read_stored(&damaged, &entry(0, damaged.len() as u64, Compression::Gzip), 100), Err(FormatError::Malformed(_))));
         }
         for missing in 1..=8 {
             let truncated = &original[..original.len() - missing];
