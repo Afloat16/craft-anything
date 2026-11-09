@@ -1329,6 +1329,8 @@ Owner: open · Status: in progress
       — claimed: Codex, branch bugfix/r3.12-unity-bundle-data-region; PR #1021
 - [x] Reject Unity serialized objects outside their declared file.
       — claimed: Afloat16, branch bugfix/r3.12-unity-serialized-object-ranges-20261105
+- [ ] Count WebAssembly locals across all declaration groups in retained function bodies.
+      — claimed: Afloat16, branch bugfix/r3.12-wasm-locals
 - [x] Preserve compression method slots in Unreal pak indexes.
       — claimed: Afloat16, branch bugfix/r3.12-unreal-pak-compression-slots-20261105
 - [x] Require complete terminators in Unreal FString values.
