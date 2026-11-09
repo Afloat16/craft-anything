@@ -1568,7 +1568,7 @@ Owner: open · Status: in progress
 
 ### R3.13 Web inspection correctness
 Owner: open · Status: in progress
-- [ ] Report received HAR response body sizes separately from decoded content sizes and identify entries whose sizes are unknown.
+- [x] Report received HAR response body sizes separately from decoded content sizes and identify entries whose sizes are unknown.
       — claimed: Afloat16, branch bugfix/r3.13-har-transfer-size
 - [x] Read HAR captures with the permitted UTF-8 byte order mark.
       — claimed: Afloat16, branch bugfix/r3.13-har-bom-bounds-20261107
