@@ -453,6 +453,74 @@ fn set_executable(_path: &Path) {}
 mod tests {
     use super::*;
 
+    fn assert_gnu_metadata_refused_before_writes(kind: u8, cut_short: bool, expected: ErrorCode) {
+        use craft_anything_testkit::firmware as fx;
+        let long = vec![b'n'; 4097];
+        let mut tar = fx::tar_entries(&[
+            ("pkg/bin/tool", b'0', b"replacement", ""),
+            ("././@LongLink", kind, &long, ""),
+            ("pkg/later", b'0', b"later", ""),
+        ]);
+        if cut_short {
+            tar.truncate(3 * 512 + 16);
+        }
+        let listing = craft_anything_formats::tarcpio::tar(&tar, 100).unwrap();
+        assert_eq!(listing.members.len(), 1);
+        assert!(!listing.complete);
+        assert_eq!(craft_anything_formats::tarcpio::member_data(&tar, &listing.members[0]).unwrap(), b"replacement");
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("bin")).unwrap();
+        let installed = dir.path().join("bin/tool");
+        std::fs::write(&installed, b"installed").unwrap();
+        let result = unpack_tar(&tar, dir.path(), Some("pkg/"), None, &|_| {});
+        let retained = std::fs::read(&installed).unwrap();
+        assert!(result.is_err() && retained == b"installed", "{kind:?}, cut short: {cut_short}, result: {result:?}, retained: {retained:?}");
+        assert_eq!(result.unwrap_err().code, expected);
+        assert!(!dir.path().join("later").exists());
+    }
+
+    #[test]
+    fn tar_metadata_guard_refuses_oversized_long_name_before_writes() {
+        assert_gnu_metadata_refused_before_writes(b'L', false, ErrorCode::OverLimit);
+    }
+
+    #[test]
+    fn tar_metadata_guard_refuses_oversized_long_link_before_writes() {
+        assert_gnu_metadata_refused_before_writes(b'K', false, ErrorCode::OverLimit);
+    }
+
+    #[test]
+    fn tar_metadata_guard_refuses_truncated_long_name_before_writes() {
+        assert_gnu_metadata_refused_before_writes(b'L', true, ErrorCode::GarbledOutput);
+    }
+
+    #[test]
+    fn tar_metadata_guard_refuses_truncated_long_link_before_writes() {
+        assert_gnu_metadata_refused_before_writes(b'K', true, ErrorCode::GarbledOutput);
+    }
+
+    #[test]
+    fn tar_metadata_guard_accepts_member_data_without_end_marker() {
+        use craft_anything_testkit::firmware as fx;
+        let mut tar = fx::tar_entries(&[("pkg/bin/tool", b'0', b"tool", "")]);
+        tar.truncate(2 * 512);
+        assert!(!craft_anything_formats::tarcpio::tar(&tar, 100).unwrap().complete);
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(unpack_tar(&tar, dir.path(), Some("pkg/"), None, &|_| {}).unwrap(), 1);
+        assert_eq!(std::fs::read(dir.path().join("bin/tool")).unwrap(), b"tool");
+    }
+
+    #[test]
+    fn tar_metadata_guard_accepts_bounded_long_names() {
+        use craft_anything_testkit::firmware as fx;
+        let mut name = b"pkg/bin/tool\0".to_vec();
+        name.resize(4200, 0);
+        let tar = fx::tar_entries(&[("././@LongLink", b'L', &name, ""), ("fallback", b'0', b"tool", "")]);
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(unpack_tar(&tar, dir.path(), Some("pkg/"), None, &|_| {}).unwrap(), 1);
+        assert_eq!(std::fs::read(dir.path().join("bin/tool")).unwrap(), b"tool");
+    }
+
     /// A server error says to try later, not to change a pin the person can't change (#1193).
     #[test]
     fn a_download_status_says_what_the_person_can_do() {
