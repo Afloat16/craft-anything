@@ -1323,7 +1323,7 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Prevent Mach-O zero-fill sections from exposing unrelated file bytes during section lookup.
+- [x] Prevent Mach-O zero-fill sections from exposing unrelated file bytes during section lookup.
       — claimed: Afloat16, branch bugfix/r3.12-macho-zerofill-section-data
 - [x] Bound rejected ASAR names by the archive listing limit.
       — claimed: Afloat16, branch bugfix/r3.12-asar-limit-bounds-20261107
