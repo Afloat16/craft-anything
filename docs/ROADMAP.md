@@ -1323,8 +1323,6 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [x] Read and edit JSONC registrations whose line comments end at a bare carriage return.
-      — claimed: Afloat16, branch bugfix/r3.12-jsonc-carriage-return-comments
 - [x] Bound rejected ASAR names by the archive listing limit.
       — claimed: Afloat16, branch bugfix/r3.12-asar-limit-bounds-20261107
 - [x] Keep .NET bundle member reads before the manifest.
@@ -1440,6 +1438,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-bplist-typed-objects
 - [x] Visit XML plist values only inside a complete, correctly encoded document.
       — claimed: Afloat16, branch bugfix/r3.12-xml-plist-document
+- [x] Read and edit JSONC registrations whose line comments end at a bare carriage return.
+      — claimed: Afloat16, branch bugfix/r3.12-jsonc-carriage-return-comments
 - [x] Name code-directory flags with the bits Apple uses: hard 0x100, kill 0x200, expires 0x400,
       restrict 0x800, enforcement 0x1000, library-validation 0x2000. The table used 0x4–0x80 for
       them and named 0x200 and 0x800 as other flags, so a library-validation signature (0x2000)
