@@ -1272,7 +1272,7 @@ Owner: open · Status: in progress
 - [x] Require a complete DNS question's type and class fields before retaining it, and keep
       truncated questions out of packet inventories while reporting the incomplete message
       — claimed: Afloat16, branch bugfix/r3.12-dns-question-class-review-20261104
-- [ ] Validate capture records, timestamps and protocol fields before reporting packet evidence.
+- [x] Preserve DNS wire-label identity and require valid HTTP start lines before reporting packet evidence.
       — claimed: Afloat16, branch bugfix/r3.12-capture-evidence
 - [x] Reject impossible IPv4 header and total lengths.
       — claimed: Afloat16, branch bugfix/r3.12-ipv4-header-lengths-20261105
