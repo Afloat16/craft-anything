@@ -1463,6 +1463,8 @@ Owner: open · Status: in progress
 - [x] Check that Unity bundle compressed blocks end before the trailing block table, or the declared
       bundle end for front-positioned tables, so bytes outside the data region cannot supply block contents.
       — claimed: Codex, branch bugfix/r3.12-unity-bundle-data-region; PR #1021
+- [ ] Validate Unity serialized metadata offsets and lengths before reading so short inputs cannot panic or borrow object bytes.
+      — claimed: Afloat16, branch bugfix/r3.12-unity-metadata-range-20261109
 - [x] Reject Unity serialized objects outside their declared file.
       — claimed: Afloat16, branch bugfix/r3.12-unity-serialized-object-ranges-20261105
 - [x] Count WebAssembly locals across all declaration groups in retained function bodies.
