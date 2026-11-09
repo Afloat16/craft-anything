@@ -1,15 +1,16 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-11-09 15:26:26 UTC",
+  "updated_at": "2026-11-09 15:35:59 UTC",
   "repository": "storytold/craft-anything",
   "fork": "Afloat16/craft-anything",
   "scope": "Ten independent other-format contributions",
-  "state": "ten_independent_changes_verified_documented_and_ready",
+  "state": "ten_upstream_pull_requests_submitted",
   "counts": {
     "source_branches": 10,
     "new_tests": 48,
-    "upstream_pull_requests_created": 5,
-    "merged_pull_requests": 0
+    "upstream_pull_requests_created": 10,
+    "merged_pull_requests": 2,
+    "open_pull_requests": 8
   },
   "creation_limit": {
     "status": 403,
@@ -102,10 +103,11 @@
   "baseline_verification": {
     "head": "ba8dcfa622a8354149542d8405c9158805548fc5",
     "test_functions": 46,
-    "result": "in_progress",
-    "note": "Production remains unchanged at 3f4c54b. Node argument count already reproduced 200001 versus 200000 at 755e24e; ordered WebAssembly fixtures are being checked at ba8dcfa. Only the two existing-API Unity integer tests are included on the unchanged base.",
+    "result": "partial",
+    "note": "The combined 46-test baseline job at ebd0ef7 was cancelled before completion and provides no complete before-fix result. Focused exact-baseline checks did reproduce the Node argument count defect (1 failed test) and four WebAssembly inventory defects (1 compatibility test passed). Unity integer baseline excludes its two tests that require new Layout variants.",
     "earlier_head": "ebd0ef71ece645d70eddfcfd994dd2ad7153f778",
-    "earlier_run": 42636776430
+    "earlier_run": 42636776430,
+    "earlier_result": "cancelled"
   },
   "items": [
     {
@@ -168,7 +170,9 @@
       "docs_only_since_source": true,
       "upstream_pr_number": 1373,
       "upstream_pr_state": "open",
-      "upstream_verified_at": "2026-11-09 15:18:22 UTC"
+      "upstream_verified_at": "2026-11-09 15:35:59 UTC",
+      "merged_at": null,
+      "upstream_merge_commit": null
     },
     {
       "n": 2,
@@ -244,7 +248,10 @@
         ]
       },
       "upstream_pr_number": 1379,
-      "upstream_pr_state": "open"
+      "upstream_pr_state": "open",
+      "merged_at": null,
+      "upstream_merge_commit": null,
+      "upstream_verified_at": "2026-11-09 15:35:59 UTC"
     },
     {
       "n": 3,
@@ -298,8 +305,8 @@
         }
       ],
       "upstream_pr_url": "https://github.com/storytold/craft-anything/pull/1377",
-      "merged": false,
-      "publication_status": "upstream_pr_open",
+      "merged": true,
+      "publication_status": "merged",
       "verification_status": "independent formats and compatibility gates passed; source unchanged by documentation completion",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-node-sea-retained-budget-20261109",
       "prefilled_compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-node-sea-retained-budget-20261109?expand=1&title=Bound%20retained%20metadata%20when%20listing%20Node%20SEA%20programs%20(R3.12)&body=%23%23%20Roadmap%0A%0AR3.12%3A%20Bound%20retained%20Node%20SEA%20asset%20and%20argument%20metadata%20while%20still%20validating%20the%20complete%20blob%20layout.%0A%0A%23%23%20Problem%0A%0ASEA%20parsing%20retained%20every%20declared%20asset%20and%20argument%20before%20applying%20the%20output%20entry%20cap.%20Argument%20strings%20and%20asset%20keys%20could%20also%20expand%20without%20a%20shared%20decoded%20text%20budget.%0A%0A%23%23%20Change%0A%0ARetain%20only%20the%20bounded%20asset%2Fargument%20inventory%20and%20at%20most%208%20MiB%20of%20decoded%20metadata%20text%2C%20including%20replacement-character%20expansion.%20Omit%20oversized%20fields%20whole%2C%20preserve%20declared%20totals%2C%20mark%20truncation%2C%20and%20continue%20validating%20every%20skipped%20binary%20field.%0A%0A%23%23%20Verification%0A%0A7%20new%20integration%20tests.%20Entry%20limits%20including%20empty%20arguments%2C%20oversized%20paths%2Fkeys%2C%20invalid%20UTF-8%20expansion%2C%20malformed%20bytes%20after%20the%20retained%20prefix%20and%20ordinary%20metadata.%20The%20fixtures%20use%20synthetic%20bytes.%0A%0AThe%20exact%20source%20head%20%60ce34c2446499f8740c9c0ad7855af845f8e8355c%60%20passed%20960%20formats-crate%20tests%2C%20%60cargo%20fmt%20--all%20--check%60%20and%20formats-crate%20Clippy%20with%20warnings%20denied%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42642329977%2Fjob%2F129246378958%0A%0AThe%20same%20independent%20source%20passed%20the%20layer%2C%20lock%2Fawait%2C%20secret%20and%20WebAssembly%20compatibility%20gates%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42642329977%2Fjob%2F129246378958%0A%0AThe%20final%20documentation%20commit%20only%20completes%20the%20roadmap%20entry%20and%20records%20the%20checked%20behavior%20in%20STATUS%3B%20production%20and%20regression-test%20bytes%20are%20unchanged.%0A%0A%23%23%20Related%20work%0A%0ANo%20matching%20Node%20SEA%20retained-inventory%20or%20decoded-text%20budget%20change%20appeared%20in%20the%20checked%20histories.%0A",
@@ -321,7 +328,10 @@
         ]
       },
       "upstream_pr_number": 1377,
-      "upstream_pr_state": "open"
+      "upstream_pr_state": "closed",
+      "merged_at": "2026-11-09T15:34:27Z",
+      "upstream_merge_commit": "ee73141313d66905e6e715e70f592b1f00fbc8ed",
+      "upstream_verified_at": "2026-11-09 15:35:59 UTC"
     },
     {
       "n": 4,
@@ -396,7 +406,10 @@
         ]
       },
       "upstream_pr_number": 1380,
-      "upstream_pr_state": "open"
+      "upstream_pr_state": "open",
+      "merged_at": null,
+      "upstream_merge_commit": "60dfe1d60197469e55391c791f0e358997f42e13",
+      "upstream_verified_at": "2026-11-09 15:35:59 UTC"
     },
     {
       "n": 5,
@@ -449,8 +462,8 @@
         }
       ],
       "upstream_pr_url": "https://github.com/storytold/craft-anything/pull/1378",
-      "merged": false,
-      "publication_status": "upstream_pr_open",
+      "merged": true,
+      "publication_status": "merged",
       "verification_status": "independent formats and compatibility gates passed; source unchanged by documentation completion",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:feature/r3.9-unity-integer-textures-20261109",
       "prefilled_compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:feature/r3.9-unity-integer-textures-20261109?expand=1&title=Decode%20Unity%20R16%20and%20RG16%20textures%20(R3.9)&body=%23%23%20Roadmap%0A%0AR3.9%3A%20Unity%3A%20decode%20R16%20and%20RG16%20texture%20pixels%20through%20the%20shared%20bounded%20PNG%20export%20path.%0A%0A%23%23%20Problem%0A%0AThe%20texture%20exporter%20rejected%20Unity's%20R16%20and%20RG16%20formats%20even%20though%20they%20can%20be%20decoded%20using%20the%20existing%20bounded%20pixel%20pipeline.%0A%0A%23%23%20Change%0A%0AAdd%20little-endian%20unsigned%20R16%20grayscale%20decoding%20and%20RG16's%20two%20eight-bit%20red%2Fgreen%20channels.%20Preserve%20Unity%20row%20inversion%2C%20first-mip%20handling%20and%20output%20allocation%20limits.%0A%0A%23%23%20Verification%0A%0A4%20new%20integration%20tests.%20Unsigned%20extrema%20and%20quantization%20boundaries%2C%20red%2Fgreen%20channel%20order%2C%20Unity%20row%20inversion%2C%20first-mip%20length%2C%20truncated%20pixels%2C%20zero%2Fhuge%20dimensions%20and%20output%20budgets.%20The%20fixtures%20use%20synthetic%20bytes.%0A%0AThe%20exact%20source%20head%20%60540b4947aa1bc7a7195d67eabcbff5582b8a3127%60%20passed%20957%20formats-crate%20tests%2C%20%60cargo%20fmt%20--all%20--check%60%20and%20formats-crate%20Clippy%20with%20warnings%20denied%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42633003467%2Fjob%2F129213811395%0A%0AThe%20same%20independent%20source%20passed%20the%20layer%2C%20lock%2Fawait%2C%20secret%20and%20WebAssembly%20compatibility%20gates%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42642583301%2Fjob%2F129247271153%0A%0AThe%20final%20documentation%20commit%20only%20completes%20the%20roadmap%20entry%20and%20records%20the%20checked%20behavior%20in%20STATUS%3B%20production%20and%20regression-test%20bytes%20are%20unchanged.%0A%0A%23%23%20Related%20work%0A%0AExisting%20float-texture%20support%20uses%20different%20layouts%3B%20this%20adds%20the%20missing%20integer%20formats.%0A",
@@ -474,7 +487,10 @@
         ]
       },
       "upstream_pr_number": 1378,
-      "upstream_pr_state": "open"
+      "upstream_pr_state": "closed",
+      "merged_at": "2026-11-09T15:34:33Z",
+      "upstream_merge_commit": "2474de39fe3f5e503433beba39f61e70bd018bf5",
+      "upstream_verified_at": "2026-11-09 15:35:59 UTC"
     },
     {
       "n": 6,
@@ -527,9 +543,9 @@
           "conclusion": "success"
         }
       ],
-      "upstream_pr_url": null,
+      "upstream_pr_url": "https://github.com/storytold/craft-anything/pull/1388",
       "merged": false,
-      "publication_status": "ready_for_upstream",
+      "publication_status": "upstream_pr_open",
       "verification_status": "independent formats and compatibility gates passed; source unchanged by documentation completion",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-dex-capped-table-alignment-20261109",
       "prefilled_compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-dex-capped-table-alignment-20261109?expand=1&title=Preserve%20DEX%20boundaries%20when%20member%20or%20handler%20lists%20are%20capped%20(R3.12)&body=%23%23%20Roadmap%0A%0AR3.12%3A%20Stop%20capped%20DEX%20member%20and%20handler%20lists%20from%20interpreting%20unread%20records%20as%20the%20following%20field%20or%20a%20catch-all.%0A%0A%23%23%20Problem%0A%0AA%20capped%20class-data%20group%20left%20its%20unread%20records%20at%20the%20cursor%2C%20then%20interpreted%20them%20as%20the%20following%20group.%20Capped%20or%20incomplete%20typed-handler%20lists%20could%20likewise%20turn%20their%20remaining%20bytes%20into%20a%20fabricated%20catch-all%20address.%0A%0A%23%23%20Change%0A%0AReturn%20retained%20class%20members%20as%20incomplete%20before%20crossing%20an%20unconsumed%20group%2C%20and%20read%20a%20catch-all%20only%20after%20every%20declared%20typed%20handler%20was%20decoded.%0A%0A%23%23%20Verification%0A%0A5%20new%20integration%20tests.%20Over-cap%20and%20exact-cap%20class%20members%3B%20oversized%2C%20truncated%2C%20empty%20and%20exact-cap%20typed-handler%20lists%20with%20real%20catch-all%20controls.%20The%20fixtures%20use%20synthetic%20bytes.%0A%0AThe%20exact%20source%20head%20%60149f060b9959e8906327e799088728820659513c%60%20passed%20958%20formats-crate%20tests%2C%20%60cargo%20fmt%20--all%20--check%60%20and%20formats-crate%20Clippy%20with%20warnings%20denied%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42633003467%2Fjob%2F129213811327%0A%0AThe%20same%20independent%20source%20passed%20the%20layer%2C%20lock%2Fawait%2C%20secret%20and%20WebAssembly%20compatibility%20gates%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42642583301%2Fjob%2F129247271153%0A%0AThe%20final%20documentation%20commit%20only%20completes%20the%20roadmap%20entry%20and%20records%20the%20checked%20behavior%20in%20STATUS%3B%20production%20and%20regression-test%20bytes%20are%20unchanged.%0A%0A%23%23%20Related%20work%0A%0AEarlier%20DEX%20work%20covered%20LEB%20values%2C%20MUTF-8%2C%20register%20lists%20and%20array%20widths.%20This%20change%20preserves%20record%20alignment%20when%20retention%20limits%20are%20reached.%0A",
@@ -551,7 +567,12 @@
           "cargo xtask secrets",
           "cargo xtask wasm"
         ]
-      }
+      },
+      "upstream_pr_number": 1388,
+      "upstream_pr_state": "open",
+      "merged_at": null,
+      "upstream_merge_commit": "265f7653a4cb2f43784b9e098a548bd0d2143b52",
+      "upstream_verified_at": "2026-11-09 15:35:59 UTC"
     },
     {
       "n": 7,
@@ -604,9 +625,9 @@
           "conclusion": "success"
         }
       ],
-      "upstream_pr_url": null,
+      "upstream_pr_url": "https://github.com/storytold/craft-anything/pull/1389",
       "merged": false,
-      "publication_status": "ready_for_upstream",
+      "publication_status": "upstream_pr_open",
       "verification_status": "independent formats and compatibility gates passed; source unchanged by documentation completion",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-arsc-parent-chunk-boundaries-20261109",
       "prefilled_compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-arsc-parent-chunk-boundaries-20261109?expand=1&title=Keep%20Android%20resource%20children%20inside%20their%20parent%20chunks%20(R3.12)&body=%23%23%20Roadmap%0A%0AR3.12%3A%20Keep%20Android%20resource%20packages%2C%20child%20chunks%20and%20library%20records%20inside%20their%20enclosing%20declared%20ranges.%0A%0A%23%23%20Problem%0A%0AA%20resource%20child%20could%20fit%20the%20physical%20input%20while%20crossing%20the%20size%20declared%20by%20its%20enclosing%20table%20or%20package.%20String-pool%20offsets%2C%20library%20records%20and%20short%20child%20headers%20could%20therefore%20borrow%20unrelated%20bytes.%0A%0A%23%23%20Change%0A%0ABound%20each%20reader%20to%20its%20declared%20parent%2C%20require%20complete%20package%2Fknown-child%20headers%2C%20keep%20package%20string%20pools%20inside%20the%20package%20payload%2C%20and%20retain%20only%20complete%20fixed-width%20library%20records.%0A%0A%23%23%20Verification%0A%0A7%20new%20integration%20tests.%20Table%2Fpackage%20crossings%2C%20escaped%20package%20pools%2C%20retained%20earlier%20entries%2C%20sibling%20library%20data%2C%20short%20headers%2C%20truncated%20bag%20parents%20and%20both%20legacy%20284-byte%20and%20current%20288-byte%20package%20headers.%20The%20fixtures%20use%20synthetic%20bytes.%0A%0AThe%20exact%20source%20head%20%60ea680eeb9e9267e54e304448596fd947cc18f3d5%60%20passed%20960%20formats-crate%20tests%2C%20%60cargo%20fmt%20--all%20--check%60%20and%20formats-crate%20Clippy%20with%20warnings%20denied%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895431%0A%0AThe%20same%20independent%20source%20passed%20the%20layer%2C%20lock%2Fawait%2C%20secret%20and%20WebAssembly%20compatibility%20gates%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42642583301%2Fjob%2F129247271153%0A%0AThe%20final%20documentation%20commit%20only%20completes%20the%20roadmap%20entry%20and%20records%20the%20checked%20behavior%20in%20STATUS%3B%20production%20and%20regression-test%20bytes%20are%20unchanged.%0A%0A%23%23%20Related%20work%0A%0APR%20%23698%20bounded%20a%20string%20pool%20by%20its%20own%20chunk.%20This%20change%20enforces%20the%20enclosing%20table%2Fpackage%20and%20sibling-child%20boundaries%3B%20it%20does%20not%20replace%20that%20pool%20implementation.%0A",
@@ -628,7 +649,12 @@
           "cargo xtask secrets",
           "cargo xtask wasm"
         ]
-      }
+      },
+      "upstream_pr_number": 1389,
+      "upstream_pr_state": "open",
+      "merged_at": null,
+      "upstream_merge_commit": "7d489f1196461a21c726680ec4501cb8d91b19fd",
+      "upstream_verified_at": "2026-11-09 15:35:59 UTC"
     },
     {
       "n": 8,
@@ -683,9 +709,9 @@
           }
         }
       ],
-      "upstream_pr_url": null,
+      "upstream_pr_url": "https://github.com/storytold/craft-anything/pull/1390",
       "merged": false,
-      "publication_status": "ready_for_upstream",
+      "publication_status": "upstream_pr_open",
       "verification_status": "independent formats and compatibility gates passed; source unchanged by documentation completion",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-wasm-custom-inventory-budget-20261109",
       "prefilled_compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-wasm-custom-inventory-budget-20261109?expand=1&title=Bound%20WebAssembly%20metadata%20across%20repeated%20custom%20sections%20(R3.12)&body=%23%23%20Roadmap%0A%0AR3.12%3A%20Apply%20WebAssembly%20name%20and%20producer%20inventory%20limits%20across%20repeated%20custom%20sections%20and%20report%20truncation.%0A%0A%23%23%20Problem%0A%0AEvery%20repeated%20name%20or%20producers%20custom%20section%20received%20a%20new%20allowance.%20Their%20combined%20retained%20inventories%20could%20exceed%20MAX_ITEMS%2C%20and%20the%20existing%20local%20cutoffs%20silently%20omitted%20metadata%20without%20setting%20the%20report's%20truncation%20flag.%0A%0A%23%23%20Change%0A%0AShare%20the%20function-name%2C%20producer-field%20and%20producer-value%20limits%20across%20the%20entire%20module.%20Permit%20updates%20to%20retained%20function%20names%20at%20the%20cap%20and%20report%20both%20local%20and%20global%20omissions.%0A%0A%23%23%20Verification%0A%0A5%20new%20integration%20tests.%20Repeated%20function-name%20sections%2C%20updates%20at%20the%20cap%2C%20producer%20values%20and%20empty%20fields%20across%20sections%2C%20each%20local%20cutoff%20and%20an%20ordinary%20module%20fixture.%20The%20fixtures%20use%20synthetic%20bytes.%0A%0AThe%20exact%20source%20head%20%60232100030acee41d80523bdcc7998fd0a1998aa3%60%20passed%20958%20formats-crate%20tests%2C%20%60cargo%20fmt%20--all%20--check%60%20and%20formats-crate%20Clippy%20with%20warnings%20denied%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42642340046%2Fjob%2F129246412808%0A%0AThe%20same%20independent%20source%20passed%20the%20layer%2C%20lock%2Fawait%2C%20secret%20and%20WebAssembly%20compatibility%20gates%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42642340046%2Fjob%2F129246412808%0A%0AThe%20final%20documentation%20commit%20only%20completes%20the%20roadmap%20entry%20and%20records%20the%20checked%20behavior%20in%20STATUS%3B%20production%20and%20regression-test%20bytes%20are%20unchanged.%0A%0A%23%23%20Related%20work%0A%0APR%20%231126%20validates%20custom%20debug%2Fsource-map%20strings.%20This%20change%20bounds%20retained%20name%20and%20producer%20inventories%20across%20repeated%20sections.%0A",
@@ -705,7 +731,12 @@
           "cargo xtask secrets",
           "cargo xtask wasm"
         ]
-      }
+      },
+      "upstream_pr_number": 1390,
+      "upstream_pr_state": "open",
+      "merged_at": null,
+      "upstream_merge_commit": "ca39556d6415987cf45d8b29b087bcd35d56724c",
+      "upstream_verified_at": "2026-11-09 15:35:59 UTC"
     },
     {
       "n": 9,
@@ -754,9 +785,9 @@
           "conclusion": "success"
         }
       ],
-      "upstream_pr_url": null,
+      "upstream_pr_url": "https://github.com/storytold/craft-anything/pull/1391",
       "merged": false,
-      "publication_status": "ready_for_upstream",
+      "publication_status": "upstream_pr_open",
       "verification_status": "independent formats and compatibility gates passed; source unchanged by documentation completion",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-unity-metadata-range-20261109",
       "prefilled_compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-unity-metadata-range-20261109?expand=1&title=Validate%20Unity%20serialized%20metadata%20ranges%20before%20reading%20(R3.12)&body=%23%23%20Roadmap%0A%0AR3.12%3A%20Validate%20Unity%20serialized%20metadata%20offsets%20and%20lengths%20before%20reading%20so%20short%20inputs%20cannot%20panic%20or%20borrow%20object%20bytes.%0A%0A%23%23%20Problem%0A%0AThe%20metadata%20reader%20accepted%20a%20header%20offset%20beyond%20a%20short%20input%20and%20read%20past%20the%20declared%20metadata%20region%20into%20object%20bytes.%20The%20string%20reader%20could%20panic%20on%20an%20impossible%20starting%20offset.%0A%0A%23%23%20Change%0A%0AValidate%20metadata%20offset%20and%20size%20with%20checked%20arithmetic%20against%20the%20object-data%20boundary%2C%20declared%20file%20length%20and%20available%20input.%20Parse%20only%20the%20resulting%20metadata%20slice.%0A%0A%23%23%20Verification%0A%0A4%20new%20integration%20tests.%20Every%20prefix%20before%20the%20metadata%20end%2C%20shortened%20declared%20metadata%2C%20arithmetic%20overflow%20and%20impossible%20public%20Header%20ranges%2C%20plus%20equality%20of%20full-file%20and%20exact-prefix%20results.%20The%20fixtures%20use%20synthetic%20bytes.%0A%0AThe%20exact%20source%20head%20%60de9d7444f5098a3e6c27b32f3b5249d4bb2743fc%60%20passed%20957%20formats-crate%20tests%2C%20%60cargo%20fmt%20--all%20--check%60%20and%20formats-crate%20Clippy%20with%20warnings%20denied%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42633003467%2Fjob%2F129213811357%0A%0AThe%20same%20independent%20source%20passed%20the%20layer%2C%20lock%2Fawait%2C%20secret%20and%20WebAssembly%20compatibility%20gates%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42642583301%2Fjob%2F129247271153%0A%0AThe%20final%20documentation%20commit%20only%20completes%20the%20roadmap%20entry%20and%20records%20the%20checked%20behavior%20in%20STATUS%3B%20production%20and%20regression-test%20bytes%20are%20unchanged.%0A%0A%23%23%20Related%20work%0A%0APR%20%23890%20validates%20serialized%20object%20extents.%20This%20change%20validates%20the%20separate%20metadata%20header%20and%20reader%20range.%0A",
@@ -778,7 +809,12 @@
           "cargo xtask secrets",
           "cargo xtask wasm"
         ]
-      }
+      },
+      "upstream_pr_number": 1391,
+      "upstream_pr_state": "open",
+      "merged_at": null,
+      "upstream_merge_commit": "11639efafce00b359df7ce8fc2195f1490fdf69a",
+      "upstream_verified_at": "2026-11-09 15:35:59 UTC"
     },
     {
       "n": 10,
@@ -828,9 +864,9 @@
           "conclusion": "success"
         }
       ],
-      "upstream_pr_url": null,
+      "upstream_pr_url": "https://github.com/storytold/craft-anything/pull/1392",
       "merged": false,
-      "publication_status": "ready_for_upstream",
+      "publication_status": "upstream_pr_open",
       "verification_status": "independent formats and compatibility gates passed; source unchanged by documentation completion",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:feature/r3.9-unreal-float-textures-20261109",
       "prefilled_compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:feature/r3.9-unreal-float-textures-20261109?expand=1&title=Decode%20Unreal%20floating-point%20texture%20formats%20(R3.9)&body=%23%23%20Roadmap%0A%0AR3.9%3A%20Unreal%3A%20decode%20cooked%20half-%20and%20full-precision%20floating-point%20textures%20with%20the%20shared%20bounded%20pixel%20reader.%0A%0A%23%23%20Problem%0A%0ACooked%20Unreal%20textures%20with%20supported%20half-%20and%20full-precision%20channel%20layouts%20were%20reported%20as%20unsupported%20because%20their%20pixel-format%20names%20were%20not%20mapped%20to%20the%20shared%20float%20decoder.%0A%0A%23%23%20Change%0A%0ARoute%20scalar%2C%20red%2Fgreen%20and%20RGBA%20half%2Ffull%20precision%20formats%2C%20including%20the%20filtered%20half%20aliases%2C%20through%20the%20bounded%20pixel%20reader.%20RGB%20converts%20from%20linear%20values%20to%208-bit%20sRGB%3B%20alpha%20stays%20linear%20and%20values%20are%20clipped%20for%20PNG%20output.%0A%0A%23%23%20Verification%0A%0A4%20new%20integration%20tests.%20Cooked%20package%20fixtures%20reaching%20all%20six%20channel%20layouts%2C%20filtered%20aliases%2C%20negative%2Fnon-finite%20values%2C%20alpha%20behavior%2C%20stored%20row%20order%2C%20short%20mips%2C%20zero%2Fhuge%20dimensions%20and%20output%20budgets.%20The%20fixtures%20use%20synthetic%20bytes.%0A%0AThe%20exact%20source%20head%20%6075b507c0b96fe22c8f8a1e517c31ef6cee207a01%60%20passed%20957%20formats-crate%20tests%2C%20%60cargo%20fmt%20--all%20--check%60%20and%20formats-crate%20Clippy%20with%20warnings%20denied%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42634877637%2Fjob%2F129220281335%0A%0AThe%20same%20independent%20source%20passed%20the%20layer%2C%20lock%2Fawait%2C%20secret%20and%20WebAssembly%20compatibility%20gates%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42642583301%2Fjob%2F129247271153%0A%0AThe%20final%20documentation%20commit%20only%20completes%20the%20roadmap%20entry%20and%20records%20the%20checked%20behavior%20in%20STATUS%3B%20production%20and%20regression-test%20bytes%20are%20unchanged.%0A%0A%23%23%20Related%20work%0A%0AThe%20existing%20float%20decoder%20was%20connected%20to%20Unity%20formats.%20This%20adds%20Unreal%20format%20dispatch%20and%20cooked-package%20regression%20coverage.%0A",
@@ -852,7 +888,12 @@
           "cargo xtask secrets",
           "cargo xtask wasm"
         ]
-      }
+      },
+      "upstream_pr_number": 1392,
+      "upstream_pr_state": "open",
+      "merged_at": null,
+      "upstream_merge_commit": "eab9a002306d855ebf4c650636eb918c48df1910",
+      "upstream_verified_at": "2026-11-09 15:35:59 UTC"
     }
   ],
   "compatibility_verification": {
