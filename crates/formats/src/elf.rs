@@ -992,7 +992,9 @@ pub fn parse_core(data: &[u8]) -> Result<CoreDump, FormatError> {
                                 let o = table + i * 3 * ws;
                                 let (Some(s), Some(en), Some(po)) = (d.word(o), d.word(o + ws), d.word(o + 2 * ws)) else { break };
                                 let path = d.r.cstr(names_off, 4096).unwrap_or_default();
-                                names_off = names_off.saturating_add(path.len() + 1);
+                                let raw = desc.get(names_off..).unwrap_or_default();
+                                let consumed = raw.iter().position(|&byte| byte == 0).map_or(raw.len(), |end| end + 1);
+                                names_off = names_off.saturating_add(consumed);
                                 core.mapped_files.push(MappedFile { start: s, end: en, file_offset: po.saturating_mul(page), path });
                             }
                         } else {
