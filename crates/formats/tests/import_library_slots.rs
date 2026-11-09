@@ -87,7 +87,10 @@ fn versioned_elf_imports_do_not_guess_between_unlabelled_slot_addresses() {
 
 fn another_versioned_library(mut data: Vec<u8>) -> Vec<u8> {
     let shoff = u64::from_le_bytes(data[40..48].try_into().unwrap()) as usize;
-    let field = |index: usize, offset: usize| u64::from_le_bytes(data[shoff + index * 64 + offset..shoff + index * 64 + offset + 8].try_into().unwrap()) as usize;
+    let field = |index: usize, offset: usize| {
+        let at = shoff + index * 64 + offset;
+        u64::from_le_bytes(data[at..at + 8].try_into().unwrap()) as usize
+    };
     let dynsym = field(2, 24);
     let dynstr = field(3, 24);
     let dynstr_len = field(3, 32);
