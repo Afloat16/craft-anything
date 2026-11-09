@@ -1323,7 +1323,7 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Distinguish literal punctuation and multi-valued attributes in the displayed X.509 issuer and subject.
+- [x] Distinguish literal punctuation and multi-valued attributes in the displayed X.509 issuer and subject.
       — claimed: Afloat16, branch bugfix/r3.12-certificate-name-rendering
 - [x] Bound rejected ASAR names by the archive listing limit.
       — claimed: Afloat16, branch bugfix/r3.12-asar-limit-bounds-20261107
