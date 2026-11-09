@@ -84,3 +84,56 @@ fn versioned_elf_imports_do_not_guess_between_unlabelled_slot_addresses() {
     assert_eq!(import.library.as_deref(), Some("libc.so.6"));
     assert_eq!(import.slot, None);
 }
+
+fn another_versioned_library(mut data: Vec<u8>) -> Vec<u8> {
+    let shoff = u64::from_le_bytes(data[40..48].try_into().unwrap()) as usize;
+    let field = |index: usize, offset: usize| u64::from_le_bytes(data[shoff + index * 64 + offset..shoff + index * 64 + offset + 8].try_into().unwrap()) as usize;
+    let dynsym = field(2, 24);
+    let dynstr = field(3, 24);
+    let dynstr_len = field(3, 32);
+    let versym = field(4, 24);
+    let verneed = field(6, 24);
+    let puts = u32::from_le_bytes(data[dynsym + 4 * 24..dynsym + 4 * 24 + 4].try_into().unwrap());
+    let mut strings = data[dynstr..dynstr + dynstr_len].to_vec();
+    let library = strings.len() as u32;
+    strings.extend_from_slice(b"libother.so\0");
+    let needed = data[verneed..verneed + 32].to_vec();
+    let strings_at = data.len();
+    data.extend_from_slice(&strings);
+    let needed_at = (data.len() + 7) & !7;
+    let mut data = Buf(data);
+    data.put(needed_at, &needed);
+    data.put(needed_at + 32, &needed);
+    data.u32(needed_at + 12, 32);
+    data.u32(needed_at + 32 + 4, library);
+    data.u16(needed_at + 32 + 16 + 6, 5);
+    for (index, offset, size) in [(3, strings_at, strings.len()), (6, needed_at, 64)] {
+        let at = shoff + index * 64;
+        data.u64(at + 16, offset as u64);
+        data.u64(at + 24, offset as u64);
+        data.u64(at + 32, size as u64);
+    }
+    // Reuse the first defined symbol as a second puts import from another version owner.
+    data.u32(dynsym + 24, puts);
+    data.u16(dynsym + 24 + 6, 0);
+    data.u64(dynsym + 24 + 8, 0);
+    data.u64(dynsym + 24 + 16, 0);
+    data.u16(versym + 2, 5);
+    let size = data.0.len() as u64;
+    data.u64(0x40 + 32, size);
+    data.u64(0x40 + 40, size);
+    data.into_vec()
+}
+
+#[test]
+fn different_versioned_libraries_do_not_share_an_unlabelled_slot() {
+    let (data, got) = versioned_elf_slots(&[(6, 0)]);
+    let binary = parse_binary(&another_versioned_library(data)).unwrap();
+    let imports: Vec<_> = binary.imports.iter().filter(|import| import.name == "puts").collect();
+    assert_eq!(imports.len(), 2);
+    assert!(imports.iter().any(|import| import.library.as_deref() == Some("libc.so.6")));
+    assert!(imports.iter().any(|import| import.library.as_deref() == Some("libother.so")));
+    let slots: Vec<_> = binary.import_slots.iter().filter(|slot| slot.name == "puts").map(|slot| slot.addr).collect();
+    assert_eq!(slots, [got]);
+    assert!(imports.iter().all(|import| import.slot.is_none()));
+}
