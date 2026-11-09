@@ -1743,7 +1743,6 @@ mod tests {
         assert_eq!(xxh32(b"Nobody inspects the spammish repetition", 0), 0xe229_3b2f);
     }
 
-
     #[test]
     fn gzip_checks_the_optional_header_checksum() {
         let plain = b"checked payload";
