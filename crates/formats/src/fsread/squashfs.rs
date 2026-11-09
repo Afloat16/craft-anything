@@ -73,13 +73,17 @@ impl Meta {
         let end = end.min(data.len());
         let r = Reader::new(data.get(..end).unwrap_or_default());
         let mut guard = 0usize;
-        while end.saturating_sub(pos) >= 2 {
+        while pos < end {
             guard += 1;
             if guard > 100_000 || out.len() > 64 << 20 {
                 break;
             }
             let block_start = out.len();
-            let Some(hdr) = r.u16_le(pos) else { break };
+            let Some(hdr) = r.u16_le(pos) else {
+                warnings.warn("squashfs: a metadata header exceeds its table");
+                warnings.complete = false;
+                break;
+            };
             let uncompressed = hdr & 0x8000 != 0;
             let len = usize::from(hdr & 0x7fff);
             let Some(block) = r.slice(pos + 2, len) else {
@@ -375,15 +379,18 @@ mod tests {
 
     #[test]
     fn truncated_metadata_preserves_only_preceding_blocks() {
-        // The second block's bytes exist in the image, but extend past the metadata table.
+        // Cut the second block inside its two-byte header and inside its payload.
         let data = [1, 0x80, b'a', 2, 0x80, b'b', b'c'];
-        let mut img = FsImage::new("squashfs");
-        let meta = Meta::read(&data, 0, 6, 1, &mut img);
-        assert_eq!(meta.data, b"a");
-        assert_eq!(meta.at(0), Some(0));
-        assert!(meta.at(3 << 16).is_none());
-        assert!(!img.complete);
-        assert!(img.warnings.iter().any(|w| w.contains("metadata block exceeds its table")));
+        for (end, warning) in [(3, None), (4, Some("squashfs: a metadata header exceeds its table")), (6, Some("squashfs: a metadata block exceeds its table"))]
+        {
+            let mut img = FsImage::new("squashfs");
+            let meta = Meta::read(&data, 0, end, 1, &mut img);
+            assert_eq!(meta.data, b"a");
+            assert_eq!(meta.at(0), Some(0));
+            assert!(meta.at(3 << 16).is_none());
+            assert_eq!(img.complete, warning.is_none(), "table end {end}");
+            assert_eq!(img.warnings.first().map(String::as_str), warning, "table end {end}");
+        }
     }
 
     #[test]
