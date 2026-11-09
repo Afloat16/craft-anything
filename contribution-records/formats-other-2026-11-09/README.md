@@ -1,15 +1,15 @@
 # Other format contributions — 2026-11-09
 
-Status: 10 formal upstream PRs; 9 merged and 1 open; all independent checks and the combined full Linux gate passed. All ten independent changes have formal upstream PRs, with 48 new integration test functions. The table records the exact source and documentation heads, successful independent checks, and current upstream state. Latest verification: 2026-11-09 15:54:59 UTC.
+Status: All ten independent upstream improvements merged; all independent checks and the combined full Linux gate passed. All ten independent changes have formal upstream PRs, with 48 new integration test functions. The table records the exact source and documentation heads, successful independent checks, and current upstream state. Latest verification: 2026-11-09 15:56:46 UTC.
 
-**Upstream PRs created: 10. Merged PRs: 9.** Each independent upstream PR counts as one merged improvement only after it is merged. Fork verification PRs and test-only branches are excluded.
+**Upstream PRs created: 10. Merged PRs: 10.** Each independent upstream PR counts as one merged improvement only after it is merged. Fork verification PRs and test-only branches are excluded.
 
 ## Source branches
 
 | # | Improvement | Current head | New tests | Verification | Upstream PR | State |
 |---|---|---|---:|---|---|---|
 | 1 | Reject Java constants that exceed the constant-pool slots (R3.12) | [`8a5332a89480`](https://github.com/Afloat16/craft-anything/commit/8a5332a89480f1f354f404860afe5433a07cd87a) | 4 | independent source checks passed; merged current main to resolve shared documentation conflicts | [#1373](https://github.com/storytold/craft-anything/pull/1373) | merged |
-| 2 | Keep embedded Godot pack reads before the trailer (R3.12) | [`ae10e66be638`](https://github.com/Afloat16/craft-anything/commit/ae10e66be638852663f6191d767c2705db6de5b3) | 4 | independent source checks passed; merged current main to resolve shared documentation conflicts | [#1379](https://github.com/storytold/craft-anything/pull/1379) | open |
+| 2 | Keep embedded Godot pack reads before the trailer (R3.12) | [`ae10e66be638`](https://github.com/Afloat16/craft-anything/commit/ae10e66be638852663f6191d767c2705db6de5b3) | 4 | independent source checks passed; merged current main to resolve shared documentation conflicts | [#1379](https://github.com/storytold/craft-anything/pull/1379) | merged |
 | 3 | Bound retained metadata when listing Node SEA programs (R3.12) | [`a91f5e8afecf`](https://github.com/Afloat16/craft-anything/commit/a91f5e8afecf0e88a23d7dc906a7aaf863e88666) | 7 | independent formats and compatibility gates passed; source unchanged by documentation completion | [#1377](https://github.com/storytold/craft-anything/pull/1377) | merged |
 | 4 | Respect the UTF-8 output budget for IL2CPP literals (R3.12) | [`43279b281e6c`](https://github.com/Afloat16/craft-anything/commit/43279b281e6c3dbe7592896d2bfa39f9c2261fcc) | 4 | independent formats and compatibility gates passed; source unchanged by documentation completion | [#1380](https://github.com/storytold/craft-anything/pull/1380) | merged |
 | 5 | Decode Unity R16 and RG16 textures (R3.9) | [`ab2f5b83f33a`](https://github.com/Afloat16/craft-anything/commit/ab2f5b83f33ae9a309bb7265055314e70ed84208) | 4 | independent formats and compatibility gates passed; source unchanged by documentation completion | [#1378](https://github.com/storytold/craft-anything/pull/1378) | merged |

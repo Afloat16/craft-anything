@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-11-09 15:54:59 UTC",
+  "updated_at": "2026-11-09 15:56:46 UTC",
   "repository": "storytold/craft-anything",
   "fork": "Afloat16/craft-anything",
   "scope": "Ten independent other-format contributions",
-  "state": "10 formal upstream PRs; 9 merged and 1 open; all independent checks and the combined full Linux gate passed",
+  "state": "All ten independent upstream improvements merged; all independent checks and the combined full Linux gate passed",
   "counts": {
     "source_branches": 10,
     "new_tests": 48,
     "upstream_pull_requests_created": 10,
-    "merged_pull_requests": 9,
-    "open_pull_requests": 1
+    "merged_pull_requests": 10,
+    "open_pull_requests": 0
   },
   "creation_limit": {
     "status": 403,
@@ -236,8 +236,8 @@
         }
       ],
       "upstream_pr_url": "https://github.com/storytold/craft-anything/pull/1379",
-      "merged": false,
-      "publication_status": "upstream_pr_open",
+      "merged": true,
+      "publication_status": "upstream_pr_merged",
       "verification_status": "independent source checks passed; merged current main to resolve shared documentation conflicts",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-godot-trailer-boundary-20261109",
       "prefilled_compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-godot-trailer-boundary-20261109?expand=1&title=Keep%20embedded%20Godot%20pack%20reads%20before%20the%20trailer%20(R3.12)&body=%23%23%20Roadmap%0A%0AR3.12%3A%20Keep%20embedded%20Godot%20pack%20tables%20and%20member%20reads%20before%20the%20executable's%20pack%20trailer.%0A%0A%23%23%20Problem%0A%0AThe%20embedded%20PCK%20directory%20and%20member%20reader%20used%20the%20executable's%20complete%20length%20as%20the%20pack%20boundary.%20This%20let%20damaged%20entries%20consume%20the%20twelve-byte%20embedded-pack%20trailer%20as%20table%20fields%20or%20member%20data.%0A%0A%23%23%20Change%0A%0AExclude%20the%20embedded%20trailer%20from%20directory%20parsing%20and%20stored-member%20reads%2C%20mark%20members%20crossing%20that%20boundary%20unreadable%2C%20and%20enforce%20it%20when%20an%20entry%20is%20passed%20directly%20to%20the%20reader.%0A%0A%23%23%20Verification%0A%0A4%20new%20integration%20tests.%20PCK%20versions%201%2C%202%20and%203%3B%20member%20ranges%20in%20the%20footer%2C%20directory%20counts%20and%20records%20crossing%20it%2C%20direct%20reads%20of%20forged%20entries%2C%20and%20valid%20embedded%2Fstandalone%20packs.%20The%20fixtures%20use%20synthetic%20bytes.%0A%0AThe%20exact%20source%20head%20%609744a0569a7c51d8938ce645e52f9a66965fb1e2%60%20passed%20957%20formats-crate%20tests%2C%20%60cargo%20fmt%20--all%20--check%60%20and%20formats-crate%20Clippy%20with%20warnings%20denied%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42633003467%2Fjob%2F129213811429%0A%0AThe%20same%20independent%20source%20passed%20the%20layer%2C%20lock%2Fawait%2C%20secret%20and%20WebAssembly%20compatibility%20gates%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42642583301%2Fjob%2F129247271153%0A%0AThe%20final%20documentation%20commit%20only%20completes%20the%20roadmap%20entry%20and%20records%20the%20checked%20behavior%20in%20STATUS%3B%20production%20and%20regression-test%20bytes%20are%20unchanged.%0A%0A%23%23%20Related%20work%0A%0AEarlier%20Godot%20contributions%20covered%20installation%20and%20process%20paths%3B%20this%20change%20bounds%20the%20embedded%20PCK%20parser%20and%20extractor.%0A",
@@ -261,10 +261,10 @@
         ]
       },
       "upstream_pr_number": 1379,
-      "upstream_pr_state": "open",
-      "merged_at": null,
-      "upstream_merge_commit": "39a8470440b13df490af5f8e5ec31194dfa30e5d",
-      "upstream_verified_at": "2026-11-09 15:54:59 UTC",
+      "upstream_pr_state": "closed",
+      "merged_at": "2026-11-09T15:55:43Z",
+      "upstream_merge_commit": "4824e31d5f9fb8864eff32d468cd58a5eef91eaa",
+      "upstream_verified_at": "2026-11-09 15:56:46 UTC",
       "integration_base": "131cac4f56dfe07700100388b4360f37b29bd841",
       "merge_parents": [
         "b16acf47009b0f33f52a54600af5f3671c960fbf",
