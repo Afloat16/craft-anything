@@ -10,6 +10,8 @@ use std::collections::HashSet;
 
 const MAX_PROJECT_DEPTH: usize = 96;
 const MAX_PROJECT_NODES: usize = 500_000;
+/// Space for text and base64 copied through UID references, separate from the node limit.
+const MAX_REFERENCED_BYTES: usize = 64 << 20;
 
 #[derive(Debug, Clone)]
 pub struct KeyedArchive {
@@ -89,9 +91,13 @@ impl KeyedArchive {
 
     /// The class name of an object (`$class` → `$classname`).
     pub fn class_of(&self, idx: u64) -> Option<String> {
+        self.class_name(idx).map(str::to_owned)
+    }
+
+    fn class_name(&self, idx: u64) -> Option<&str> {
         let o = self.object(idx)?;
         let c = o.get("$class").and_then(uid_of)?;
-        self.object(c)?.get("$classname").and_then(Value::as_str).map(str::to_string)
+        self.object(c)?.get("$classname").and_then(Value::as_str)
     }
 
     /// The table of objects.
@@ -122,7 +128,7 @@ impl KeyedArchive {
 
     /// Project the object graph below `idx` into JSON.
     pub fn project(&self, idx: u64) -> Json {
-        let mut p = Projector { a: self, expanded: HashSet::new(), nodes: 0 };
+        let mut p = Projector { a: self, expanded: HashSet::new(), nodes: 0, bytes_left: MAX_REFERENCED_BYTES };
         p.uid(idx, 0)
     }
 }
@@ -146,13 +152,24 @@ struct Projector<'a> {
     a: &'a KeyedArchive,
     expanded: HashSet<u64>,
     nodes: usize,
+    bytes_left: usize,
 }
 
 impl Projector<'_> {
-    fn reference(&self, idx: u64, why: &str) -> Json {
+    fn spend(&mut self, n: usize) -> bool {
+        if let Some(left) = self.bytes_left.checked_sub(n) {
+            self.bytes_left = left;
+            return true;
+        }
+        false
+    }
+
+    fn reference(&mut self, idx: u64, why: &str) -> Json {
         let mut m = Map::new();
         m.insert("$ref".into(), json!(idx));
-        if let Some(c) = self.a.class_of(idx) {
+        if let Some(c) = self.a.class_name(idx)
+            && self.spend(c.len())
+        {
             m.insert("$class".into(), json!(c));
         }
         if !why.is_empty() {
@@ -184,7 +201,17 @@ impl Projector<'_> {
         match obj {
             Value::String(s) if s == "$null" => return Json::Null,
             Value::Dict(_) | Value::Array(_) | Value::Uid(_) => {}
-            other => return other.to_json(),
+            other => {
+                let copied = match other {
+                    Value::String(s) | Value::Date(plist::DateValue::Text(s)) => s.len(),
+                    Value::Data(b) => b.len().div_ceil(3).saturating_mul(4),
+                    _ => 0,
+                };
+                if !self.spend(copied) {
+                    return self.reference(idx, "projection byte limit");
+                }
+                return other.to_json();
+            }
         }
         if self.expanded.contains(&idx) {
             return self.reference(idx, "");
@@ -196,8 +223,13 @@ impl Projector<'_> {
         if !matches!(obj, Value::Dict(_)) || uid_of(obj).is_some() {
             return self.value(obj, depth);
         }
-        let class = self.a.class_of(idx);
-        let c = class.as_deref().unwrap_or("");
+        let class = self.a.class_name(idx);
+        if let Some(name) = class
+            && !self.spend(name.len())
+        {
+            return self.reference(idx, "projection byte limit");
+        }
+        let c = class.unwrap_or("");
         match c {
             "NSArray" | "NSMutableArray" | "NSSet" | "NSMutableSet" | "NSOrderedSet" | "NSMutableOrderedSet" => {
                 let items = self.list(obj.get("NS.objects"), depth);
@@ -237,7 +269,7 @@ impl Projector<'_> {
             _ => {}
         }
         let mut m = Map::new();
-        if let Some(c) = &class {
+        if let Some(c) = class {
             m.insert("$class".into(), json!(c));
         }
         m.insert("$index".into(), json!(idx));
@@ -312,6 +344,27 @@ mod tests {
         assert_eq!(projected[0]["nested"], "leaf");
         assert_eq!(projected[1]["$ref"], 1);
         assert_eq!(a.project(4)["$ref"], 4);
+    }
+
+    #[test]
+    fn repeated_scalar_references_share_a_copy_budget() {
+        let a = KeyedArchive {
+            archiver: "NSKeyedArchiver".into(),
+            version: None,
+            top: vec![],
+            objects: vec![
+                Value::Array(vec![Value::Uid(1), Value::Uid(1), Value::Uid(2), Value::Uid(2), Value::Uid(1)]),
+                Value::String("key".into()),
+                Value::Data(vec![42; 3]),
+            ],
+        };
+        let mut p = Projector { a: &a, expanded: HashSet::new(), nodes: 0, bytes_left: 10 };
+        let out = p.uid(0, 0);
+        assert_eq!(out[0], "key");
+        assert_eq!(out[1], "key");
+        assert_eq!(out[2]["$data"], "Kioq");
+        assert_eq!(out[3]["$ref"], 2);
+        assert_eq!(out[4]["$note"], "projection byte limit");
     }
 
     #[test]
