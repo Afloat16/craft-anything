@@ -1,5 +1,7 @@
 # fix(formats): reject incomplete GNU tar record extents
 
+Upstream PR: https://github.com/storytold/craft-anything/pull/1402
+
 ## Problem
 A GNU long-name or long-link record can contain its complete body but end before its 512-byte padding. The parser stopped with an earlier member list without setting the typed metadata stop reason, allowing the installer to overwrite an existing file and report success for a partial archive. An overflowing padded extent took the same unclassified stop path.
 
