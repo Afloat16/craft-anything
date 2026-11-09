@@ -9,6 +9,7 @@ workspace clippy, layers, fmt and the secret scan of all history were clean. Chi
 | Area | State | Verified by |
 |---|---|---|
 | Binary property-list object types | Accepts compatible version-zero minor signatures and rejects unsupported major versions, invalid simple/date markers and unrepresentable non-string dictionary keys. | Typed binary fixtures with valid null, string-key and date controls. |
+| Limited string scans | The earliest printable strings are retained in address order across narrow and UTF-16LE encodings. | Interleaved binary fixture with every result limit from zero to four. |
 | ASAR listings | Rejected unsafe names count toward the listing limit alongside retained entries. | Synthetic regression `invalid_names_consume_the_listing_budget` in the formats crate. |
 | HAR input | Captures with a leading UTF-8 byte order mark parse like the same capture without it. | Synthetic regression `reads_a_har_with_a_utf8_bom` in the formats crate. |
 | Tar numeric fields | Reject negative GNU base-256 encodings when reading unsigned header values. | The octal_fields regression covers both a negative eight-byte value and a positive binary value. |
