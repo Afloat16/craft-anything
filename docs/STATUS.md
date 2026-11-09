@@ -1,7 +1,7 @@
 # Status
 
 What works today and how it was checked. The plan, owners and order of work are in
-[ROADMAP.md](ROADMAP.md). Last updated 2026-11-05. The baseline audit on 2026-10-23 from `main` had 923 tests passing;
+[ROADMAP.md](ROADMAP.md). Last updated 2026-11-09. The baseline audit on 2026-10-23 from `main` had 923 tests passing;
 workspace clippy, layers, fmt and the secret scan of all history were clean. Chinese UI checks are listed separately below.
 
 ## What works, and how it was checked
@@ -53,6 +53,7 @@ workspace clippy, layers, fmt and the secret scan of all history were clean. Chi
 | Locate Unity bundle metadata within the declared bundle size | Unity bundle metadata placement respects the declared bundle extent. | Synthetic byte fixtures in `unity_bundle_declared_size` integration regressions. Cover versions 6 through 8, front and trailing tables, padding, appended bytes, invalid extents, and header-only prefixes of larger bundles. |
 | Keep Unity bundle blocks inside the data region | The shared table parser refuses compressed block totals crossing the trailing table or the declared bundle end before listing or extraction can read block contents. | Synthetic `unity_bundle_data_region` regressions cover versions 6–8, both table positions, data alignment, appended bytes, cumulative sizes above 32 bits, exact fits, spare bytes and empty blocks. No real game bundle was run for this correction. |
 | Reject Unity serialized objects outside their declared file | Unity serialized object ranges must fit the declared file. | Synthetic byte fixtures in `unity_serialized_object_ranges` integration regressions. Cover offset and end overflow, ranges crossing the file boundary, both byte orders, valid existing objects, and empty objects at EOF. |
+| Unreal floating-point textures | Cooked R16F/G16R16F/FloatRGBA and R32_FLOAT/G32R32F/A32B32G32R32F textures export through the shared float decoder. RGB becomes 8-bit sRGB, alpha remains linear, and values outside the display range are clipped. | Synthetic `unreal_float_textures` regressions (4 tests): Cooked package fixtures reaching all six channel layouts, filtered aliases, negative/non-finite values, alpha behavior, stored row order, short mips, zero/huge dimensions and output budgets.  [Format checks](https://github.com/Afloat16/claude-mem/actions/runs/42634877637/job/129220281335) and [compatibility gates](https://github.com/Afloat16/claude-mem/actions/runs/42642583301/job/129247271153) passed at `75b507c0b96f`. |
 | Preserve compression method slots in Unreal pak indexes | PAK compression names retain their original method numbers. | Synthetic byte fixtures in `unreal_pak_compression_slots` integration regressions. Cover interior and leading empty slots in plain and packed indexes, plus unchanged contiguous method tables. |
 | Require complete terminators in Unreal FString values | PAK and IoStore strings require complete terminators. | Synthetic byte fixtures in `unreal_fstring_terminators` integration regressions. Cover missing ANSI and UTF-16 terminators, zero-length strings, terminated empty strings, Unicode names, and the shared IoStore path. |
 | IoStore directory references | Missing name or chunk references are diagnosed instead of producing a placeholder path or a zero-byte asset. | Altered directory and file entries at three listing limits. |
