@@ -1625,6 +1625,8 @@ Owner: open · Status: in progress
 
 - [x] Keep Android binary XML events within their document, chunk and attribute bounds.
       — claimed: Afloat16, branch bugfix/r3.12-android-xml-events
+- [ ] Reject Java Long and Double constants without their reserved constant-pool slot, including the maximum u16 pool boundary.
+      — claimed: Afloat16, branch bugfix/r3.12-java-wide-pool-slot-20261109
 - [x] Find the method parameter terminator outside object type names in JVM descriptors.
       — claimed: Afloat16, branch bugfix/r3.12-java-descriptor-boundary
 - [x] Address the combined parser review: preserve partial Java reference coverage,
