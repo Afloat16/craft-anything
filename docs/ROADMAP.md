@@ -1316,7 +1316,7 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-iostore-unaligned-chunk-blocks-20261105
 - [x] Reject truncated IoStore fixed headers.
       — claimed: Afloat16, branch bugfix/r3.12-iostore-complete-header-20261105
-- [ ] Reject CBOR collections that exceed the EVM metadata reader's limits and invalid text strings.
+- [x] Reject CBOR collections that exceed the EVM metadata reader's limits and invalid text strings.
       — claimed: Afloat16, branch bugfix/r3.12-evm-cbor
 - [x] Reject invalid marshal long integer digits.
       — claimed: Afloat16, branch bugfix/r3.12-pyc-long-limb-validation-20261105
