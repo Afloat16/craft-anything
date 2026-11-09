@@ -1380,6 +1380,17 @@ fn literal_value(tokens: &[&str], affinity: Affinity, allow_words: bool) -> Opti
     let clean = unseparated_number(&number)?;
     let integer = number_kind(&clean)?;
     match affinity {
+        // Reading an old row supplies the DEFAULT expression, not the stored value of a
+        // later insert. SQLite formats a representable integer magnitude, but otherwise
+        // keeps a separated literal's spelling (without underscores or a leading plus).
+        Affinity::Text if clean != number => {
+            let spelling = clean.strip_prefix('+').unwrap_or(&clean);
+            let magnitude = spelling.strip_prefix('-').unwrap_or(spelling);
+            Some(match magnitude.parse::<i64>() {
+                Ok(n) if integer => integer_default(if spelling.starts_with('-') { -n } else { n }, affinity),
+                _ => text_value(spelling.as_bytes()),
+            })
+        }
         // An integer literal that fits in 64 bits is written plainly (`007` reads '7', and
         // `-9223372036854775808` keeps its sign); any other number is written in SQLite's REAL
         // text form, since the schema's text is not the REAL it reads.
@@ -2472,13 +2483,19 @@ mod tests {
             ("x BLOB DEFAULT -'1e3'", CellValue::Real(-1000.0)),
             ("x TEXT DEFAULT 1_000", text("1000")),
             ("x TEXT DEFAULT 1_000.5", text("1000.5")),
-            ("x TEXT DEFAULT 1_000.", text("1000.0")),
-            ("x TEXT DEFAULT .1_0", text("0.1")),
-            ("x TEXT DEFAULT 1_0e2", text("1000.0")),
-            ("x TEXT DEFAULT 1_0e-2", text("0.1")),
-            ("x TEXT DEFAULT 1_0e-5", text("0.0001")),
-            ("x TEXT DEFAULT -0_0.0", text("0.0")),
+            ("x TEXT DEFAULT 1_000.", text("1000.")),
+            ("x TEXT DEFAULT .1_0", text(".10")),
+            ("x TEXT DEFAULT 1_0e2", text("10e2")),
+            ("x TEXT DEFAULT 1_0e-2", text("10e-2")),
+            ("x TEXT DEFAULT 1_0e-5", text("10e-5")),
+            ("x TEXT DEFAULT -0_0.0", text("-00.0")),
             ("x TEXT DEFAULT -1_0", text("-10")),
+            ("x TEXT DEFAULT 12_34.5_0", text("1234.50")),
+            ("x TEXT DEFAULT +1_0e+0_2", text("10e+02")),
+            ("x TEXT DEFAULT -0_9223372036854775808", text("-09223372036854775808")),
+            ("x TEXT DEFAULT 0_07", text("7")),
+            ("x NUMERIC DEFAULT 1_0e-0_1", CellValue::Int(1)),
+            ("x NUMERIC DEFAULT '1_000'", text("1_000")),
             ("x INTEGER DEFAULT 1_000", CellValue::Int(1000)),
             ("x INTEGER DEFAULT 1_000.5", CellValue::Real(1000.5)),
             ("x INTEGER DEFAULT .1_0", CellValue::Real(0.1)),

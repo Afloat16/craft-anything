@@ -1393,13 +1393,13 @@ Owner: open · Status: in progress
       `DEFAULT "abc"`), a signed string (`DEFAULT -'5'`) or a number with digit separators
       (`DEFAULT 1_000`); they show NULL with a note today. Bare and double-quoted words are text
       constants; a signed numeric string and single digit separators take the column's affinity,
-      and a separator-bearing REAL uses SQLite's REAL text form.
+      and a separator-bearing REAL fills a missing TEXT field with its unseparated spelling.
       — claimed: AlexJoaquimPereira, branch bugfix/r3.12-sqlite-default-literals
 - [x] Read a TEXT column's REAL default as SQLite does: `DEFAULT 1e3` and `DEFAULT 5.` are
       '1000.0' and '5.0' in SQLite. A non-integer REAL default now uses SQLite's REAL text form,
       including `Inf`/`-Inf`; integer literals keep integer text.
       — claimed: AlexJoaquimPereira, branch bugfix/r3.12-sqlite-real-text
-- [ ] Preserve decimal literal spelling when filling a missing TEXT field from a SQLite default with digit separators.
+- [x] Preserve decimal literal spelling when filling a missing TEXT field from a SQLite default with digit separators.
       — claimed: Afloat16, branch bugfix/r3.12-sqlite-added-default-spellings
 - [x] Read a signed quoted numeric default with SQLite's coercion before the column's affinity:
       `DEFAULT -'1e3'` is '-1000.0' on TEXT and -1000 on INTEGER, and `DEFAULT -'1.50'` is '-1.5';
