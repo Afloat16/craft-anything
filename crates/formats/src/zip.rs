@@ -40,7 +40,7 @@ pub struct ZipEntry {
     pub local_header_offset: u64,
     pub is_dir: bool,
     pub encrypted: bool,
-    /// Unix mode from the external attributes (only when the entry was made on a Unix host).
+    /// Unix mode from the external attributes (when stored by Unix or macOS).
     #[serde(skip)]
     pub unix_mode: Option<u32>,
 }
@@ -184,7 +184,7 @@ pub fn parse(data: &[u8], max_entries: usize) -> Result<ZipArchive, ZipError> {
             .ok_or(ZipError::Truncated("directory entry fields"))?;
         let host = r.slice(pos + 5, 1).and_then(|b| b.first().copied()).unwrap_or(0);
         let attrs = r.u32_le(pos + 38).ok_or(ZipError::Truncated("entry attributes"))?;
-        let unix_mode = (host == 3).then_some(attrs >> 16);
+        let unix_mode = matches!(host, 3 | 19).then_some(attrs >> 16);
         let mut local = u64::from(r.u32_le(pos + 42).ok_or(ZipError::Truncated("directory entry"))?);
         let mut entry_disk = u32::from(r.u16_le(pos + 34).ok_or(ZipError::Truncated("directory entry"))?);
         let name_bytes = r.slice(pos + 46, name_len).ok_or(ZipError::Truncated("entry name"))?;
@@ -231,7 +231,7 @@ pub fn parse(data: &[u8], max_entries: usize) -> Result<ZipArchive, ZipError> {
         }
         let name = decode_name(name_bytes, flags).replace('\\', "/");
         entries.push(ZipEntry {
-            is_dir: name.ends_with('/') || unix_mode.is_some_and(|m| m & 0o170000 == 0o040000) || (matches!(host, 0 | 10) && attrs & 0x10 != 0),
+            is_dir: name.ends_with('/') || unix_mode.is_some_and(|m| m & 0o170000 == 0o040000) || (matches!(host, 0 | 10 | 14) && attrs & 0x10 != 0),
             name,
             method,
             flags,
@@ -409,11 +409,25 @@ mod tests {
     fn directory_markers_do_not_require_a_trailing_slash() {
         let sample = build(&[("folder", b"")]);
         let central = 30 + "folder".len();
-        for (host, attrs, directory) in [(0, 0x10u32, true), (10, 0x10, true), (3, 0o040755 << 16, true), (3, 0o120777 << 16, false), (0, 0x20, false)] {
+        for (host, attrs, directory, special) in [
+            (0, 0x10u32, true, None),
+            (10, 0x10, true, None),
+            (3, 0o040755 << 16, true, None),
+            (3, 0o120777 << 16, false, Some("symlink")),
+            (0, 0x20, false, None),
+            (14, 0x10, true, None),
+            (14, 0x20, false, None),
+            (19, 0o040755 << 16, true, None),
+            (19, 0o100644 << 16, false, None),
+            (19, 0o120777 << 16, false, Some("symlink")),
+            (42, 0x10, false, None),
+        ] {
             let mut file = sample.clone();
             file[central + 5] = host;
             file[central + 38..central + 42].copy_from_slice(&attrs.to_le_bytes());
-            assert_eq!(parse(&file, 1).unwrap().entries[0].is_dir, directory);
+            let archive = parse(&file, 1).unwrap();
+            let entry = &archive.entries[0];
+            assert_eq!((entry.is_dir, entry.special_kind()), (directory, special), "host {host}, attributes {attrs:#x}");
         }
     }
 
