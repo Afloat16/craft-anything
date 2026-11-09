@@ -1,7 +1,7 @@
 # Status
 
 What works today and how it was checked. The plan, owners and order of work are in
-[ROADMAP.md](ROADMAP.md). Last updated 2026-11-05. The baseline audit on 2026-10-23 from `main` had 923 tests passing;
+[ROADMAP.md](ROADMAP.md). Last updated 2026-11-09. The baseline audit on 2026-10-23 from `main` had 923 tests passing;
 workspace clippy, layers, fmt and the secret scan of all history were clean. Chinese UI checks are listed separately below.
 
 ## What works, and how it was checked
@@ -81,6 +81,7 @@ workspace clippy, layers, fmt and the secret scan of all history were clean. Chi
 | ELF dynamic library names | Needed libraries and dynamic path names stay within DT_STRSZ when the executable declares it. | An ELF64 fixture moves the bound to the beginning and to the terminator of a needed library name. |
 | Locate ELF core mapping names after the complete declared table | ELF core filenames follow the full declared mapping table. | Synthetic byte fixtures in `elf_core_file_name_count_cap` integration regressions. Cover 65,537 declared mappings with capped output, an impossible declared table, and a small complete mapping table. |
 | Keep DOS relocations inside the declared executable header | DOS relocation records stay inside the declared MZ header. | Synthetic byte fixtures in `dos_relocation_header_boundary` integration regressions. Cover records extending into the load module, a partial final record, and complete records ending exactly at the header boundary. |
+| Java constant-pool slots | Long and Double constants must fit their two declared pool slots; impossible final-slot entries return a malformed-format error without overflowing the cursor. | Synthetic `java_constant_pool_slots` regressions (4 tests): Long and Double entries at ordinary and maximum u16 boundaries, valid two-slot tail entries, ordinary constants and an existing class fixture.  [Full Linux gate](https://github.com/Afloat16/craft-anything/actions/runs/42629757277) passed at `e0dbc3a5b60b`. |
 | Java decompilation | `java_vineflower_decompile` decompiles a real JAR to source with the pinned Vineflower 1.12.0, run through the configured Java | Live run on Linux x86-64 (OpenJDK 21.0.12.1) against Apache Commons IO 2.16.1 (497 KB, 374 entries): 253 source files, exit 0; `org.apache.commons.io.FileUtils` returned 1,350 lines with the class and its file-reading methods present. The engine install matched the pinned SHA-256. Not checked: Windows and macOS, a `.class` input, or a second JAR |
 | Conversation width | Agent paragraphs, inline code and fenced code stay within the message column, including glossary terms followed by long file links (#523) | UI regression checks painted text and subsequent answers against the composer bounds in Project and Ask at 1920 × 1032 and 1280 × 820; Unicode/formatted glossary hover check |
 | Settings saved on exit | Pending app settings merge the session's latest AI table when its guard is available. A busy session defers non-AI edits in `config.pending.toml` without waiting for the tool; startup recovers them with the latest committed AI table | Isolated child-process regression exercises idle and busy exit saves, a late AI commit, startup recovery and pending non-AI edits; engine tests cover sidecar migrations and damaged/newer files. No live desktop shutdown was exercised |
