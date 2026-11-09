@@ -2,7 +2,7 @@
 
 Ten independent improvements are published in Afloat16/craft-anything from upstream base `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`. Each branch contains an earlier roadmap claim, a focused implementation, regression fixtures and corresponding roadmap/status updates.
 
-Confirmed upstream pull requests: **10**. Merged: **0**. Fork validation PRs and material/validation branches are excluded from contribution counts.
+Confirmed upstream pull requests: **10**. Merged: **1**. Fork validation PRs and material/validation branches are excluded from contribution counts.
 
 ## Source revisions and checks
 
