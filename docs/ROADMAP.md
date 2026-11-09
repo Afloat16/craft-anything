@@ -1367,8 +1367,9 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-asar-limit-bounds-20261107
 - [x] Keep .NET bundle member reads before the manifest.
       — claimed: Afloat16, branch bugfix/r3.12-dotnet-data-bounds-20261107
-- [ ] Bound retained Node SEA asset and argument metadata while still validating the complete blob layout.
+- [x] Bound retained Node SEA asset and argument metadata while still validating the complete blob layout.
       — claimed: Afloat16, branch bugfix/r3.12-node-sea-retained-budget-20261109
+      Source `ce34c2446499`; [format checks](https://github.com/Afloat16/claude-mem/actions/runs/42642329977/job/129246378958) and [compatibility gates](https://github.com/Afloat16/claude-mem/actions/runs/42642329977/job/129246378958) passed.
 - [x] Check the decoded byte count for packed files whose manifest declares their original size.
       — claimed: Afloat16, branch bugfix/r3.12-packed-member-size
 - [x] Decode all frames of concatenated Zstandard members and account for their combined output.
