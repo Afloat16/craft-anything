@@ -1685,8 +1685,8 @@
       "title": "Keep GNU sparse tar payloads out of regular-file extraction",
       "branch": "bugfix/r3.12-tar-pax-sparse-20261109",
       "latest_head": "5d18e4ee2a33fc75e84d2322160b0a02100b755f",
-      "source_sha": "576b1d0bc3b9ac26b00bfa748de20ca7b44bb702",
-      "source_url": "https://github.com/Afloat16/craft-anything/commit/576b1d0bc3b9ac26b00bfa748de20ca7b44bb702",
+      "source_sha": "5d18e4ee2a33fc75e84d2322160b0a02100b755f",
+      "source_url": "https://github.com/Afloat16/craft-anything/commit/5d18e4ee2a33fc75e84d2322160b0a02100b755f",
       "base": "1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1",
       "claim_sha": "30337ecef0ff0e0d9d66255e45501fd4d3697978",
       "files": [
@@ -1699,18 +1699,18 @@
         "sparse_metadata_survives_other_extension_headers"
       ],
       "deduplication": "GNU sparse PAX interpretation and extraction classification; existing old-GNU type S and PAX framing fixes do not cover it.",
-      "body": "## Problem\nGNU PAX sparse archives store extents (and, in version 1.0, a sparse map) instead of the full logical file. The tar walker ignored the sparse metadata and listed these bytes as an ordinary file, allowing extraction of incorrect contents.\n\n## Change\nRecognize GNU.sparse metadata, retain GNU.sparse.name when present, and mark the member unsupported with an explicit reconstruction warning. Carry this state across extension headers and clear it after the member, so following ordinary files remain readable.\n\n## Validation\nAdded original synthetic sparse 0.0/0.1/1.0 fixtures, member alignment and following-file controls, plus intervening GNU/PAX extensions.\n\nExact source commit `576b1d0bc3b9ac26b00bfa748de20ca7b44bb702` passed formatting, all 1043 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `gnu_sparse_pax_members_are_not_regular_file_bytes` and `sparse_metadata_survives_other_extension_headers`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386).\n\nBranch head `5d18e4ee2a33fc75e84d2322160b0a02100b755f` merges upstream `cdc8a880f1e60bce757ebac59e3f7983f084a1f8` with both parents retained. [Exact-head verification](https://github.com/Afloat16/claude-mem/actions/runs/42653593224) is in progress; the successful checks above refer to the earlier verified source.\n\nRoadmap: R3.12.",
-      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-tar-pax-sparse-20261109?expand=1&title=Keep%20GNU%20sparse%20tar%20payloads%20out%20of%20regular-file%20extraction&body=%23%23%20Problem%0AGNU%20PAX%20sparse%20archives%20store%20extents%20(and%2C%20in%20version%201.0%2C%20a%20sparse%20map)%20instead%20of%20the%20full%20logical%20file.%20The%20tar%20walker%20ignored%20the%20sparse%20metadata%20and%20listed%20these%20bytes%20as%20an%20ordinary%20file%2C%20allowing%20extraction%20of%20incorrect%20contents.%0A%0A%23%23%20Change%0ARecognize%20GNU.sparse%20metadata%2C%20retain%20GNU.sparse.name%20when%20present%2C%20and%20mark%20the%20member%20unsupported%20with%20an%20explicit%20reconstruction%20warning.%20Carry%20this%20state%20across%20extension%20headers%20and%20clear%20it%20after%20the%20member%2C%20so%20following%20ordinary%20files%20remain%20readable.%0A%0A%23%23%20Validation%0AAdded%20original%20synthetic%20sparse%200.0%2F0.1%2F1.0%20fixtures%2C%20member%20alignment%20and%20following-file%20controls%2C%20plus%20intervening%20GNU%2FPAX%20extensions.%0A%0AExact%20source%20commit%20%60576b1d0bc3b9ac26b00bfa748de20ca7b44bb702%60%20passed%20formatting%2C%20all%201043%20formats%20tests%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140%2Fjob%2F129272016386).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60gnu_sparse_pax_members_are_not_regular_file_bytes%60%20and%20%60sparse_metadata_survives_other_extension_headers%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ALayers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20an%20unchanged%20Cargo.lock%20also%20passed%20for%20this%20exact%20revision%20in%20%5Bthe%20supplementary%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140%2Fjob%2F129272016386).%0A%0ABranch%20head%20%605d18e4ee2a33fc75e84d2322160b0a02100b755f%60%20merges%20upstream%20%60cdc8a880f1e60bce757ebac59e3f7983f084a1f8%60%20with%20both%20parents%20retained.%20%5BExact-head%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42653593224)%20is%20in%20progress%3B%20the%20successful%20checks%20above%20refer%20to%20the%20earlier%20verified%20source.%0A%0ARoadmap%3A%20R3.12.",
+      "body": "## Problem\nGNU PAX sparse archives store extents (and, in version 1.0, a sparse map) instead of the full logical file. The tar walker ignored the sparse metadata and listed these bytes as an ordinary file, allowing extraction of incorrect contents.\n\n## Change\nRecognize GNU.sparse metadata, retain GNU.sparse.name when present, and mark the member unsupported with an explicit reconstruction warning. Carry this state across extension headers and clear it after the member, so following ordinary files remain readable.\n\n## Validation\nAdded original synthetic sparse 0.0/0.1/1.0 fixtures, member alignment and following-file controls, plus intervening GNU/PAX extensions.\n\nExact source commit `5d18e4ee2a33fc75e84d2322160b0a02100b755f` passed formatting, the complete formats test suite, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `gnu_sparse_pax_members_are_not_regular_file_bytes` and `sparse_metadata_survives_other_extension_headers`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135).\n\nBranch head `5d18e4ee2a33fc75e84d2322160b0a02100b755f` merges upstream `cdc8a880f1e60bce757ebac59e3f7983f084a1f8` with both parents retained; the exact merged source passed the verification above.\n\nRoadmap: R3.12.",
+      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-tar-pax-sparse-20261109?expand=1&title=Keep%20GNU%20sparse%20tar%20payloads%20out%20of%20regular-file%20extraction&body=%23%23%20Problem%0AGNU%20PAX%20sparse%20archives%20store%20extents%20(and%2C%20in%20version%201.0%2C%20a%20sparse%20map)%20instead%20of%20the%20full%20logical%20file.%20The%20tar%20walker%20ignored%20the%20sparse%20metadata%20and%20listed%20these%20bytes%20as%20an%20ordinary%20file%2C%20allowing%20extraction%20of%20incorrect%20contents.%0A%0A%23%23%20Change%0ARecognize%20GNU.sparse%20metadata%2C%20retain%20GNU.sparse.name%20when%20present%2C%20and%20mark%20the%20member%20unsupported%20with%20an%20explicit%20reconstruction%20warning.%20Carry%20this%20state%20across%20extension%20headers%20and%20clear%20it%20after%20the%20member%2C%20so%20following%20ordinary%20files%20remain%20readable.%0A%0A%23%23%20Validation%0AAdded%20original%20synthetic%20sparse%200.0%2F0.1%2F1.0%20fixtures%2C%20member%20alignment%20and%20following-file%20controls%2C%20plus%20intervening%20GNU%2FPAX%20extensions.%0A%0AExact%20source%20commit%20%605d18e4ee2a33fc75e84d2322160b0a02100b755f%60%20passed%20formatting%2C%20the%20complete%20formats%20test%20suite%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42653593224%2Fjob%2F129286113135).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60gnu_sparse_pax_members_are_not_regular_file_bytes%60%20and%20%60sparse_metadata_survives_other_extension_headers%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ALayers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20an%20unchanged%20Cargo.lock%20also%20passed%20for%20this%20exact%20revision%20in%20%5Bthe%20supplementary%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42653593224%2Fjob%2F129286113135).%0A%0ABranch%20head%20%605d18e4ee2a33fc75e84d2322160b0a02100b755f%60%20merges%20upstream%20%60cdc8a880f1e60bce757ebac59e3f7983f084a1f8%60%20with%20both%20parents%20retained%3B%20the%20exact%20merged%20source%20passed%20the%20verification%20above.%0A%0ARoadmap%3A%20R3.12.",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-tar-pax-sparse-20261109",
       "validation": {
         "status": "success",
-        "source_sha": "576b1d0bc3b9ac26b00bfa748de20ca7b44bb702",
+        "source_sha": "5d18e4ee2a33fc75e84d2322160b0a02100b755f",
         "fork_validation_pr": "https://github.com/Afloat16/craft-anything/pull/21",
         "runs_url": "https://github.com/Afloat16/craft-anything/actions?query=branch%3Abugfix%2Fr3.12-tar-pax-sparse-20261109",
         "l0_gates": {
           "status": "success",
-          "source_sha": "576b1d0bc3b9ac26b00bfa748de20ca7b44bb702",
-          "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
+          "source_sha": "5d18e4ee2a33fc75e84d2322160b0a02100b755f",
+          "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42653593224",
           "step": "Archive 9 L0 gates",
           "commands": [
             "cargo run --locked -p xtask -- layers",
@@ -1719,10 +1719,10 @@
             "cargo run --locked -p xtask -- wasm",
             "git diff --exit-code -- Cargo.lock"
           ],
-          "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386"
+          "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135"
         },
-        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
-        "passed_tests": 1043,
+        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135",
+        "passed_tests": null,
         "commands": [
           "cargo fmt --all -- --check",
           "cargo test --locked -p craft-anything-formats",
@@ -1735,7 +1735,7 @@
         ],
         "baseline_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582",
         "fork_validation_state": "closed",
-        "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
+        "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42653593224",
         "confirmed_steps": [
           "Archive 9 formatting",
           "Archive 9 regression tests",
@@ -1785,7 +1785,7 @@
           "576b1d0bc3b9ac26b00bfa748de20ca7b44bb702",
           "cdc8a880f1e60bce757ebac59e3f7983f084a1f8"
         ],
-        "validation_status": "in_progress",
+        "validation_status": "success",
         "validation_run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42653593224",
         "validation_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135"
       },
@@ -1861,6 +1861,62 @@
             ],
             "baseline_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582",
             "fork_validation_state": "closed"
+          },
+          "documentation_followup": {
+            "sha": "764269976093b101de197c9c5b2bf2a1f4418109",
+            "source_sha": "daaeb4fe6c2db3f805fb9b02f9fbdfe55d80eb4a",
+            "files": [
+              "docs/ROADMAP.md",
+              "docs/STATUS.md"
+            ],
+            "source_files_unchanged": true
+          }
+        },
+        {
+          "source_sha": "576b1d0bc3b9ac26b00bfa748de20ca7b44bb702",
+          "validation": {
+            "status": "success",
+            "source_sha": "576b1d0bc3b9ac26b00bfa748de20ca7b44bb702",
+            "fork_validation_pr": "https://github.com/Afloat16/craft-anything/pull/21",
+            "runs_url": "https://github.com/Afloat16/craft-anything/actions?query=branch%3Abugfix%2Fr3.12-tar-pax-sparse-20261109",
+            "l0_gates": {
+              "status": "success",
+              "source_sha": "576b1d0bc3b9ac26b00bfa748de20ca7b44bb702",
+              "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
+              "step": "Archive 9 L0 gates",
+              "commands": [
+                "cargo run --locked -p xtask -- layers",
+                "cargo run --locked -p xtask -- locks",
+                "cargo run --locked -p xtask -- secrets",
+                "cargo run --locked -p xtask -- wasm",
+                "git diff --exit-code -- Cargo.lock"
+              ],
+              "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386"
+            },
+            "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
+            "passed_tests": 1043,
+            "commands": [
+              "cargo fmt --all -- --check",
+              "cargo test --locked -p craft-anything-formats",
+              "cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings"
+            ],
+            "scope": "Exact source: complete formats tests, formatting, all-targets clippy and L0 gates.",
+            "baseline_failures": [
+              "gnu_sparse_pax_members_are_not_regular_file_bytes",
+              "sparse_metadata_survives_other_extension_headers"
+            ],
+            "baseline_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582",
+            "fork_validation_state": "closed",
+            "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
+            "confirmed_steps": [
+              "Archive 9 formatting",
+              "Archive 9 regression tests",
+              "Archive 9 clippy",
+              "Archive 9 L0 gates"
+            ],
+            "ignored_tests": 0,
+            "log_results": 110,
+            "exact_sha_in_log": true
           },
           "documentation_followup": {
             "sha": "764269976093b101de197c9c5b2bf2a1f4418109",
