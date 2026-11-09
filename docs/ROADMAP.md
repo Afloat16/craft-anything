@@ -1469,6 +1469,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-wasm-debug-names
 - [x] Decode the full signed 32-bit source map VLQ range and refuse mapping fields outside it.
       — claimed: Afloat16, branch bugfix/r3.12-sourcemap-vlq-range
+- [ ] Group Go functions by the declaring package when a generic argument names another import path.
+      — claimed: Afloat16, branch bugfix/r3.12-go-generic-owner
 - [x] Keep Go function tables and names within their section.
       — claimed: Afloat16, branch bugfix/r3.12-go-pclntab-section-boundary-20261105
 - [x] Keep the report's function display limit from marking a valid large WebAssembly module as mismatched.
