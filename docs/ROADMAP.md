@@ -1385,7 +1385,7 @@ Owner: open · Status: in progress
       (#606–#615, by Afloat16)
 - [x] Bound filesystem and archive recovery by the recorded image, node, directory and member limits.
       — claimed: Afloat16, branch bugfix/r3.12-filesystem-archive-bounds
-- [ ] Exercise signed PAX lengths, empty keys and equals signs inside a path value.
+- [x] Exercise signed PAX lengths, empty keys and equals signs inside a path value.
       — claimed: Afloat16, branch bugfix/r3.12-pax-record-framing
 - [x] Bound and cancel CRC cpio verification across firmware probes, and reject non-hex checksum
       fields — claimed: Afloat16, branch bugfix/r3.12-bound-cpio-crc-scans-20261103

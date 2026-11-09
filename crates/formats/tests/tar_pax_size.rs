@@ -50,8 +50,8 @@ fn pax_record(key: &str, value: &str) -> String {
 }
 
 #[test]
-fn pax_requires_a_newline_at_the_declared_record_boundary() {
-    for invalid in [b"10 size=3!".as_slice(), b"10 size=3!\n", b"20 size=3\n"] {
+fn malformed_pax_framing_stops_the_listing() {
+    for invalid in [b"10 size=3!".as_slice(), b"10 size=3!\n", b"20 size=3\n", b"+12 path=no\n", b"5 =x\n", b"12 path=a=b\n11 path=bad"] {
         let archive = fx::tar_entries(&[("keep", b'0', b"one", ""), ("PaxHeader", b'x', invalid, ""), ("after", b'0', b"two", "")]);
         let listing = tar(&archive, 10).unwrap();
         assert!(!listing.complete);
@@ -59,6 +59,14 @@ fn pax_requires_a_newline_at_the_declared_record_boundary() {
         assert_eq!(listing.members[0].name, "keep");
         assert!(listing.warnings.iter().any(|s| s.contains("pax")));
     }
+}
+
+#[test]
+fn pax_path_can_contain_an_equals_sign() {
+    let archive = fx::tar_entries(&[("PaxHeader", b'x', b"12 path=a=b\n", ""), ("short", b'0', b"ok", "")]);
+    let listing = tar(&archive, 10).unwrap();
+    assert!(listing.complete);
+    assert_eq!(listing.members[0].name, "a=b");
 }
 
 #[test]
