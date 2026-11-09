@@ -126,7 +126,7 @@ impl KeyedArchive {
         }
     }
 
-    /// Project the object graph below `idx` into JSON.
+    /// Project the object graph below `idx` into JSON. Inline containers beyond the depth limit become `{"$note": "projection limit"}`.
     pub fn project(&self, idx: u64) -> Json {
         let mut p = Projector { a: self, expanded: HashSet::new(), nodes: 0, bytes_left: MAX_REFERENCED_BYTES };
         p.uid(idx, 0)
@@ -183,6 +183,7 @@ impl Projector<'_> {
             return self.uid(u, depth + 1);
         }
         match v {
+            Value::Array(_) | Value::Dict(_) if depth > MAX_PROJECT_DEPTH => json!({"$note": "projection limit"}),
             Value::Array(items) => Json::Array(items.iter().map(|x| self.value(x, depth + 1)).collect()),
             Value::Dict(entries) => Json::Object(entries.iter().map(|(k, v)| (k.clone(), self.value(v, depth + 1))).collect()),
             other => other.to_json(),
@@ -344,6 +345,22 @@ mod tests {
         assert_eq!(projected[0]["nested"], "leaf");
         assert_eq!(projected[1]["$ref"], 1);
         assert_eq!(a.project(4)["$ref"], 4);
+    }
+
+    #[test]
+    fn projection_limits_inline_containers_and_keeps_sibling_values() {
+        let mut nested = Value::Bool(true);
+        for depth in (1..=MAX_PROJECT_DEPTH + 1).rev() {
+            nested = if depth % 2 == 0 { Value::Dict(vec![("next".into(), nested)]) } else { Value::Array(vec![nested]) };
+        }
+        let a = KeyedArchive { archiver: String::new(), version: None, top: vec![], objects: vec![Value::Array(vec![nested, Value::Bool(false)])] };
+        let out = a.project(0);
+        let mut cursor = &out[0];
+        for depth in 1..=MAX_PROJECT_DEPTH {
+            cursor = if depth % 2 == 0 { &cursor["next"] } else { &cursor[0] };
+        }
+        assert_eq!(cursor, &json!({"$note": "projection limit"}));
+        assert_eq!(out[1], false);
     }
 
     #[test]
