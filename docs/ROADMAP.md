@@ -1323,8 +1323,6 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [x] Require evidence of a rejecting payment branch before labelling EVM functions nonpayable; reading CALLVALUE alone accepts payments.
-      — claimed: Afloat16, branch bugfix/r3.12-evm-payment-guards
 - [x] Bound rejected ASAR names by the archive listing limit.
       — claimed: Afloat16, branch bugfix/r3.12-asar-limit-bounds-20261107
 - [x] Keep .NET bundle member reads before the manifest.
@@ -1413,6 +1411,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-iostore-complete-header-20261105
 - [x] Reject CBOR collections that exceed the EVM metadata reader's limits and invalid text strings.
       — claimed: Afloat16, branch bugfix/r3.12-evm-cbor
+- [x] Require evidence of a rejecting payment branch before labelling EVM functions nonpayable; reading CALLVALUE alone accepts payments.
+      — claimed: Afloat16, branch bugfix/r3.12-evm-payment-guards
 - [x] Reject invalid marshal long integer digits.
       — claimed: Afloat16, branch bugfix/r3.12-pyc-long-limb-validation-20261105
 - [x] Check expanded RGBA image sizes and enforce output budgets before allocation.
