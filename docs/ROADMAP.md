@@ -1281,7 +1281,7 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Decode service bindings, SSH fingerprints, TLS associations, naming-authority pointers, URI answers and delegated-name redirects from captures.
+- [x] Decode service bindings, SSH fingerprints, TLS associations, naming-authority pointers, URI answers and delegated-name redirects from captures.
       — claimed: Afloat16, branch feature/r3.12-dns-service-bindings
 - [x] Bound rejected ASAR names by the archive listing limit.
       — claimed: Afloat16, branch bugfix/r3.12-asar-limit-bounds-20261107
