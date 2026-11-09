@@ -481,11 +481,7 @@ mod tests {
                 sparse_body.resize(512, 0);
             }
             sparse_body.extend_from_slice(b"abc");
-            let data = fx::tar_entries(&[
-                ("metadata", b'x', &metadata, ""),
-                ("stored-name", b'0', &sparse_body, ""),
-                ("normal", b'0', b"ordinary", ""),
-            ]);
+            let data = fx::tar_entries(&[("metadata", b'x', &metadata, ""), ("stored-name", b'0', &sparse_body, ""), ("normal", b'0', b"ordinary", "")]);
             let listing = tar(&data, 10).unwrap();
             assert!(listing.complete, "{:?}", listing.warnings);
             assert_eq!(listing.members.len(), 2);
