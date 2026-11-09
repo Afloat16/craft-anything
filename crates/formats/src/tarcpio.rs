@@ -64,6 +64,9 @@ fn octal(f: &[u8]) -> Option<u64> {
     if let Some((&first, rest)) = f.split_first()
         && first & 0x80 != 0
     {
+        if first & 0x40 != 0 {
+            return None; // This field holds an unsigned value.
+        }
         let mut v = u64::from(first & 0x7f);
         for &b in rest {
             v = v.checked_mul(256)?.checked_add(u64::from(b))?;
@@ -426,6 +429,7 @@ mod tests {
         assert_eq!(octal(b"  \0"), Some(0));
         assert_eq!(octal(b"9"), None);
         assert_eq!(octal(&[0x80, 0, 0, 1, 0]), Some(256));
+        assert_eq!(octal(&[0xff; 8]), None);
         assert_eq!(octal(&[0xff; 12]), None);
     }
 
