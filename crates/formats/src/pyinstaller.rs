@@ -314,10 +314,7 @@ impl PackedFormat for PyInstaller {
             truncated = true;
         }
         let payload_end = (cookie.start + cookie.toc_at) as u64;
-        let outside = members
-            .iter()
-            .filter(|m| m.entry.offset.checked_add(m.entry.stored_size).is_none_or(|end| end > payload_end))
-            .count();
+        let outside = members.iter().filter(|m| m.entry.offset.checked_add(m.entry.stored_size).is_none_or(|end| end > payload_end)).count();
         if outside > 0 {
             notes.push(format!("{outside} member(s) lie outside the CArchive payload and cannot be read."));
         }
@@ -433,24 +430,15 @@ mod tests {
         }
     }
 
-
     #[test]
     fn members_cannot_read_the_table_cookie_or_signed_tail() {
         for new_cookie in [false, true] {
-            let original = pyinstaller(
-                &[("bad", b'x', b"bad", false), ("good", b'x', b"ok", false), ("runtime", b'o', b"", false)],
-                new_cookie,
-                312,
-            );
+            let original = pyinstaller(&[("bad", b'x', b"bad", false), ("good", b'x', b"ok", false), ("runtime", b'o', b"", false)], new_cookie, 312);
             let cookie = find_cookie(&original).unwrap();
             let table = cookie.start + cookie.toc_at;
-            for offset in [
-                cookie.toc_at as u32 - 2,
-                cookie.toc_at as u32,
-                (cookie.toc_at + cookie.toc_len) as u32,
-                (original.len() - cookie.start) as u32,
-                u32::MAX,
-            ] {
+            for offset in
+                [cookie.toc_at as u32 - 2, cookie.toc_at as u32, (cookie.toc_at + cookie.toc_len) as u32, (original.len() - cookie.start) as u32, u32::MAX]
+            {
                 let mut data = original.clone();
                 data.extend([0x55; 32]);
                 data[table + 4..table + 8].copy_from_slice(&offset.to_be_bytes());
