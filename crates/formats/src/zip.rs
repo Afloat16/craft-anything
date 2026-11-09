@@ -338,6 +338,13 @@ pub fn read_entry_unverified(data: &[u8], e: &ZipEntry, max_bytes: u64) -> Resul
             miniz_oxide::inflate::TINFLStatus::HasMoreOutput => ZipError::TooLarge(max_bytes),
             _ => ZipError::Corrupt(format!("deflate stream for {} is damaged", e.name)),
         })?,
+        12 | 95 => {
+            let decoded = if e.method == 12 { crate::decompress::bzip2(raw, max_bytes) } else { crate::decompress::xz(raw, max_bytes) };
+            decoded.map_err(|error| match error {
+                crate::decompress::DecompressError::TooLarge => ZipError::TooLarge(max_bytes),
+                _ => ZipError::Corrupt(format!("{} stream for {} is damaged: {error}", e.method_name(), e.name)),
+            })?
+        }
         93 => crate::decompress::zstd(raw, max_bytes).map_err(|err| ZipError::Corrupt(format!("zstd stream for {} is damaged: {err}", e.name)))?,
         m => return Err(ZipError::Unsupported(format!("compression method {m} ({}) for {}", e.method_name(), e.name))),
     };
@@ -399,6 +406,46 @@ mod tests {
         out.extend_from_slice(&cd_off.to_le_bytes());
         out.extend_from_slice(&0u16.to_le_bytes());
         out
+    }
+
+
+    fn build_codec_entry(method: u16, compressed: &[u8], plain: &[u8]) -> Vec<u8> {
+        let mut file = build(&[("entry", compressed)]);
+        let central = 30 + "entry".len() + compressed.len();
+        let version: u16 = if method == 12 { 46 } else { 63 };
+        file[4..6].copy_from_slice(&version.to_le_bytes());
+        file[8..10].copy_from_slice(&method.to_le_bytes());
+        file[14..18].copy_from_slice(&crc32(plain).to_le_bytes());
+        file[22..26].copy_from_slice(&(plain.len() as u32).to_le_bytes());
+        file[central + 6..central + 8].copy_from_slice(&version.to_le_bytes());
+        file[central + 10..central + 12].copy_from_slice(&method.to_le_bytes());
+        file[central + 16..central + 20].copy_from_slice(&crc32(plain).to_le_bytes());
+        file[central + 24..central + 28].copy_from_slice(&(plain.len() as u32).to_le_bytes());
+        file
+    }
+
+    #[test]
+    fn bzip2_and_xz_zip_entries_keep_size_crc_and_output_checks() {
+        use craft_anything_testkit::firmware::{BZIP2_FIXTURE, BZIP2_PLAIN, XZ_FIXTURE, XZ_PLAIN};
+        for (method, compressed, plain) in [(12, BZIP2_FIXTURE, BZIP2_PLAIN), (95, XZ_FIXTURE, XZ_PLAIN)] {
+            let file = build_codec_entry(method, compressed, plain);
+            let original = parse(&file, 1).unwrap().entries.remove(0);
+            assert_eq!(read_entry(&file, &original, plain.len() as u64).unwrap(), plain);
+            let mut entry = original.clone();
+            entry.crc32 ^= 1;
+            assert!(matches!(read_entry(&file, &entry, 100), Err(ZipError::CrcMismatch { .. })));
+            assert_eq!(read_entry_unverified(&file, &entry, 100).unwrap(), plain);
+            entry = original.clone();
+            entry.uncompressed_size = 0;
+            assert!(matches!(read_entry(&file, &entry, 100), Err(ZipError::Corrupt(_))));
+            assert!(matches!(read_entry(&file, &entry, plain.len() as u64 - 1), Err(ZipError::TooLarge(_))));
+            let mut damaged = file.clone();
+            damaged[30 + "entry".len()] ^= 0xff;
+            assert!(matches!(read_entry(&damaged, &original, 100), Err(ZipError::Corrupt(_))));
+            entry = original;
+            entry.encrypted = true;
+            assert!(matches!(read_entry(&file, &entry, 100), Err(ZipError::Unsupported(_))));
+        }
     }
 
     fn build_named_entry(name: &[u8], flags: u16) -> Vec<u8> {

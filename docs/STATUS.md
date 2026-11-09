@@ -8,6 +8,7 @@ workspace clippy, layers, fmt and the secret scan of all history were clean. Chi
 
 | Area | State | Verified by |
 |---|---|---|
+| ZIP bzip2 and XZ members | Extract methods 12 and 95 with the existing pure-Rust decoders, output limits, declared-size checks and CRC verification. | Full ZIP fixtures carry known-good bzip2/XZ streams; controls cover damaged data, understated sizes, limits, CRC mismatches and encryption. |
 | PyInstaller PYZ resources | Legacy data members unpack with their original bytes and names. Empty namespace packages are listed as metadata. Older namespaces with code still unpack as packages. | List- and dictionary-form PYZ fixtures with mixed member types. |
 | Binary property-list object types | Accepts compatible version-zero minor signatures and rejects unsupported major versions, invalid simple/date markers and unrepresentable non-string dictionary keys. | Typed binary fixtures with valid null, string-key and date controls. |
 | Limited string scans | The earliest printable strings are retained in address order across narrow and UTF-16LE encodings. | Interleaved binary fixture with every result limit from zero to four. |
