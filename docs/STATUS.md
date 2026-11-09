@@ -1,7 +1,7 @@
 # Status
 
 What works today and how it was checked. The plan, owners and order of work are in
-[ROADMAP.md](ROADMAP.md). Last updated 2026-11-05. The baseline audit on 2026-10-23 from `main` had 923 tests passing;
+[ROADMAP.md](ROADMAP.md). Last updated 2026-11-09. The baseline audit on 2026-10-23 from `main` had 923 tests passing;
 workspace clippy, layers, fmt and the secret scan of all history were clean. Chinese UI checks are listed separately below.
 
 ## What works, and how it was checked
@@ -52,6 +52,7 @@ workspace clippy, layers, fmt and the secret scan of all history were clean. Chi
 | ZIP Unicode member names | Names in valid Info-ZIP Unicode Path extra fields are used when the legacy filename checksum matches and the main UTF-8 flag is clear. | ZIP parser controls for a valid override, stale checksum, unknown version and UTF-8 flag precedence. |
 | Locate Unity bundle metadata within the declared bundle size | Unity bundle metadata placement respects the declared bundle extent. | Synthetic byte fixtures in `unity_bundle_declared_size` integration regressions. Cover versions 6 through 8, front and trailing tables, padding, appended bytes, invalid extents, and header-only prefixes of larger bundles. |
 | Keep Unity bundle blocks inside the data region | The shared table parser refuses compressed block totals crossing the trailing table or the declared bundle end before listing or extraction can read block contents. | Synthetic `unity_bundle_data_region` regressions cover versions 6–8, both table positions, data alignment, appended bytes, cumulative sizes above 32 bits, exact fits, spare bytes and empty blocks. No real game bundle was run for this correction. |
+| Unity serialized metadata ranges | Metadata reads require a complete declared metadata range within the file and before object data. Short inputs and impossible public Header ranges return errors. | Synthetic `unity_metadata_range` regressions (4 tests): Every prefix before the metadata end, shortened declared metadata, arithmetic overflow and impossible public Header ranges, plus equality of full-file and exact-prefix results.  [Format checks](https://github.com/Afloat16/claude-mem/actions/runs/42633003467/job/129213811357) and [compatibility gates](https://github.com/Afloat16/claude-mem/actions/runs/42642583301/job/129247271153) passed at `de9d7444f509`. |
 | Reject Unity serialized objects outside their declared file | Unity serialized object ranges must fit the declared file. | Synthetic byte fixtures in `unity_serialized_object_ranges` integration regressions. Cover offset and end overflow, ranges crossing the file boundary, both byte orders, valid existing objects, and empty objects at EOF. |
 | Preserve compression method slots in Unreal pak indexes | PAK compression names retain their original method numbers. | Synthetic byte fixtures in `unreal_pak_compression_slots` integration regressions. Cover interior and leading empty slots in plain and packed indexes, plus unchanged contiguous method tables. |
 | Require complete terminators in Unreal FString values | PAK and IoStore strings require complete terminators. | Synthetic byte fixtures in `unreal_fstring_terminators` integration regressions. Cover missing ANSI and UTF-16 terminators, zero-length strings, terminated empty strings, Unicode names, and the shared IoStore path. |
