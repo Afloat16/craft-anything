@@ -1361,6 +1361,8 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
+- [ ] Keep PE entry points, import slots and exception function starts from wrapping image-base arithmetic into unrelated addresses.
+      — claimed: Afloat16, branch bugfix/r3.12-pe-virtual-address-overflow-20261109
 - [x] Extract legacy PyInstaller PYZ data as raw files and report modern namespace packages without fabricating bytecode.
       — claimed: Afloat16, branch bugfix/r3.12-pyz-member-kinds
 - [x] Bound rejected ASAR names by the archive listing limit.
