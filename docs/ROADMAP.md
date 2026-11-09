@@ -1260,8 +1260,6 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Keep Android binary XML events within their document, chunk and attribute bounds.
-      — claimed: Afloat16, branch bugfix/r3.12-android-xml-events
 - [x] Bound rejected ASAR names by the archive listing limit.
       — claimed: Afloat16, branch bugfix/r3.12-asar-limit-bounds-20261107
 - [x] Keep .NET bundle member reads before the manifest.
@@ -1366,6 +1364,8 @@ Owner: open · Status: in progress
 - [x] Check ClientHello vector lengths and extension values before reporting the handshake as complete.
       — claimed: Afloat16, branch bugfix/r3.12-tls-client-hello-values
 
+- [x] Keep Android binary XML events within their document, chunk and attribute bounds.
+      — claimed: Afloat16, branch bugfix/r3.12-android-xml-events
 - [x] Address the combined parser review: preserve partial Java reference coverage,
       enforce DEX signed 32-bit LEB128 limits, recover legacy AAPT UTF-8 lengths within
       their pool with a shared recovery probe limit, and distinguish missing ext indirect
