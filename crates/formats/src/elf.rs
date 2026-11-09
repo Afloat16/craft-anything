@@ -349,18 +349,15 @@ fn add_dynamic_symbols(b: &mut Binary, ds: DynamicSymbols) {
     }
     let mut exports: BTreeSet<(String, u64)> = b.exports.iter().map(|s| (s.name.clone(), s.addr)).collect();
     let room = MAX_IMPORTS.saturating_sub(b.exports.len());
-    b.exports.extend(
-        ds.exports.iter().filter(|s| exports.insert((s.name.clone(), s.addr))).take(room).map(|s| Export { name: s.name.clone(), addr: s.addr }),
-    );
+    b.exports.extend(ds.exports.iter().filter(|s| exports.insert((s.name.clone(), s.addr))).take(room).map(|s| Export { name: s.name.clone(), addr: s.addr }));
     let mut imports: BTreeSet<(String, Option<String>)> = b.imports.iter().map(|s| (s.name.clone(), s.library.clone())).collect();
     let room = MAX_IMPORTS.saturating_sub(b.imports.len());
-    b.imports.extend(
-        ds.imports
-            .into_iter()
-            .filter(|s| imports.insert((s.name.clone(), s.library.clone())))
-            .take(room)
-            .map(|s| Import { name: s.name, library: s.library, ordinal: None, slot: None }),
-    );
+    b.imports.extend(ds.imports.into_iter().filter(|s| imports.insert((s.name.clone(), s.library.clone()))).take(room).map(|s| Import {
+        name: s.name,
+        library: s.library,
+        ordinal: None,
+        slot: None,
+    }));
 }
 
 // ---------------------------------------------------------------------------------------------
