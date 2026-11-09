@@ -1493,6 +1493,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-tensor-zero-dimension-product-20261105
 - [x] Find APK signatures through valid ZIP comments and framed central directories.
       — claimed: Afloat16, branch bugfix/r3.12-apk-sign-eocd-comment-boundary-20261105
+- [ ] Keep Android resource packages, child chunks and library records inside their enclosing declared ranges.
+      — claimed: Afloat16, branch bugfix/r3.12-arsc-parent-chunk-boundaries-20261109
 - [x] Keep explicit script and variant subtags when grouping Android resource strings by locale.
       — claimed: Afloat16, branch bugfix/r3.12-android-script-locale
 - [x] Read 16-bit native pointers without consuming adjacent bytes.
