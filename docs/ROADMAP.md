@@ -1260,6 +1260,8 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
+- [ ] Keep Android binary XML events within their document, chunk and attribute bounds.
+      — claimed: Afloat16, branch bugfix/r3.12-android-xml-events
 - [x] Bound rejected ASAR names by the archive listing limit.
       — claimed: Afloat16, branch bugfix/r3.12-asar-limit-bounds-20261107
 - [x] Keep .NET bundle member reads before the manifest.
