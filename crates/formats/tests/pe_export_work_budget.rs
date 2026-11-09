@@ -12,13 +12,7 @@ fn fixture(functions: usize, names: usize) -> Vec<u8> {
     data.resize(text + 16, 0);
     data[FUNCTIONS..].fill(0);
     let rva = |offset: usize| 0x3000 + (offset - FUNCTIONS) as u32;
-    for (at, value) in [
-        (0x7b4, functions as u32),
-        (0x7b8, names as u32),
-        (0x7bc, rva(FUNCTIONS)),
-        (0x7c0, rva(name_table)),
-        (0x7c4, rva(ordinal_table)),
-    ] {
+    for (at, value) in [(0x7b4, functions as u32), (0x7b8, names as u32), (0x7bc, rva(FUNCTIONS)), (0x7c0, rva(name_table)), (0x7c4, rva(ordinal_table))] {
         data[at..at + 4].copy_from_slice(&value.to_le_bytes());
     }
     let section = 0x98 + 240 + 2 * 40;
