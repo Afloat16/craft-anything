@@ -673,7 +673,10 @@ fn parse_object(data: &[u8], slice_offset: u64) -> Result<Binary, FormatError> {
     }
     let slots: Vec<Option<u64>> = b.imports.iter().map(|i| slot_of.get(i.name.as_str()).copied()).collect();
     for (imp, slot) in b.imports.iter_mut().zip(slots) {
-        imp.slot = slot;
+        // PE enrichment leaves rejected addresses unknown; another row cannot supply that slot.
+        if format != Format::Pe || imp.slot.is_some() {
+            imp.slot = slot;
+        }
     }
     let canary_names = ["__stack_chk_fail", "___stack_chk_fail", "__security_check_cookie", "__stack_chk_guard", "___stack_chk_guard"];
     let has = |n: &str| b.imports.iter().any(|i| i.name == n) || b.symbols.iter().any(|s| s.name == n);
