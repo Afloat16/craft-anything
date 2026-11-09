@@ -369,7 +369,8 @@ pub fn enrich(data: &[u8], b: &mut Binary) {
             let desc = r.u16_le(e + 6)?;
             Some((r.cstr(stroff as usize + strx as usize, (strsize - strx) as usize)?, desc))
         };
-        for s in &sections {
+        let mut remaining = MAX_INDIRECT;
+        'sections: for s in &sections {
             let ty = s.flags & 0xff;
             let (entsize, kind) = match ty {
                 6 | 7 | 0x10 => (if is64 { 8 } else { 4 }, "slot"),
@@ -379,12 +380,17 @@ pub fn enrich(data: &[u8], b: &mut Binary) {
             if entsize == 0 {
                 continue;
             }
-            let count = (s.size / entsize) as usize;
-            for i in 0..count.min(MAX_INDIRECT) {
+            let count = usize::try_from(s.size / entsize).unwrap_or(usize::MAX);
+            for i in 0..count {
                 let Some(ii) = (s.reserved1 as usize).checked_add(i) else { break };
                 if ii >= nind as usize {
                     break;
                 }
+                if remaining == 0 {
+                    b.warnings.push("indirect symbol limit reached across sections; remaining slots omitted".into());
+                    break 'sections;
+                }
+                remaining -= 1;
                 let Some(sym) = r.u32_le(indoff as usize + ii * 4) else { break };
                 if sym & 0xc000_0000 != 0 {
                     continue;
