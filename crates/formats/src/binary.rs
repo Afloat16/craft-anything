@@ -660,13 +660,13 @@ fn parse_object(data: &[u8], slice_offset: u64) -> Result<Binary, FormatError> {
     let local_syms = b.symbols.iter().filter(|s| !s.dynamic && s.defined && !linker_header(s)).count();
     b.mitigations.stripped = local_syms == 0;
     // Import slots also name the imports.
-    let mut slot_of: BTreeMap<&str, u64> = BTreeMap::new();
+    let mut slot_of: BTreeMap<(&str, Option<&str>), u64> = BTreeMap::new();
     for s in &b.import_slots {
         if s.kind == "slot" {
-            slot_of.entry(s.name.as_str()).or_insert(s.addr);
+            slot_of.entry((s.name.as_str(), s.library.as_deref())).or_insert(s.addr);
         }
     }
-    let slots: Vec<Option<u64>> = b.imports.iter().map(|i| slot_of.get(i.name.as_str()).copied()).collect();
+    let slots: Vec<Option<u64>> = b.imports.iter().map(|i| i.slot.or_else(|| slot_of.get(&(i.name.as_str(), i.library.as_deref())).copied())).collect();
     for (imp, slot) in b.imports.iter_mut().zip(slots) {
         imp.slot = slot;
     }
