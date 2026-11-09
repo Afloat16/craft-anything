@@ -8,6 +8,7 @@ workspace clippy, layers, fmt and the secret scan of all history were clean. Chi
 
 | Area | State | Verified by |
 |---|---|---|
+| Binary property-list object types | Rejects unknown binary versions, unsupported simple objects, invalid date markers and non-string dictionary keys. | Typed binary fixtures with valid null, string-key and date controls. |
 | ASAR listings | Rejected unsafe names count toward the listing limit alongside retained entries. | Synthetic regression `invalid_names_consume_the_listing_budget` in the formats crate. |
 | HAR input | Captures with a leading UTF-8 byte order mark parse like the same capture without it. | Synthetic regression `reads_a_har_with_a_utf8_bom` in the formats crate. |
 | .NET single-file bundles | Entries crossing from the payload into the manifest are reported as unreadable. | Synthetic regression `a_member_cannot_borrow_bytes_from_the_manifest` in the formats crate. |
