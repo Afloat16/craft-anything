@@ -164,7 +164,7 @@ pub fn apple_date_iso(secs: f64) -> String {
 
 /// True when the bytes look like a property list of either kind.
 pub fn looks_like_plist(data: &[u8]) -> bool {
-    data.starts_with(b"bplist00") || data.iter().take(1024).copied().collect::<Vec<u8>>().windows(6).any(|w| w == b"<plist")
+    (data.len() >= 8 && data.starts_with(b"bplist0")) || data.iter().take(1024).copied().collect::<Vec<u8>>().windows(6).any(|w| w == b"<plist")
 }
 
 /// Parse a binary or XML property list.
@@ -194,7 +194,7 @@ fn parse_binary_within(data: &[u8], byte_budget: usize) -> Result<Value, FormatE
     if !data.starts_with(b"bplist") {
         return Err(FormatError::Malformed("not a binary plist".into()));
     }
-    if !data.starts_with(b"bplist00") {
+    if !data.starts_with(b"bplist0") {
         return Err(FormatError::Unsupported("unknown binary plist version".into()));
     }
     let len = data.len();
@@ -400,7 +400,7 @@ impl Bin<'_> {
                     let v = self.reference(s, i + n)?;
                     let key = match self.object(k, stack)? {
                         Value::String(s) => s,
-                        _ => return Err(FormatError::Malformed("a plist dictionary key is not a string".into())),
+                        _ => return Err(FormatError::Unsupported("non-string dictionary keys cannot be represented in this plist view".into())),
                     };
                     out.push((key, self.object(v, stack)?));
                 }
@@ -799,6 +799,9 @@ mod tests {
     fn binary_plist_does_not_invent_types_or_dictionary_keys() {
         let mut version = small_bplist(&[vec![0x00]]);
         version[7] = b'1';
+        assert!(looks_like_plist(&version));
+        assert_eq!(parse_binary(&version).unwrap(), Value::Null);
+        version[6] = b'1';
         assert!(matches!(parse_binary(&version), Err(FormatError::Unsupported(_))));
         for marker in [0x01, 0x0f, 0x30, 0x32, 0x34] {
             let mut object = vec![marker];
