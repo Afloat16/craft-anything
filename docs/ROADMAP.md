@@ -1361,7 +1361,7 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Verify gzip FHCRC and accept informational XFL and OS bytes without inventing reserved-value restrictions.
+- [x] Verify gzip FHCRC and accept informational XFL and OS bytes without inventing reserved-value restrictions.
       — claimed: Afloat16, branch bugfix/r3.12-gzip-header-crc-20261109
 - [x] Extract legacy PyInstaller PYZ data as raw files and report modern namespace packages without fabricating bytecode.
       — claimed: Afloat16, branch bugfix/r3.12-pyz-member-kinds
