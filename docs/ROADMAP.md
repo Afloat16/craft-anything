@@ -1323,8 +1323,6 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Check that IL2CPP method ranges agree with each method's declaring type before reporting names and ownership.
-      — claimed: Afloat16, branch bugfix/r3.12-il2cpp-method-owners
 - [x] Bound rejected ASAR names by the archive listing limit.
       — claimed: Afloat16, branch bugfix/r3.12-asar-limit-bounds-20261107
 - [x] Keep .NET bundle member reads before the manifest.
@@ -1561,6 +1559,8 @@ Owner: open · Status: in progress
 - [x] Keep the comma inside a SQLite type's parentheses: `DECIMAL(10, 2)` is listed as
       `DECIMAL(10 2)`. The type keeps the comma inside its parentheses, and the schema overview
       shows it unchanged. — claimed: AlexJoaquimPereira, branch bugfix/r3.12-sqlite-type-comma
+- [x] Check that IL2CPP method ranges agree with each method's declaring type before reporting names and ownership.
+      — claimed: Afloat16, branch bugfix/r3.12-il2cpp-method-owners
 - [x] Asset catalogs name each rendition key attribute as CoreUI reads it. When the deployment
       target predates an attribute (display gamut before macOS 10.12), actool writes a stand-in
       (the placeholder attribute) in KEYFORMAT and the real one in KEYFORMATWORKAROUND, which
