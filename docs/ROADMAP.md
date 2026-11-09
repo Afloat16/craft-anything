@@ -1361,6 +1361,8 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
+- [ ] Keep same-named imported functions attached to their own library and preserve an explicitly recorded pointer slot.
+      — claimed: Afloat16, branch bugfix/r3.12-import-library-slots-20261109
 - [x] Extract legacy PyInstaller PYZ data as raw files and report modern namespace packages without fabricating bytecode.
       — claimed: Afloat16, branch bugfix/r3.12-pyz-member-kinds
 - [x] Bound rejected ASAR names by the archive listing limit.
