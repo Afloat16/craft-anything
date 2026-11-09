@@ -1330,6 +1330,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-macho-function-starts-payload-boundary-20261105
 - [x] Keep code-signature children and verification reads within their declared superblob.
       — claimed: Afloat16, branch bugfix/r3.12-codesign-superblob-length-boundary-20261105
+- [ ] Refuse short ELF64 header and section records and handle section-table offsets at the address limit safely.
+      — claimed: Afloat16, branch bugfix/r3.12-sbpf-records
 - [x] Keep PE optional-header reads within the declared header.
       — claimed: Afloat16, branch bugfix/r3.12-pe-optional-header-framing-20261105
 - [x] Keep PE resource metadata within the resource directory.
