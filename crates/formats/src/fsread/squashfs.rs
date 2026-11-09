@@ -78,11 +78,15 @@ impl Meta {
             if guard > 100_000 || out.len() > 64 << 20 {
                 break;
             }
-            map.insert((pos as u64 - start) as u32, out.len());
+            let block_start = out.len();
             let Some(hdr) = r.u16_le(pos) else { break };
             let uncompressed = hdr & 0x8000 != 0;
             let len = usize::from(hdr & 0x7fff);
-            let Some(block) = r.slice(pos + 2, len) else { break };
+            let Some(block) = r.slice(pos + 2, len) else {
+                warnings.warn("squashfs: a metadata block exceeds its table");
+                warnings.complete = false;
+                break;
+            };
             if uncompressed {
                 out.extend_from_slice(block);
             } else if let Some(d) = decompress(comp, block, META_MAX as u64) {
@@ -92,6 +96,7 @@ impl Meta {
                 warnings.complete = false;
                 break;
             }
+            map.insert((pos as u64 - start) as u32, block_start);
             pos += 2 + len;
         }
         Meta { data: out, map }
@@ -367,6 +372,19 @@ fn fragment_bytes(data: &[u8], sb: &Sb, index: u32, img: &mut FsImage) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn truncated_metadata_preserves_only_preceding_blocks() {
+        // The second block's bytes exist in the image, but extend past the metadata table.
+        let data = [1, 0x80, b'a', 2, 0x80, b'b', b'c'];
+        let mut img = FsImage::new("squashfs");
+        let meta = Meta::read(&data, 0, 6, 1, &mut img);
+        assert_eq!(meta.data, b"a");
+        assert_eq!(meta.at(0), Some(0));
+        assert!(meta.at(3 << 16).is_none());
+        assert!(!img.complete);
+        assert!(img.warnings.iter().any(|w| w.contains("metadata block exceeds its table")));
+    }
 
     #[test]
     fn reads_a_small_image() {
