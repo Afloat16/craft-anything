@@ -1260,8 +1260,6 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Report malformed safetensors metadata, element widths and payload coverage.
-      — claimed: Afloat16, branch bugfix/r3.12-safetensors-layout
 - [x] Bound rejected ASAR names by the archive listing limit.
       — claimed: Afloat16, branch bugfix/r3.12-asar-limit-bounds-20261107
 - [x] Keep .NET bundle member reads before the manifest.
@@ -1322,6 +1320,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-pyc-long-limb-validation-20261105
 - [x] Check expanded RGBA image sizes and enforce output budgets before allocation.
       — claimed: Afloat16, branch bugfix/r3.12-pixel-rgba-output-overflow-20261105
+- [x] Report malformed safetensors metadata, element widths and payload coverage.
+      — claimed: Afloat16, branch bugfix/r3.12-safetensors-layout
 - [x] Count empty tensor shapes consistently across axis orders.
       — claimed: Afloat16, branch bugfix/r3.12-tensor-zero-dimension-product-20261105
 - [x] Find APK signatures through valid ZIP comments and framed central directories.
