@@ -964,7 +964,7 @@ Owner: open · Status: in progress
       — PR #1209; claimed: rmsff, branch feature/r2.7-python-java-launch
 - [ ] Audit relative project placements in build, option-run and Play paths too: runtime window
       capture now normalizes its request paths, but earlier runner paths can still be relative
-- [ ] Keep Godot and Electron project arguments usable when the project folder contains non-UTF-8 bytes.
+- [x] Keep Godot from opening a different project when the selected path cannot be represented as UTF-8.
       — claimed: Afloat16, branch bugfix/r2.7-native-runner-project-args
 - [x] Resolve Godot's project argument and the local Electron binary and project argument before
       starting either runner from a relative project folder — claimed: Afloat16, branch bugfix/r2.7-project-launch-paths
