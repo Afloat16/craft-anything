@@ -429,9 +429,7 @@ fn literal_text(bytes: &[u8], max_bytes: usize) -> (String, bool) {
         if invalid.is_empty() {
             continue;
         }
-        if consumed + invalid.len() == shown.len()
-            && shown.len() < bytes.len()
-            && std::str::from_utf8(invalid).is_err_and(|error| error.error_len().is_none())
+        if consumed + invalid.len() == shown.len() && shown.len() < bytes.len() && std::str::from_utf8(invalid).is_err_and(|error| error.error_len().is_none())
         {
             break;
         }
