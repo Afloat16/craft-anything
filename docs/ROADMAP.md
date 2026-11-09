@@ -1323,6 +1323,8 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
+- [ ] Identify regular files sharing an inode and device in newc and CRC archives so hard-link aliases are visible in listings.
+      — claimed: Afloat16, branch feature/r3.12-cpio-hard-link-evidence
 - [x] Bound rejected ASAR names by the archive listing limit.
       — claimed: Afloat16, branch bugfix/r3.12-asar-limit-bounds-20261107
 - [x] Keep .NET bundle member reads before the manifest.
