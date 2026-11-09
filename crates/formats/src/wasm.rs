@@ -202,10 +202,7 @@ pub fn validate(data: &[u8]) -> WasmValidation {
 
 /// A length-prefixed UTF-8 string at the start of a custom section payload.
 fn leading_string(data: &[u8]) -> Option<String> {
-    let r = Reader::new(data);
-    let (n, used) = r.uleb128(0)?;
-    let s = r.slice(used, usize::try_from(n).ok()?)?;
-    Some(String::from_utf8_lossy(s).into_owned())
+    wasmparser::BinaryReader::new(data, 0).read_string().ok().map(str::to_owned)
 }
 
 fn target_features(data: &[u8]) -> Vec<String> {
@@ -653,6 +650,14 @@ pub fn scan_glue(text: &str, imports: &[WasmImport]) -> GlueScan {
 mod tests {
     use super::*;
     use craft_anything_testkit::formats as fx;
+
+    #[test]
+    fn debug_links_need_valid_wasm_names() {
+        assert_eq!(leading_string(b"\x04test").as_deref(), Some("test"));
+        assert!(leading_string(&[1, 0xff]).is_none());
+        assert!(leading_string(b"\x81\x80\x80\x80\x80\0x").is_none());
+        assert!(leading_string(b"\x04abc").is_none());
+    }
 
     #[test]
     fn reads_the_sample_module() {

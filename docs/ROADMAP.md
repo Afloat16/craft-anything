@@ -1350,7 +1350,7 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-pe-resource-directory-boundary-20261105
 - [x] Decode inline source-map data URLs without treating their URL fragments as payload; recognize case-insensitive scheme and base64 markers.
       — claimed: Afloat16, branch bugfix/r3.12-source-map-data-url-fragment
-- [ ] Accept only valid WebAssembly names when reporting custom-section debug and source map URLs.
+- [x] Accept only valid WebAssembly names when reporting custom-section debug and source map URLs.
       — claimed: Afloat16, branch bugfix/r3.12-wasm-debug-names
 - [x] Keep Go function tables and names within their section.
       — claimed: Afloat16, branch bugfix/r3.12-go-pclntab-section-boundary-20261105
