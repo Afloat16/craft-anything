@@ -1281,7 +1281,7 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Trace class literals, method types, method handles and dynamic linkage dependencies at their bytecode use sites.
+- [x] Trace class literals, method types, method handles and dynamic linkage dependencies at their bytecode use sites.
       — claimed: Afloat16, branch feature/r3.12-jvm-bootstrap-references
 - [x] Bound rejected ASAR names by the archive listing limit.
       — claimed: Afloat16, branch bugfix/r3.12-asar-limit-bounds-20261107
