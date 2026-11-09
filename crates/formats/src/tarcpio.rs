@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn oversized_gnu_names_do_not_alias_their_truncated_prefix() {
-        for kind in [b'L', b'K'] {
+        for kind in *b"LK" {
             let mut long = vec![b'n'; MAX_NAME + 1];
             long.push(0);
             let data = fx::tar_entries(&[
@@ -479,7 +479,7 @@ mod tests {
 
     #[test]
     fn gnu_long_names_keep_exact_limits_and_short_terminated_values() {
-        for kind in [b'L', b'K'] {
+        for kind in *b"LK" {
             for terminated in [false, true] {
                 let mut long = vec![b'n'; MAX_NAME];
                 if terminated {
