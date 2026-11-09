@@ -3,7 +3,7 @@
   "fork": "Afloat16/craft-anything",
   "base": "1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1",
   "published_independent_changes": 10,
-  "upstream_pull_requests_created": 6,
+  "upstream_pull_requests_created": 7,
   "merged": 0,
   "deduplication_scope": "Full text of 927 upstream pull requests and 206 historical user pull requests was reviewed by the parent task; candidate-specific matches were checked against current production paths.",
   "baseline": {
@@ -636,13 +636,24 @@
           "docs/STATUS.md"
         ],
         "source_files_unchanged": true
+      },
+      "upstream_pull_request": {
+        "number": 1375,
+        "url": "https://github.com/storytold/craft-anything/pull/1375",
+        "state": "open",
+        "merged": false,
+        "head_sha": "9a812d00d14a24fcf3db106a3df4138c4bf1b26f",
+        "head_branch": "feature/r3.12-zip-lzma-20261109",
+        "body": "## Problem\nZIP entries using LZMA method 14 are listed but cannot be read. Their property header and optional end-marker framing differ from standalone .lzma files, so passing the bytes to the existing standalone decoder would not work.\n\n## Change\nRead the ZIP-specific property header, select the decoder's size/end-marker mode from general-purpose bit 1, and bound the decoder dictionary and output. Require complete consumption and retain the existing decoded-size and CRC checks. No dependency is added.\n\nFormat reference: [PKWARE APPNOTE section 5.8](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT).\n\n## Validation\nAdded generated full ZIP fixtures for both framing modes, zero literals, limits, mismatched size/CRC, damaged properties, oversized dictionaries, truncated and trailing streams.\n\nExact source commit `61fdab39da4849eb5a84196df53c55e19c869134` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226892042). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `zip_lzma_reads_size_delimited_and_end_marked_streams` and `zip_lzma_rejects_bad_properties_without_unbounded_dictionaries`. The same regression cases pass in this branch.\n\nThe same source revision passed `cargo xtask layers`, `cargo xtask locks`, `cargo xtask secrets`, and `cargo xtask wasm`; Cargo.lock stayed unchanged. See the `Archive 6 L0 gates` step in [supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663). The final follow-up updates ROADMAP and STATUS only; production and regression-test bytes are unchanged.\n\nRoadmap: R3.12.",
+        "created_at": "2026-11-09T15:19:18Z",
+        "draft": false
       }
     },
     {
       "number": 7,
       "title": "Enforce standalone LZMA budgets before large dictionary growth",
       "branch": "bugfix/r3.12-standalone-lzma-budget-20261109",
-      "latest_head": "5da8880d3b56785498cf0c09ae46f300f070322d",
+      "latest_head": "89f119772b205bf63dc99fae7744cccbaafc6c09",
       "source_sha": "5da8880d3b56785498cf0c09ae46f300f070322d",
       "source_url": "https://github.com/Afloat16/craft-anything/commit/5da8880d3b56785498cf0c09ae46f300f070322d",
       "base": "1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1",
@@ -657,8 +668,8 @@
         "standalone_lzma_stops_before_a_large_window_reaches_a_damaged_tail"
       ],
       "deduplication": "Public standalone decompress::lzma had no dictionary budget. Earlier #888 only protects the Unity-specific lzma_raw_complete path.",
-      "body": "## Problem\nThe standalone .lzma reader used default decoder options. Its capped output sink was reached only after the decoder flushed an internal dictionary, so small output budgets could still require large dictionary growth or processing of a damaged tail first.\n\n## Change\nRead the standalone size header before decoding, reject declared output above the budget, and bound the decoder's internal dictionary as well as the output sink. Preserve the decoder's 4 KiB minimum window and accept oversized dictionary properties for small valid streams.\n\nThis fixes the public standalone reader; the existing Unity raw-piece helper already has its own bounds and is unchanged.\n\n## Validation\nAdded public-reader regressions for declared sizes, dictionary properties, exact/zero budgets and an over-budget stream with a damaged tail.\n\nExact source commit `5da8880d3b56785498cf0c09ae46f300f070322d` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226892150). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `standalone_lzma_checks_declared_sizes_before_decoding` and `standalone_lzma_stops_before_a_large_window_reaches_a_damaged_tail`. The same regression cases pass in this branch.\n\nSupplementary layers, locks, secret scanning and WebAssembly verification is in progress.\n\nRoadmap: R3.12.",
-      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-standalone-lzma-budget-20261109?expand=1&title=Enforce%20standalone%20LZMA%20budgets%20before%20large%20dictionary%20growth&body=%23%23%20Problem%0AThe%20standalone%20.lzma%20reader%20used%20default%20decoder%20options.%20Its%20capped%20output%20sink%20was%20reached%20only%20after%20the%20decoder%20flushed%20an%20internal%20dictionary%2C%20so%20small%20output%20budgets%20could%20still%20require%20large%20dictionary%20growth%20or%20processing%20of%20a%20damaged%20tail%20first.%0A%0A%23%23%20Change%0ARead%20the%20standalone%20size%20header%20before%20decoding%2C%20reject%20declared%20output%20above%20the%20budget%2C%20and%20bound%20the%20decoder's%20internal%20dictionary%20as%20well%20as%20the%20output%20sink.%20Preserve%20the%20decoder's%204%20KiB%20minimum%20window%20and%20accept%20oversized%20dictionary%20properties%20for%20small%20valid%20streams.%0A%0AThis%20fixes%20the%20public%20standalone%20reader%3B%20the%20existing%20Unity%20raw-piece%20helper%20already%20has%20its%20own%20bounds%20and%20is%20unchanged.%0A%0A%23%23%20Validation%0AAdded%20public-reader%20regressions%20for%20declared%20sizes%2C%20dictionary%20properties%2C%20exact%2Fzero%20budgets%20and%20an%20over-budget%20stream%20with%20a%20damaged%20tail.%0A%0AExact%20source%20commit%20%605da8880d3b56785498cf0c09ae46f300f070322d%60%20passed%20formatting%2C%20all%20952%20formats%20tests%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226892150).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60standalone_lzma_checks_declared_sizes_before_decoding%60%20and%20%60standalone_lzma_stops_before_a_large_window_reaches_a_damaged_tail%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ASupplementary%20layers%2C%20locks%2C%20secret%20scanning%20and%20WebAssembly%20verification%20is%20in%20progress.%0A%0ARoadmap%3A%20R3.12.",
+      "body": "## Problem\nThe standalone .lzma reader used default decoder options. Its capped output sink was reached only after the decoder flushed an internal dictionary, so small output budgets could still require large dictionary growth or processing of a damaged tail first.\n\n## Change\nRead the standalone size header before decoding, reject declared output above the budget, and bound the decoder's internal dictionary as well as the output sink. Preserve the decoder's 4 KiB minimum window and accept oversized dictionary properties for small valid streams.\n\nThis fixes the public standalone reader; the existing Unity raw-piece helper already has its own bounds and is unchanged.\n\n## Validation\nAdded public-reader regressions for declared sizes, dictionary properties, exact/zero budgets and an over-budget stream with a damaged tail.\n\nExact source commit `5da8880d3b56785498cf0c09ae46f300f070322d` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226892150). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `standalone_lzma_checks_declared_sizes_before_decoding` and `standalone_lzma_stops_before_a_large_window_reaches_a_damaged_tail`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).\n\nBranch head `89f119772b205bf63dc99fae7744cccbaafc6c09` adds only ROADMAP and STATUS verification notes after the tested source commit; source and test files are unchanged.\n\nRoadmap: R3.12.",
+      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-standalone-lzma-budget-20261109?expand=1&title=Enforce%20standalone%20LZMA%20budgets%20before%20large%20dictionary%20growth&body=%23%23%20Problem%0AThe%20standalone%20.lzma%20reader%20used%20default%20decoder%20options.%20Its%20capped%20output%20sink%20was%20reached%20only%20after%20the%20decoder%20flushed%20an%20internal%20dictionary%2C%20so%20small%20output%20budgets%20could%20still%20require%20large%20dictionary%20growth%20or%20processing%20of%20a%20damaged%20tail%20first.%0A%0A%23%23%20Change%0ARead%20the%20standalone%20size%20header%20before%20decoding%2C%20reject%20declared%20output%20above%20the%20budget%2C%20and%20bound%20the%20decoder's%20internal%20dictionary%20as%20well%20as%20the%20output%20sink.%20Preserve%20the%20decoder's%204%20KiB%20minimum%20window%20and%20accept%20oversized%20dictionary%20properties%20for%20small%20valid%20streams.%0A%0AThis%20fixes%20the%20public%20standalone%20reader%3B%20the%20existing%20Unity%20raw-piece%20helper%20already%20has%20its%20own%20bounds%20and%20is%20unchanged.%0A%0A%23%23%20Validation%0AAdded%20public-reader%20regressions%20for%20declared%20sizes%2C%20dictionary%20properties%2C%20exact%2Fzero%20budgets%20and%20an%20over-budget%20stream%20with%20a%20damaged%20tail.%0A%0AExact%20source%20commit%20%605da8880d3b56785498cf0c09ae46f300f070322d%60%20passed%20formatting%2C%20all%20952%20formats%20tests%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226892150).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60standalone_lzma_checks_declared_sizes_before_decoding%60%20and%20%60standalone_lzma_stops_before_a_large_window_reaches_a_damaged_tail%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ALayers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20an%20unchanged%20Cargo.lock%20also%20passed%20for%20this%20exact%20revision%20in%20%5Bthe%20supplementary%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42640688213%2Fjob%2F129240669663).%0A%0ABranch%20head%20%6089f119772b205bf63dc99fae7744cccbaafc6c09%60%20adds%20only%20ROADMAP%20and%20STATUS%20verification%20notes%20after%20the%20tested%20source%20commit%3B%20source%20and%20test%20files%20are%20unchanged.%0A%0ARoadmap%3A%20R3.12.",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-standalone-lzma-budget-20261109",
       "validation": {
         "status": "success",
@@ -674,16 +685,36 @@
         ],
         "scope": "Formatting, complete formats crate tests including new regressions, and all-targets clippy.",
         "l0_gates": {
-          "status": "in_progress",
-          "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42640688213"
+          "status": "success",
+          "source_sha": "5da8880d3b56785498cf0c09ae46f300f070322d",
+          "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663",
+          "step": "Archive 7 L0 gates",
+          "commands": [
+            "cargo run --locked -p xtask -- layers",
+            "cargo run --locked -p xtask -- locks",
+            "cargo run --locked -p xtask -- secrets",
+            "cargo run --locked -p xtask -- wasm",
+            "git diff --exit-code -- Cargo.lock"
+          ]
         },
         "baseline_failures": [
           "standalone_lzma_checks_declared_sizes_before_decoding",
           "standalone_lzma_stops_before_a_large_window_reaches_a_damaged_tail"
         ],
-        "baseline_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582"
+        "baseline_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582",
+        "fork_validation_state": "closed"
       },
-      "revisions": []
+      "revisions": [],
+      "latest_head_url": "https://github.com/Afloat16/craft-anything/commit/89f119772b205bf63dc99fae7744cccbaafc6c09",
+      "documentation_followup": {
+        "sha": "89f119772b205bf63dc99fae7744cccbaafc6c09",
+        "source_sha": "5da8880d3b56785498cf0c09ae46f300f070322d",
+        "files": [
+          "docs/ROADMAP.md",
+          "docs/STATUS.md"
+        ],
+        "source_files_unchanged": true
+      }
     },
     {
       "number": 8,
