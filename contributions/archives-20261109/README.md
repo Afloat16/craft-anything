@@ -2,14 +2,14 @@
 
 Ten independent improvements are published in Afloat16/craft-anything initially based on upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`. Each branch contains an earlier roadmap claim, a focused implementation, regression fixtures and corresponding roadmap/status updates.
 
-Confirmed upstream pull requests: **10**. Merged: **6**. Fork validation PRs and material/validation branches are excluded from contribution counts.
+Confirmed upstream pull requests: **10**. Merged: **8**. Fork validation PRs and material/validation branches are excluded from contribution counts.
 
 ## Source revisions and checks
 
 | # | Improvement | Branch head | Tested source revision | Verification | Upstream contribution |
 |---|---|---|---|---|---|
 | 1 | Keep PyInstaller CArchive members inside the payload | [a574cde](https://github.com/Afloat16/craft-anything/commit/a574cde8b266b8a07f84b0ad70a809a08e8f4d95) | [a574cde](https://github.com/Afloat16/craft-anything/commit/a574cde8b266b8a07f84b0ad70a809a08e8f4d95) | [Formats checks passed](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386) | [#1363](https://github.com/storytold/craft-anything/pull/1363) |
-| 2 | Reject ASAR manifest nodes with invalid file metadata | [2c5df53](https://github.com/Afloat16/craft-anything/commit/2c5df5307f4733355a4e88be1ebf58bbfb0b95d1) | [2c5df53](https://github.com/Afloat16/craft-anything/commit/2c5df5307f4733355a4e88be1ebf58bbfb0b95d1) | [Formats checks passed](https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135) | [#1364](https://github.com/storytold/craft-anything/pull/1364) |
+| 2 | Reject ASAR manifest nodes with invalid file metadata | [7ff2027](https://github.com/Afloat16/craft-anything/commit/7ff2027b989fdd3ed6b9ee4d927779b29b69e895) | [2c5df53](https://github.com/Afloat16/craft-anything/commit/2c5df5307f4733355a4e88be1ebf58bbfb0b95d1) | [Formats checks passed](https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135) | [#1364](https://github.com/storytold/craft-anything/pull/1364) |
 | 3 | Validate gzip header checksums without rejecting informational fields | [7f58bf1](https://github.com/Afloat16/craft-anything/commit/7f58bf1574fae2edfd2fa71de2176639cb9562e1) | [7f58bf1](https://github.com/Afloat16/craft-anything/commit/7f58bf1574fae2edfd2fa71de2176639cb9562e1) | [Formats checks passed](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386) | [#1371](https://github.com/storytold/craft-anything/pull/1371) |
 | 4 | Read complete gzip packed members and verify their trailers | [aadb52e](https://github.com/Afloat16/craft-anything/commit/aadb52ee71b387e58d0d090bded25d8f6b6fea8d) | [aadb52e](https://github.com/Afloat16/craft-anything/commit/aadb52ee71b387e58d0d090bded25d8f6b6fea8d) | [Formats checks passed](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386) | [#1372](https://github.com/storytold/craft-anything/pull/1372) |
 | 5 | Extract ZIP entries compressed with bzip2 or XZ | [2ca31fb](https://github.com/Afloat16/craft-anything/commit/2ca31fb11dc780e9a96d9fa12beadf2e80ad4e53) | [2ca31fb](https://github.com/Afloat16/craft-anything/commit/2ca31fb11dc780e9a96d9fa12beadf2e80ad4e53) | [Formats checks passed](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386) | [#1374](https://github.com/storytold/craft-anything/pull/1374) |
@@ -55,7 +55,7 @@ The ordinary merge commits preserve both parents and all upstream changes. Their
 | # | Current head | Integrated main | Current-head verification |
 |---|---|---|---|
 | 1 | [a574cde](https://github.com/Afloat16/craft-anything/commit/a574cde8b266b8a07f84b0ad70a809a08e8f4d95) | `7073462` | [success](https://github.com/Afloat16/claude-mem/actions/runs/42649592140) |
-| 2 | [2c5df53](https://github.com/Afloat16/craft-anything/commit/2c5df5307f4733355a4e88be1ebf58bbfb0b95d1) | `cdc8a88` | [success](https://github.com/Afloat16/claude-mem/actions/runs/42653593224) |
+| 2 | [7ff2027](https://github.com/Afloat16/craft-anything/commit/7ff2027b989fdd3ed6b9ee4d927779b29b69e895) | `69e7f57` | [in_progress](https://github.com/Afloat16/claude-mem/actions/runs/42659466852) |
 | 3 | [7f58bf1](https://github.com/Afloat16/craft-anything/commit/7f58bf1574fae2edfd2fa71de2176639cb9562e1) | `7073462` | [success](https://github.com/Afloat16/claude-mem/actions/runs/42649592140) |
 | 4 | [aadb52e](https://github.com/Afloat16/craft-anything/commit/aadb52ee71b387e58d0d090bded25d8f6b6fea8d) | `7073462` | [success](https://github.com/Afloat16/claude-mem/actions/runs/42649592140) |
 | 5 | [2ca31fb](https://github.com/Afloat16/craft-anything/commit/2ca31fb11dc780e9a96d9fa12beadf2e80ad4e53) | `7073462` | [success](https://github.com/Afloat16/claude-mem/actions/runs/42649592140) |
@@ -66,4 +66,6 @@ The ordinary merge commits preserve both parents and all upstream changes. Their
 
 ## Follow-up after merge
 
-The GNU tar identity contribution #1362 has merged. Its installer follow-up, **Refuse incomplete tar engine installs after GNU metadata stops**, is tracked separately and does not add to the ten planned contributions. The unchanged-production baseline reproduces four failures while two compatibility controls pass. Source `c88767b601aef15b8e2604b607f069734fef5a09` has verification status **success**. [Follow-up PR](https://github.com/storytold/craft-anything/pull/1394). [Verification](https://github.com/Afloat16/claude-mem/actions/runs/42653593224).
+The follow-up **Refuse incomplete tar engine installs after GNU metadata stops** follows #1362 and is tracked separately from the ten planned contributions. Source `c88767b601aef15b8e2604b607f069734fef5a09` has verification status **success**. [Follow-up PR](https://github.com/storytold/craft-anything/pull/1394). [Verification](https://github.com/Afloat16/claude-mem/actions/runs/42653593224).
+
+The follow-up **Require complete padded GNU tar metadata records** follows #1394 and is tracked separately from the ten planned contributions. Source `25c45ef05d81bfee699dd3c7d351aefc27d83224` has verification status **in_progress**. [Verification](https://github.com/Afloat16/claude-mem/actions/runs/42659466852).
