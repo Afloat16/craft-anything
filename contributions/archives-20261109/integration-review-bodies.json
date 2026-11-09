@@ -1,7 +1,7 @@
 {
   "repository": "storytold/craft-anything",
   "purpose": "Updated bodies after ordinary merges of upstream main, retaining both parents.",
-  "ready_count": 4,
+  "ready_count": 5,
   "merged_primary_count": 6,
   "entries": [
     {
@@ -348,14 +348,20 @@
       "merged": true,
       "branch": "bugfix/r3.12-standalone-lzma-budget-20261109",
       "current_head": "f57923ea32733aa2d4e383bb44dd4b3892b9dfe5",
-      "verified_source_sha": "5da8880d3b56785498cf0c09ae46f300f070322d",
-      "ready": false,
-      "body": "## Problem\nThe standalone .lzma reader used default decoder options. Its capped output sink was reached only after the decoder flushed an internal dictionary, so small output budgets could still require large dictionary growth or processing of a damaged tail first.\n\n## Change\nRead the standalone size header before decoding, reject declared output above the budget, and bound the decoder's internal dictionary as well as the output sink. Preserve the decoder's 4 KiB minimum window and accept oversized dictionary properties for small valid streams.\n\nThis fixes the public standalone reader; the existing Unity raw-piece helper already has its own bounds and is unchanged.\n\n## Validation\nAdded public-reader regressions for declared sizes, dictionary properties, exact/zero budgets and an over-budget stream with a damaged tail.\n\nExact source commit `5da8880d3b56785498cf0c09ae46f300f070322d` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226892150). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `standalone_lzma_checks_declared_sizes_before_decoding` and `standalone_lzma_stops_before_a_large_window_reaches_a_damaged_tail`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).\n\nBranch head `f57923ea32733aa2d4e383bb44dd4b3892b9dfe5` merges upstream `7073462fcca6088989f9127f3473b95471a758b1` with both parents retained. [Exact-head verification](https://github.com/Afloat16/claude-mem/actions/runs/42649592140) is in progress; the successful checks above refer to the earlier verified source.\n\nRoadmap: R3.12.",
+      "verified_source_sha": "f57923ea32733aa2d4e383bb44dd4b3892b9dfe5",
+      "ready": true,
+      "body": "## Problem\nThe standalone .lzma reader used default decoder options. Its capped output sink was reached only after the decoder flushed an internal dictionary, so small output budgets could still require large dictionary growth or processing of a damaged tail first.\n\n## Change\nRead the standalone size header before decoding, reject declared output above the budget, and bound the decoder's internal dictionary as well as the output sink. Preserve the decoder's 4 KiB minimum window and accept oversized dictionary properties for small valid streams.\n\nThis fixes the public standalone reader; the existing Unity raw-piece helper already has its own bounds and is unchanged.\n\n## Validation\nAdded public-reader regressions for declared sizes, dictionary properties, exact/zero budgets and an over-budget stream with a damaged tail.\n\nExact source commit `f57923ea32733aa2d4e383bb44dd4b3892b9dfe5` passed formatting, the complete formats test suite, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `standalone_lzma_checks_declared_sizes_before_decoding` and `standalone_lzma_stops_before_a_large_window_reaches_a_damaged_tail`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386).\n\nBranch head `f57923ea32733aa2d4e383bb44dd4b3892b9dfe5` merges upstream `7073462fcca6088989f9127f3473b95471a758b1` with both parents retained; the exact merged source passed the verification above.\n\nRoadmap: R3.12.",
       "last_verified_source": {
-        "sha": "5da8880d3b56785498cf0c09ae46f300f070322d",
+        "sha": "f57923ea32733aa2d4e383bb44dd4b3892b9dfe5",
         "status": "success",
-        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226892150",
-        "passed_tests": 952
+        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
+        "passed_tests": null,
+        "confirmed_steps": [
+          "Archive 7 formatting",
+          "Archive 7 regression tests",
+          "Archive 7 clippy",
+          "Archive 7 L0 gates"
+        ]
       },
       "current_head_steps": [
         {
@@ -379,8 +385,8 @@
         {
           "name": "Archive 7 L0 gates",
           "source_sha": "f57923ea32733aa2d4e383bb44dd4b3892b9dfe5",
-          "status": "in_progress",
-          "conclusion": null
+          "status": "completed",
+          "conclusion": "success"
         }
       ],
       "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
@@ -633,19 +639,19 @@
       {
         "name": "Installer 1394 regression tests",
         "source_sha": "c88767b601aef15b8e2604b607f069734fef5a09",
-        "status": "in_progress",
-        "conclusion": null
+        "status": "completed",
+        "conclusion": "success"
       },
       {
         "name": "Installer 1394 clippy",
         "source_sha": "c88767b601aef15b8e2604b607f069734fef5a09",
-        "status": "pending",
-        "conclusion": null
+        "status": "completed",
+        "conclusion": "success"
       },
       {
         "name": "Installer 1394 L0 gates",
         "source_sha": "c88767b601aef15b8e2604b607f069734fef5a09",
-        "status": "pending",
+        "status": "in_progress",
         "conclusion": null
       }
     ],
