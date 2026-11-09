@@ -1,7 +1,7 @@
 {
   "repository": "storytold/craft-anything",
   "purpose": "Updated bodies after ordinary merges of upstream main, retaining both parents.",
-  "ready_count": 6,
+  "ready_count": 7,
   "merged_primary_count": 6,
   "entries": [
     {
@@ -77,16 +77,16 @@
       "merged": false,
       "branch": "bugfix/r3.12-asar-node-shapes-20261109",
       "current_head": "2c5df5307f4733355a4e88be1ebf58bbfb0b95d1",
-      "verified_source_sha": "1613476ae0e8af07bf09e69f6454705047ec1e90",
-      "ready": false,
-      "body": "## Problem\nASAR JSON nodes with the wrong shape or missing file metadata were silently treated as empty files, and a non-object files map was accepted as an empty archive. That produces a plausible but incorrect inventory of damaged manifests.\n\n## Change\nValidate directory maps, node objects, link values, unsigned file sizes, packed offsets and unpacked markers. Keep valid empty files, numeric offsets, links and unpacked files supported, while retaining existing name and listing limits.\n\n## Validation\nAdded malformed-manifest fixtures and valid controls.\n\nExact source commit `1613476ae0e8af07bf09e69f6454705047ec1e90` passed formatting, all 1043 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `malformed_nodes_do_not_become_empty_files`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386).\n\nBranch head `2c5df5307f4733355a4e88be1ebf58bbfb0b95d1` merges upstream `cdc8a880f1e60bce757ebac59e3f7983f084a1f8` with both parents retained. [Exact-head verification](https://github.com/Afloat16/claude-mem/actions/runs/42653593224) is in progress; the successful checks above refer to the earlier verified source.\n\nRoadmap: R3.12.",
+      "verified_source_sha": "2c5df5307f4733355a4e88be1ebf58bbfb0b95d1",
+      "ready": true,
+      "body": "## Problem\nASAR JSON nodes with the wrong shape or missing file metadata were silently treated as empty files, and a non-object files map was accepted as an empty archive. That produces a plausible but incorrect inventory of damaged manifests.\n\n## Change\nValidate directory maps, node objects, link values, unsigned file sizes, packed offsets and unpacked markers. Keep valid empty files, numeric offsets, links and unpacked files supported, while retaining existing name and listing limits.\n\n## Validation\nAdded malformed-manifest fixtures and valid controls.\n\nExact source commit `2c5df5307f4733355a4e88be1ebf58bbfb0b95d1` passed formatting, the complete formats test suite, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `malformed_nodes_do_not_become_empty_files`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135).\n\nBranch head `2c5df5307f4733355a4e88be1ebf58bbfb0b95d1` merges upstream `cdc8a880f1e60bce757ebac59e3f7983f084a1f8` with both parents retained; the exact merged source passed the verification above.\n\nRoadmap: R3.12.",
       "published_review_body": null,
       "prepared_body_role": "Prepared update; published text is recorded separately and may differ in wording, counts or retained bot footer.",
       "last_verified_source": {
-        "sha": "1613476ae0e8af07bf09e69f6454705047ec1e90",
+        "sha": "2c5df5307f4733355a4e88be1ebf58bbfb0b95d1",
         "status": "success",
-        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
-        "passed_tests": 1043,
+        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135",
+        "passed_tests": null,
         "confirmed_steps": [
           "Archive 2 formatting",
           "Archive 2 regression tests",
@@ -110,14 +110,14 @@
         {
           "name": "Archive 2 clippy",
           "source_sha": "2c5df5307f4733355a4e88be1ebf58bbfb0b95d1",
-          "status": "in_progress",
-          "conclusion": null
+          "status": "completed",
+          "conclusion": "success"
         },
         {
           "name": "Archive 2 L0 gates",
           "source_sha": "2c5df5307f4733355a4e88be1ebf58bbfb0b95d1",
-          "status": "pending",
-          "conclusion": null
+          "status": "completed",
+          "conclusion": "success"
         }
       ],
       "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42653593224",
@@ -351,13 +351,13 @@
         {
           "name": "Archive 6 formatting",
           "source_sha": "fc220b1a29572e2b2c17ed2b948e915c54fa6de6",
-          "status": "pending",
-          "conclusion": null
+          "status": "completed",
+          "conclusion": "success"
         },
         {
           "name": "Archive 6 regression tests",
           "source_sha": "fc220b1a29572e2b2c17ed2b948e915c54fa6de6",
-          "status": "pending",
+          "status": "in_progress",
           "conclusion": null
         },
         {
@@ -750,6 +750,15 @@
         }
       }
     ],
+    "published_review_body": {
+      "verified_via": "GitHub pull request API",
+      "observed_updated_at": "2026-11-09T16:33:41Z",
+      "head_sha": "c88767b601aef15b8e2604b607f069734fef5a09",
+      "source_sha": "c88767b601aef15b8e2604b607f069734fef5a09",
+      "body": "## Problem\r\n\r\nA tar listing can retain earlier members after a GNU long-name or long-link record is refused. The managed engine installer previously treated that partial inventory as a successful extraction whenever an earlier regular file existed. That can replace an engine installation with incomplete contents.\r\n\r\nThis is a follow-up to #1362, prepared from upstream `efddbdeb6868f10a3d8d53f114d47aed72b89612` after that PR merged.\r\n\r\n## Change\r\n\r\n- Record an explicit typed stop reason for oversized or truncated GNU name metadata, while retaining earlier members for inspection.\r\n- Check that reason in the installer before writing any member. Oversized metadata returns `OverLimit`; truncated metadata returns `GarbledOutput`.\r\n- Keep the existing compatibility for readable tar members without an end-of-archive marker. CPIO behavior and successful bounded GNU names remain unchanged.\r\n\r\n## Regression evidence\r\n\r\nThe test-only revision `24d844ce89c6ea660e41f30be676411b25b06490` keeps production code at upstream `efddbdeb6868f10a3d8d53f114d47aed72b89612`. Its [actual baseline run](https://github.com/Afloat16/claude-mem/actions/runs/42648642576/job/129268658248) reports **4 failed and 2 passed**: oversized/truncated long names and long links each write an earlier file on the old code; missing end markers and valid bounded metadata are passing controls.\r\n\r\nThe fixed tests also assert that an existing installed file is unchanged when extraction is refused. Formats tests check that partial listing bytes remain readable and that absent end markers do not receive the new stop reason.\r\n\r\n## Verification\r\n\r\nExact source revision: `c88767b601aef15b8e2604b607f069734fef5a09`.\r\nThe [source-specific verification steps](https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135) passed formatting, the complete formats and engines test suites, all-targets clippy with warnings denied, layers, locks, secret scanning, WebAssembly checks and Cargo.lock stability. The workflow checks out this exact craft-anything revision in Afloat16/claude-mem.\r\n\r\nBranch head `c88767b601aef15b8e2604b607f069734fef5a09` merges upstream `cdc8a880f1e60bce757ebac59e3f7983f084a1f8` with both parents retained. The exact integrated head passed all verification steps above.\r\n\r\nRoadmap: R3.12.\r\n\r\n\r\n<!-- This is an auto-generated comment: release notes by coderabbit.ai -->\r\n\r\n<!-- coderabbit-ai-generated:v1 -->\r\n\r\n## Summary by CodeRabbit\r\n\r\n* **Bug Fixes**\r\n  * Engine installation now stops before writing files when archive name or link metadata is truncated or exceeds supported limits, helping prevent incomplete or invalid extractions.\r\n  * Partial archive listings remain available for inspection when traversal stops due to invalid metadata.\r\n  * Archives with supported name metadata and complete member data can still be processed even without an end marker.\r\n\r\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+      "equal_to_current_prepared_body": false
+    },
+    "merged_at": null,
     "ready": true,
     "current_head_steps": [
       {
