@@ -1,7 +1,7 @@
 {
   "repository": "storytold/craft-anything",
   "purpose": "Updated bodies after ordinary merges of upstream main, retaining both parents.",
-  "ready_count": 8,
+  "ready_count": 9,
   "post_merge_followups": [
     {
       "original_change": 8,
@@ -299,21 +299,21 @@
       "merged": false,
       "branch": "bugfix/r3.12-asar-node-shapes-20261109",
       "current_head": "7ff2027b989fdd3ed6b9ee4d927779b29b69e895",
-      "verified_source_sha": "2c5df5307f4733355a4e88be1ebf58bbfb0b95d1",
-      "ready": false,
-      "body": "## Problem\nASAR JSON nodes with the wrong shape or missing file metadata were silently treated as empty files, and a non-object files map was accepted as an empty archive. That produces a plausible but incorrect inventory of damaged manifests.\n\n## Change\nValidate directory maps, node objects, link values, unsigned file sizes, packed offsets and unpacked markers. Keep valid empty files, numeric offsets, links and unpacked files supported, while retaining existing name and listing limits.\n\n## Validation\nAdded malformed-manifest fixtures and valid controls.\n\nExact source commit `2c5df5307f4733355a4e88be1ebf58bbfb0b95d1` passed formatting, all 1064 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `malformed_nodes_do_not_become_empty_files`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135).\n\nBranch head `7ff2027b989fdd3ed6b9ee4d927779b29b69e895` merges upstream `69e7f5773d48368b18f22c2e7abe79d115589174` with both parents retained. [Exact-head verification](https://github.com/Afloat16/claude-mem/actions/runs/42659466852) is in progress; the successful checks above refer to the earlier verified source.\n\nRoadmap: R3.12.",
+      "verified_source_sha": "7ff2027b989fdd3ed6b9ee4d927779b29b69e895",
+      "ready": true,
+      "body": "## Problem\nASAR JSON nodes with the wrong shape or missing file metadata were silently treated as empty files, and a non-object files map was accepted as an empty archive. That produces a plausible but incorrect inventory of damaged manifests.\n\n## Change\nValidate directory maps, node objects, link values, unsigned file sizes, packed offsets and unpacked markers. Keep valid empty files, numeric offsets, links and unpacked files supported, while retaining existing name and listing limits.\n\n## Validation\nAdded malformed-manifest fixtures and valid controls.\n\nExact source commit `7ff2027b989fdd3ed6b9ee4d927779b29b69e895` passed formatting, the complete formats test suite, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42659466852/job/129306793039). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `malformed_nodes_do_not_become_empty_files`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42659466852/job/129306793039).\n\nBranch head `7ff2027b989fdd3ed6b9ee4d927779b29b69e895` merges upstream `69e7f5773d48368b18f22c2e7abe79d115589174` with both parents retained; the exact merged source passed the verification above.\n\nRoadmap: R3.12.",
       "published_review_body": null,
       "prepared_body_role": "Prepared update; published text is recorded separately and may differ in wording, counts or retained bot footer.",
       "last_verified_source": {
-        "sha": "2c5df5307f4733355a4e88be1ebf58bbfb0b95d1",
+        "sha": "7ff2027b989fdd3ed6b9ee4d927779b29b69e895",
         "status": "success",
-        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135",
-        "passed_tests": 1064,
+        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42659466852/job/129306793039",
+        "passed_tests": null,
         "confirmed_steps": [
-          "Archive 2 formatting",
-          "Archive 2 regression tests",
-          "Archive 2 clippy",
-          "Archive 2 L0 gates"
+          "ASAR third formatting",
+          "ASAR third regression tests",
+          "ASAR third clippy",
+          "ASAR third L0 gates"
         ]
       },
       "current_head_steps": [
@@ -338,8 +338,8 @@
         {
           "name": "ASAR third L0 gates",
           "source_sha": "7ff2027b989fdd3ed6b9ee4d927779b29b69e895",
-          "status": "in_progress",
-          "conclusion": null
+          "status": "completed",
+          "conclusion": "success"
         }
       ],
       "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42659466852",
