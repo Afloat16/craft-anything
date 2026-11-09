@@ -157,11 +157,22 @@ pub fn tar(data: &[u8], max_members: usize) -> Option<Listing> {
         let body = r.slice(data_off, usize::try_from(size).unwrap_or(usize::MAX));
         match typeflag {
             b'L' | b'K' => {
-                let v = body.map(|b| text(b.get(..MAX_NAME.min(b.len())).unwrap_or(&[])));
+                let Some(body) = body else {
+                    out.warnings.push(format!("GNU long-name data ends early at {pos:#x}"));
+                    out.length = data.len() as u64;
+                    break;
+                };
+                let end = body.iter().take(MAX_NAME + 1).position(|&byte| byte == 0).unwrap_or(body.len());
+                if end > MAX_NAME {
+                    out.warnings.push(format!("GNU long name or link exceeds {MAX_NAME} bytes at {pos:#x}"));
+                    out.length = pos as u64;
+                    break;
+                }
+                let value = Some(String::from_utf8_lossy(&body[..end]).into_owned());
                 if typeflag == b'L' {
-                    long_name = v;
+                    long_name = value;
                 } else {
-                    long_link = v;
+                    long_link = value;
                 }
             }
             b'x' => {
@@ -446,6 +457,50 @@ pub fn member_data<'a>(data: &'a [u8], m: &Member) -> Option<&'a [u8]> {
 mod tests {
     use super::*;
     use craft_anything_testkit::firmware as fx;
+
+    #[test]
+    fn oversized_gnu_names_do_not_alias_their_truncated_prefix() {
+        for kind in [b'L', b'K'] {
+            let mut long = vec![b'n'; MAX_NAME + 1];
+            long.push(0);
+            let data = fx::tar_entries(&[
+                ("before", b'0', b"kept", ""),
+                ("././@LongLink", kind, &long, ""),
+                ("short", if kind == b'K' { b'2' } else { b'0' }, b"", "fallback"),
+            ]);
+            let listing = tar(&data, 10).unwrap();
+            assert!(!listing.complete);
+            assert_eq!(listing.members.len(), 1);
+            assert_eq!(listing.members[0].name, "before");
+            assert_eq!(member_data(&data, &listing.members[0]).unwrap(), b"kept");
+            assert!(listing.warnings.iter().any(|warning| warning.contains("GNU long name or link exceeds")));
+        }
+    }
+
+    #[test]
+    fn gnu_long_names_keep_exact_limits_and_short_terminated_values() {
+        for kind in [b'L', b'K'] {
+            for terminated in [false, true] {
+                let mut long = vec![b'n'; MAX_NAME];
+                if terminated {
+                    long.push(0);
+                }
+                let data = fx::tar_entries(&[
+                    ("././@LongLink", kind, &long, ""),
+                    ("short", if kind == b'K' { b'2' } else { b'0' }, b"", "fallback"),
+                ]);
+                let listing = tar(&data, 10).unwrap();
+                assert!(listing.complete, "{:?}", listing.warnings);
+                let member = &listing.members[0];
+                let name = if kind == b'L' { member.name.as_str() } else { member.link_target.as_deref().unwrap() };
+                assert_eq!(name, "n".repeat(MAX_NAME));
+            }
+        }
+        let mut padded = b"short\0".to_vec();
+        padded.resize(MAX_NAME + 100, 0);
+        let data = fx::tar_entries(&[("././@LongLink", b'L', &padded, ""), ("fallback", b'0', b"payload", "")]);
+        assert_eq!(tar(&data, 10).unwrap().members[0].name, "short");
+    }
 
     #[test]
     fn walks_tar() {
