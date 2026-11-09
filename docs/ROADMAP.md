@@ -1562,6 +1562,8 @@ Owner: open · Status: in progress
       — claimed: AlexJoaquimPereira, branch bugfix/r3.12-pe-binary-version-strings
 - [x] Decode inline source-map data URLs without treating their URL fragments as payload; recognize case-insensitive scheme and base64 markers.
       — claimed: Afloat16, branch bugfix/r3.12-source-map-data-url-fragment
+- [ ] Apply WebAssembly name and producer inventory limits across repeated custom sections and report truncation.
+      — claimed: Afloat16, branch bugfix/r3.12-wasm-custom-inventory-budget-20261109
 - [x] Accept only valid WebAssembly names when reporting custom-section debug and source map URLs.
       — claimed: Afloat16, branch bugfix/r3.12-wasm-debug-names
 - [x] Decode the full signed 32-bit source map VLQ range and refuse mapping fields outside it.
