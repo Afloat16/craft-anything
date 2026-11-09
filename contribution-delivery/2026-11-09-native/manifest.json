@@ -8,20 +8,20 @@
   "status": {
     "implemented_independent_fork_branches": 10,
     "upstream_prs_created": 10,
-    "merged": 8,
-    "validation": "The original ten per-item source revisions passed their recorded tests and gates. Two review corrections are undergoing additional before/after validation on current main. A normal merge updates item 10 without altering its own correction.",
+    "merged": 9,
+    "validation": "All original per-item fixes and the two subsequent review corrections passed their recorded tests and required gates. One follow-up PR for the merged ELF-slot item is ready; it does not increase the ten-item target.",
     "blockers": [],
     "ready_for_submission": [],
-    "new_regression_and_control_tests": 35,
-    "reproduced_failing_cases": 25,
-    "control_cases": 10,
-    "publication": "Ten original upstream PRs; eight merged and two open at this snapshot.",
-    "upstream_prs_open": 2,
-    "publication_verified_at": "2026-11-09T15:51:45Z",
-    "review_followups_pending": [
-      1,
-      5
-    ]
+    "new_regression_and_control_tests": 39,
+    "reproduced_failing_cases": 28,
+    "control_cases": 11,
+    "publication": "Ten original upstream PRs; 9 merged and 1 open at this snapshot.",
+    "upstream_prs_open": 1,
+    "publication_verified_at": "2026-11-09T16:10:47Z",
+    "review_followups_pending": [],
+    "followup_pr_ready": true,
+    "original_pr_test_cases": 36,
+    "followup_pr_test_cases": 3
   },
   "entries": [
     {
@@ -114,7 +114,16 @@
         "kind": "existing full CI"
       },
       "integration_before_validation": null,
-      "validation_pr_closed": true
+      "validation_pr_closed": true,
+      "review_correction": {
+        "previous_head": "b450b193912c0d0766abab7c339ac5c5f8bec44a",
+        "before": "460e4243f8373735a0c6ea93952b34a8522a75eb",
+        "before_branch": "test/r3.12-native-review-1-20261109",
+        "after": "cf95f3b705efa60f7910c4506fadda22f75a3bbc",
+        "after_branch": "validation/r3.12-native-review-1-20261109",
+        "tree": "66f39a0bc938dae362c1a791da82a2682110ddb2",
+        "status": "verification_pending"
+      }
     },
     {
       "number": 2,
@@ -404,9 +413,9 @@
       "number": 5,
       "title": "Keep PE import descriptors inside their declared directories",
       "branch": "bugfix/r3.12-pe-import-directory-bounds-20261109",
-      "latest_head": "9295c9716118277527e820dba29d2a7965d84047",
-      "source_tested_sha": "7f3a9ba44bc77f949221d03c4b040473f4b4f166",
-      "validation_target_sha": "7f3a9ba44bc77f949221d03c4b040473f4b4f166",
+      "latest_head": "3e9d922a7b36d9c092a2850923281f8cb08d4eb0",
+      "source_tested_sha": "8a6017bd43b2eef263a645eafbac98b038763c20",
+      "validation_target_sha": "8a6017bd43b2eef263a645eafbac98b038763c20",
       "claim_commit": "5dbf2b5f94a4146c13d9765a31486ec31e25421d",
       "test_only_commit": "60d5f452a78c77e0c670b2d457fbb334d06876a3",
       "fix_commit": "f9e17888dac7352dd4882c57bc34f779afe4a87e",
@@ -420,7 +429,7 @@
       "problem": "Normal and delay-load descriptors ignore directory sizes, and bound descriptors, forwarder records and names can consume bytes after their directory. Partial metadata is consequently reported as complete imports.",
       "change": "Frame all three import metadata readers by their declared directory and contiguous RVA mapping, require complete descriptor/forwarder records, and report truncation. Share the existing resource mapping-extent calculation without changing resource behavior.",
       "related_work": "#902 bounds optional headers, #903 resource directories and #1334 header RVA fallback. None bounds the import descriptor directories read by normal_imports, delay_imports and bound_modules.",
-      "regression_tests": 5,
+      "regression_tests": 6,
       "test_command": "cargo test --locked -p craft-anything-formats --test pe_import_directory_bounds",
       "baseline_validation": {
         "sha": "a100bb0647e191efa327867191fa508a49b8df2c",
@@ -457,31 +466,84 @@
       },
       "validation_pr": "https://github.com/Afloat16/craft-anything/pull/11",
       "full_ci": {
-        "run": 42635844120,
-        "url": "https://github.com/Afloat16/craft-anything/actions/runs/42635844120",
-        "status": "completed",
-        "conclusion": "success"
+        "status": "pending",
+        "source_sha": "3e9d922a7b36d9c092a2850923281f8cb08d4eb0",
+        "note": "Upstream merged-head CI is separate from the successful exact-source follow-up verification."
       },
       "pr_title": "Keep PE import descriptors inside their declared directories (R3.12)",
-      "pr_body": "## Problem\n\nNormal and delay-load descriptors ignore directory sizes, and bound descriptors, forwarder records and names can consume bytes after their directory. Partial metadata is consequently reported as complete imports.\n\n## Changes\n\nFrame all three import metadata readers by their declared directory and contiguous RVA mapping, require complete descriptor/forwarder records, and report truncation. Share the existing resource mapping-extent calculation without changing resource behavior.\n\nThe existing row-budget test overwrites .facts with 102 complete descriptors but leaves the old three-descriptor directory size. Updated only the declared size to 102 * 20, preserving its 408,000 requested rows and 200,000 output-cap assertion.\n\n## Regression coverage\n\n5 regression and control tests in `crates/formats/tests/pe_import_directory_bounds.rs`. Short and partial descriptors, bound forwarder/name boundaries, selected-section extent, valid external names and the existing 200,000-row cap.\n\n## Validation\n\nSource revision `7f3a9ba44bc77f949221d03c4b040473f4b4f166` passed `cargo fmt --all -- --check`, the complete `craft-anything-formats` test suite, and `cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings`: [verification](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226892207).\n\nThe repository's complete existing CI also passed for that source revision: [CI run](https://github.com/Afloat16/craft-anything/actions/runs/42635844120).\n\nThe tests against unchanged production code reproduced 4 failures with 1 passing control: [baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895499), revision `a100bb0647e191efa327867191fa508a49b8df2c`.\n\nCurrent head `9295c9716118277527e820dba29d2a7965d84047` adds only the completed roadmap entry and status documentation after the tested source revision; [the comparison](https://github.com/Afloat16/craft-anything/compare/7f3a9ba44bc77f949221d03c4b040473f4b4f166...9295c9716118277527e820dba29d2a7965d84047) contains no source or test changes.\n\n## Related work\n\n#902 bounds optional headers, #903 resource directories and #1334 header RVA fallback. None bounds the import descriptor directories read by normal_imports, delay_imports and bound_modules.\n\n## Scope\n\nOne R3.12 pending change, claimed in commit `5dbf2b5f94a4146c13d9765a31486ec31e25421d` before implementation.",
-      "prefilled_pr_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-pe-import-directory-bounds-20261109?expand=1&title=Keep%20PE%20import%20descriptors%20inside%20their%20declared%20directories%20(R3.12)&body=%23%23%20Problem%0A%0ANormal%20and%20delay-load%20descriptors%20ignore%20directory%20sizes%2C%20and%20bound%20descriptors%2C%20forwarder%20records%20and%20names%20can%20consume%20bytes%20after%20their%20directory.%20Partial%20metadata%20is%20consequently%20reported%20as%20complete%20imports.%0A%0A%23%23%20Changes%0A%0AFrame%20all%20three%20import%20metadata%20readers%20by%20their%20declared%20directory%20and%20contiguous%20RVA%20mapping%2C%20require%20complete%20descriptor%2Fforwarder%20records%2C%20and%20report%20truncation.%20Share%20the%20existing%20resource%20mapping-extent%20calculation%20without%20changing%20resource%20behavior.%0A%0AThe%20existing%20row-budget%20test%20overwrites%20.facts%20with%20102%20complete%20descriptors%20but%20leaves%20the%20old%20three-descriptor%20directory%20size.%20Updated%20only%20the%20declared%20size%20to%20102%20*%2020%2C%20preserving%20its%20408%2C000%20requested%20rows%20and%20200%2C000%20output-cap%20assertion.%0A%0A%23%23%20Regression%20coverage%0A%0A5%20regression%20and%20control%20tests%20in%20%60crates%2Fformats%2Ftests%2Fpe_import_directory_bounds.rs%60.%20Short%20and%20partial%20descriptors%2C%20bound%20forwarder%2Fname%20boundaries%2C%20selected-section%20extent%2C%20valid%20external%20names%20and%20the%20existing%20200%2C000-row%20cap.%0A%0A%23%23%20Validation%0A%0ASource%20revision%20%607f3a9ba44bc77f949221d03c4b040473f4b4f166%60%20passed%20%60cargo%20fmt%20--all%20--%20--check%60%2C%20the%20complete%20%60craft-anything-formats%60%20test%20suite%2C%20and%20%60cargo%20clippy%20--locked%20-p%20craft-anything-formats%20--all-targets%20--%20-D%20warnings%60%3A%20%5Bverification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226892207).%0A%0AThe%20repository's%20complete%20existing%20CI%20also%20passed%20for%20that%20source%20revision%3A%20%5BCI%20run%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fcraft-anything%2Factions%2Fruns%2F42635844120).%0A%0AThe%20tests%20against%20unchanged%20production%20code%20reproduced%204%20failures%20with%201%20passing%20control%3A%20%5Bbaseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895499)%2C%20revision%20%60a100bb0647e191efa327867191fa508a49b8df2c%60.%0A%0ACurrent%20head%20%609295c9716118277527e820dba29d2a7965d84047%60%20adds%20only%20the%20completed%20roadmap%20entry%20and%20status%20documentation%20after%20the%20tested%20source%20revision%3B%20%5Bthe%20comparison%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fcraft-anything%2Fcompare%2F7f3a9ba44bc77f949221d03c4b040473f4b4f166...9295c9716118277527e820dba29d2a7965d84047)%20contains%20no%20source%20or%20test%20changes.%0A%0A%23%23%20Related%20work%0A%0A%23902%20bounds%20optional%20headers%2C%20%23903%20resource%20directories%20and%20%231334%20header%20RVA%20fallback.%20None%20bounds%20the%20import%20descriptor%20directories%20read%20by%20normal_imports%2C%20delay_imports%20and%20bound_modules.%0A%0A%23%23%20Scope%0A%0AOne%20R3.12%20pending%20change%2C%20claimed%20in%20commit%20%605dbf2b5f94a4146c13d9765a31486ec31e25421d%60%20before%20implementation.",
+      "pr_body": "## Problem\n\nNormal and delay-load descriptors ignore directory sizes, and bound descriptors, forwarder records and names can consume bytes after their directory. Partial metadata is consequently reported as complete imports.\n\n## Changes\n\nFrame all three import metadata readers by their declared directory and contiguous RVA mapping, require complete descriptor/forwarder records, and report truncation. Share the existing resource mapping-extent calculation without changing resource behavior.\n\nThe existing row-budget test overwrites .facts with 102 complete descriptors but leaves the old three-descriptor directory size. Updated only the declared size to 102 * 20, preserving its 408,000 requested rows and 200,000 output-cap assertion.\n\nInvalid bound-forwarder names produce one warning per module, preventing repeated malformed records from multiplying identical diagnostic strings. Valid forwarder names are retained, and truncation remains visible.\n\n## Regression coverage\n\n6 regression and control tests in `crates/formats/tests/pe_import_directory_bounds.rs`. Short and partial descriptors, bound forwarder/name boundaries, selected-section extent, valid external names and the existing 200,000-row cap.\n\n## Validation\n\nSource revision `8a6017bd43b2eef263a645eafbac98b038763c20`, including a normal two-parent merge of upstream `efddbdeb6868f10a3d8d53f114d47aed72b89612`, passed formatting, the complete `craft-anything-formats` test suite, clippy with warnings denied, layer/lock/secret checks, L0–L2 WebAssembly checks, and the unchanged-lockfile check: [verification](https://github.com/Afloat16/claude-mem/actions/runs/42648202887/job/129267099134).\n\nThe new diagnostic regression failed before the correction at `943016fe3f242185981d1621e816f91ec6f00408`: 32 invalid forwarder names produced 32 identical warnings. It passes after coalescing those warnings per module. The original directory-boundary tests also reproduced four failures and one passing control against unchanged production code: [original baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895499).\n\nCurrent head `3e9d922a7b36d9c092a2850923281f8cb08d4eb0` adds only the status documentation after the tested source revision; [the comparison](https://github.com/Afloat16/craft-anything/compare/8a6017bd43b2eef263a645eafbac98b038763c20...3e9d922a7b36d9c092a2850923281f8cb08d4eb0) contains no source or test changes. Both the newer upstream parser changes and the existing 200,000-row assertion are preserved.\n\n## Related work\n\n#902 bounds optional headers, #903 resource directories and #1334 header RVA fallback. None bounds the import descriptor directories read by normal_imports, delay_imports and bound_modules.\n\n## Scope\n\nOne R3.12 pending change, claimed in commit `5dbf2b5f94a4146c13d9765a31486ec31e25421d` before implementation.",
+      "prefilled_pr_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-pe-import-directory-bounds-20261109?expand=1&title=Keep%20PE%20import%20descriptors%20inside%20their%20declared%20directories%20(R3.12)&body=%23%23%20Problem%0A%0ANormal%20and%20delay-load%20descriptors%20ignore%20directory%20sizes%2C%20and%20bound%20descriptors%2C%20forwarder%20records%20and%20names%20can%20consume%20bytes%20after%20their%20directory.%20Partial%20metadata%20is%20consequently%20reported%20as%20complete%20imports.%0A%0A%23%23%20Changes%0A%0AFrame%20all%20three%20import%20metadata%20readers%20by%20their%20declared%20directory%20and%20contiguous%20RVA%20mapping%2C%20require%20complete%20descriptor%2Fforwarder%20records%2C%20and%20report%20truncation.%20Share%20the%20existing%20resource%20mapping-extent%20calculation%20without%20changing%20resource%20behavior.%0A%0AThe%20existing%20row-budget%20test%20overwrites%20.facts%20with%20102%20complete%20descriptors%20but%20leaves%20the%20old%20three-descriptor%20directory%20size.%20Updated%20only%20the%20declared%20size%20to%20102%20*%2020%2C%20preserving%20its%20408%2C000%20requested%20rows%20and%20200%2C000%20output-cap%20assertion.%0A%0AInvalid%20bound-forwarder%20names%20produce%20one%20warning%20per%20module%2C%20preventing%20repeated%20malformed%20records%20from%20multiplying%20identical%20diagnostic%20strings.%20Valid%20forwarder%20names%20are%20retained%2C%20and%20truncation%20remains%20visible.%0A%0A%23%23%20Regression%20coverage%0A%0A6%20regression%20and%20control%20tests%20in%20%60crates%2Fformats%2Ftests%2Fpe_import_directory_bounds.rs%60.%20Short%20and%20partial%20descriptors%2C%20bound%20forwarder%2Fname%20boundaries%2C%20selected-section%20extent%2C%20valid%20external%20names%20and%20the%20existing%20200%2C000-row%20cap.%0A%0A%23%23%20Validation%0A%0ASource%20revision%20%608a6017bd43b2eef263a645eafbac98b038763c20%60%2C%20including%20a%20normal%20two-parent%20merge%20of%20upstream%20%60efddbdeb6868f10a3d8d53f114d47aed72b89612%60%2C%20passed%20formatting%2C%20the%20complete%20%60craft-anything-formats%60%20test%20suite%2C%20clippy%20with%20warnings%20denied%2C%20layer%2Flock%2Fsecret%20checks%2C%20L0%E2%80%93L2%20WebAssembly%20checks%2C%20and%20the%20unchanged-lockfile%20check%3A%20%5Bverification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42648202887%2Fjob%2F129267099134).%0A%0AThe%20new%20diagnostic%20regression%20failed%20before%20the%20correction%20at%20%60943016fe3f242185981d1621e816f91ec6f00408%60%3A%2032%20invalid%20forwarder%20names%20produced%2032%20identical%20warnings.%20It%20passes%20after%20coalescing%20those%20warnings%20per%20module.%20The%20original%20directory-boundary%20tests%20also%20reproduced%20four%20failures%20and%20one%20passing%20control%20against%20unchanged%20production%20code%3A%20%5Boriginal%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895499).%0A%0ACurrent%20head%20%603e9d922a7b36d9c092a2850923281f8cb08d4eb0%60%20adds%20only%20the%20status%20documentation%20after%20the%20tested%20source%20revision%3B%20%5Bthe%20comparison%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fcraft-anything%2Fcompare%2F8a6017bd43b2eef263a645eafbac98b038763c20...3e9d922a7b36d9c092a2850923281f8cb08d4eb0)%20contains%20no%20source%20or%20test%20changes.%20Both%20the%20newer%20upstream%20parser%20changes%20and%20the%20existing%20200%2C000-row%20assertion%20are%20preserved.%0A%0A%23%23%20Related%20work%0A%0A%23902%20bounds%20optional%20headers%2C%20%23903%20resource%20directories%20and%20%231334%20header%20RVA%20fallback.%20None%20bounds%20the%20import%20descriptor%20directories%20read%20by%20normal_imports%2C%20delay_imports%20and%20bound_modules.%0A%0A%23%23%20Scope%0A%0AOne%20R3.12%20pending%20change%2C%20claimed%20in%20commit%20%605dbf2b5f94a4146c13d9765a31486ec31e25421d%60%20before%20implementation.",
       "upstream_pr": {
         "number": 1369,
         "url": "https://github.com/storytold/craft-anything/pull/1369",
         "state": "open",
         "merged": false,
-        "head": "9295c9716118277527e820dba29d2a7965d84047",
+        "head": "3e9d922a7b36d9c092a2850923281f8cb08d4eb0",
         "merged_at": null
       },
       "merged": false,
       "docs_only_after_tested_source": true,
       "post_test_changed_files": [
-        "docs/ROADMAP.md",
         "docs/STATUS.md"
       ],
-      "post_test_compare_url": "https://github.com/Afloat16/craft-anything/compare/7f3a9ba44bc77f949221d03c4b040473f4b4f166...9295c9716118277527e820dba29d2a7965d84047",
+      "post_test_compare_url": "https://github.com/Afloat16/craft-anything/compare/8a6017bd43b2eef263a645eafbac98b038763c20...3e9d922a7b36d9c092a2850923281f8cb08d4eb0",
       "ready_for_submission": false,
       "verification": {
+        "status": "success",
+        "sha": "8a6017bd43b2eef263a645eafbac98b038763c20",
+        "run": 42648202887,
+        "job": 129267099134,
+        "url": "https://github.com/Afloat16/claude-mem/actions/runs/42648202887/job/129267099134",
+        "commands": [
+          "cargo fmt --all -- --check",
+          "cargo test --locked -p craft-anything-formats",
+          "cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings"
+        ],
+        "tests_failed": 0
+      },
+      "gates": {
+        "status": "success",
+        "sha": "8a6017bd43b2eef263a645eafbac98b038763c20",
+        "run": 42648202887,
+        "job": 129267099134,
+        "url": "https://github.com/Afloat16/claude-mem/actions/runs/42648202887/job/129267099134",
+        "commands": [
+          "cargo xtask layers",
+          "cargo xtask locks",
+          "cargo xtask secrets",
+          "cargo xtask wasm",
+          "git diff --exit-code -- Cargo.lock"
+        ],
+        "tests_failed": 0
+      },
+      "integration_before_validation": null,
+      "validation_pr_closed": true,
+      "integration_merge": {
+        "base": "efddbdeb6868f10a3d8d53f114d47aed72b89612",
+        "commit": "943016fe3f242185981d1621e816f91ec6f00408",
+        "parents": [
+          "52449a2c89a914b3f3f707f0ae0b05e2f14b086e",
+          "efddbdeb6868f10a3d8d53f114d47aed72b89612"
+        ],
+        "previous_upstream_head": "9295c9716118277527e820dba29d2a7965d84047",
+        "source_and_regressions_verified": true
+      },
+      "review_correction": {
+        "previous_head": "9295c9716118277527e820dba29d2a7965d84047",
+        "before": "943016fe3f242185981d1621e816f91ec6f00408",
+        "before_branch": "test/r3.12-native-review-5-20261109",
+        "after": "03f8b849644b3325730a91ab36ef3885bd7c4e72",
+        "after_branch": "validation/r3.12-native-review-5-20261109",
+        "tree": "2bb0dfb2401b020e0ffbe6aa5087007fd5179bc2",
+        "status": "verified and published",
+        "base": "efddbdeb6868f10a3d8d53f114d47aed72b89612",
+        "source": "8a6017bd43b2eef263a645eafbac98b038763c20",
+        "head": "3e9d922a7b36d9c092a2850923281f8cb08d4eb0",
+        "validation": "https://github.com/Afloat16/claude-mem/actions/runs/42648202887/job/129267099134",
+        "baseline_result": "32 duplicate warnings; expected one per module",
+        "new_regression_tests": 1
+      },
+      "previous_verification": {
         "status": "success",
         "sha": "7f3a9ba44bc77f949221d03c4b040473f4b4f166",
         "run": 42636776430,
@@ -493,15 +555,12 @@
           "cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings"
         ]
       },
-      "gates": {
-        "status": "success",
-        "sha": "7f3a9ba44bc77f949221d03c4b040473f4b4f166",
-        "url": "https://github.com/Afloat16/craft-anything/actions/runs/42635844120",
+      "initial_full_ci": {
         "run": 42635844120,
-        "kind": "existing full CI"
-      },
-      "integration_before_validation": null,
-      "validation_pr_closed": true
+        "url": "https://github.com/Afloat16/craft-anything/actions/runs/42635844120",
+        "status": "completed",
+        "conclusion": "success"
+      }
     },
     {
       "number": 6,
@@ -963,12 +1022,12 @@
       "upstream_pr": {
         "number": 1387,
         "url": "https://github.com/storytold/craft-anything/pull/1387",
-        "state": "open",
-        "merged": false,
+        "state": "closed",
+        "merged": true,
         "head": "ca995c780a255ded81ba7ffc72680839d47c302c",
-        "merged_at": null
+        "merged_at": "2026-11-09T16:05:43Z"
       },
-      "merged": false,
+      "merged": true,
       "docs_only_after_tested_source": false,
       "post_test_changed_files": [
         "docs/ROADMAP.md",
@@ -1032,26 +1091,72 @@
       "original_item": 1,
       "original_pr": 1365,
       "counts_as_new_target": false,
+      "status": "ready for upstream follow-up PR",
+      "branch": "bugfix/r3.12-elf-versioned-import-slot-fallback-20261109",
       "base": "efddbdeb6868f10a3d8d53f114d47aed72b89612",
+      "claim": "d3e6bf46c064bd4d4a28c5859ce60ecb1254fe6a",
+      "head": "ca4e03b2991ff6641a230f36e6b53b57047e2535",
+      "source_tested_sha": "1179870c55203d946bb8a7412b9b8f1088352fe3",
       "before": "3ad1f5b0d33a336b744b6f653f85eb1635622422",
-      "after": "d4048c6ef9b07b775597cf193efa70269cad7ff4",
-      "status": "verification in progress",
-      "run": 42648202887,
-      "job": 129267099134,
-      "url": "https://github.com/Afloat16/claude-mem/actions/runs/42648202887/job/129267099134",
-      "claim": "d3e6bf46c064bd4d4a28c5859ce60ecb1254fe6a"
+      "ownership_before": "f607786f68c16bdc85968ea35ec4ac76ff3d320f",
+      "new_integration_tests": 3,
+      "verification": {
+        "status": "success",
+        "sha": "1179870c55203d946bb8a7412b9b8f1088352fe3",
+        "run": 42649963480,
+        "job": 129273346728,
+        "url": "https://github.com/Afloat16/claude-mem/actions/runs/42649963480/job/129273346728",
+        "commands": [
+          "cargo fmt --all -- --check",
+          "cargo test --locked -p craft-anything-formats",
+          "cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings",
+          "cargo xtask layers",
+          "cargo xtask locks",
+          "cargo xtask secrets",
+          "cargo xtask wasm",
+          "git diff --exit-code -- Cargo.lock"
+        ],
+        "new_integration_tests": 3
+      },
+      "initial_regression": {
+        "sha": "3ad1f5b0d33a336b744b6f653f85eb1635622422",
+        "run": 42648202887,
+        "job": 129267099134,
+        "url": "https://github.com/Afloat16/claude-mem/actions/runs/42648202887/job/129267099134",
+        "test": "versioned_elf_imports_keep_unique_slots_without_library_metadata",
+        "result": "expected failure"
+      },
+      "ownership_regression": {
+        "sha": "f607786f68c16bdc85968ea35ec4ac76ff3d320f",
+        "run": 42649963480,
+        "job": 129273346728,
+        "url": "https://github.com/Afloat16/claude-mem/actions/runs/42649963480/job/129273346728",
+        "test": "different_versioned_libraries_do_not_share_an_unlabelled_slot",
+        "result": "expected failure before final ownership guard"
+      },
+      "title": "Preserve unambiguous ELF import slots across version-library metadata (R3.12)",
+      "body": "## Problem\n\nA versioned ELF import has a library name, while `collect_symbols` records its GOT relocation slot without library metadata. The tuple-only association from #1365 can therefore leave an existing `JUMP_SLOT` or `GLOB_DAT` address unset.\n\n## Changes\n\nPreserve any explicit parser-provided slot and prefer a matching named-library slot. Permit an unlabelled-slot fallback only when both the candidate address and the import's library identity are unambiguous. Repeated relocation records for one address remain usable; different addresses or different version owners remain unknown.\n\nThe merged PE rejected-address guard is retained, so an invalid PE slot cannot be filled from another row.\n\n## Regression coverage\n\nThree additional integration regressions run through `parse_binary`: a versioned ELF with unique unlabelled GLOB_DAT/JUMP_SLOT slots, distinct possible slot addresses, and two same-named imports from different GNU version libraries sharing one unlabelled relocation. Existing PE library/slot identity controls remain in the same suite.\n\nThe missing-slot regression fails on `3ad1f5b0d33a336b744b6f653f85eb1635622422`. The two-library ownership regression fails on `f607786f68c16bdc85968ea35ec4ac76ff3d320f` before the final ownership guard. The fixtures verify that the parser actually reads both version-library identities and the expected relocation addresses.\n\n## Validation\n\nExact source `1179870c55203d946bb8a7412b9b8f1088352fe3` passed formatting, the complete `craft-anything-formats` suite, clippy with warnings denied, layer/lock/secret checks, L0–L2 WebAssembly checks and the unchanged-lockfile check: [verification](https://github.com/Afloat16/claude-mem/actions/runs/42649963480/job/129273346728).\n\nThe initial missing-slot failure is preserved in [its before/after run](https://github.com/Afloat16/claude-mem/actions/runs/42648202887/job/129267099134); the final verification also proves the two-library ownership failure before the guard and passes all five import-slot integration tests after it.\n\nCurrent head `ca4e03b2991ff6641a230f36e6b53b57047e2535` adds only completed roadmap/status documentation after the tested source; [the comparison](https://github.com/Afloat16/craft-anything/compare/1179870c55203d946bb8a7412b9b8f1088352fe3...ca4e03b2991ff6641a230f36e6b53b57047e2535) contains no source or test changes.\n\n## Related work\n\nFollow-up to merged #1365. It restores the valid versioned-ELF fallback without reintroducing same-named library reassignment. The branch includes upstream `efddbdeb6868f10a3d8d53f114d47aed72b89612` and preserves its newer native-parser corrections.\n\nClaimed before implementation in `d3e6bf46c064bd4d4a28c5859ce60ecb1254fe6a`; the roadmap and status entry document this compatibility correction.\n",
+      "prefilled_pr_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-elf-versioned-import-slot-fallback-20261109?expand=1&title=Preserve%20unambiguous%20ELF%20import%20slots%20across%20version-library%20metadata%20(R3.12)&body=%23%23%20Problem%0A%0AA%20versioned%20ELF%20import%20has%20a%20library%20name%2C%20while%20%60collect_symbols%60%20records%20its%20GOT%20relocation%20slot%20without%20library%20metadata.%20The%20tuple-only%20association%20from%20%231365%20can%20therefore%20leave%20an%20existing%20%60JUMP_SLOT%60%20or%20%60GLOB_DAT%60%20address%20unset.%0A%0A%23%23%20Changes%0A%0APreserve%20any%20explicit%20parser-provided%20slot%20and%20prefer%20a%20matching%20named-library%20slot.%20Permit%20an%20unlabelled-slot%20fallback%20only%20when%20both%20the%20candidate%20address%20and%20the%20import's%20library%20identity%20are%20unambiguous.%20Repeated%20relocation%20records%20for%20one%20address%20remain%20usable%3B%20different%20addresses%20or%20different%20version%20owners%20remain%20unknown.%0A%0AThe%20merged%20PE%20rejected-address%20guard%20is%20retained%2C%20so%20an%20invalid%20PE%20slot%20cannot%20be%20filled%20from%20another%20row.%0A%0A%23%23%20Regression%20coverage%0A%0AThree%20additional%20integration%20regressions%20run%20through%20%60parse_binary%60%3A%20a%20versioned%20ELF%20with%20unique%20unlabelled%20GLOB_DAT%2FJUMP_SLOT%20slots%2C%20distinct%20possible%20slot%20addresses%2C%20and%20two%20same-named%20imports%20from%20different%20GNU%20version%20libraries%20sharing%20one%20unlabelled%20relocation.%20Existing%20PE%20library%2Fslot%20identity%20controls%20remain%20in%20the%20same%20suite.%0A%0AThe%20missing-slot%20regression%20fails%20on%20%603ad1f5b0d33a336b744b6f653f85eb1635622422%60.%20The%20two-library%20ownership%20regression%20fails%20on%20%60f607786f68c16bdc85968ea35ec4ac76ff3d320f%60%20before%20the%20final%20ownership%20guard.%20The%20fixtures%20verify%20that%20the%20parser%20actually%20reads%20both%20version-library%20identities%20and%20the%20expected%20relocation%20addresses.%0A%0A%23%23%20Validation%0A%0AExact%20source%20%601179870c55203d946bb8a7412b9b8f1088352fe3%60%20passed%20formatting%2C%20the%20complete%20%60craft-anything-formats%60%20suite%2C%20clippy%20with%20warnings%20denied%2C%20layer%2Flock%2Fsecret%20checks%2C%20L0%E2%80%93L2%20WebAssembly%20checks%20and%20the%20unchanged-lockfile%20check%3A%20%5Bverification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649963480%2Fjob%2F129273346728).%0A%0AThe%20initial%20missing-slot%20failure%20is%20preserved%20in%20%5Bits%20before%2Fafter%20run%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42648202887%2Fjob%2F129267099134)%3B%20the%20final%20verification%20also%20proves%20the%20two-library%20ownership%20failure%20before%20the%20guard%20and%20passes%20all%20five%20import-slot%20integration%20tests%20after%20it.%0A%0ACurrent%20head%20%60ca4e03b2991ff6641a230f36e6b53b57047e2535%60%20adds%20only%20completed%20roadmap%2Fstatus%20documentation%20after%20the%20tested%20source%3B%20%5Bthe%20comparison%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fcraft-anything%2Fcompare%2F1179870c55203d946bb8a7412b9b8f1088352fe3...ca4e03b2991ff6641a230f36e6b53b57047e2535)%20contains%20no%20source%20or%20test%20changes.%0A%0A%23%23%20Related%20work%0A%0AFollow-up%20to%20merged%20%231365.%20It%20restores%20the%20valid%20versioned-ELF%20fallback%20without%20reintroducing%20same-named%20library%20reassignment.%20The%20branch%20includes%20upstream%20%60efddbdeb6868f10a3d8d53f114d47aed72b89612%60%20and%20preserves%20its%20newer%20native-parser%20corrections.%0A%0AClaimed%20before%20implementation%20in%20%60d3e6bf46c064bd4d4a28c5859ce60ecb1254fe6a%60%3B%20the%20roadmap%20and%20status%20entry%20document%20this%20compatibility%20correction.%0A",
+      "docs_only_after_tested_source": true,
+      "post_test_compare_url": "https://github.com/Afloat16/craft-anything/compare/1179870c55203d946bb8a7412b9b8f1088352fe3...ca4e03b2991ff6641a230f36e6b53b57047e2535"
     },
     {
       "original_item": 5,
       "original_pr": 1369,
       "counts_as_new_target": false,
-      "base": "efddbdeb6868f10a3d8d53f114d47aed72b89612",
+      "previous_head": "9295c9716118277527e820dba29d2a7965d84047",
       "before": "943016fe3f242185981d1621e816f91ec6f00408",
-      "after": "8a6017bd43b2eef263a645eafbac98b038763c20",
-      "status": "verification in progress",
-      "run": 42648202887,
-      "job": 129267099134,
-      "url": "https://github.com/Afloat16/claude-mem/actions/runs/42648202887/job/129267099134"
+      "before_branch": "test/r3.12-native-review-5-20261109",
+      "after": "03f8b849644b3325730a91ab36ef3885bd7c4e72",
+      "after_branch": "validation/r3.12-native-review-5-20261109",
+      "tree": "2bb0dfb2401b020e0ffbe6aa5087007fd5179bc2",
+      "status": "verified and published",
+      "base": "efddbdeb6868f10a3d8d53f114d47aed72b89612",
+      "source": "8a6017bd43b2eef263a645eafbac98b038763c20",
+      "head": "3e9d922a7b36d9c092a2850923281f8cb08d4eb0",
+      "validation": "https://github.com/Afloat16/claude-mem/actions/runs/42648202887/job/129267099134",
+      "baseline_result": "32 duplicate warnings; expected one per module",
+      "new_regression_tests": 1
     }
   ]
 }
