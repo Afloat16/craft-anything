@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-11-09 15:15:10 UTC",
+  "updated_at": "2026-11-09 15:17:18 UTC",
   "repository": "storytold/craft-anything",
   "fork": "Afloat16/craft-anything",
   "scope": "Ten independent other-format contributions",
@@ -113,11 +113,11 @@
       "key": "java",
       "title": "Reject Java constants that exceed the constant-pool slots (R3.12)",
       "branch": "bugfix/r3.12-java-wide-pool-slot-20261109",
-      "head": "e0dbc3a5b60b140f26f3622f34c11035e3c1cb7d",
+      "head": "f358146ebeaa5856e32178308c24a8e9283e84b2",
       "source_head": "e0dbc3a5b60b140f26f3622f34c11035e3c1cb7d",
       "source_tested_sha": "e0dbc3a5b60b140f26f3622f34c11035e3c1cb7d",
       "base": "3f4c54bdd4066f9c6bd1708c215ac64bf776927a",
-      "tree": "76a9f6636a230ddb55a7b4b6a57c345a20d9175c",
+      "tree": "9ef677e57350aa5bde74f04cf160d776aa70d521",
       "files": [
         "crates/formats/src/java_class.rs",
         "crates/formats/tests/java_constant_pool_slots.rs"
@@ -158,11 +158,14 @@
       ],
       "upstream_pr_url": null,
       "merged": false,
-      "publication_status": "source_committed_to_fork",
-      "verification_status": "full Linux gate and independent formats checks passed",
+      "publication_status": "ready_for_upstream",
+      "verification_status": "full Linux gate passed; source unchanged by documentation completion",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-java-wide-pool-slot-20261109",
       "prefilled_compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-java-wide-pool-slot-20261109?expand=1&title=Reject%20Java%20constants%20that%20exceed%20the%20constant-pool%20slots%20(R3.12)&body=%23%23%20Roadmap%0A%0AR3.12%3A%20Reject%20Java%20Long%20and%20Double%20constants%20without%20their%20reserved%20constant-pool%20slot%2C%20including%20the%20maximum%20u16%20pool%20boundary.%0A%0A%23%23%20Problem%0A%0AA%20Long%20or%20Double%20in%20the%20final%20declared%20pool%20slot%20was%20accepted%20without%20its%20required%20second%20slot.%20At%20constant_pool_count%20%3D%2065535%20the%20u16%20cursor%20overflowed%20while%20advancing%20past%20that%20entry.%0A%0A%23%23%20Change%0A%0ACheck%20the%20next%20pool%20index%20before%20retaining%20each%20constant.%20Reject%20a%20wide%20entry%20whose%20reserved%20slot%20does%20not%20fit%2C%20while%20preserving%20correctly%20formed%20maximum-size%20pools.%0A%0A%23%23%20Verification%0A%0A4%20new%20integration%20tests.%20Long%20and%20Double%20entries%20at%20ordinary%20and%20maximum%20u16%20boundaries%2C%20valid%20two-slot%20tail%20entries%2C%20ordinary%20constants%20and%20an%20existing%20class%20fixture.%20The%20fixtures%20use%20synthetic%20bytes.%0A%0AThe%20exact%20source%20head%20%60e0dbc3a5b60b140f26f3622f34c11035e3c1cb7d%60%20passed%20957%20formats-crate%20tests%2C%20%60cargo%20fmt%20--all%20--check%60%20and%20formats-crate%20Clippy%20with%20warnings%20denied%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42633003467%2Fjob%2F129213811541%0A%0AThe%20full%20existing%20Linux%20gate%2C%20including%20workspace%20tests%20and%20the%20WebAssembly%20check%2C%20also%20passed%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fcraft-anything%2Factions%2Fruns%2F42629757277%0A%0A%23%23%20Related%20work%0A%0AEarlier%20Java%20work%20covered%20bytecode-wide%20opcodes%20and%20method%20descriptors%3B%20this%20change%20validates%20constant-pool%20slot%20accounting.%0A",
-      "body": "## Roadmap\n\nR3.12: Reject Java Long and Double constants without their reserved constant-pool slot, including the maximum u16 pool boundary.\n\n## Problem\n\nA Long or Double in the final declared pool slot was accepted without its required second slot. At constant_pool_count = 65535 the u16 cursor overflowed while advancing past that entry.\n\n## Change\n\nCheck the next pool index before retaining each constant. Reject a wide entry whose reserved slot does not fit, while preserving correctly formed maximum-size pools.\n\n## Verification\n\n4 new integration tests. Long and Double entries at ordinary and maximum u16 boundaries, valid two-slot tail entries, ordinary constants and an existing class fixture. The fixtures use synthetic bytes.\n\nThe exact source head `e0dbc3a5b60b140f26f3622f34c11035e3c1cb7d` passed 957 formats-crate tests, `cargo fmt --all --check` and formats-crate Clippy with warnings denied: https://github.com/Afloat16/claude-mem/actions/runs/42633003467/job/129213811541\n\nThe full existing Linux gate, including workspace tests and the WebAssembly check, also passed: https://github.com/Afloat16/craft-anything/actions/runs/42629757277\n\n## Related work\n\nEarlier Java work covered bytecode-wide opcodes and method descriptors; this change validates constant-pool slot accounting.\n"
+      "body": "## Roadmap\n\nR3.12: Reject Java Long and Double constants without their reserved constant-pool slot, including the maximum u16 pool boundary.\n\n## Problem\n\nA Long or Double in the final declared pool slot was accepted without its required second slot. At constant_pool_count = 65535 the u16 cursor overflowed while advancing past that entry.\n\n## Change\n\nCheck the next pool index before retaining each constant. Reject a wide entry whose reserved slot does not fit, while preserving correctly formed maximum-size pools.\n\n## Verification\n\n4 new integration tests. Long and Double entries at ordinary and maximum u16 boundaries, valid two-slot tail entries, ordinary constants and an existing class fixture. The fixtures use synthetic bytes.\n\nThe exact source head `e0dbc3a5b60b140f26f3622f34c11035e3c1cb7d` passed 957 formats-crate tests, `cargo fmt --all --check` and formats-crate Clippy with warnings denied: https://github.com/Afloat16/claude-mem/actions/runs/42633003467/job/129213811541\n\nThe full existing Linux gate, including workspace tests and the WebAssembly check, also passed: https://github.com/Afloat16/craft-anything/actions/runs/42629757277\n\n## Related work\n\nEarlier Java work covered bytecode-wide opcodes and method descriptors; this change validates constant-pool slot accounting.\n",
+      "docs_head": "f358146ebeaa5856e32178308c24a8e9283e84b2",
+      "documentation_complete": true,
+      "docs_only_since_source": true
     },
     {
       "n": 2,
