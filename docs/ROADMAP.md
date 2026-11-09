@@ -446,7 +446,7 @@ been run live.
       loop) picks the wording: a website's `layouts` and each round's `capture.json`, a program's
       `ui-tree.json` and the check's likeness, and asking the person what their pictures show
       — claimed: youkaicountry, branch bugfix/r5.4-blind-builder-prompts
-- [ ] The carry-on and follow-up prompts (`continue_prompt`, `follow_up`) ask an API-loop builder
+- [x] The carry-on and follow-up prompts (`continue_prompt`, `follow_up`) ask an API-loop builder
       to check its work with rebuild_check, which the loop refuses while it builds; only its first
       message says so. Say "Craft Anything checks it after your turn" there instead
       — claimed: Afloat16, branch bugfix/r5.4-api-follow-up-check
