@@ -960,7 +960,7 @@ Owner: open · Status: in progress
 
 ### R2.7 The request decides how to build
 Owner: open · Status: in progress
-- [ ] Recognize Phaser and Bevy requests in the stack catalogue so Make can start those games without a Unity, Unreal or Godot editor.
+- [x] Recognize Phaser and Bevy requests in the stack catalogue so Make can start those games without a Unity, Unreal or Godot editor.
       — claimed: Afloat16, branch feature/r2.7-phaser-bevy-game-stacks
 - [ ] Make: a game whose request names a technology the stack table doesn't know (Phaser, Bevy…)
       still needs the default engine installed to start, though the builder is told to use what
