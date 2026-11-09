@@ -373,7 +373,7 @@ impl<'a> D<'a> {
             b'O' => ('V', "ObjectIdentifier"),
             b'P' => ('V', "UnsafePointer"),
             b'p' => ('V', "UnsafeMutablePointer"),
-            b'Q' => ('O', "ImplicitlyUnwrappedOptional"),
+            b'Q' => ('P', "Equatable"),
             b'q' => ('O', "Optional"),
             b'R' => ('V', "UnsafeBufferPointer"),
             b'r' => ('V', "UnsafeMutableBufferPointer"),
