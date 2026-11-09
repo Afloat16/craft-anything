@@ -678,14 +678,29 @@ fn parse_object(data: &[u8], slice_offset: u64) -> Result<Binary, FormatError> {
                 .or_insert(Some(s.addr));
         }
     }
+    let mut import_libraries: BTreeMap<&str, (Option<&str>, bool)> = BTreeMap::new();
+    for import in &b.imports {
+        import_libraries
+            .entry(import.name.as_str())
+            .and_modify(|(library, ambiguous)| *ambiguous |= *library != import.library.as_deref())
+            .or_insert((import.library.as_deref(), false));
+    }
     let slots: Vec<Option<u64>> = b
         .imports
         .iter()
         .map(|i| {
             i.slot.or_else(|| {
-                // ELF relocation slots do not carry the version's library name.
-                // Use an unlabelled slot only when all candidates agree on its address.
-                slot_of.get(&(i.name.as_str(), i.library.as_deref())).or_else(|| slot_of.get(&(i.name.as_str(), None))).copied().flatten()
+                let key = (i.name.as_str(), i.library.as_deref());
+                let exact = key.1.and_then(|_| slot_of.get(&key));
+                // ELF relocation slots may omit the version's library name. A fallback
+                // needs both a unique import identity and a unique candidate address.
+                exact
+                    .or_else(|| {
+                        let (_, ambiguous) = import_libraries.get(key.0)?;
+                        if *ambiguous { None } else { slot_of.get(&(key.0, None)) }
+                    })
+                    .copied()
+                    .flatten()
             })
         })
         .collect();
