@@ -1260,6 +1260,8 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
+- [ ] Resolve keyed archive references consistently in nested objects and object rows.
+      — claimed: Afloat16, branch bugfix/r3.12-keyed-archive-references
 - [x] Bound rejected ASAR names by the archive listing limit.
       — claimed: Afloat16, branch bugfix/r3.12-asar-limit-bounds-20261107
 - [x] Keep .NET bundle member reads before the manifest.
