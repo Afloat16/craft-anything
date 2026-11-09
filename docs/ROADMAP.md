@@ -1365,6 +1365,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-pyz-member-kinds
 - [x] Bound rejected ASAR names by the archive listing limit.
       — claimed: Afloat16, branch bugfix/r3.12-asar-limit-bounds-20261107
+- [ ] Keep embedded Godot pack tables and member reads before the executable's pack trailer.
+      — claimed: Afloat16, branch bugfix/r3.12-godot-trailer-boundary-20261109
 - [x] Keep .NET bundle member reads before the manifest.
       — claimed: Afloat16, branch bugfix/r3.12-dotnet-data-bounds-20261107
 - [x] Check the decoded byte count for packed files whose manifest declares their original size.
