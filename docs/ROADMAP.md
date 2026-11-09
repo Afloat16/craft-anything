@@ -1324,6 +1324,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-zip-multidisk-20261105
 - [x] Check Unity bundle blocks against their declared output lengths.
       — claimed: Afloat16, branch bugfix/r3.12-unity-bundle-decompressed-length-20261105
+- [ ] Require terminated cpio pathnames and a complete, empty trailer before reporting an archive as complete.
+      — claimed: Afloat16, branch bugfix/r3.12-cpio-path-and-trailer
 - [x] Locate Unity bundle metadata within the declared bundle size.
       — claimed: Afloat16, branch bugfix/r3.12-unity-bundle-declared-size-20261105
 - [x] Check that Unity bundle compressed blocks end before the trailing block table, or the declared
