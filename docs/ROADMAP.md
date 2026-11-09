@@ -1361,8 +1361,6 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Keep normal, delay-load and bound import descriptor walks within their declared directories and report incomplete metadata.
-      — claimed: Afloat16, branch bugfix/r3.12-pe-import-directory-bounds-20261109
 - [x] Extract legacy PyInstaller PYZ data as raw files and report modern namespace packages without fabricating bytecode.
       — claimed: Afloat16, branch bugfix/r3.12-pyz-member-kinds
 - [x] Bound rejected ASAR names by the archive listing limit.
@@ -1549,6 +1547,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-sbpf-records
 - [x] Keep PE optional-header reads within the declared header.
       — claimed: Afloat16, branch bugfix/r3.12-pe-optional-header-framing-20261105
+- [x] Keep normal, delay-load and bound import descriptor walks within their declared directories and report incomplete metadata.
+      — claimed: Afloat16, branch bugfix/r3.12-pe-import-directory-bounds-20261109
 - [x] Use the PE image's declared header extent when an RVA is not mapped by a section.
       — claimed: Afloat16, branch bugfix/r3.12-pe-header-rva-span
 - [x] Keep relocation symbol indices inside a linked symbol table and require a linked string table before reporting a syscall name.
