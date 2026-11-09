@@ -1384,6 +1384,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-tar-install-stop-reasons-20261109
       Source `3e588c55` passed [formats and engines tests, formatting, clippy and L0 gates](https://github.com/Afloat16/claude-mem/actions/runs/42649935938/job/129273248608).
       The [unchanged-production baseline](https://github.com/Afloat16/claude-mem/actions/runs/42648642576/job/129268658248) reproduces four failed guards while two compatibility controls pass.
+- [ ] Require the complete padded extent of GNU tar name and link records before allowing installation, including extents that overflow checked offsets; preserve ordinary member reads without trailing padding.
+      — claimed: Afloat16, branch bugfix/r3.12-gnu-tar-padded-records-20261109
 - [x] Extract legacy PyInstaller PYZ data as raw files and report modern namespace packages without fabricating bytecode.
       — claimed: Afloat16, branch bugfix/r3.12-pyz-member-kinds
 - [x] Keep PyInstaller CArchive member reads before the table and cookie, including signed files with trailing bytes.
