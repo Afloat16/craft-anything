@@ -8,14 +8,20 @@
   "status": {
     "implemented_independent_fork_branches": 10,
     "upstream_prs_created": 10,
-    "merged": 0,
-    "validation": "All ten source revisions passed formatting, the complete formats suite and clippy. Required layer/lock/secret/WebAssembly gates passed for all ten.",
+    "merged": 8,
+    "validation": "The original ten per-item source revisions passed their recorded tests and gates. Two review corrections are undergoing additional before/after validation on current main. A normal merge updates item 10 without altering its own correction.",
     "blockers": [],
     "ready_for_submission": [],
     "new_regression_and_control_tests": 35,
     "reproduced_failing_cases": 25,
     "control_cases": 10,
-    "publication": "All ten independent corrections have open upstream PRs; no merges recorded."
+    "publication": "Ten original upstream PRs; eight merged and two open at this snapshot.",
+    "upstream_prs_open": 2,
+    "publication_verified_at": "2026-11-09T15:51:45Z",
+    "review_followups_pending": [
+      1,
+      5
+    ]
   },
   "entries": [
     {
@@ -73,11 +79,12 @@
       "upstream_pr": {
         "number": 1365,
         "url": "https://github.com/storytold/craft-anything/pull/1365",
-        "state": "open",
-        "merged": false,
-        "head": "b450b193912c0d0766abab7c339ac5c5f8bec44a"
+        "state": "closed",
+        "merged": true,
+        "head": "b450b193912c0d0766abab7c339ac5c5f8bec44a",
+        "merged_at": "2026-11-09T15:34:47Z"
       },
-      "merged": false,
+      "merged": true,
       "docs_only_after_tested_source": true,
       "post_test_changed_files": [
         "docs/ROADMAP.md",
@@ -106,7 +113,8 @@
         "run": 42633033910,
         "kind": "existing full CI"
       },
-      "integration_before_validation": null
+      "integration_before_validation": null,
+      "validation_pr_closed": true
     },
     {
       "number": 2,
@@ -167,11 +175,12 @@
       "upstream_pr": {
         "number": 1366,
         "url": "https://github.com/storytold/craft-anything/pull/1366",
-        "state": "open",
-        "merged": false,
-        "head": "b9836f65b9e2c74d76921ca8d4f5dfaa27ac91d1"
+        "state": "closed",
+        "merged": true,
+        "head": "b9836f65b9e2c74d76921ca8d4f5dfaa27ac91d1",
+        "merged_at": "2026-11-09T15:34:54Z"
       },
-      "merged": false,
+      "merged": true,
       "docs_only_after_tested_source": true,
       "post_test_changed_files": [
         "docs/ROADMAP.md",
@@ -199,7 +208,8 @@
         "run": 42633044721,
         "kind": "existing full CI"
       },
-      "integration_before_validation": null
+      "integration_before_validation": null,
+      "validation_pr_closed": true
     },
     {
       "number": 3,
@@ -256,11 +266,12 @@
       "upstream_pr": {
         "number": 1367,
         "url": "https://github.com/storytold/craft-anything/pull/1367",
-        "state": "open",
-        "merged": false,
-        "head": "72461eb1a8f3dfea12884e8ef60b96e8cfb654f2"
+        "state": "closed",
+        "merged": true,
+        "head": "72461eb1a8f3dfea12884e8ef60b96e8cfb654f2",
+        "merged_at": "2026-11-09T15:35:01Z"
       },
-      "merged": false,
+      "merged": true,
       "docs_only_after_tested_source": true,
       "post_test_changed_files": [
         "docs/ROADMAP.md",
@@ -287,7 +298,8 @@
         "run": 42635162210,
         "kind": "existing full CI"
       },
-      "integration_before_validation": null
+      "integration_before_validation": null,
+      "validation_pr_closed": true
     },
     {
       "number": 4,
@@ -352,11 +364,12 @@
       "upstream_pr": {
         "number": 1368,
         "url": "https://github.com/storytold/craft-anything/pull/1368",
-        "state": "open",
-        "merged": false,
-        "head": "31b8c716149aa27ad0517042f747dde0bf8c4238"
+        "state": "closed",
+        "merged": true,
+        "head": "31b8c716149aa27ad0517042f747dde0bf8c4238",
+        "merged_at": "2026-11-09T15:31:14Z"
       },
-      "merged": false,
+      "merged": true,
       "docs_only_after_tested_source": true,
       "post_test_changed_files": [
         "docs/ROADMAP.md",
@@ -384,7 +397,8 @@
         "run": 42633072871,
         "kind": "existing full CI"
       },
-      "integration_before_validation": null
+      "integration_before_validation": null,
+      "validation_pr_closed": true
     },
     {
       "number": 5,
@@ -456,7 +470,8 @@
         "url": "https://github.com/storytold/craft-anything/pull/1369",
         "state": "open",
         "merged": false,
-        "head": "9295c9716118277527e820dba29d2a7965d84047"
+        "head": "9295c9716118277527e820dba29d2a7965d84047",
+        "merged_at": null
       },
       "merged": false,
       "docs_only_after_tested_source": true,
@@ -485,7 +500,8 @@
         "run": 42635844120,
         "kind": "existing full CI"
       },
-      "integration_before_validation": null
+      "integration_before_validation": null,
+      "validation_pr_closed": true
     },
     {
       "number": 6,
@@ -551,11 +567,12 @@
       "upstream_pr": {
         "number": 1370,
         "url": "https://github.com/storytold/craft-anything/pull/1370",
-        "state": "open",
-        "merged": false,
-        "head": "a6d9662a67a7030b997be20f68c2209997f48ad2"
+        "state": "closed",
+        "merged": true,
+        "head": "a6d9662a67a7030b997be20f68c2209997f48ad2",
+        "merged_at": "2026-11-09T15:31:21Z"
       },
-      "merged": false,
+      "merged": true,
       "integration_test_commit": "15f005334071b7666d60d3a50549fd3082771165",
       "docs_only_after_tested_source": true,
       "post_test_changed_files": [
@@ -598,7 +615,8 @@
         "filtered": 4,
         "url": "https://github.com/Afloat16/claude-mem/actions/runs/42639231395/job/129235545286",
         "detail": "The second slot was incorrectly copied as Some(4294967292), while the expected second slot was None."
-      }
+      },
+      "validation_pr_closed": true
     },
     {
       "number": 7,
@@ -658,11 +676,12 @@
       "upstream_pr": {
         "number": 1384,
         "url": "https://github.com/storytold/craft-anything/pull/1384",
-        "state": "open",
-        "merged": false,
-        "head": "c71cc845e5deb38a35eba8e687a4cbff102ebf91"
+        "state": "closed",
+        "merged": true,
+        "head": "c71cc845e5deb38a35eba8e687a4cbff102ebf91",
+        "merged_at": "2026-11-09T15:41:30Z"
       },
-      "merged": false,
+      "merged": true,
       "docs_only_after_tested_source": true,
       "post_test_changed_files": [
         "docs/ROADMAP.md",
@@ -689,7 +708,8 @@
         "run": 42636390909,
         "kind": "existing full CI"
       },
-      "integration_before_validation": null
+      "integration_before_validation": null,
+      "validation_pr_closed": true
     },
     {
       "number": 8,
@@ -753,11 +773,12 @@
       "upstream_pr": {
         "number": 1385,
         "url": "https://github.com/storytold/craft-anything/pull/1385",
-        "state": "open",
-        "merged": false,
-        "head": "cb1f5189983f9d7b933157a5fcc6201a711fe99e"
+        "state": "closed",
+        "merged": true,
+        "head": "cb1f5189983f9d7b933157a5fcc6201a711fe99e",
+        "merged_at": "2026-11-09T15:41:36Z"
       },
-      "merged": false,
+      "merged": true,
       "docs_only_after_tested_source": true,
       "post_test_changed_files": [
         "docs/ROADMAP.md",
@@ -784,7 +805,8 @@
         "run": 42636329701,
         "kind": "existing full CI"
       },
-      "integration_before_validation": null
+      "integration_before_validation": null,
+      "validation_pr_closed": true
     },
     {
       "number": 9,
@@ -844,11 +866,12 @@
       "upstream_pr": {
         "number": 1386,
         "url": "https://github.com/storytold/craft-anything/pull/1386",
-        "state": "open",
-        "merged": false,
-        "head": "ef532d520f0fbcfc2313434dbd06e997860d48ea"
+        "state": "closed",
+        "merged": true,
+        "head": "ef532d520f0fbcfc2313434dbd06e997860d48ea",
+        "merged_at": "2026-11-09T15:41:43Z"
       },
-      "merged": false,
+      "merged": true,
       "docs_only_after_tested_source": true,
       "post_test_changed_files": [
         "docs/ROADMAP.md",
@@ -875,13 +898,14 @@
         "run": 42636342906,
         "kind": "existing full CI"
       },
-      "integration_before_validation": null
+      "integration_before_validation": null,
+      "validation_pr_closed": true
     },
     {
       "number": 10,
       "title": "Reject Objective-C method records shorter than their declared layout",
       "branch": "bugfix/r3.12-objc-method-record-stride-20261109",
-      "latest_head": "21de8ca8ae05d47a92a49ca6428d02317673a30d",
+      "latest_head": "ca995c780a255ded81ba7ffc72680839d47c302c",
       "source_tested_sha": "aaaac76ed1de9dda750128308f8fed0f6bce2457",
       "validation_target_sha": "aaaac76ed1de9dda750128308f8fed0f6bce2457",
       "claim_commit": "50d170d6829d3cc6d410d90f7376cf139d4393c4",
@@ -934,17 +958,18 @@
         "conclusion": "success"
       },
       "pr_title": "Reject Objective-C method records shorter than their declared layout (R3.12)",
-      "pr_body": "## Problem\n\nObjective-C method decoding accepts nonzero strides smaller than the absolute or relative layout and publishes methods even when only a record prefix is backed by the section.\n\n## Changes\n\nRequire a stride of at least 24 bytes for absolute records or 12 bytes for relative records, and require the complete declared record to be backed before decoding it. Preserve complete extended strides.\n\n## Regression coverage\n\n4 regression and control tests in `crates/formats/tests/objc_method_record_stride.rs`. Undersized absolute/relative strides, incomplete backed records, and standard/extended controls preserving selectors, types and implementations.\n\n## Validation\n\nSource revision `aaaac76ed1de9dda750128308f8fed0f6bce2457` passed `cargo fmt --all -- --check`, the complete `craft-anything-formats` test suite, and `cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings`: [verification](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891913).\n\nThe repository's complete existing CI also passed for that source revision: [CI run](https://github.com/Afloat16/craft-anything/actions/runs/42636344831).\n\nThe tests against unchanged production code reproduced 3 failures with 1 passing control: [baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895499), revision `a100bb0647e191efa327867191fa508a49b8df2c`.\n\nCurrent head `21de8ca8ae05d47a92a49ca6428d02317673a30d` adds only the completed roadmap entry and status documentation after the tested source revision; [the comparison](https://github.com/Afloat16/craft-anything/compare/aaaac76ed1de9dda750128308f8fed0f6bce2457...21de8ca8ae05d47a92a49ca6428d02317673a30d) contains no source or test changes.\n\n## Related work\n\n#205 checks method entry address overflow. This rejects too-small absolute/relative record layouts that overlap the next record, while preserving valid extended strides.\n\n## Scope\n\nOne R3.12 pending change, claimed in commit `50d170d6829d3cc6d410d90f7376cf139d4393c4` before implementation.",
-      "prefilled_pr_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-objc-method-record-stride-20261109?expand=1&title=Reject%20Objective-C%20method%20records%20shorter%20than%20their%20declared%20layout%20(R3.12)&body=%23%23%20Problem%0A%0AObjective-C%20method%20decoding%20accepts%20nonzero%20strides%20smaller%20than%20the%20absolute%20or%20relative%20layout%20and%20publishes%20methods%20even%20when%20only%20a%20record%20prefix%20is%20backed%20by%20the%20section.%0A%0A%23%23%20Changes%0A%0ARequire%20a%20stride%20of%20at%20least%2024%20bytes%20for%20absolute%20records%20or%2012%20bytes%20for%20relative%20records%2C%20and%20require%20the%20complete%20declared%20record%20to%20be%20backed%20before%20decoding%20it.%20Preserve%20complete%20extended%20strides.%0A%0A%23%23%20Regression%20coverage%0A%0A4%20regression%20and%20control%20tests%20in%20%60crates%2Fformats%2Ftests%2Fobjc_method_record_stride.rs%60.%20Undersized%20absolute%2Frelative%20strides%2C%20incomplete%20backed%20records%2C%20and%20standard%2Fextended%20controls%20preserving%20selectors%2C%20types%20and%20implementations.%0A%0A%23%23%20Validation%0A%0ASource%20revision%20%60aaaac76ed1de9dda750128308f8fed0f6bce2457%60%20passed%20%60cargo%20fmt%20--all%20--%20--check%60%2C%20the%20complete%20%60craft-anything-formats%60%20test%20suite%2C%20and%20%60cargo%20clippy%20--locked%20-p%20craft-anything-formats%20--all-targets%20--%20-D%20warnings%60%3A%20%5Bverification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226891913).%0A%0AThe%20repository's%20complete%20existing%20CI%20also%20passed%20for%20that%20source%20revision%3A%20%5BCI%20run%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fcraft-anything%2Factions%2Fruns%2F42636344831).%0A%0AThe%20tests%20against%20unchanged%20production%20code%20reproduced%203%20failures%20with%201%20passing%20control%3A%20%5Bbaseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895499)%2C%20revision%20%60a100bb0647e191efa327867191fa508a49b8df2c%60.%0A%0ACurrent%20head%20%6021de8ca8ae05d47a92a49ca6428d02317673a30d%60%20adds%20only%20the%20completed%20roadmap%20entry%20and%20status%20documentation%20after%20the%20tested%20source%20revision%3B%20%5Bthe%20comparison%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fcraft-anything%2Fcompare%2Faaaac76ed1de9dda750128308f8fed0f6bce2457...21de8ca8ae05d47a92a49ca6428d02317673a30d)%20contains%20no%20source%20or%20test%20changes.%0A%0A%23%23%20Related%20work%0A%0A%23205%20checks%20method%20entry%20address%20overflow.%20This%20rejects%20too-small%20absolute%2Frelative%20record%20layouts%20that%20overlap%20the%20next%20record%2C%20while%20preserving%20valid%20extended%20strides.%0A%0A%23%23%20Scope%0A%0AOne%20R3.12%20pending%20change%2C%20claimed%20in%20commit%20%6050d170d6829d3cc6d410d90f7376cf139d4393c4%60%20before%20implementation.",
+      "pr_body": "## Problem\n\nObjective-C method decoding accepts nonzero strides smaller than the absolute or relative layout and publishes methods even when only a record prefix is backed by the section.\n\n## Changes\n\nRequire a stride of at least 24 bytes for absolute records or 12 bytes for relative records, and require the complete declared record to be backed before decoding it. Preserve complete extended strides.\n\n## Regression coverage\n\n4 regression and control tests in `crates/formats/tests/objc_method_record_stride.rs`. Undersized absolute/relative strides, incomplete backed records, and standard/extended controls preserving selectors, types and implementations.\n\n## Validation\n\nSource revision `aaaac76ed1de9dda750128308f8fed0f6bce2457` passed `cargo fmt --all -- --check`, the complete `craft-anything-formats` test suite, and `cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings`: [verification](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891913).\n\nThe repository's complete existing CI also passed for that source revision: [CI run](https://github.com/Afloat16/craft-anything/actions/runs/42636344831).\n\nThe tests against unchanged production code reproduced 3 failures with 1 passing control: [baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895499), revision `a100bb0647e191efa327867191fa508a49b8df2c`.\n\nThe original tested source `aaaac76ed1de9dda750128308f8fed0f6bce2457` is followed by completed documentation and a normal merge of upstream `efddbdeb6868f10a3d8d53f114d47aed72b89612`. Current head `ca995c780a255ded81ba7ffc72680839d47c302c` preserves the newer upstream parser work and both sets of roadmap/status entries. This PR's method-stride correction and regression fixtures are unchanged; the upstream CI checks the merged head.\n\n## Related work\n\n#205 checks method entry address overflow. This rejects too-small absolute/relative record layouts that overlap the next record, while preserving valid extended strides.\n\n## Scope\n\nOne R3.12 pending change, claimed in commit `50d170d6829d3cc6d410d90f7376cf139d4393c4` before implementation.",
+      "prefilled_pr_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-objc-method-record-stride-20261109?expand=1&title=Reject%20Objective-C%20method%20records%20shorter%20than%20their%20declared%20layout%20(R3.12)&body=%23%23%20Problem%0A%0AObjective-C%20method%20decoding%20accepts%20nonzero%20strides%20smaller%20than%20the%20absolute%20or%20relative%20layout%20and%20publishes%20methods%20even%20when%20only%20a%20record%20prefix%20is%20backed%20by%20the%20section.%0A%0A%23%23%20Changes%0A%0ARequire%20a%20stride%20of%20at%20least%2024%20bytes%20for%20absolute%20records%20or%2012%20bytes%20for%20relative%20records%2C%20and%20require%20the%20complete%20declared%20record%20to%20be%20backed%20before%20decoding%20it.%20Preserve%20complete%20extended%20strides.%0A%0A%23%23%20Regression%20coverage%0A%0A4%20regression%20and%20control%20tests%20in%20%60crates%2Fformats%2Ftests%2Fobjc_method_record_stride.rs%60.%20Undersized%20absolute%2Frelative%20strides%2C%20incomplete%20backed%20records%2C%20and%20standard%2Fextended%20controls%20preserving%20selectors%2C%20types%20and%20implementations.%0A%0A%23%23%20Validation%0A%0ASource%20revision%20%60aaaac76ed1de9dda750128308f8fed0f6bce2457%60%20passed%20%60cargo%20fmt%20--all%20--%20--check%60%2C%20the%20complete%20%60craft-anything-formats%60%20test%20suite%2C%20and%20%60cargo%20clippy%20--locked%20-p%20craft-anything-formats%20--all-targets%20--%20-D%20warnings%60%3A%20%5Bverification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226891913).%0A%0AThe%20repository's%20complete%20existing%20CI%20also%20passed%20for%20that%20source%20revision%3A%20%5BCI%20run%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fcraft-anything%2Factions%2Fruns%2F42636344831).%0A%0AThe%20tests%20against%20unchanged%20production%20code%20reproduced%203%20failures%20with%201%20passing%20control%3A%20%5Bbaseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895499)%2C%20revision%20%60a100bb0647e191efa327867191fa508a49b8df2c%60.%0A%0AThe%20original%20tested%20source%20%60aaaac76ed1de9dda750128308f8fed0f6bce2457%60%20is%20followed%20by%20completed%20documentation%20and%20a%20normal%20merge%20of%20upstream%20%60efddbdeb6868f10a3d8d53f114d47aed72b89612%60.%20Current%20head%20%60ca995c780a255ded81ba7ffc72680839d47c302c%60%20preserves%20the%20newer%20upstream%20parser%20work%20and%20both%20sets%20of%20roadmap%2Fstatus%20entries.%20This%20PR's%20method-stride%20correction%20and%20regression%20fixtures%20are%20unchanged%3B%20the%20upstream%20CI%20checks%20the%20merged%20head.%0A%0A%23%23%20Related%20work%0A%0A%23205%20checks%20method%20entry%20address%20overflow.%20This%20rejects%20too-small%20absolute%2Frelative%20record%20layouts%20that%20overlap%20the%20next%20record%2C%20while%20preserving%20valid%20extended%20strides.%0A%0A%23%23%20Scope%0A%0AOne%20R3.12%20pending%20change%2C%20claimed%20in%20commit%20%6050d170d6829d3cc6d410d90f7376cf139d4393c4%60%20before%20implementation.",
       "upstream_pr": {
         "number": 1387,
         "url": "https://github.com/storytold/craft-anything/pull/1387",
         "state": "open",
         "merged": false,
-        "head": "21de8ca8ae05d47a92a49ca6428d02317673a30d"
+        "head": "ca995c780a255ded81ba7ffc72680839d47c302c",
+        "merged_at": null
       },
       "merged": false,
-      "docs_only_after_tested_source": true,
+      "docs_only_after_tested_source": false,
       "post_test_changed_files": [
         "docs/ROADMAP.md",
         "docs/STATUS.md"
@@ -970,7 +995,63 @@
         "run": 42636344831,
         "kind": "existing full CI"
       },
-      "integration_before_validation": null
+      "integration_before_validation": null,
+      "validation_pr_closed": true,
+      "integration_merge": {
+        "head": "ca995c780a255ded81ba7ffc72680839d47c302c",
+        "previous_head": "21de8ca8ae05d47a92a49ca6428d02317673a30d",
+        "upstream_base": "efddbdeb6868f10a3d8d53f114d47aed72b89612",
+        "parents": [
+          "21de8ca8ae05d47a92a49ca6428d02317673a30d",
+          "efddbdeb6868f10a3d8d53f114d47aed72b89612"
+        ],
+        "own_correction_unchanged": true,
+        "upstream_ci_status": "pending"
+      }
+    }
+  ],
+  "supplementary_gates": {
+    "status": "success",
+    "run": 42640324816,
+    "job": 129239402190,
+    "url": "https://github.com/Afloat16/claude-mem/actions/runs/42640324816/job/129239402190",
+    "items": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      7,
+      8,
+      9,
+      10
+    ]
+  },
+  "review_followups": [
+    {
+      "original_item": 1,
+      "original_pr": 1365,
+      "counts_as_new_target": false,
+      "base": "efddbdeb6868f10a3d8d53f114d47aed72b89612",
+      "before": "3ad1f5b0d33a336b744b6f653f85eb1635622422",
+      "after": "d4048c6ef9b07b775597cf193efa70269cad7ff4",
+      "status": "verification in progress",
+      "run": 42648202887,
+      "job": 129267099134,
+      "url": "https://github.com/Afloat16/claude-mem/actions/runs/42648202887/job/129267099134",
+      "claim": "d3e6bf46c064bd4d4a28c5859ce60ecb1254fe6a"
+    },
+    {
+      "original_item": 5,
+      "original_pr": 1369,
+      "counts_as_new_target": false,
+      "base": "efddbdeb6868f10a3d8d53f114d47aed72b89612",
+      "before": "943016fe3f242185981d1621e816f91ec6f00408",
+      "after": "8a6017bd43b2eef263a645eafbac98b038763c20",
+      "status": "verification in progress",
+      "run": 42648202887,
+      "job": 129267099134,
+      "url": "https://github.com/Afloat16/claude-mem/actions/runs/42648202887/job/129267099134"
     }
   ]
 }
