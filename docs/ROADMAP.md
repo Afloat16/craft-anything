@@ -1323,6 +1323,8 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
+- [ ] Apply the extracted-string limit in file-offset order across UTF-16LE and narrow strings, so an early wide string is not hidden by later ASCII.
+      — claimed: Afloat16, branch bugfix/r3.12-earliest-extracted-strings
 - [x] Bound rejected ASAR names by the archive listing limit.
       — claimed: Afloat16, branch bugfix/r3.12-asar-limit-bounds-20261107
 - [x] Keep .NET bundle member reads before the manifest.
