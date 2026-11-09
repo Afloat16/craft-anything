@@ -1671,6 +1671,8 @@ Owner: open · Status: in progress
 - [x] Keep the comma inside a SQLite type's parentheses: `DECIMAL(10, 2)` is listed as
       `DECIMAL(10 2)`. The type keeps the comma inside its parentheses, and the schema overview
       shows it unchanged. — claimed: AlexJoaquimPereira, branch bugfix/r3.12-sqlite-type-comma
+- [ ] Keep shortened IL2CPP literals within their UTF-8 output budget without inventing a partial character.
+      — claimed: Afloat16, branch bugfix/r3.12-il2cpp-literal-byte-budget-20261109
 - [x] Check that IL2CPP method ranges agree with each method's declaring type before reporting names and ownership.
       — claimed: Afloat16, branch bugfix/r3.12-il2cpp-method-owners
 - [x] Asset catalogs name each rendition key attribute as CoreUI reads it. When the deployment
