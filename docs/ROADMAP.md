@@ -1361,6 +1361,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-macho-function-starts-payload-boundary-20261105
 - [x] Decode binary plist markers and dictionary keys according to their stored types.
       — claimed: Afloat16, branch bugfix/r3.12-bplist-typed-objects
+- [ ] Visit XML plist values only inside a complete, correctly encoded document.
+      — claimed: Afloat16, branch bugfix/r3.12-xml-plist-document
 - [x] Keep code-signature children and verification reads within their declared superblob.
       — claimed: Afloat16, branch bugfix/r3.12-codesign-superblob-length-boundary-20261105
 - [x] Refuse short ELF64 header and section records and handle section-table offsets at the address limit safely.
