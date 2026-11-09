@@ -1475,6 +1475,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-wasm-function-count
 - [x] Preserve complete Unicode characters in shortened .NET strings.
       — claimed: Afloat16, branch bugfix/r3.12-dotnet-user-string-surrogate-limit-20261105
+- [ ] Read Dart version hashes and feature strings only from the bytes belonging to that snapshot.
+      — claimed: Afloat16, branch bugfix/r3.12-dart-snapshot-extent
 - [x] Read a Dart ELF build ID only when its name and descriptor fit the declared note.
       — claimed: Afloat16, branch bugfix/r3.12-dart-note
 - [x] Locate ELF core mapping names after the complete declared table.
