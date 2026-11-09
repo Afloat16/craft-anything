@@ -1242,7 +1242,7 @@ to the project next.
 - [ ] Cap a run's log (`last-run.log`, `play.log`): it grows as long as the program prints
       — in PR #218
 - [ ] Opening a pin that's already running brings its window to the front, instead of a message
-- [ ] How much space pins take in Settings
+- [x] How much space pins take in Settings
       — claimed: Afloat16, branch feature/r2.10-pinned-copy-storage
 
 ---
