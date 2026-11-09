@@ -1363,6 +1363,9 @@ Owner: open · Status: in progress
 Owner: open · Status: in progress
 - [x] Read ZIP bzip2 and XZ members through the existing bounded pure-Rust decompressors.
       — claimed: Afloat16, branch feature/r3.12-zip-bzip2-xz-20261109
+      Source [`4cac3638`](https://github.com/Afloat16/craft-anything/commit/4cac36386e426e332bd89cb2cfa63894f3a367a5) passed [formats tests, fmt and clippy](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226892219)
+      and [layers, locks, secret scanning, wasm checks and Cargo.lock stability](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).
+      The [unchanged-code baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) reproduces the new regression cases.
 - [x] Extract legacy PyInstaller PYZ data as raw files and report modern namespace packages without fabricating bytecode.
       — claimed: Afloat16, branch bugfix/r3.12-pyz-member-kinds
 - [x] Bound rejected ASAR names by the archive listing limit.
