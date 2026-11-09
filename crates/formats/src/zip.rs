@@ -1,8 +1,8 @@
 //! ZIP archives (also APK, JAR, IPA, MSIX, HAP…): central directory listing and bounded entry reads.
 //!
 //! Only the central directory is trusted for the listing. Entry data is located through the local
-//! header, decompressed with a hard output cap, and checked against the recorded CRC-32. Stored and
-//! deflated entries are supported; anything else (and encrypted entries) is reported, not read.
+//! header, decompressed with a hard output cap, and checked against the recorded CRC-32. Stored,
+//! DEFLATE, bzip2, XZ and Zstandard entries are supported; other methods and encrypted entries are listed.
 
 use crate::bytes::Reader;
 
@@ -407,7 +407,6 @@ mod tests {
         out.extend_from_slice(&0u16.to_le_bytes());
         out
     }
-
 
     fn build_codec_entry(method: u16, compressed: &[u8], plain: &[u8]) -> Vec<u8> {
         let mut file = build(&[("entry", compressed)]);
