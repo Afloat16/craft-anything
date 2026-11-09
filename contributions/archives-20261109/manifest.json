@@ -158,8 +158,8 @@
       "title": "Keep PyInstaller CArchive members inside the payload",
       "branch": "bugfix/r3.12-carchive-payload-range-20261109",
       "latest_head": "a574cde8b266b8a07f84b0ad70a809a08e8f4d95",
-      "source_sha": "a5bcfaedcb1ad67c8bb7f06c7143befc8292409c",
-      "source_url": "https://github.com/Afloat16/craft-anything/commit/a5bcfaedcb1ad67c8bb7f06c7143befc8292409c",
+      "source_sha": "a574cde8b266b8a07f84b0ad70a809a08e8f4d95",
+      "source_url": "https://github.com/Afloat16/craft-anything/commit/a574cde8b266b8a07f84b0ad70a809a08e8f4d95",
       "base": "1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1",
       "claim_sha": "5b7c3c6375a83beb64ae6ad79d19c9e3cc04c0c3",
       "files": [
@@ -172,26 +172,26 @@
         "a_pyz_in_the_signed_tail_does_not_supply_nested_members"
       ],
       "deduplication": "Outer CArchive payload ranges; earlier #398 concerns encryption-key hints and #707 inner PYZ ranges.",
-      "body": "## Problem\nCArchive member offsets were checked against the whole executable when reading. A malformed table could therefore expose the archive table, cookie or bytes appended by signing as member contents, and an out-of-range PYZ could supply a fabricated nested listing.\n\n## Change\nRequire each stored member range to end before the CArchive table. Keep the outer listing and valid members, mark invalid ranges unreadable, and explain the limitation. Empty runtime options at the payload boundary remain valid.\n\n## Validation\nAdded regressions for both cookie formats, crossing the payload boundary, table/cookie/signed-tail offsets, empty options and a valid PYZ placed in the signed tail.\n\nExact source commit `a5bcfaedcb1ad67c8bb7f06c7143befc8292409c` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891917). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `members_cannot_read_the_table_cookie_or_signed_tail` and `a_pyz_in_the_signed_tail_does_not_supply_nested_members`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).\n\nBranch head `a574cde8b266b8a07f84b0ad70a809a08e8f4d95` merges upstream `7073462fcca6088989f9127f3473b95471a758b1` with both parents retained. [Exact-head verification](https://github.com/Afloat16/claude-mem/actions/runs/42649592140) is in progress; the successful checks above refer to the earlier verified source.\n\nRoadmap: R3.12.",
-      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-carchive-payload-range-20261109?expand=1&title=Keep%20PyInstaller%20CArchive%20members%20inside%20the%20payload&body=%23%23%20Problem%0ACArchive%20member%20offsets%20were%20checked%20against%20the%20whole%20executable%20when%20reading.%20A%20malformed%20table%20could%20therefore%20expose%20the%20archive%20table%2C%20cookie%20or%20bytes%20appended%20by%20signing%20as%20member%20contents%2C%20and%20an%20out-of-range%20PYZ%20could%20supply%20a%20fabricated%20nested%20listing.%0A%0A%23%23%20Change%0ARequire%20each%20stored%20member%20range%20to%20end%20before%20the%20CArchive%20table.%20Keep%20the%20outer%20listing%20and%20valid%20members%2C%20mark%20invalid%20ranges%20unreadable%2C%20and%20explain%20the%20limitation.%20Empty%20runtime%20options%20at%20the%20payload%20boundary%20remain%20valid.%0A%0A%23%23%20Validation%0AAdded%20regressions%20for%20both%20cookie%20formats%2C%20crossing%20the%20payload%20boundary%2C%20table%2Fcookie%2Fsigned-tail%20offsets%2C%20empty%20options%20and%20a%20valid%20PYZ%20placed%20in%20the%20signed%20tail.%0A%0AExact%20source%20commit%20%60a5bcfaedcb1ad67c8bb7f06c7143befc8292409c%60%20passed%20formatting%2C%20all%20952%20formats%20tests%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226891917).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60members_cannot_read_the_table_cookie_or_signed_tail%60%20and%20%60a_pyz_in_the_signed_tail_does_not_supply_nested_members%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ALayers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20an%20unchanged%20Cargo.lock%20also%20passed%20for%20this%20exact%20revision%20in%20%5Bthe%20supplementary%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42640688213%2Fjob%2F129240669663).%0A%0ABranch%20head%20%60a574cde8b266b8a07f84b0ad70a809a08e8f4d95%60%20merges%20upstream%20%607073462fcca6088989f9127f3473b95471a758b1%60%20with%20both%20parents%20retained.%20%5BExact-head%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140)%20is%20in%20progress%3B%20the%20successful%20checks%20above%20refer%20to%20the%20earlier%20verified%20source.%0A%0ARoadmap%3A%20R3.12.",
+      "body": "## Problem\nCArchive member offsets were checked against the whole executable when reading. A malformed table could therefore expose the archive table, cookie or bytes appended by signing as member contents, and an out-of-range PYZ could supply a fabricated nested listing.\n\n## Change\nRequire each stored member range to end before the CArchive table. Keep the outer listing and valid members, mark invalid ranges unreadable, and explain the limitation. Empty runtime options at the payload boundary remain valid.\n\n## Validation\nAdded regressions for both cookie formats, crossing the payload boundary, table/cookie/signed-tail offsets, empty options and a valid PYZ placed in the signed tail.\n\nExact source commit `a574cde8b266b8a07f84b0ad70a809a08e8f4d95` passed formatting, the complete formats test suite, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `members_cannot_read_the_table_cookie_or_signed_tail` and `a_pyz_in_the_signed_tail_does_not_supply_nested_members`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386).\n\nBranch head `a574cde8b266b8a07f84b0ad70a809a08e8f4d95` merges upstream `7073462fcca6088989f9127f3473b95471a758b1` with both parents retained; the exact merged source passed the verification above.\n\nRoadmap: R3.12.",
+      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-carchive-payload-range-20261109?expand=1&title=Keep%20PyInstaller%20CArchive%20members%20inside%20the%20payload&body=%23%23%20Problem%0ACArchive%20member%20offsets%20were%20checked%20against%20the%20whole%20executable%20when%20reading.%20A%20malformed%20table%20could%20therefore%20expose%20the%20archive%20table%2C%20cookie%20or%20bytes%20appended%20by%20signing%20as%20member%20contents%2C%20and%20an%20out-of-range%20PYZ%20could%20supply%20a%20fabricated%20nested%20listing.%0A%0A%23%23%20Change%0ARequire%20each%20stored%20member%20range%20to%20end%20before%20the%20CArchive%20table.%20Keep%20the%20outer%20listing%20and%20valid%20members%2C%20mark%20invalid%20ranges%20unreadable%2C%20and%20explain%20the%20limitation.%20Empty%20runtime%20options%20at%20the%20payload%20boundary%20remain%20valid.%0A%0A%23%23%20Validation%0AAdded%20regressions%20for%20both%20cookie%20formats%2C%20crossing%20the%20payload%20boundary%2C%20table%2Fcookie%2Fsigned-tail%20offsets%2C%20empty%20options%20and%20a%20valid%20PYZ%20placed%20in%20the%20signed%20tail.%0A%0AExact%20source%20commit%20%60a574cde8b266b8a07f84b0ad70a809a08e8f4d95%60%20passed%20formatting%2C%20the%20complete%20formats%20test%20suite%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140%2Fjob%2F129272016386).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60members_cannot_read_the_table_cookie_or_signed_tail%60%20and%20%60a_pyz_in_the_signed_tail_does_not_supply_nested_members%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ALayers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20an%20unchanged%20Cargo.lock%20also%20passed%20for%20this%20exact%20revision%20in%20%5Bthe%20supplementary%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140%2Fjob%2F129272016386).%0A%0ABranch%20head%20%60a574cde8b266b8a07f84b0ad70a809a08e8f4d95%60%20merges%20upstream%20%607073462fcca6088989f9127f3473b95471a758b1%60%20with%20both%20parents%20retained%3B%20the%20exact%20merged%20source%20passed%20the%20verification%20above.%0A%0ARoadmap%3A%20R3.12.",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-carchive-payload-range-20261109",
       "validation": {
         "status": "success",
-        "source_sha": "a5bcfaedcb1ad67c8bb7f06c7143befc8292409c",
+        "source_sha": "a574cde8b266b8a07f84b0ad70a809a08e8f4d95",
         "fork_validation_pr": "https://github.com/Afloat16/craft-anything/pull/10",
         "runs_url": "https://github.com/Afloat16/craft-anything/actions?query=branch%3Abugfix%2Fr3.12-carchive-payload-range-20261109",
-        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891917",
-        "passed_tests": 952,
+        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
+        "passed_tests": null,
         "commands": [
           "cargo fmt --all -- --check",
           "cargo test --locked -p craft-anything-formats",
           "cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings"
         ],
-        "scope": "Formatting, complete formats crate tests including new regressions, and all-targets clippy.",
+        "scope": "Exact merged source: complete formats crate tests, formatting, all-targets clippy and L0 gates. Final log totals will be recorded when the serial job completes.",
         "l0_gates": {
           "status": "success",
-          "source_sha": "a5bcfaedcb1ad67c8bb7f06c7143befc8292409c",
-          "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663",
+          "source_sha": "a574cde8b266b8a07f84b0ad70a809a08e8f4d95",
+          "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
           "step": "Archive 1 L0 gates",
           "commands": [
             "cargo run --locked -p xtask -- layers",
@@ -199,14 +199,22 @@
             "cargo run --locked -p xtask -- secrets",
             "cargo run --locked -p xtask -- wasm",
             "git diff --exit-code -- Cargo.lock"
-          ]
+          ],
+          "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386"
         },
         "baseline_failures": [
           "members_cannot_read_the_table_cookie_or_signed_tail",
           "a_pyz_in_the_signed_tail_does_not_supply_nested_members"
         ],
         "baseline_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582",
-        "fork_validation_state": "closed"
+        "fork_validation_state": "closed",
+        "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
+        "confirmed_steps": [
+          "Archive 1 formatting",
+          "Archive 1 regression tests",
+          "Archive 1 clippy",
+          "Archive 1 L0 gates"
+        ]
       },
       "revisions": [
         {
@@ -247,7 +255,7 @@
           "aa1a1c6f40b053d5c345aa84ef94395d4587a034",
           "7073462fcca6088989f9127f3473b95471a758b1"
         ],
-        "validation_status": "in_progress",
+        "validation_status": "success",
         "validation_run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
         "validation_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
         "scope": {
@@ -273,15 +281,62 @@
             }
           ]
         }
-      }
+      },
+      "verification_history": [
+        {
+          "source_sha": "a5bcfaedcb1ad67c8bb7f06c7143befc8292409c",
+          "validation": {
+            "status": "success",
+            "source_sha": "a5bcfaedcb1ad67c8bb7f06c7143befc8292409c",
+            "fork_validation_pr": "https://github.com/Afloat16/craft-anything/pull/10",
+            "runs_url": "https://github.com/Afloat16/craft-anything/actions?query=branch%3Abugfix%2Fr3.12-carchive-payload-range-20261109",
+            "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891917",
+            "passed_tests": 952,
+            "commands": [
+              "cargo fmt --all -- --check",
+              "cargo test --locked -p craft-anything-formats",
+              "cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings"
+            ],
+            "scope": "Formatting, complete formats crate tests including new regressions, and all-targets clippy.",
+            "l0_gates": {
+              "status": "success",
+              "source_sha": "a5bcfaedcb1ad67c8bb7f06c7143befc8292409c",
+              "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663",
+              "step": "Archive 1 L0 gates",
+              "commands": [
+                "cargo run --locked -p xtask -- layers",
+                "cargo run --locked -p xtask -- locks",
+                "cargo run --locked -p xtask -- secrets",
+                "cargo run --locked -p xtask -- wasm",
+                "git diff --exit-code -- Cargo.lock"
+              ]
+            },
+            "baseline_failures": [
+              "members_cannot_read_the_table_cookie_or_signed_tail",
+              "a_pyz_in_the_signed_tail_does_not_supply_nested_members"
+            ],
+            "baseline_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582",
+            "fork_validation_state": "closed"
+          },
+          "documentation_followup": {
+            "sha": "aa1a1c6f40b053d5c345aa84ef94395d4587a034",
+            "source_sha": "a5bcfaedcb1ad67c8bb7f06c7143befc8292409c",
+            "files": [
+              "docs/ROADMAP.md",
+              "docs/STATUS.md"
+            ],
+            "source_files_unchanged": true
+          }
+        }
+      ]
     },
     {
       "number": 2,
       "title": "Reject ASAR manifest nodes with invalid file metadata",
       "branch": "bugfix/r3.12-asar-node-shapes-20261109",
       "latest_head": "1613476ae0e8af07bf09e69f6454705047ec1e90",
-      "source_sha": "351002eab7e69791a9eb6cd3764c35e1c3cbc130",
-      "source_url": "https://github.com/Afloat16/craft-anything/commit/351002eab7e69791a9eb6cd3764c35e1c3cbc130",
+      "source_sha": "1613476ae0e8af07bf09e69f6454705047ec1e90",
+      "source_url": "https://github.com/Afloat16/craft-anything/commit/1613476ae0e8af07bf09e69f6454705047ec1e90",
       "base": "1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1",
       "claim_sha": "746645f0c03ab84fa31de95c691de460dbc37c95",
       "files": [
@@ -294,26 +349,26 @@
         "valid_empty_unpacked_and_link_nodes_keep_their_kinds"
       ],
       "deduplication": "Manifest node grammar and required file metadata; earlier #702 is header framing, #1142 rejected-name budgets and #533 output names.",
-      "body": "## Problem\nASAR JSON nodes with the wrong shape or missing file metadata were silently treated as empty files, and a non-object files map was accepted as an empty archive. That produces a plausible but incorrect inventory of damaged manifests.\n\n## Change\nValidate directory maps, node objects, link values, unsigned file sizes, packed offsets and unpacked markers. Keep valid empty files, numeric offsets, links and unpacked files supported, while retaining existing name and listing limits.\n\n## Validation\nAdded malformed-manifest fixtures and valid controls.\n\nExact source commit `351002eab7e69791a9eb6cd3764c35e1c3cbc130` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891843). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `malformed_nodes_do_not_become_empty_files`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).\n\nBranch head `1613476ae0e8af07bf09e69f6454705047ec1e90` merges upstream `7073462fcca6088989f9127f3473b95471a758b1` with both parents retained. [Exact-head verification](https://github.com/Afloat16/claude-mem/actions/runs/42649592140) is in progress; the successful checks above refer to the earlier verified source.\n\nRoadmap: R3.12.",
-      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-asar-node-shapes-20261109?expand=1&title=Reject%20ASAR%20manifest%20nodes%20with%20invalid%20file%20metadata&body=%23%23%20Problem%0AASAR%20JSON%20nodes%20with%20the%20wrong%20shape%20or%20missing%20file%20metadata%20were%20silently%20treated%20as%20empty%20files%2C%20and%20a%20non-object%20files%20map%20was%20accepted%20as%20an%20empty%20archive.%20That%20produces%20a%20plausible%20but%20incorrect%20inventory%20of%20damaged%20manifests.%0A%0A%23%23%20Change%0AValidate%20directory%20maps%2C%20node%20objects%2C%20link%20values%2C%20unsigned%20file%20sizes%2C%20packed%20offsets%20and%20unpacked%20markers.%20Keep%20valid%20empty%20files%2C%20numeric%20offsets%2C%20links%20and%20unpacked%20files%20supported%2C%20while%20retaining%20existing%20name%20and%20listing%20limits.%0A%0A%23%23%20Validation%0AAdded%20malformed-manifest%20fixtures%20and%20valid%20controls.%0A%0AExact%20source%20commit%20%60351002eab7e69791a9eb6cd3764c35e1c3cbc130%60%20passed%20formatting%2C%20all%20952%20formats%20tests%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226891843).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60malformed_nodes_do_not_become_empty_files%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ALayers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20an%20unchanged%20Cargo.lock%20also%20passed%20for%20this%20exact%20revision%20in%20%5Bthe%20supplementary%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42640688213%2Fjob%2F129240669663).%0A%0ABranch%20head%20%601613476ae0e8af07bf09e69f6454705047ec1e90%60%20merges%20upstream%20%607073462fcca6088989f9127f3473b95471a758b1%60%20with%20both%20parents%20retained.%20%5BExact-head%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140)%20is%20in%20progress%3B%20the%20successful%20checks%20above%20refer%20to%20the%20earlier%20verified%20source.%0A%0ARoadmap%3A%20R3.12.",
+      "body": "## Problem\nASAR JSON nodes with the wrong shape or missing file metadata were silently treated as empty files, and a non-object files map was accepted as an empty archive. That produces a plausible but incorrect inventory of damaged manifests.\n\n## Change\nValidate directory maps, node objects, link values, unsigned file sizes, packed offsets and unpacked markers. Keep valid empty files, numeric offsets, links and unpacked files supported, while retaining existing name and listing limits.\n\n## Validation\nAdded malformed-manifest fixtures and valid controls.\n\nExact source commit `1613476ae0e8af07bf09e69f6454705047ec1e90` passed formatting, the complete formats test suite, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `malformed_nodes_do_not_become_empty_files`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386).\n\nBranch head `1613476ae0e8af07bf09e69f6454705047ec1e90` merges upstream `7073462fcca6088989f9127f3473b95471a758b1` with both parents retained; the exact merged source passed the verification above.\n\nRoadmap: R3.12.",
+      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-asar-node-shapes-20261109?expand=1&title=Reject%20ASAR%20manifest%20nodes%20with%20invalid%20file%20metadata&body=%23%23%20Problem%0AASAR%20JSON%20nodes%20with%20the%20wrong%20shape%20or%20missing%20file%20metadata%20were%20silently%20treated%20as%20empty%20files%2C%20and%20a%20non-object%20files%20map%20was%20accepted%20as%20an%20empty%20archive.%20That%20produces%20a%20plausible%20but%20incorrect%20inventory%20of%20damaged%20manifests.%0A%0A%23%23%20Change%0AValidate%20directory%20maps%2C%20node%20objects%2C%20link%20values%2C%20unsigned%20file%20sizes%2C%20packed%20offsets%20and%20unpacked%20markers.%20Keep%20valid%20empty%20files%2C%20numeric%20offsets%2C%20links%20and%20unpacked%20files%20supported%2C%20while%20retaining%20existing%20name%20and%20listing%20limits.%0A%0A%23%23%20Validation%0AAdded%20malformed-manifest%20fixtures%20and%20valid%20controls.%0A%0AExact%20source%20commit%20%601613476ae0e8af07bf09e69f6454705047ec1e90%60%20passed%20formatting%2C%20the%20complete%20formats%20test%20suite%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140%2Fjob%2F129272016386).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60malformed_nodes_do_not_become_empty_files%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ALayers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20an%20unchanged%20Cargo.lock%20also%20passed%20for%20this%20exact%20revision%20in%20%5Bthe%20supplementary%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140%2Fjob%2F129272016386).%0A%0ABranch%20head%20%601613476ae0e8af07bf09e69f6454705047ec1e90%60%20merges%20upstream%20%607073462fcca6088989f9127f3473b95471a758b1%60%20with%20both%20parents%20retained%3B%20the%20exact%20merged%20source%20passed%20the%20verification%20above.%0A%0ARoadmap%3A%20R3.12.",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-asar-node-shapes-20261109",
       "validation": {
         "status": "success",
-        "source_sha": "351002eab7e69791a9eb6cd3764c35e1c3cbc130",
+        "source_sha": "1613476ae0e8af07bf09e69f6454705047ec1e90",
         "fork_validation_pr": "https://github.com/Afloat16/craft-anything/pull/12",
         "runs_url": "https://github.com/Afloat16/craft-anything/actions?query=branch%3Abugfix%2Fr3.12-asar-node-shapes-20261109",
-        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891843",
-        "passed_tests": 952,
+        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
+        "passed_tests": null,
         "commands": [
           "cargo fmt --all -- --check",
           "cargo test --locked -p craft-anything-formats",
           "cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings"
         ],
-        "scope": "Formatting, complete formats crate tests including new regressions, and all-targets clippy.",
+        "scope": "Exact merged source: complete formats crate tests, formatting, all-targets clippy and L0 gates. Final log totals will be recorded when the serial job completes.",
         "l0_gates": {
           "status": "success",
-          "source_sha": "351002eab7e69791a9eb6cd3764c35e1c3cbc130",
-          "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663",
+          "source_sha": "1613476ae0e8af07bf09e69f6454705047ec1e90",
+          "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
           "step": "Archive 2 L0 gates",
           "commands": [
             "cargo run --locked -p xtask -- layers",
@@ -321,13 +376,21 @@
             "cargo run --locked -p xtask -- secrets",
             "cargo run --locked -p xtask -- wasm",
             "git diff --exit-code -- Cargo.lock"
-          ]
+          ],
+          "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386"
         },
         "baseline_failures": [
           "malformed_nodes_do_not_become_empty_files"
         ],
         "baseline_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582",
-        "fork_validation_state": "closed"
+        "fork_validation_state": "closed",
+        "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
+        "confirmed_steps": [
+          "Archive 2 formatting",
+          "Archive 2 regression tests",
+          "Archive 2 clippy",
+          "Archive 2 L0 gates"
+        ]
       },
       "revisions": [
         {
@@ -368,7 +431,7 @@
           "b09a93a40ec1cdb37f32f6c52760855ce73d31bd",
           "7073462fcca6088989f9127f3473b95471a758b1"
         ],
-        "validation_status": "in_progress",
+        "validation_status": "success",
         "validation_run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
         "validation_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
         "scope": {
@@ -394,15 +457,61 @@
             }
           ]
         }
-      }
+      },
+      "verification_history": [
+        {
+          "source_sha": "351002eab7e69791a9eb6cd3764c35e1c3cbc130",
+          "validation": {
+            "status": "success",
+            "source_sha": "351002eab7e69791a9eb6cd3764c35e1c3cbc130",
+            "fork_validation_pr": "https://github.com/Afloat16/craft-anything/pull/12",
+            "runs_url": "https://github.com/Afloat16/craft-anything/actions?query=branch%3Abugfix%2Fr3.12-asar-node-shapes-20261109",
+            "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891843",
+            "passed_tests": 952,
+            "commands": [
+              "cargo fmt --all -- --check",
+              "cargo test --locked -p craft-anything-formats",
+              "cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings"
+            ],
+            "scope": "Formatting, complete formats crate tests including new regressions, and all-targets clippy.",
+            "l0_gates": {
+              "status": "success",
+              "source_sha": "351002eab7e69791a9eb6cd3764c35e1c3cbc130",
+              "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663",
+              "step": "Archive 2 L0 gates",
+              "commands": [
+                "cargo run --locked -p xtask -- layers",
+                "cargo run --locked -p xtask -- locks",
+                "cargo run --locked -p xtask -- secrets",
+                "cargo run --locked -p xtask -- wasm",
+                "git diff --exit-code -- Cargo.lock"
+              ]
+            },
+            "baseline_failures": [
+              "malformed_nodes_do_not_become_empty_files"
+            ],
+            "baseline_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582",
+            "fork_validation_state": "closed"
+          },
+          "documentation_followup": {
+            "sha": "b09a93a40ec1cdb37f32f6c52760855ce73d31bd",
+            "source_sha": "351002eab7e69791a9eb6cd3764c35e1c3cbc130",
+            "files": [
+              "docs/ROADMAP.md",
+              "docs/STATUS.md"
+            ],
+            "source_files_unchanged": true
+          }
+        }
+      ]
     },
     {
       "number": 3,
       "title": "Validate gzip header checksums without rejecting informational fields",
       "branch": "bugfix/r3.12-gzip-header-crc-20261109",
       "latest_head": "7f58bf1574fae2edfd2fa71de2176639cb9562e1",
-      "source_sha": "dde4aa0233be968f9b55bd3316204b880b8dbf2e",
-      "source_url": "https://github.com/Afloat16/craft-anything/commit/dde4aa0233be968f9b55bd3316204b880b8dbf2e",
+      "source_sha": "7f58bf1574fae2edfd2fa71de2176639cb9562e1",
+      "source_url": "https://github.com/Afloat16/craft-anything/commit/7f58bf1574fae2edfd2fa71de2176639cb9562e1",
       "base": "1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1",
       "claim_sha": "dbcbaf44188263af5c4d344da1f0e8c58b34ad94",
       "files": [
@@ -415,26 +524,26 @@
         "gzip_accepts_informational_bytes_but_rejects_reserved_flags"
       ],
       "deduplication": "Gzip FHCRC and informational header fields; no substantive matching PR in the reviewed full-body history.",
-      "body": "## Problem\nGzip headers with an FHCRC were accepted even when the header checksum was wrong, while otherwise readable streams were rejected solely for informational XFL or OS values.\n\n## Change\nCheck the low 16 bits of the header CRC-32 when FHCRC is present. Accept informational encoder bytes and preserve checks for the compression method, reserved flag bits, optional-field boundaries and trailer integrity.\n\nThe framing follows [RFC 1952 section 2.3.1](https://www.rfc-editor.org/rfc/rfc1952#section-2.3.1).\n\n## Validation\nAdded complete optional-header fixtures, header-bit corruption, truncated FHCRC, informational-byte coverage and reserved-bit controls.\n\nExact source commit `dde4aa0233be968f9b55bd3316204b880b8dbf2e` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891865). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `gzip_checks_the_optional_header_checksum` and `gzip_accepts_informational_bytes_but_rejects_reserved_flags`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).\n\nBranch head `7f58bf1574fae2edfd2fa71de2176639cb9562e1` merges upstream `7073462fcca6088989f9127f3473b95471a758b1` with both parents retained. [Exact-head verification](https://github.com/Afloat16/claude-mem/actions/runs/42649592140) is in progress; the successful checks above refer to the earlier verified source.\n\nRoadmap: R3.12.",
-      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-gzip-header-crc-20261109?expand=1&title=Validate%20gzip%20header%20checksums%20without%20rejecting%20informational%20fields&body=%23%23%20Problem%0AGzip%20headers%20with%20an%20FHCRC%20were%20accepted%20even%20when%20the%20header%20checksum%20was%20wrong%2C%20while%20otherwise%20readable%20streams%20were%20rejected%20solely%20for%20informational%20XFL%20or%20OS%20values.%0A%0A%23%23%20Change%0ACheck%20the%20low%2016%20bits%20of%20the%20header%20CRC-32%20when%20FHCRC%20is%20present.%20Accept%20informational%20encoder%20bytes%20and%20preserve%20checks%20for%20the%20compression%20method%2C%20reserved%20flag%20bits%2C%20optional-field%20boundaries%20and%20trailer%20integrity.%0A%0AThe%20framing%20follows%20%5BRFC%201952%20section%202.3.1%5D(https%3A%2F%2Fwww.rfc-editor.org%2Frfc%2Frfc1952%23section-2.3.1).%0A%0A%23%23%20Validation%0AAdded%20complete%20optional-header%20fixtures%2C%20header-bit%20corruption%2C%20truncated%20FHCRC%2C%20informational-byte%20coverage%20and%20reserved-bit%20controls.%0A%0AExact%20source%20commit%20%60dde4aa0233be968f9b55bd3316204b880b8dbf2e%60%20passed%20formatting%2C%20all%20952%20formats%20tests%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226891865).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60gzip_checks_the_optional_header_checksum%60%20and%20%60gzip_accepts_informational_bytes_but_rejects_reserved_flags%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ALayers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20an%20unchanged%20Cargo.lock%20also%20passed%20for%20this%20exact%20revision%20in%20%5Bthe%20supplementary%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42640688213%2Fjob%2F129240669663).%0A%0ABranch%20head%20%607f58bf1574fae2edfd2fa71de2176639cb9562e1%60%20merges%20upstream%20%607073462fcca6088989f9127f3473b95471a758b1%60%20with%20both%20parents%20retained.%20%5BExact-head%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140)%20is%20in%20progress%3B%20the%20successful%20checks%20above%20refer%20to%20the%20earlier%20verified%20source.%0A%0ARoadmap%3A%20R3.12.",
+      "body": "## Problem\nGzip headers with an FHCRC were accepted even when the header checksum was wrong, while otherwise readable streams were rejected solely for informational XFL or OS values.\n\n## Change\nCheck the low 16 bits of the header CRC-32 when FHCRC is present. Accept informational encoder bytes and preserve checks for the compression method, reserved flag bits, optional-field boundaries and trailer integrity.\n\nThe framing follows [RFC 1952 section 2.3.1](https://www.rfc-editor.org/rfc/rfc1952#section-2.3.1).\n\n## Validation\nAdded complete optional-header fixtures, header-bit corruption, truncated FHCRC, informational-byte coverage and reserved-bit controls.\n\nExact source commit `7f58bf1574fae2edfd2fa71de2176639cb9562e1` passed formatting, the complete formats test suite, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `gzip_checks_the_optional_header_checksum` and `gzip_accepts_informational_bytes_but_rejects_reserved_flags`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386).\n\nBranch head `7f58bf1574fae2edfd2fa71de2176639cb9562e1` merges upstream `7073462fcca6088989f9127f3473b95471a758b1` with both parents retained; the exact merged source passed the verification above.\n\nRoadmap: R3.12.",
+      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-gzip-header-crc-20261109?expand=1&title=Validate%20gzip%20header%20checksums%20without%20rejecting%20informational%20fields&body=%23%23%20Problem%0AGzip%20headers%20with%20an%20FHCRC%20were%20accepted%20even%20when%20the%20header%20checksum%20was%20wrong%2C%20while%20otherwise%20readable%20streams%20were%20rejected%20solely%20for%20informational%20XFL%20or%20OS%20values.%0A%0A%23%23%20Change%0ACheck%20the%20low%2016%20bits%20of%20the%20header%20CRC-32%20when%20FHCRC%20is%20present.%20Accept%20informational%20encoder%20bytes%20and%20preserve%20checks%20for%20the%20compression%20method%2C%20reserved%20flag%20bits%2C%20optional-field%20boundaries%20and%20trailer%20integrity.%0A%0AThe%20framing%20follows%20%5BRFC%201952%20section%202.3.1%5D(https%3A%2F%2Fwww.rfc-editor.org%2Frfc%2Frfc1952%23section-2.3.1).%0A%0A%23%23%20Validation%0AAdded%20complete%20optional-header%20fixtures%2C%20header-bit%20corruption%2C%20truncated%20FHCRC%2C%20informational-byte%20coverage%20and%20reserved-bit%20controls.%0A%0AExact%20source%20commit%20%607f58bf1574fae2edfd2fa71de2176639cb9562e1%60%20passed%20formatting%2C%20the%20complete%20formats%20test%20suite%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140%2Fjob%2F129272016386).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60gzip_checks_the_optional_header_checksum%60%20and%20%60gzip_accepts_informational_bytes_but_rejects_reserved_flags%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ALayers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20an%20unchanged%20Cargo.lock%20also%20passed%20for%20this%20exact%20revision%20in%20%5Bthe%20supplementary%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140%2Fjob%2F129272016386).%0A%0ABranch%20head%20%607f58bf1574fae2edfd2fa71de2176639cb9562e1%60%20merges%20upstream%20%607073462fcca6088989f9127f3473b95471a758b1%60%20with%20both%20parents%20retained%3B%20the%20exact%20merged%20source%20passed%20the%20verification%20above.%0A%0ARoadmap%3A%20R3.12.",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-gzip-header-crc-20261109",
       "validation": {
         "status": "success",
-        "source_sha": "dde4aa0233be968f9b55bd3316204b880b8dbf2e",
+        "source_sha": "7f58bf1574fae2edfd2fa71de2176639cb9562e1",
         "fork_validation_pr": "https://github.com/Afloat16/craft-anything/pull/13",
         "runs_url": "https://github.com/Afloat16/craft-anything/actions?query=branch%3Abugfix%2Fr3.12-gzip-header-crc-20261109",
-        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891865",
-        "passed_tests": 952,
+        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
+        "passed_tests": null,
         "commands": [
           "cargo fmt --all -- --check",
           "cargo test --locked -p craft-anything-formats",
           "cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings"
         ],
-        "scope": "Formatting, complete formats crate tests including new regressions, and all-targets clippy.",
+        "scope": "Exact merged source: complete formats crate tests, formatting, all-targets clippy and L0 gates. Final log totals will be recorded when the serial job completes.",
         "l0_gates": {
           "status": "success",
-          "source_sha": "dde4aa0233be968f9b55bd3316204b880b8dbf2e",
-          "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663",
+          "source_sha": "7f58bf1574fae2edfd2fa71de2176639cb9562e1",
+          "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
           "step": "Archive 3 L0 gates",
           "commands": [
             "cargo run --locked -p xtask -- layers",
@@ -442,14 +551,22 @@
             "cargo run --locked -p xtask -- secrets",
             "cargo run --locked -p xtask -- wasm",
             "git diff --exit-code -- Cargo.lock"
-          ]
+          ],
+          "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386"
         },
         "baseline_failures": [
           "gzip_checks_the_optional_header_checksum",
           "gzip_accepts_informational_bytes_but_rejects_reserved_flags"
         ],
         "baseline_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582",
-        "fork_validation_state": "closed"
+        "fork_validation_state": "closed",
+        "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
+        "confirmed_steps": [
+          "Archive 3 formatting",
+          "Archive 3 regression tests",
+          "Archive 3 clippy",
+          "Archive 3 L0 gates"
+        ]
       },
       "revisions": [
         {
@@ -490,7 +607,7 @@
           "839304aa2892c5d8db92a2191dc31e47be6ea6c1",
           "7073462fcca6088989f9127f3473b95471a758b1"
         ],
-        "validation_status": "in_progress",
+        "validation_status": "success",
         "validation_run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
         "validation_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
         "scope": {
@@ -516,7 +633,54 @@
             }
           ]
         }
-      }
+      },
+      "verification_history": [
+        {
+          "source_sha": "dde4aa0233be968f9b55bd3316204b880b8dbf2e",
+          "validation": {
+            "status": "success",
+            "source_sha": "dde4aa0233be968f9b55bd3316204b880b8dbf2e",
+            "fork_validation_pr": "https://github.com/Afloat16/craft-anything/pull/13",
+            "runs_url": "https://github.com/Afloat16/craft-anything/actions?query=branch%3Abugfix%2Fr3.12-gzip-header-crc-20261109",
+            "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891865",
+            "passed_tests": 952,
+            "commands": [
+              "cargo fmt --all -- --check",
+              "cargo test --locked -p craft-anything-formats",
+              "cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings"
+            ],
+            "scope": "Formatting, complete formats crate tests including new regressions, and all-targets clippy.",
+            "l0_gates": {
+              "status": "success",
+              "source_sha": "dde4aa0233be968f9b55bd3316204b880b8dbf2e",
+              "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663",
+              "step": "Archive 3 L0 gates",
+              "commands": [
+                "cargo run --locked -p xtask -- layers",
+                "cargo run --locked -p xtask -- locks",
+                "cargo run --locked -p xtask -- secrets",
+                "cargo run --locked -p xtask -- wasm",
+                "git diff --exit-code -- Cargo.lock"
+              ]
+            },
+            "baseline_failures": [
+              "gzip_checks_the_optional_header_checksum",
+              "gzip_accepts_informational_bytes_but_rejects_reserved_flags"
+            ],
+            "baseline_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582",
+            "fork_validation_state": "closed"
+          },
+          "documentation_followup": {
+            "sha": "839304aa2892c5d8db92a2191dc31e47be6ea6c1",
+            "source_sha": "dde4aa0233be968f9b55bd3316204b880b8dbf2e",
+            "files": [
+              "docs/ROADMAP.md",
+              "docs/STATUS.md"
+            ],
+            "source_files_unchanged": true
+          }
+        }
+      ]
     },
     {
       "number": 4,
