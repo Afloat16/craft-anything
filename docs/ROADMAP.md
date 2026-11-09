@@ -1361,7 +1361,7 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Apply standalone LZMA output budgets to its internal dictionary and reject oversized declared output before decoding.
+- [x] Apply standalone LZMA output budgets to its internal dictionary and reject oversized declared output before decoding.
       — claimed: Afloat16, branch bugfix/r3.12-standalone-lzma-budget-20261109
 - [x] Extract legacy PyInstaller PYZ data as raw files and report modern namespace packages without fabricating bytecode.
       — claimed: Afloat16, branch bugfix/r3.12-pyz-member-kinds
