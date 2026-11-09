@@ -174,6 +174,8 @@ same exit status. No live provider or paid-model run was performed. The separate
 
 ### Bun stored-text encoding
 
+The packed-file tools list and extract the original Bun source-map and bytecode bytes alongside module contents. Payload paths use the module index and a directory separate from original paths.
+
 Packed Bun members with encoding value 2 are labelled `utf16le`, matching their stored UTF-16LE
 bytes. Reading or unpacking preserves those bytes. Synthetic graphs cover UTF-16LE (including a
 surrogate pair), Latin1 and binary members across both supported module-record and offsets-block

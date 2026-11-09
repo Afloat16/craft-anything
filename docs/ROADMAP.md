@@ -1300,8 +1300,9 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.11-standin-empty-304-20261103
 - [ ] Godot format 4 and IL2CPP metadata 38 and 39 are header-only; read their tables once a real
       file can be checked
-- [ ] Bun: take source maps and bytecode out as files; a standalone `.pyz`
-      — Bun payloads claimed: Afloat16, branch feature/r3.11-bun-module-payloads
+- [x] Bun: take each module's stored source map and bytecode out as files.
+      — claimed: Afloat16, branch feature/r3.11-bun-module-payloads
+- [ ] A standalone `.pyz`
 - [ ] `native_source_folder_write` uses the built-in decompiler only: use Ghidra in Deep mode when
       it's there
 - [x] Keep stand-in response samples distinct when headers, content types or body-availability metadata differ.
