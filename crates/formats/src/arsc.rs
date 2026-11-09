@@ -344,7 +344,11 @@ fn parse_package(data: &[u8], pos: usize, cs: usize, global: &StringPool, table:
         };
         // Each child was checked against its package; reads within it must also stop before
         // the next sibling, including fixed-width library records and bag headers.
-        let r = Reader::new(&data[..c + sz]);
+        let Some(child) = data.get(..c.saturating_add(sz)) else {
+            table.warnings.push(format!("package {name}: child chunk runs past its package"));
+            break;
+        };
+        let r = Reader::new(child);
         match ct {
             RES_TYPE_SPEC if ch >= 16 => {
                 let tid = r.u8(c + 8).unwrap_or(0);
