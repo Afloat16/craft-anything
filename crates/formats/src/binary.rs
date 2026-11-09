@@ -540,9 +540,14 @@ fn parse_object(data: &[u8], slice_offset: u64) -> Result<Binary, FormatError> {
     b.sections.clear();
     b.slice_offset = slice_offset;
     b.image_base = file.relative_address_base();
-    b.entry = match file.entry() {
-        0 => None,
-        e => Some(e),
+    // The PE enrichment validates image-base arithmetic before publishing its entry.
+    b.entry = if format == Format::Pe {
+        None
+    } else {
+        match file.entry() {
+            0 => None,
+            e => Some(e),
+        }
     };
     for s in file.sections().take(MAX_SECTIONS) {
         let name = s.name().unwrap_or("").to_string();
@@ -660,15 +665,18 @@ fn parse_object(data: &[u8], slice_offset: u64) -> Result<Binary, FormatError> {
     let local_syms = b.symbols.iter().filter(|s| !s.dynamic && s.defined && !linker_header(s)).count();
     b.mitigations.stripped = local_syms == 0;
     // Import slots also name the imports.
-    let mut slot_of: BTreeMap<&str, u64> = BTreeMap::new();
+    let mut slot_of: BTreeMap<(&str, Option<&str>), u64> = BTreeMap::new();
     for s in &b.import_slots {
         if s.kind == "slot" {
-            slot_of.entry(s.name.as_str()).or_insert(s.addr);
+            slot_of.entry((s.name.as_str(), s.library.as_deref())).or_insert(s.addr);
         }
     }
-    let slots: Vec<Option<u64>> = b.imports.iter().map(|i| slot_of.get(i.name.as_str()).copied()).collect();
+    let slots: Vec<Option<u64>> = b.imports.iter().map(|i| i.slot.or_else(|| slot_of.get(&(i.name.as_str(), i.library.as_deref())).copied())).collect();
     for (imp, slot) in b.imports.iter_mut().zip(slots) {
-        imp.slot = slot;
+        // PE enrichment leaves rejected addresses unknown; another row cannot supply that slot.
+        if format != Format::Pe || imp.slot.is_some() {
+            imp.slot = slot;
+        }
     }
     let canary_names = ["__stack_chk_fail", "___stack_chk_fail", "__security_check_cookie", "__stack_chk_guard", "___stack_chk_guard"];
     let has = |n: &str| b.imports.iter().any(|i| i.name == n) || b.symbols.iter().any(|s| s.name == n);
