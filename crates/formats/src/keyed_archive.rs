@@ -34,7 +34,7 @@ pub struct ObjectRow {
 
 /// True when a parsed plist is a keyed archive.
 pub fn is_keyed_archive(v: &Value) -> bool {
-    v.get("$objects").and_then(Value::as_array).is_some() && v.get("$top").is_some()
+    v.get("$objects").and_then(Value::as_array).is_some() && matches!(v.get("$top"), Some(Value::Dict(_)))
 }
 
 /// Read the archive structure from a parsed plist.
@@ -100,17 +100,14 @@ impl KeyedArchive {
             .iter()
             .enumerate()
             .map(|(i, o)| {
-                let (keys, references) = match o {
-                    Value::Dict(d) => {
-                        let mut refs = Vec::new();
-                        for (_, v) in d {
-                            collect_uids(v, &mut refs, 0);
-                        }
-                        (d.iter().map(|(k, _)| k.clone()).collect(), refs)
-                    }
-                    _ => (Vec::new(), Vec::new()),
+                let mut references = Vec::new();
+                collect_uids(o, &mut references, 0);
+                let keys = match o {
+                    Value::Dict(d) if uid_of(o).is_none() => d.iter().map(|(k, _)| k.clone()).collect(),
+                    _ => Vec::new(),
                 };
-                ObjectRow { index: i, class: self.class_of(i as u64), kind: kind_of(o), keys, references }
+                let kind = if uid_of(o).is_some() { "uid" } else { kind_of(o) };
+                ObjectRow { index: i, class: self.class_of(i as u64), kind, keys, references }
             })
             .collect()
     }
@@ -170,6 +167,7 @@ impl Projector<'_> {
         }
         match v {
             Value::Array(items) => Json::Array(items.iter().map(|x| self.value(x, depth + 1)).collect()),
+            Value::Dict(entries) => Json::Object(entries.iter().map(|(k, v)| (k.clone(), self.value(v, depth + 1))).collect()),
             other => other.to_json(),
         }
     }
@@ -185,7 +183,7 @@ impl Projector<'_> {
         };
         match obj {
             Value::String(s) if s == "$null" => return Json::Null,
-            Value::Dict(_) => {}
+            Value::Dict(_) | Value::Array(_) | Value::Uid(_) => {}
             other => return other.to_json(),
         }
         if self.expanded.contains(&idx) {
@@ -195,6 +193,9 @@ impl Projector<'_> {
             return self.reference(idx, "projection limit");
         }
         self.expanded.insert(idx);
+        if !matches!(obj, Value::Dict(_)) || uid_of(obj).is_some() {
+            return self.value(obj, depth);
+        }
         let class = self.a.class_of(idx);
         let c = class.as_deref().unwrap_or("");
         match c {
@@ -277,6 +278,40 @@ mod tests {
         let xml = fx::to_xml(&fx::keyed_archive_value());
         let b = parse(xml.as_bytes()).unwrap();
         assert_eq!(b.project(b.root(None).unwrap().1)["title"], "Groceries");
+    }
+
+    #[test]
+    fn non_dictionary_tops_are_not_detected_as_archives() {
+        let invalid = Value::Dict(vec![("$objects".into(), Value::Array(vec![])), ("$top".into(), Value::Bool(true))]);
+        assert!(!is_keyed_archive(&invalid));
+        assert!(from_plist(&invalid).is_err());
+    }
+
+    #[test]
+    fn projects_and_lists_references_through_arrays_inline_dictionaries_and_aliases() {
+        let xml_uid = Value::Dict(vec![("CF$UID".into(), Value::Integer(2))]);
+        let a = KeyedArchive {
+            archiver: "NSKeyedArchiver".into(),
+            version: None,
+            top: vec![("root".into(), 1)],
+            objects: vec![
+                Value::String("$null".into()),
+                Value::Array(vec![Value::Dict(vec![("nested".into(), Value::Uid(3))]), Value::Uid(1)]),
+                Value::String("leaf".into()),
+                xml_uid,
+                Value::Uid(4),
+            ],
+        };
+        let rows = a.rows();
+        assert_eq!(rows[1].references, [3, 1]);
+        assert_eq!(rows[3].references, [2]);
+        assert_eq!(rows[3].kind, "uid");
+        assert!(rows[3].keys.is_empty());
+        assert_eq!(rows[4].references, [4]);
+        let projected = a.project(1);
+        assert_eq!(projected[0]["nested"], "leaf");
+        assert_eq!(projected[1]["$ref"], 1);
+        assert_eq!(a.project(4)["$ref"], 4);
     }
 
     #[test]
