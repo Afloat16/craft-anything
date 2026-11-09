@@ -1,17 +1,17 @@
 # Other format contributions — 2026-11-09
 
-Status: ten_upstream_pull_requests_submitted. All ten independent changes have formal upstream PRs, with 48 new integration test functions. The table records the exact source and documentation heads, successful independent checks, and current upstream state. Latest verification: 2026-11-09 15:35:59 UTC.
+Status: ten_upstream_pull_requests_submitted. All ten independent changes have formal upstream PRs, with 48 new integration test functions. The table records the exact source and documentation heads, successful independent checks, and current upstream state. Latest verification: 2026-11-09 15:42:00 UTC.
 
-**Upstream PRs created: 10. Merged PRs: 2.** Each independent upstream PR counts as one merged improvement only after it is merged. Fork verification PRs and test-only branches are excluded.
+**Upstream PRs created: 10. Merged PRs: 3.** Each independent upstream PR counts as one merged improvement only after it is merged. Fork verification PRs and test-only branches are excluded.
 
 ## Source branches
 
 | # | Improvement | Current head | New tests | Verification | Upstream PR | State |
 |---|---|---|---:|---|---|---|
-| 1 | Reject Java constants that exceed the constant-pool slots (R3.12) | [`f358146ebeaa`](https://github.com/Afloat16/craft-anything/commit/f358146ebeaa5856e32178308c24a8e9283e84b2) | 4 | full Linux gate passed; source unchanged by documentation completion | [#1373](https://github.com/storytold/craft-anything/pull/1373) | open |
-| 2 | Keep embedded Godot pack reads before the trailer (R3.12) | [`b16acf47009b`](https://github.com/Afloat16/craft-anything/commit/b16acf47009b0f33f52a54600af5f3671c960fbf) | 4 | independent formats and compatibility gates passed; source unchanged by documentation completion | [#1379](https://github.com/storytold/craft-anything/pull/1379) | open |
+| 1 | Reject Java constants that exceed the constant-pool slots (R3.12) | [`8a5332a89480`](https://github.com/Afloat16/craft-anything/commit/8a5332a89480f1f354f404860afe5433a07cd87a) | 4 | independent source checks passed; merged current main to resolve shared documentation conflicts | [#1373](https://github.com/storytold/craft-anything/pull/1373) | open |
+| 2 | Keep embedded Godot pack reads before the trailer (R3.12) | [`ae10e66be638`](https://github.com/Afloat16/craft-anything/commit/ae10e66be638852663f6191d767c2705db6de5b3) | 4 | independent source checks passed; merged current main to resolve shared documentation conflicts | [#1379](https://github.com/storytold/craft-anything/pull/1379) | open |
 | 3 | Bound retained metadata when listing Node SEA programs (R3.12) | [`a91f5e8afecf`](https://github.com/Afloat16/craft-anything/commit/a91f5e8afecf0e88a23d7dc906a7aaf863e88666) | 7 | independent formats and compatibility gates passed; source unchanged by documentation completion | [#1377](https://github.com/storytold/craft-anything/pull/1377) | merged |
-| 4 | Respect the UTF-8 output budget for IL2CPP literals (R3.12) | [`43279b281e6c`](https://github.com/Afloat16/craft-anything/commit/43279b281e6c3dbe7592896d2bfa39f9c2261fcc) | 4 | independent formats and compatibility gates passed; source unchanged by documentation completion | [#1380](https://github.com/storytold/craft-anything/pull/1380) | open |
+| 4 | Respect the UTF-8 output budget for IL2CPP literals (R3.12) | [`43279b281e6c`](https://github.com/Afloat16/craft-anything/commit/43279b281e6c3dbe7592896d2bfa39f9c2261fcc) | 4 | independent formats and compatibility gates passed; source unchanged by documentation completion | [#1380](https://github.com/storytold/craft-anything/pull/1380) | merged |
 | 5 | Decode Unity R16 and RG16 textures (R3.9) | [`ab2f5b83f33a`](https://github.com/Afloat16/craft-anything/commit/ab2f5b83f33ae9a309bb7265055314e70ed84208) | 4 | independent formats and compatibility gates passed; source unchanged by documentation completion | [#1378](https://github.com/storytold/craft-anything/pull/1378) | merged |
 | 6 | Preserve DEX boundaries when member or handler lists are capped (R3.12) | [`eeab41fd938c`](https://github.com/Afloat16/craft-anything/commit/eeab41fd938c2f26d599a4ba9682f8525b8ee67b) | 5 | independent formats and compatibility gates passed; source unchanged by documentation completion | [#1388](https://github.com/storytold/craft-anything/pull/1388) | open |
 | 7 | Keep Android resource children inside their parent chunks (R3.12) | [`5eb384a87f45`](https://github.com/Afloat16/craft-anything/commit/5eb384a87f453156e37025f878ddfb427d6ceaa2) | 7 | independent formats and compatibility gates passed; source unchanged by documentation completion | [#1389](https://github.com/storytold/craft-anything/pull/1389) | open |
@@ -32,7 +32,7 @@ The candidate search covered 927 upstream PR titles/bodies and 206 PRs by Afloat
 
 ## 1. Reject Java constants that exceed the constant-pool slots (R3.12)
 
-Branch: `bugfix/r3.12-java-wide-pool-slot-20261109`. Current head: `f358146ebeaa5856e32178308c24a8e9283e84b2`. Source head: `e0dbc3a5b60b140f26f3622f34c11035e3c1cb7d`.
+Branch: `bugfix/r3.12-java-wide-pool-slot-20261109`. Current head: `8a5332a89480f1f354f404860afe5433a07cd87a`. Source head: `e0dbc3a5b60b140f26f3622f34c11035e3c1cb7d`.
 
 A Long or Double in the final declared pool slot was accepted without its required second slot. At constant_pool_count = 65535 the u16 cursor overflowed while advancing past that entry.
 
@@ -48,7 +48,7 @@ Prior-work distinction: Earlier Java work covered bytecode-wide opcodes and meth
 
 ## 2. Keep embedded Godot pack reads before the trailer (R3.12)
 
-Branch: `bugfix/r3.12-godot-trailer-boundary-20261109`. Current head: `b16acf47009b0f33f52a54600af5f3671c960fbf`. Source head: `9744a0569a7c51d8938ce645e52f9a66965fb1e2`.
+Branch: `bugfix/r3.12-godot-trailer-boundary-20261109`. Current head: `ae10e66be638852663f6191d767c2705db6de5b3`. Source head: `9744a0569a7c51d8938ce645e52f9a66965fb1e2`.
 
 The embedded PCK directory and member reader used the executable's complete length as the pack boundary. This let damaged entries consume the twelve-byte embedded-pack trailer as table fields or member data.
 
