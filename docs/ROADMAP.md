@@ -295,7 +295,7 @@ only when it's green and a maintainer has fully reviewed it, code as well as wor
       Code, Websites as targets, Desktop app and CLI; `docs/opencode.md` has a paragraph twice.
       Keep the newest complete copy of each
       — claimed: youkaicountry, branch docs/r5.2-doubled-status-rows — PR #1226
-- [ ] Have `cargo xtask` refuse a STATUS.md table with two rows of the same name, so a merge
+- [x] Have `cargo xtask` refuse a STATUS.md table with two rows of the same name, so a merge
       that keeps both copies of an edited row fails CI instead of reaching `main`
       — claimed: Afloat16, branch test/r5.2-detect-duplicate-status-rows
 - [x] `docs/opencode.md` still has one passage twice, missed by #1226: in "Configuration and
