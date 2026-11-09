@@ -7,19 +7,15 @@
   "latest_main_comparison": "Subsequent upstream commits affect Swift demangling, CLI adapters and docs; binary.rs, elf.rs, pe.rs, macho.rs and the modified existing regression are unchanged.",
   "status": {
     "implemented_independent_fork_branches": 10,
-    "upstream_prs_created": 6,
+    "upstream_prs_created": 10,
     "merged": 0,
     "validation": "All ten source revisions passed formatting, the complete formats suite and clippy. Required layer/lock/secret/WebAssembly gates passed for all ten.",
     "blockers": [],
-    "ready_for_submission": [
-      7,
-      8,
-      9,
-      10
-    ],
+    "ready_for_submission": [],
     "new_regression_and_control_tests": 35,
     "reproduced_failing_cases": 25,
-    "control_cases": 10
+    "control_cases": 10,
+    "publication": "All ten independent corrections have open upstream PRs; no merges recorded."
   },
   "entries": [
     {
@@ -88,7 +84,7 @@
         "docs/STATUS.md"
       ],
       "post_test_compare_url": "https://github.com/Afloat16/craft-anything/compare/14b61bb39ae47a4ab1a2b8488fee673a0a02a395...b450b193912c0d0766abab7c339ac5c5f8bec44a",
-      "ready_for_submission": true,
+      "ready_for_submission": false,
       "verification": {
         "status": "success",
         "sha": "14b61bb39ae47a4ab1a2b8488fee673a0a02a395",
@@ -182,7 +178,7 @@
         "docs/STATUS.md"
       ],
       "post_test_compare_url": "https://github.com/Afloat16/craft-anything/compare/31727d965106c62e552d901be3f1e4710fc0030a...b9836f65b9e2c74d76921ca8d4f5dfaa27ac91d1",
-      "ready_for_submission": true,
+      "ready_for_submission": false,
       "verification": {
         "status": "success",
         "sha": "31727d965106c62e552d901be3f1e4710fc0030a",
@@ -271,7 +267,7 @@
         "docs/STATUS.md"
       ],
       "post_test_compare_url": "https://github.com/Afloat16/craft-anything/compare/4e16e2f3572c5e56711a56e872d77ff848ab1678...72461eb1a8f3dfea12884e8ef60b96e8cfb654f2",
-      "ready_for_submission": true,
+      "ready_for_submission": false,
       "verification": {
         "status": "success",
         "sha": "4e16e2f3572c5e56711a56e872d77ff848ab1678",
@@ -367,7 +363,7 @@
         "docs/STATUS.md"
       ],
       "post_test_compare_url": "https://github.com/Afloat16/craft-anything/compare/99df6a3f90b8feb52cb0949ac935ced6881379ed...31b8c716149aa27ad0517042f747dde0bf8c4238",
-      "ready_for_submission": true,
+      "ready_for_submission": false,
       "verification": {
         "status": "success",
         "sha": "99df6a3f90b8feb52cb0949ac935ced6881379ed",
@@ -469,7 +465,7 @@
         "docs/STATUS.md"
       ],
       "post_test_compare_url": "https://github.com/Afloat16/craft-anything/compare/7f3a9ba44bc77f949221d03c4b040473f4b4f166...9295c9716118277527e820dba29d2a7965d84047",
-      "ready_for_submission": true,
+      "ready_for_submission": false,
       "verification": {
         "status": "success",
         "sha": "7f3a9ba44bc77f949221d03c4b040473f4b4f166",
@@ -567,7 +563,7 @@
         "docs/STATUS.md"
       ],
       "post_test_compare_url": "https://github.com/Afloat16/craft-anything/compare/c41af7fb99b3dddebfc45fe5a806a3144f7c4d20...a6d9662a67a7030b997be20f68c2209997f48ad2",
-      "ready_for_submission": true,
+      "ready_for_submission": false,
       "verification": {
         "status": "success",
         "sha": "c41af7fb99b3dddebfc45fe5a806a3144f7c4d20",
@@ -659,7 +655,13 @@
       "pr_title": "Apply PE export limits to aliases and empty function slots (R3.12)",
       "pr_body": "## Problem\n\nThe export row cap is checked before each function, so one function's aliases can overshoot it. Empty function slots do not add rows, allowing a sparse table to bypass the work cap entirely.\n\n## Changes\n\nBound function slots examined independently of emitted rows and charge aliases against the remaining output budget; report omitted work as truncated.\n\n## Regression coverage\n\n3 regression and control tests in `crates/formats/tests/pe_export_work_budget.rs`. A sparse table with a function beyond 200,000 slots, a large alias list after an ordinal-only export, and a small complete-table control.\n\n## Validation\n\nSource revision `0c7d16657e98343eaca1b7ac0c13108d04123c63` passed `cargo fmt --all -- --check`, the complete `craft-anything-formats` test suite, and `cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings`: [verification](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226892098).\n\nThe repository's complete existing CI also passed for that source revision: [CI run](https://github.com/Afloat16/craft-anything/actions/runs/42636390909).\n\nThe tests against unchanged production code reproduced 2 failures with 1 passing control: [baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895499), revision `a100bb0647e191efa327867191fa508a49b8df2c`.\n\nCurrent head `c71cc845e5deb38a35eba8e687a4cbff102ebf91` adds only the completed roadmap entry and status documentation after the tested source revision; [the comparison](https://github.com/Afloat16/craft-anything/compare/0c7d16657e98343eaca1b7ac0c13108d04123c63...c71cc845e5deb38a35eba8e687a4cbff102ebf91) contains no source or test changes.\n\n## Related work\n\nNo matching PE export alias or sparse-table budget correction found in all upstream PR titles and bodies.\n\n## Scope\n\nOne R3.12 pending change, claimed in commit `2d3f0638f8b11e36b2fe27db65e593523b0de971` before implementation.",
       "prefilled_pr_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-pe-export-work-budget-20261109?expand=1&title=Apply%20PE%20export%20limits%20to%20aliases%20and%20empty%20function%20slots%20(R3.12)&body=%23%23%20Problem%0A%0AThe%20export%20row%20cap%20is%20checked%20before%20each%20function%2C%20so%20one%20function's%20aliases%20can%20overshoot%20it.%20Empty%20function%20slots%20do%20not%20add%20rows%2C%20allowing%20a%20sparse%20table%20to%20bypass%20the%20work%20cap%20entirely.%0A%0A%23%23%20Changes%0A%0ABound%20function%20slots%20examined%20independently%20of%20emitted%20rows%20and%20charge%20aliases%20against%20the%20remaining%20output%20budget%3B%20report%20omitted%20work%20as%20truncated.%0A%0A%23%23%20Regression%20coverage%0A%0A3%20regression%20and%20control%20tests%20in%20%60crates%2Fformats%2Ftests%2Fpe_export_work_budget.rs%60.%20A%20sparse%20table%20with%20a%20function%20beyond%20200%2C000%20slots%2C%20a%20large%20alias%20list%20after%20an%20ordinal-only%20export%2C%20and%20a%20small%20complete-table%20control.%0A%0A%23%23%20Validation%0A%0ASource%20revision%20%600c7d16657e98343eaca1b7ac0c13108d04123c63%60%20passed%20%60cargo%20fmt%20--all%20--%20--check%60%2C%20the%20complete%20%60craft-anything-formats%60%20test%20suite%2C%20and%20%60cargo%20clippy%20--locked%20-p%20craft-anything-formats%20--all-targets%20--%20-D%20warnings%60%3A%20%5Bverification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226892098).%0A%0AThe%20repository's%20complete%20existing%20CI%20also%20passed%20for%20that%20source%20revision%3A%20%5BCI%20run%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fcraft-anything%2Factions%2Fruns%2F42636390909).%0A%0AThe%20tests%20against%20unchanged%20production%20code%20reproduced%202%20failures%20with%201%20passing%20control%3A%20%5Bbaseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895499)%2C%20revision%20%60a100bb0647e191efa327867191fa508a49b8df2c%60.%0A%0ACurrent%20head%20%60c71cc845e5deb38a35eba8e687a4cbff102ebf91%60%20adds%20only%20the%20completed%20roadmap%20entry%20and%20status%20documentation%20after%20the%20tested%20source%20revision%3B%20%5Bthe%20comparison%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fcraft-anything%2Fcompare%2F0c7d16657e98343eaca1b7ac0c13108d04123c63...c71cc845e5deb38a35eba8e687a4cbff102ebf91)%20contains%20no%20source%20or%20test%20changes.%0A%0A%23%23%20Related%20work%0A%0ANo%20matching%20PE%20export%20alias%20or%20sparse-table%20budget%20correction%20found%20in%20all%20upstream%20PR%20titles%20and%20bodies.%0A%0A%23%23%20Scope%0A%0AOne%20R3.12%20pending%20change%2C%20claimed%20in%20commit%20%602d3f0638f8b11e36b2fe27db65e593523b0de971%60%20before%20implementation.",
-      "upstream_pr": null,
+      "upstream_pr": {
+        "number": 1384,
+        "url": "https://github.com/storytold/craft-anything/pull/1384",
+        "state": "open",
+        "merged": false,
+        "head": "c71cc845e5deb38a35eba8e687a4cbff102ebf91"
+      },
       "merged": false,
       "docs_only_after_tested_source": true,
       "post_test_changed_files": [
@@ -667,7 +669,7 @@
         "docs/STATUS.md"
       ],
       "post_test_compare_url": "https://github.com/Afloat16/craft-anything/compare/0c7d16657e98343eaca1b7ac0c13108d04123c63...c71cc845e5deb38a35eba8e687a4cbff102ebf91",
-      "ready_for_submission": true,
+      "ready_for_submission": false,
       "verification": {
         "status": "success",
         "sha": "0c7d16657e98343eaca1b7ac0c13108d04123c63",
@@ -748,7 +750,13 @@
       "pr_title": "Read Mach-O thread entry points from the matching complete CPU state (R3.12)",
       "pr_body": "## Problem\n\nUNIXTHREAD entry-point decoding ignores each state's declared word count and the image CPU, and reads only the first state. It can publish a PC from incomplete or unrelated state bytes and miss a later supported state.\n\n## Changes\n\nWalk complete count-delimited state records inside the load command, select the supported flavor for the image CPU, and require the complete register layout before reading its PC.\n\n## Regression coverage\n\n4 regression and control tests in `crates/formats/tests/macho_thread_state.rs`. Short and truncated states, mismatched CPU flavors, later matching records, and complete i386, x86-64 and arm64 controls.\n\n## Validation\n\nSource revision `cb87e7f82d569c88c3b6bff84d60bb11d0b6f540` passed `cargo fmt --all -- --check`, the complete `craft-anything-formats` test suite, and `cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings`: [verification](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891839).\n\nThe repository's complete existing CI also passed for that source revision: [CI run](https://github.com/Afloat16/craft-anything/actions/runs/42636329701).\n\nThe tests against unchanged production code reproduced 3 failures with 1 passing control: [baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895499), revision `a100bb0647e191efa327867191fa508a49b8df2c`.\n\nCurrent head `cb1f5189983f9d7b933157a5fcc6201a711fe99e` adds only the completed roadmap entry and status documentation after the tested source revision; [the comparison](https://github.com/Afloat16/craft-anything/compare/cb87e7f82d569c88c3b6bff84d60bb11d0b6f540...cb1f5189983f9d7b933157a5fcc6201a711fe99e) contains no source or test changes.\n\n## Related work\n\n#899 frames load commands but does not interpret each UNIXTHREAD state count or multiple states. #1278 corrects LC_MAIN segment mapping, not thread states.\n\n## Scope\n\nOne R3.12 pending change, claimed in commit `a217d383939fb09ed60a9b5fe4adf8236a63b57e` before implementation.",
       "prefilled_pr_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-macho-thread-state-20261109?expand=1&title=Read%20Mach-O%20thread%20entry%20points%20from%20the%20matching%20complete%20CPU%20state%20(R3.12)&body=%23%23%20Problem%0A%0AUNIXTHREAD%20entry-point%20decoding%20ignores%20each%20state's%20declared%20word%20count%20and%20the%20image%20CPU%2C%20and%20reads%20only%20the%20first%20state.%20It%20can%20publish%20a%20PC%20from%20incomplete%20or%20unrelated%20state%20bytes%20and%20miss%20a%20later%20supported%20state.%0A%0A%23%23%20Changes%0A%0AWalk%20complete%20count-delimited%20state%20records%20inside%20the%20load%20command%2C%20select%20the%20supported%20flavor%20for%20the%20image%20CPU%2C%20and%20require%20the%20complete%20register%20layout%20before%20reading%20its%20PC.%0A%0A%23%23%20Regression%20coverage%0A%0A4%20regression%20and%20control%20tests%20in%20%60crates%2Fformats%2Ftests%2Fmacho_thread_state.rs%60.%20Short%20and%20truncated%20states%2C%20mismatched%20CPU%20flavors%2C%20later%20matching%20records%2C%20and%20complete%20i386%2C%20x86-64%20and%20arm64%20controls.%0A%0A%23%23%20Validation%0A%0ASource%20revision%20%60cb87e7f82d569c88c3b6bff84d60bb11d0b6f540%60%20passed%20%60cargo%20fmt%20--all%20--%20--check%60%2C%20the%20complete%20%60craft-anything-formats%60%20test%20suite%2C%20and%20%60cargo%20clippy%20--locked%20-p%20craft-anything-formats%20--all-targets%20--%20-D%20warnings%60%3A%20%5Bverification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226891839).%0A%0AThe%20repository's%20complete%20existing%20CI%20also%20passed%20for%20that%20source%20revision%3A%20%5BCI%20run%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fcraft-anything%2Factions%2Fruns%2F42636329701).%0A%0AThe%20tests%20against%20unchanged%20production%20code%20reproduced%203%20failures%20with%201%20passing%20control%3A%20%5Bbaseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895499)%2C%20revision%20%60a100bb0647e191efa327867191fa508a49b8df2c%60.%0A%0ACurrent%20head%20%60cb1f5189983f9d7b933157a5fcc6201a711fe99e%60%20adds%20only%20the%20completed%20roadmap%20entry%20and%20status%20documentation%20after%20the%20tested%20source%20revision%3B%20%5Bthe%20comparison%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fcraft-anything%2Fcompare%2Fcb87e7f82d569c88c3b6bff84d60bb11d0b6f540...cb1f5189983f9d7b933157a5fcc6201a711fe99e)%20contains%20no%20source%20or%20test%20changes.%0A%0A%23%23%20Related%20work%0A%0A%23899%20frames%20load%20commands%20but%20does%20not%20interpret%20each%20UNIXTHREAD%20state%20count%20or%20multiple%20states.%20%231278%20corrects%20LC_MAIN%20segment%20mapping%2C%20not%20thread%20states.%0A%0A%23%23%20Scope%0A%0AOne%20R3.12%20pending%20change%2C%20claimed%20in%20commit%20%60a217d383939fb09ed60a9b5fe4adf8236a63b57e%60%20before%20implementation.",
-      "upstream_pr": null,
+      "upstream_pr": {
+        "number": 1385,
+        "url": "https://github.com/storytold/craft-anything/pull/1385",
+        "state": "open",
+        "merged": false,
+        "head": "cb1f5189983f9d7b933157a5fcc6201a711fe99e"
+      },
       "merged": false,
       "docs_only_after_tested_source": true,
       "post_test_changed_files": [
@@ -756,7 +764,7 @@
         "docs/STATUS.md"
       ],
       "post_test_compare_url": "https://github.com/Afloat16/craft-anything/compare/cb87e7f82d569c88c3b6bff84d60bb11d0b6f540...cb1f5189983f9d7b933157a5fcc6201a711fe99e",
-      "ready_for_submission": true,
+      "ready_for_submission": false,
       "verification": {
         "status": "success",
         "sha": "cb87e7f82d569c88c3b6bff84d60bb11d0b6f540",
@@ -833,7 +841,13 @@
       "pr_title": "Bound Mach-O indirect import slots across all sections (R3.12)",
       "pr_body": "## Problem\n\nThe indirect symbol cap resets for every section, so many pointer or stub sections can repeatedly scan the same table and emit an unbounded combined number of import slots.\n\n## Changes\n\nCharge every inspected indirect index, including local and invalid entries, against one image-wide budget and report when unexamined entries remain.\n\n## Regression coverage\n\n3 regression and control tests in `crates/formats/tests/macho_indirect_global_budget.rs`. Repeated table references across sections, local and invalid indices, and small/exact-budget controls.\n\n## Validation\n\nSource revision `7fdf6a0ac3bee117e66fd7f7b3275a37569a248c` passed `cargo fmt --all -- --check`, the complete `craft-anything-formats` test suite, and `cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings`: [verification](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226892166).\n\nThe repository's complete existing CI also passed for that source revision: [CI run](https://github.com/Afloat16/craft-anything/actions/runs/42636342906).\n\nThe tests against unchanged production code reproduced 2 failures with 1 passing control: [baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895499), revision `a100bb0647e191efa327867191fa508a49b8df2c`.\n\nCurrent head `ef532d520f0fbcfc2313434dbd06e997860d48ea` adds only the completed roadmap entry and status documentation after the tested source revision; [the comparison](https://github.com/Afloat16/craft-anything/compare/7fdf6a0ac3bee117e66fd7f7b3275a37569a248c...ef532d520f0fbcfc2313434dbd06e997860d48ea) contains no source or test changes.\n\n## Related work\n\nNo matching global indirect-symbol budget correction found in all upstream PR titles and bodies.\n\n## Scope\n\nOne R3.12 pending change, claimed in commit `675bca9ac7ff3678e27123571a221f87de59a705` before implementation.",
       "prefilled_pr_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-macho-indirect-global-budget-20261109?expand=1&title=Bound%20Mach-O%20indirect%20import%20slots%20across%20all%20sections%20(R3.12)&body=%23%23%20Problem%0A%0AThe%20indirect%20symbol%20cap%20resets%20for%20every%20section%2C%20so%20many%20pointer%20or%20stub%20sections%20can%20repeatedly%20scan%20the%20same%20table%20and%20emit%20an%20unbounded%20combined%20number%20of%20import%20slots.%0A%0A%23%23%20Changes%0A%0ACharge%20every%20inspected%20indirect%20index%2C%20including%20local%20and%20invalid%20entries%2C%20against%20one%20image-wide%20budget%20and%20report%20when%20unexamined%20entries%20remain.%0A%0A%23%23%20Regression%20coverage%0A%0A3%20regression%20and%20control%20tests%20in%20%60crates%2Fformats%2Ftests%2Fmacho_indirect_global_budget.rs%60.%20Repeated%20table%20references%20across%20sections%2C%20local%20and%20invalid%20indices%2C%20and%20small%2Fexact-budget%20controls.%0A%0A%23%23%20Validation%0A%0ASource%20revision%20%607fdf6a0ac3bee117e66fd7f7b3275a37569a248c%60%20passed%20%60cargo%20fmt%20--all%20--%20--check%60%2C%20the%20complete%20%60craft-anything-formats%60%20test%20suite%2C%20and%20%60cargo%20clippy%20--locked%20-p%20craft-anything-formats%20--all-targets%20--%20-D%20warnings%60%3A%20%5Bverification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226892166).%0A%0AThe%20repository's%20complete%20existing%20CI%20also%20passed%20for%20that%20source%20revision%3A%20%5BCI%20run%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fcraft-anything%2Factions%2Fruns%2F42636342906).%0A%0AThe%20tests%20against%20unchanged%20production%20code%20reproduced%202%20failures%20with%201%20passing%20control%3A%20%5Bbaseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895499)%2C%20revision%20%60a100bb0647e191efa327867191fa508a49b8df2c%60.%0A%0ACurrent%20head%20%60ef532d520f0fbcfc2313434dbd06e997860d48ea%60%20adds%20only%20the%20completed%20roadmap%20entry%20and%20status%20documentation%20after%20the%20tested%20source%20revision%3B%20%5Bthe%20comparison%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fcraft-anything%2Fcompare%2F7fdf6a0ac3bee117e66fd7f7b3275a37569a248c...ef532d520f0fbcfc2313434dbd06e997860d48ea)%20contains%20no%20source%20or%20test%20changes.%0A%0A%23%23%20Related%20work%0A%0ANo%20matching%20global%20indirect-symbol%20budget%20correction%20found%20in%20all%20upstream%20PR%20titles%20and%20bodies.%0A%0A%23%23%20Scope%0A%0AOne%20R3.12%20pending%20change%2C%20claimed%20in%20commit%20%60675bca9ac7ff3678e27123571a221f87de59a705%60%20before%20implementation.",
-      "upstream_pr": null,
+      "upstream_pr": {
+        "number": 1386,
+        "url": "https://github.com/storytold/craft-anything/pull/1386",
+        "state": "open",
+        "merged": false,
+        "head": "ef532d520f0fbcfc2313434dbd06e997860d48ea"
+      },
       "merged": false,
       "docs_only_after_tested_source": true,
       "post_test_changed_files": [
@@ -841,7 +855,7 @@
         "docs/STATUS.md"
       ],
       "post_test_compare_url": "https://github.com/Afloat16/craft-anything/compare/7fdf6a0ac3bee117e66fd7f7b3275a37569a248c...ef532d520f0fbcfc2313434dbd06e997860d48ea",
-      "ready_for_submission": true,
+      "ready_for_submission": false,
       "verification": {
         "status": "success",
         "sha": "7fdf6a0ac3bee117e66fd7f7b3275a37569a248c",
@@ -922,7 +936,13 @@
       "pr_title": "Reject Objective-C method records shorter than their declared layout (R3.12)",
       "pr_body": "## Problem\n\nObjective-C method decoding accepts nonzero strides smaller than the absolute or relative layout and publishes methods even when only a record prefix is backed by the section.\n\n## Changes\n\nRequire a stride of at least 24 bytes for absolute records or 12 bytes for relative records, and require the complete declared record to be backed before decoding it. Preserve complete extended strides.\n\n## Regression coverage\n\n4 regression and control tests in `crates/formats/tests/objc_method_record_stride.rs`. Undersized absolute/relative strides, incomplete backed records, and standard/extended controls preserving selectors, types and implementations.\n\n## Validation\n\nSource revision `aaaac76ed1de9dda750128308f8fed0f6bce2457` passed `cargo fmt --all -- --check`, the complete `craft-anything-formats` test suite, and `cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings`: [verification](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891913).\n\nThe repository's complete existing CI also passed for that source revision: [CI run](https://github.com/Afloat16/craft-anything/actions/runs/42636344831).\n\nThe tests against unchanged production code reproduced 3 failures with 1 passing control: [baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895499), revision `a100bb0647e191efa327867191fa508a49b8df2c`.\n\nCurrent head `21de8ca8ae05d47a92a49ca6428d02317673a30d` adds only the completed roadmap entry and status documentation after the tested source revision; [the comparison](https://github.com/Afloat16/craft-anything/compare/aaaac76ed1de9dda750128308f8fed0f6bce2457...21de8ca8ae05d47a92a49ca6428d02317673a30d) contains no source or test changes.\n\n## Related work\n\n#205 checks method entry address overflow. This rejects too-small absolute/relative record layouts that overlap the next record, while preserving valid extended strides.\n\n## Scope\n\nOne R3.12 pending change, claimed in commit `50d170d6829d3cc6d410d90f7376cf139d4393c4` before implementation.",
       "prefilled_pr_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-objc-method-record-stride-20261109?expand=1&title=Reject%20Objective-C%20method%20records%20shorter%20than%20their%20declared%20layout%20(R3.12)&body=%23%23%20Problem%0A%0AObjective-C%20method%20decoding%20accepts%20nonzero%20strides%20smaller%20than%20the%20absolute%20or%20relative%20layout%20and%20publishes%20methods%20even%20when%20only%20a%20record%20prefix%20is%20backed%20by%20the%20section.%0A%0A%23%23%20Changes%0A%0ARequire%20a%20stride%20of%20at%20least%2024%20bytes%20for%20absolute%20records%20or%2012%20bytes%20for%20relative%20records%2C%20and%20require%20the%20complete%20declared%20record%20to%20be%20backed%20before%20decoding%20it.%20Preserve%20complete%20extended%20strides.%0A%0A%23%23%20Regression%20coverage%0A%0A4%20regression%20and%20control%20tests%20in%20%60crates%2Fformats%2Ftests%2Fobjc_method_record_stride.rs%60.%20Undersized%20absolute%2Frelative%20strides%2C%20incomplete%20backed%20records%2C%20and%20standard%2Fextended%20controls%20preserving%20selectors%2C%20types%20and%20implementations.%0A%0A%23%23%20Validation%0A%0ASource%20revision%20%60aaaac76ed1de9dda750128308f8fed0f6bce2457%60%20passed%20%60cargo%20fmt%20--all%20--%20--check%60%2C%20the%20complete%20%60craft-anything-formats%60%20test%20suite%2C%20and%20%60cargo%20clippy%20--locked%20-p%20craft-anything-formats%20--all-targets%20--%20-D%20warnings%60%3A%20%5Bverification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226891913).%0A%0AThe%20repository's%20complete%20existing%20CI%20also%20passed%20for%20that%20source%20revision%3A%20%5BCI%20run%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fcraft-anything%2Factions%2Fruns%2F42636344831).%0A%0AThe%20tests%20against%20unchanged%20production%20code%20reproduced%203%20failures%20with%201%20passing%20control%3A%20%5Bbaseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895499)%2C%20revision%20%60a100bb0647e191efa327867191fa508a49b8df2c%60.%0A%0ACurrent%20head%20%6021de8ca8ae05d47a92a49ca6428d02317673a30d%60%20adds%20only%20the%20completed%20roadmap%20entry%20and%20status%20documentation%20after%20the%20tested%20source%20revision%3B%20%5Bthe%20comparison%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fcraft-anything%2Fcompare%2Faaaac76ed1de9dda750128308f8fed0f6bce2457...21de8ca8ae05d47a92a49ca6428d02317673a30d)%20contains%20no%20source%20or%20test%20changes.%0A%0A%23%23%20Related%20work%0A%0A%23205%20checks%20method%20entry%20address%20overflow.%20This%20rejects%20too-small%20absolute%2Frelative%20record%20layouts%20that%20overlap%20the%20next%20record%2C%20while%20preserving%20valid%20extended%20strides.%0A%0A%23%23%20Scope%0A%0AOne%20R3.12%20pending%20change%2C%20claimed%20in%20commit%20%6050d170d6829d3cc6d410d90f7376cf139d4393c4%60%20before%20implementation.",
-      "upstream_pr": null,
+      "upstream_pr": {
+        "number": 1387,
+        "url": "https://github.com/storytold/craft-anything/pull/1387",
+        "state": "open",
+        "merged": false,
+        "head": "21de8ca8ae05d47a92a49ca6428d02317673a30d"
+      },
       "merged": false,
       "docs_only_after_tested_source": true,
       "post_test_changed_files": [
@@ -930,7 +950,7 @@
         "docs/STATUS.md"
       ],
       "post_test_compare_url": "https://github.com/Afloat16/craft-anything/compare/aaaac76ed1de9dda750128308f8fed0f6bce2457...21de8ca8ae05d47a92a49ca6428d02317673a30d",
-      "ready_for_submission": true,
+      "ready_for_submission": false,
       "verification": {
         "status": "success",
         "sha": "aaaac76ed1de9dda750128308f8fed0f6bce2457",
