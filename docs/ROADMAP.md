@@ -1361,6 +1361,8 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
+- [ ] Apply one indirect-import budget across all Mach-O sections and report when repeated table references exhaust it.
+      — claimed: Afloat16, branch bugfix/r3.12-macho-indirect-global-budget-20261109
 - [x] Extract legacy PyInstaller PYZ data as raw files and report modern namespace packages without fabricating bytecode.
       — claimed: Afloat16, branch bugfix/r3.12-pyz-member-kinds
 - [x] Bound rejected ASAR names by the archive listing limit.
