@@ -8,6 +8,7 @@ workspace clippy, layers, fmt and the secret scan of all history were clean. Chi
 
 | Area | State | Verified by |
 |---|---|---|
+| ZIP LZMA members | Decode method-14 property headers and select size-delimited or end-marker decoding, with bounded dictionaries/output and existing size/CRC checks. | Generated ZIP fixtures exercise both framing modes, zero literals, corrupt/truncated/trailing data, output limits and oversized dictionary properties. |
 | PyInstaller PYZ resources | Legacy data members unpack with their original bytes and names. Empty namespace packages are listed as metadata. Older namespaces with code still unpack as packages. | List- and dictionary-form PYZ fixtures with mixed member types. |
 | Binary property-list object types | Accepts compatible version-zero minor signatures and rejects unsupported major versions, invalid simple/date markers and unrepresentable non-string dictionary keys. | Typed binary fixtures with valid null, string-key and date controls. |
 | Limited string scans | The earliest printable strings are retained in address order across narrow and UTF-16LE encodings. | Interleaved binary fixture with every result limit from zero to four. |
