@@ -3,7 +3,7 @@
   "fork": "Afloat16/craft-anything",
   "base": "1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1",
   "published_independent_changes": 10,
-  "upstream_pull_requests_created": 5,
+  "upstream_pull_requests_created": 6,
   "merged": 0,
   "deduplication_scope": "Full text of 927 upstream pull requests and 206 historical user pull requests was reviewed by the parent task; candidate-specific matches were checked against current production paths.",
   "baseline": {
@@ -552,6 +552,17 @@
           "docs/STATUS.md"
         ],
         "source_files_unchanged": true
+      },
+      "upstream_pull_request": {
+        "number": 1374,
+        "url": "https://github.com/storytold/craft-anything/pull/1374",
+        "state": "open",
+        "merged": false,
+        "head_sha": "2c069f4b042ead31ec9a78c726bad5f67228271b",
+        "head_branch": "feature/r3.12-zip-bzip2-xz-20261109",
+        "body": "## Problem\nThe ZIP directory recognized bzip2 (12) and XZ (95), but extraction rejected both even though the formats crate already includes pure-Rust decoders for these streams.\n\n## Change\nRoute both ZIP methods through the existing decompressors, preserving TooLarge errors, decoded-size validation and CRC checks. This adds no dependency and keeps encrypted entries unsupported.\n\n## Validation\nAdded complete ZIP fixtures using the existing reference-encoder streams, plus corrupted data, understated directory sizes, exact/insufficient limits, CRC mismatch and encrypted controls.\n\nExact source commit `4cac36386e426e332bd89cb2cfa63894f3a367a5` passed formatting, all 951 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226892219). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `bzip2_and_xz_zip_entries_keep_size_crc_and_output_checks`. The same regression cases pass in this branch.\n\nThe same source revision passed `cargo xtask layers`, `cargo xtask locks`, `cargo xtask secrets`, and `cargo xtask wasm`; Cargo.lock stayed unchanged. See the `Archive 5 L0 gates` step in [supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663). The final follow-up updates ROADMAP and STATUS only; production and regression-test bytes are unchanged.\n\nRoadmap: R3.12.",
+        "created_at": "2026-11-09T15:17:49Z",
+        "draft": false
       }
     },
     {
