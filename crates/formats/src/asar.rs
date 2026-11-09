@@ -233,6 +233,60 @@ mod tests {
         assert!(archive.truncated);
     }
 
+    fn archive_header(value: Value) -> Vec<u8> {
+        let json = serde_json::to_vec(&value).unwrap();
+        let mut data = 4u32.to_le_bytes().to_vec();
+        data.extend_from_slice(&((json.len() + 8) as u32).to_le_bytes());
+        data.extend_from_slice(&((json.len() + 4) as u32).to_le_bytes());
+        data.extend_from_slice(&(json.len() as u32).to_le_bytes());
+        data.extend_from_slice(&json);
+        data
+    }
+
+    #[test]
+    fn malformed_nodes_do_not_become_empty_files() {
+        for files in [serde_json::json!([]), serde_json::json!(null), serde_json::json!(42)] {
+            assert!(matches!(parse(&archive_header(serde_json::json!({"files": files})), 10), Err(AsarError::BadJson(_))));
+        }
+        for node in [
+            serde_json::json!(null),
+            serde_json::json!(false),
+            serde_json::json!([]),
+            serde_json::json!({}),
+            serde_json::json!({"files": []}),
+            serde_json::json!({"files": {}, "link": "target"}),
+            serde_json::json!({"link": 42}),
+            serde_json::json!({"size": -1, "offset": "0"}),
+            serde_json::json!({"size": "1", "offset": "0"}),
+            serde_json::json!({"size": 0}),
+            serde_json::json!({"size": 0, "offset": "-1"}),
+            serde_json::json!({"size": 0, "offset": "18446744073709551616"}),
+            serde_json::json!({"size": 0, "offset": "0", "unpacked": "false"}),
+        ] {
+            let data = archive_header(serde_json::json!({"files": {"bad": node}}));
+            assert!(matches!(parse(&data, 10), Err(AsarError::BadJson(_))), "{node}");
+        }
+    }
+
+    #[test]
+    fn valid_empty_unpacked_and_link_nodes_keep_their_kinds() {
+        let data = archive_header(serde_json::json!({"files": {
+            "directory": {"files": {}},
+            "empty": {"size": 0, "offset": "0"},
+            "numeric": {"size": 0, "offset": 0},
+            "external": {"size": 10, "unpacked": true},
+            "link": {"link": "empty"}
+        }}));
+        let archive = parse(&data, 10).unwrap();
+        assert_eq!(archive.entries.len(), 5);
+        assert_eq!(archive.get("directory").unwrap().kind, AsarKind::Directory);
+        assert_eq!(archive.get("link").unwrap().kind, AsarKind::Link);
+        assert_eq!(file_bytes(&data, &archive, archive.get("empty").unwrap()), Some(&b""[..]));
+        assert_eq!(file_bytes(&data, &archive, archive.get("numeric").unwrap()), Some(&b""[..]));
+        assert!(archive.get("external").unwrap().unpacked);
+        assert_eq!(file_bytes(&data, &archive, archive.get("external").unwrap()), None);
+    }
+
     #[test]
     fn round_trip() {
         let a = build(&[("package.json", b"{\"main\":\"main.js\"}"), ("src/main.js", b"require('electron')")]);

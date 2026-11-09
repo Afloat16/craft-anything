@@ -211,6 +211,41 @@ mod tests {
     }
 
     #[test]
+    fn gzip_members_require_complete_valid_trailers() {
+        let original = craft_anything_testkit::firmware::gzip(b"payload", None);
+        for trailer_byte in [original.len() - 8, original.len() - 4] {
+            let mut damaged = original.clone();
+            damaged[trailer_byte] ^= 1;
+            assert!(matches!(
+                read_stored(&damaged, &entry(0, damaged.len() as u64, Compression::Gzip), 100),
+                Err(FormatError::Malformed(_))
+            ));
+        }
+        for missing in 1..=8 {
+            let truncated = &original[..original.len() - missing];
+            assert!(read_stored(truncated, &entry(0, truncated.len() as u64, Compression::Gzip), 100).is_err());
+        }
+        let mut trailing = original.clone();
+        trailing.extend_from_slice(b"garbage");
+        assert!(read_stored(&trailing, &entry(0, trailing.len() as u64, Compression::Gzip), 100).is_err());
+        assert!(read_stored(b"", &entry(0, 0, Compression::Gzip), 100).is_err());
+    }
+
+    #[test]
+    fn gzip_concatenation_shares_the_output_limit() {
+        let first = craft_anything_testkit::firmware::gzip(b"first", Some("one"));
+        let empty = craft_anything_testkit::firmware::gzip(b"", None);
+        let last = craft_anything_testkit::firmware::gzip(b"last", None);
+        let data = [first, empty.clone(), last].concat();
+        let mut member = entry(0, data.len() as u64, Compression::Gzip);
+        assert_eq!(read_stored(&data, &member, 9).unwrap(), b"firstlast");
+        assert!(matches!(read_stored(&data, &member, 8), Err(FormatError::TooLarge(_))));
+        member.size = Some(5);
+        assert!(matches!(read_stored(&data, &member, 100), Err(FormatError::Malformed(_))));
+        assert!(read_stored(&empty, &entry(0, empty.len() as u64, Compression::Gzip), 0).unwrap().is_empty());
+    }
+
+    #[test]
     fn damaged_and_unreadable_members_are_errors_not_panics() {
         assert!(read_stored(b"not zlib", &entry(0, 8, Compression::Zlib), 100).is_err());
         assert!(read_stored(b"not zstd", &entry(0, 8, Compression::Zstd), 100).is_err());

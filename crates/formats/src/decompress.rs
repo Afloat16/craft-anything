@@ -271,6 +271,50 @@ mod tests {
     }
 
     #[test]
+    fn xz_concatenated_streams_and_padding_share_one_budget() {
+        let input = [fx::XZ_FIXTURE, &[0; 4], fx::XZ_FIXTURE, &[0; 8]].concat();
+        let expected = [fx::XZ_PLAIN, fx::XZ_PLAIN].concat();
+        assert_eq!(xz(&input, expected.len() as u64).unwrap(), expected);
+        assert_eq!(xz(&input, expected.len() as u64 - 1), Err(DecompressError::TooLarge));
+        let mut empty = Vec::new();
+        lzma_rs::xz_compress(&mut io::Cursor::new(b""), &mut empty).unwrap();
+        let with_empty = [&empty[..], fx::XZ_FIXTURE, &empty[..]].concat();
+        assert_eq!(xz(&with_empty, fx::XZ_PLAIN.len() as u64).unwrap(), fx::XZ_PLAIN);
+        assert!(xz(&empty, 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn xz_rejects_incomplete_members_and_nonstandard_padding() {
+        for padding in [1, 2, 3, 5] {
+            let input = [fx::XZ_FIXTURE, &vec![0; padding]].concat();
+            assert!(xz(&input, 1000).is_err());
+        }
+        assert!(xz(&[&[0; 4][..], fx::XZ_FIXTURE].concat(), 1000).is_err());
+        assert!(xz(&[fx::XZ_FIXTURE, b"junk"].concat(), 1000).is_err());
+        for missing in 1..fx::XZ_FIXTURE.len() {
+            let input = [fx::XZ_FIXTURE, &fx::XZ_FIXTURE[..fx::XZ_FIXTURE.len() - missing]].concat();
+            assert!(xz(&input, 1000).is_err(), "missing {missing} bytes");
+        }
+        for at in [fx::XZ_FIXTURE.len() - 13, fx::XZ_FIXTURE.len() - 12] {
+            let mut damaged = fx::XZ_FIXTURE.to_vec();
+            damaged[at] ^= 1;
+            assert!(xz(&damaged, 1000).is_err());
+        }
+    }
+
+    #[test]
+    fn xz_index_sizes_and_integer_encodings_are_checked() {
+        let mut damaged = fx::XZ_FIXTURE.to_vec();
+        let footer = damaged.len() - 12;
+        let backward = u32::from_le_bytes(damaged[footer + 4..footer + 8].try_into().unwrap());
+        let index = footer - (backward as usize + 1) * 4;
+        damaged[index + 2] = 0;
+        let checksum = crate::firmware::crc32(&damaged[index..footer - 4]);
+        damaged[footer - 4..footer].copy_from_slice(&checksum.to_le_bytes());
+        assert!(xz(&damaged, 1000).is_err());
+    }
+
+    #[test]
     fn lzma_round_trip() {
         let c = fx::LZMA_FIXTURE;
         assert_eq!(lzma(c, 1 << 20).unwrap(), fx::LZMA_PLAIN);
@@ -278,6 +322,30 @@ mod tests {
         for len in 0..c.len() {
             let _ = lzma(&c[..len], 1 << 20);
         }
+    }
+
+    #[test]
+    fn standalone_lzma_checks_declared_sizes_before_decoding() {
+        let mut header = [0u8; 13];
+        header[0] = 0x5d;
+        header[1..5].copy_from_slice(&u32::MAX.to_le_bytes());
+        header[5..13].copy_from_slice(&1_000_000_000u64.to_le_bytes());
+        assert_eq!(lzma(&header, 64), Err(DecompressError::TooLarge));
+        assert_eq!(lzma(&header[..12], 64), Err(DecompressError::Truncated));
+        let mut valid = fx::LZMA_FIXTURE.to_vec();
+        valid[1..5].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert_eq!(lzma(&valid, fx::LZMA_PLAIN.len() as u64).unwrap(), fx::LZMA_PLAIN);
+        assert_eq!(lzma(&valid, 0), Err(DecompressError::TooLarge));
+    }
+
+    #[test]
+    fn standalone_lzma_stops_before_a_large_window_reaches_a_damaged_tail() {
+        let plain = vec![b'a'; 16 * 1024];
+        let mut compressed = Vec::new();
+        lzma_rs::lzma_compress(&mut io::Cursor::new(&plain), &mut compressed).unwrap();
+        compressed.truncate(compressed.len() - 5);
+        assert_eq!(lzma(&compressed, 64), Err(DecompressError::TooLarge));
+        assert_eq!(lzma(&compressed, plain.len() as u64), Err(DecompressError::Corrupt));
     }
 
     #[test]

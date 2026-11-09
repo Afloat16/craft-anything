@@ -401,6 +401,103 @@ mod tests {
         out
     }
 
+    fn build_codec_entry(method: u16, compressed: &[u8], plain: &[u8]) -> Vec<u8> {
+        let mut file = build(&[("entry", compressed)]);
+        let central = 30 + "entry".len() + compressed.len();
+        let version: u16 = if method == 12 { 46 } else { 63 };
+        file[4..6].copy_from_slice(&version.to_le_bytes());
+        file[8..10].copy_from_slice(&method.to_le_bytes());
+        file[14..18].copy_from_slice(&crc32(plain).to_le_bytes());
+        file[22..26].copy_from_slice(&(plain.len() as u32).to_le_bytes());
+        file[central + 6..central + 8].copy_from_slice(&version.to_le_bytes());
+        file[central + 10..central + 12].copy_from_slice(&method.to_le_bytes());
+        file[central + 16..central + 20].copy_from_slice(&crc32(plain).to_le_bytes());
+        file[central + 24..central + 28].copy_from_slice(&(plain.len() as u32).to_le_bytes());
+        file
+    }
+
+    #[test]
+    fn bzip2_and_xz_zip_entries_keep_size_crc_and_output_checks() {
+        use craft_anything_testkit::firmware::{BZIP2_FIXTURE, BZIP2_PLAIN, XZ_FIXTURE, XZ_PLAIN};
+        for (method, compressed, plain) in [(12, BZIP2_FIXTURE, BZIP2_PLAIN), (95, XZ_FIXTURE, XZ_PLAIN)] {
+            let file = build_codec_entry(method, compressed, plain);
+            let original = parse(&file, 1).unwrap().entries.remove(0);
+            assert_eq!(read_entry(&file, &original, plain.len() as u64).unwrap(), plain);
+            let mut entry = original.clone();
+            entry.crc32 ^= 1;
+            assert!(matches!(read_entry(&file, &entry, 100), Err(ZipError::CrcMismatch { .. })));
+            assert_eq!(read_entry_unverified(&file, &entry, 100).unwrap(), plain);
+            entry = original.clone();
+            entry.uncompressed_size = 0;
+            assert!(matches!(read_entry(&file, &entry, 100), Err(ZipError::Corrupt(_))));
+            assert!(matches!(read_entry(&file, &entry, plain.len() as u64 - 1), Err(ZipError::TooLarge(_))));
+            let mut damaged = file.clone();
+            damaged[30 + "entry".len()] ^= 0xff;
+            assert!(matches!(read_entry(&damaged, &original, 100), Err(ZipError::Corrupt(_))));
+            entry = original;
+            entry.encrypted = true;
+            assert!(matches!(read_entry(&file, &entry, 100), Err(ZipError::Unsupported(_))));
+        }
+    }
+
+    fn zip_lzma_member(plain: &[u8], end_marker: bool) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        let size = if end_marker { None } else { Some(plain.len() as u64) };
+        let options = lzma_rs::compress::Options { unpacked_size: lzma_rs::compress::UnpackedSize::WriteToHeader(size) };
+        lzma_rs::lzma_compress_with_options(&mut std::io::Cursor::new(plain), &mut encoded, &options).unwrap();
+        let mut compressed = vec![9, 4, 5, 0];
+        compressed.extend_from_slice(&encoded[..5]);
+        compressed.extend_from_slice(&encoded[13..]);
+        let mut file = build(&[("entry", &compressed)]);
+        let central = 30 + "entry".len() + compressed.len();
+        let flags: u16 = if end_marker { 2 } else { 0 };
+        for (version_at, flags_at, method_at, crc_at, size_at) in [(4, 6, 8, 14, 22), (central + 6, central + 8, central + 10, central + 16, central + 24)] {
+            file[version_at..version_at + 2].copy_from_slice(&63u16.to_le_bytes());
+            file[flags_at..flags_at + 2].copy_from_slice(&flags.to_le_bytes());
+            file[method_at..method_at + 2].copy_from_slice(&14u16.to_le_bytes());
+            file[crc_at..crc_at + 4].copy_from_slice(&crc32(plain).to_le_bytes());
+            file[size_at..size_at + 4].copy_from_slice(&(plain.len() as u32).to_le_bytes());
+        }
+        file
+    }
+
+    #[test]
+    fn zip_lzma_reads_size_delimited_and_end_marked_streams() {
+        for end_marker in [false, true] {
+            for plain in [&b"ZIP LZMA contents"[..], &[0; 23][..]] {
+                let file = zip_lzma_member(plain, end_marker);
+                let original = parse(&file, 1).unwrap().entries.remove(0);
+                assert_eq!(read_entry(&file, &original, plain.len() as u64).unwrap(), plain);
+                assert!(matches!(read_entry(&file, &original, plain.len() as u64 - 1), Err(ZipError::TooLarge(_))));
+                let mut entry = original.clone();
+                entry.crc32 ^= 1;
+                assert!(matches!(read_entry(&file, &entry, 100), Err(ZipError::CrcMismatch { .. })));
+                entry = original.clone();
+                entry.uncompressed_size -= 1;
+                assert!(read_entry(&file, &entry, 100).is_err());
+                entry = original.clone();
+                entry.compressed_size -= 1;
+                assert!(read_entry(&file, &entry, 100).is_err());
+                entry = original;
+                entry.compressed_size += 1;
+                assert!(read_entry(&file, &entry, 100).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn zip_lzma_rejects_bad_properties_without_unbounded_dictionaries() {
+        let mut file = zip_lzma_member(b"small", true);
+        let entry = parse(&file, 1).unwrap().entries.remove(0);
+        let body = 30 + "entry".len();
+        file[body + 5..body + 9].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert_eq!(read_entry(&file, &entry, 5).unwrap(), b"small");
+        file[body + 4] = 255;
+        assert!(read_entry(&file, &entry, 5).is_err());
+        file[body + 2..body + 4].copy_from_slice(&6u16.to_le_bytes());
+        assert!(matches!(read_entry(&file, &entry, 5), Err(ZipError::Unsupported(_))));
+    }
+
     fn build_named_entry(name: &[u8], flags: u16) -> Vec<u8> {
         let mut zip = build(&[(&"x".repeat(name.len()), b"")]);
         let central = 30 + name.len();

@@ -1744,6 +1744,45 @@ mod tests {
     }
 
     #[test]
+    fn gzip_checks_the_optional_header_checksum() {
+        let plain = b"checked payload";
+        let original = fx::gzip(plain, None);
+        let mut data = original[..10].to_vec();
+        data[3] = 2 | 4 | 8 | 16;
+        data.extend_from_slice(&[3, 0, 1, 2, 3]);
+        data.extend_from_slice(b"payload.bin\0comment\0");
+        let checksum_at = data.len();
+        data.extend_from_slice(&(crc32(&data) as u16).to_le_bytes());
+        data.extend_from_slice(&original[10..]);
+        let header = gzip_header(&data).unwrap();
+        assert_eq!(header.original_name.as_deref(), Some("payload.bin"));
+        assert_eq!(header.comment.as_deref(), Some("comment"));
+        assert_eq!(gunzip(&data, plain.len() as u64).unwrap(), (plain.to_vec(), data.len()));
+        for at in [4, 12, 15, checksum_at, checksum_at + 1] {
+            let mut damaged = data.clone();
+            damaged[at] ^= 1;
+            assert!(gzip_header(&damaged).is_none(), "changed header byte {at}");
+            assert_eq!(gunzip(&damaged, 100), Err(InflateError::Corrupt));
+        }
+        assert!(gzip_header(&data[..checksum_at + 1]).is_none());
+    }
+
+    #[test]
+    fn gzip_accepts_informational_bytes_but_rejects_reserved_flags() {
+        let mut data = fx::gzip(b"payload", None);
+        for value in 0..=u8::MAX {
+            data[8] = value;
+            data[9] = value;
+            assert_eq!(gzip_header(&data).unwrap().os, value);
+        }
+        assert_eq!(gunzip(&data, 7).unwrap().0, b"payload");
+        for flag in [0x20, 0x40, 0x80] {
+            data[3] = flag;
+            assert!(gzip_header(&data).is_none());
+        }
+    }
+
+    #[test]
     fn inflates_and_caps() {
         let data = b"hello hello hello firmware".repeat(10);
         let gz = fx::gzip(&data, Some("x.bin"));

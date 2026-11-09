@@ -448,6 +448,111 @@ mod tests {
     use craft_anything_testkit::firmware as fx;
 
     #[test]
+    fn oversized_gnu_names_do_not_alias_their_truncated_prefix() {
+        for kind in [b'L', b'K'] {
+            let mut long = vec![b'n'; MAX_NAME + 1];
+            long.push(0);
+            let data = fx::tar_entries(&[
+                ("before", b'0', b"kept", ""),
+                ("././@LongLink", kind, &long, ""),
+                ("short", if kind == b'K' { b'2' } else { b'0' }, b"", "fallback"),
+            ]);
+            let listing = tar(&data, 10).unwrap();
+            assert!(!listing.complete);
+            assert_eq!(listing.members.len(), 1);
+            assert_eq!(listing.members[0].name, "before");
+            assert_eq!(member_data(&data, &listing.members[0]).unwrap(), b"kept");
+            assert!(listing.warnings.iter().any(|warning| warning.contains("GNU long name or link exceeds")));
+        }
+    }
+
+    #[test]
+    fn gnu_long_names_keep_exact_limits_and_short_terminated_values() {
+        for kind in [b'L', b'K'] {
+            for terminated in [false, true] {
+                let mut long = vec![b'n'; MAX_NAME];
+                if terminated {
+                    long.push(0);
+                }
+                let data = fx::tar_entries(&[
+                    ("././@LongLink", kind, &long, ""),
+                    ("short", if kind == b'K' { b'2' } else { b'0' }, b"", "fallback"),
+                ]);
+                let listing = tar(&data, 10).unwrap();
+                assert!(listing.complete, "{:?}", listing.warnings);
+                let member = &listing.members[0];
+                let name = if kind == b'L' { member.name.as_str() } else { member.link_target.as_deref().unwrap() };
+                assert_eq!(name, "n".repeat(MAX_NAME));
+            }
+        }
+        let mut padded = b"short\0".to_vec();
+        padded.resize(MAX_NAME + 100, 0);
+        let data = fx::tar_entries(&[("././@LongLink", b'L', &padded, ""), ("fallback", b'0', b"payload", "")]);
+        assert_eq!(tar(&data, 10).unwrap().members[0].name, "short");
+    }
+
+    fn sparse_pax_record(key: &str, value: &str) -> Vec<u8> {
+        let field = format!(" {key}={value}\n");
+        let mut length = field.len() + 1;
+        loop {
+            let actual = field.len() + length.to_string().len();
+            if actual == length {
+                return format!("{length}{field}").into_bytes();
+            }
+            length = actual;
+        }
+    }
+
+    #[test]
+    fn gnu_sparse_pax_members_are_not_regular_file_bytes() {
+        for fields in [
+            vec![("GNU.sparse.size", "100"), ("GNU.sparse.numblocks", "1"), ("GNU.sparse.offset", "50"), ("GNU.sparse.numbytes", "3")],
+            vec![("GNU.sparse.size", "100"), ("GNU.sparse.map", "50,3"), ("GNU.sparse.name", "original.bin")],
+            vec![("GNU.sparse.major", "1"), ("GNU.sparse.minor", "0"), ("GNU.sparse.realsize", "100"), ("GNU.sparse.name", "original.bin")],
+        ] {
+            let metadata: Vec<u8> = fields.iter().flat_map(|(key, value)| sparse_pax_record(key, value)).collect();
+            let version_one = fields.iter().any(|(key, _)| *key == "GNU.sparse.major");
+            let mut sparse_body = if version_one { b"1\n50\n3\n".to_vec() } else { Vec::new() };
+            if version_one {
+                sparse_body.resize(512, 0);
+            }
+            sparse_body.extend_from_slice(b"abc");
+            let data = fx::tar_entries(&[
+                ("metadata", b'x', &metadata, ""),
+                ("stored-name", b'0', &sparse_body, ""),
+                ("normal", b'0', b"ordinary", ""),
+            ]);
+            let listing = tar(&data, 10).unwrap();
+            assert!(listing.complete, "{:?}", listing.warnings);
+            assert_eq!(listing.members.len(), 2);
+            assert_eq!(listing.members[0].kind, MemberKind::Other);
+            let named = fields.iter().any(|(key, _)| *key == "GNU.sparse.name");
+            assert_eq!(listing.members[0].name, if named { "original.bin" } else { "stored-name" });
+            assert_eq!(listing.members[1].kind, MemberKind::File);
+            assert_eq!(member_data(&data, &listing.members[1]).unwrap(), b"ordinary");
+            assert_eq!(listing.warnings.len(), 1);
+            assert!(listing.warnings[0].contains("sparse reconstruction is unsupported"));
+        }
+    }
+
+    #[test]
+    fn sparse_metadata_survives_other_extension_headers() {
+        let sparse = sparse_pax_record("GNU.sparse.map", "0,3");
+        let path = sparse_pax_record("path", "renamed");
+        let data = fx::tar_entries(&[
+            ("sparse", b'x', &sparse, ""),
+            ("name", b'L', b"long-name\0", ""),
+            ("path", b'x', &path, ""),
+            ("header", b'0', b"abc", ""),
+            ("next", b'0', b"ok", ""),
+        ]);
+        let listing = tar(&data, 10).unwrap();
+        assert_eq!(listing.members[0].name, "renamed");
+        assert_eq!(listing.members[0].kind, MemberKind::Other);
+        assert_eq!(listing.members[1].kind, MemberKind::File);
+    }
+
+    #[test]
     fn walks_tar() {
         let t = fx::tar(&[("etc/passwd", b"root:x:0:0\n"), ("bin/", b""), ("long/".repeat(30).as_str(), b"deep")]);
         let l = tar(&t, 100).unwrap();
