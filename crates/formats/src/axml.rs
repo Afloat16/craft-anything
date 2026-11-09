@@ -890,6 +890,31 @@ mod tests {
     }
 
     #[test]
+    fn extended_attribute_strides_keep_each_manifest_value() {
+        let mut data = fx::manifest_axml();
+        let pos = chunk_at(&data, XML_START_ELEMENT);
+        let ext = pos + 16;
+        // The fixture writes three 20-byte attributes with 8-byte typed values.
+        for index in (1..=3).rev() {
+            let end = ext + 20 + index * 20;
+            data.splice(end..end, [0xff; 4]);
+        }
+        data[ext + 10..ext + 12].copy_from_slice(&24u16.to_le_bytes());
+        data[pos + 4..pos + 8].copy_from_slice(&(36 + 3 * 24u32).to_le_bytes());
+        let len = data.len() as u32;
+        data[4..8].copy_from_slice(&len.to_le_bytes());
+
+        let doc = parse(&data).unwrap();
+        assert!(!doc.truncated);
+        assert!(doc.warnings.is_empty(), "{:?}", doc.warnings);
+        let Node::Start { attributes, .. } = &doc.nodes[1] else {
+            panic!("expected the manifest start after the namespace");
+        };
+        let pairs: Vec<_> = attributes.iter().map(|a| (a.name.as_str(), a.value.as_str())).collect();
+        assert_eq!(pairs, [("package", fx::PACKAGE), ("versionCode", "42"), ("versionName", "1.2.3")]);
+    }
+
+    #[test]
     fn decodes_manifest() {
         let doc = parse(&fx::manifest_axml()).unwrap();
         assert!(doc.warnings.is_empty(), "{:?}", doc.warnings);
