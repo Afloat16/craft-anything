@@ -138,9 +138,24 @@ pub fn bzip2(input: &[u8], max_out: u64) -> Result<Vec<u8>, DecompressError> {
 }
 
 /// Decompress a Zstandard stream, producing at most `max_out` bytes.
-pub fn zstd(input: &[u8], max_out: u64) -> Result<Vec<u8>, DecompressError> {
-    let decoder = ruzstd::decoding::StreamingDecoder::new(input).map_err(|_| DecompressError::Corrupt)?;
-    read_capped(decoder, cap_of(max_out))
+pub fn zstd(mut input: &[u8], max_out: u64) -> Result<Vec<u8>, DecompressError> {
+    if input.is_empty() {
+        return Err(DecompressError::Corrupt);
+    }
+    let mut out = CapWrite::new(cap_of(max_out));
+    while !input.is_empty() {
+        if matches!(input.get(..4), Some([0x50..=0x5f, 0x2a, 0x4d, 0x18])) {
+            let header = input.get(4..8).and_then(|s| s.try_into().ok()).ok_or(DecompressError::Truncated)?;
+            let len = u32::from_le_bytes(header) as usize;
+            input = input.get(8..).and_then(|body| body.get(len..)).ok_or(DecompressError::Truncated)?;
+            continue;
+        }
+        let mut decoder = ruzstd::decoding::StreamingDecoder::new(&mut input).map_err(|_| DecompressError::Corrupt)?;
+        if io::copy(&mut decoder, &mut out).is_err() {
+            return Err(if out.exceeded { DecompressError::TooLarge } else { DecompressError::Corrupt });
+        }
+    }
+    Ok(out.buf)
 }
 
 /// Decompress one raw LZ4 block (no frame) that inflates to exactly `out_len` bytes, as Unity
@@ -223,6 +238,19 @@ mod tests {
             let junk: Vec<u8> = (0..n).map(|k| k.wrapping_mul(37).wrapping_add(n)).collect();
             let _ = lz4_block(&junk, 100);
         }
+    }
+
+    #[test]
+    fn zstandard_members_can_contain_multiple_frames() {
+        let frame = fx::ZSTD_FIXTURE;
+        let plain = fx::ZSTD_PLAIN;
+        let skip = [0x50, 0x2a, 0x4d, 0x18, 3, 0, 0, 0, 1, 2, 3];
+        let input = [frame, &skip, frame].concat();
+        let expected = [plain, plain].concat();
+        assert_eq!(zstd(&input, expected.len() as u64).unwrap(), expected);
+        assert_eq!(zstd(&input, plain.len() as u64), Err(DecompressError::TooLarge));
+        assert!(zstd(&[frame, &skip[..9]].concat(), u64::MAX).is_err());
+        assert!(zstd(&[frame, &frame[..5]].concat(), u64::MAX).is_err());
     }
 
     #[test]
