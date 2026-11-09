@@ -1323,8 +1323,6 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [x] Distinguish literal punctuation and multi-valued attributes in the displayed X.509 issuer and subject.
-      — claimed: Afloat16, branch bugfix/r3.12-certificate-name-rendering
 - [x] Bound rejected ASAR names by the archive listing limit.
       — claimed: Afloat16, branch bugfix/r3.12-asar-limit-bounds-20261107
 - [x] Keep .NET bundle member reads before the manifest.
@@ -1377,6 +1375,8 @@ Owner: open · Status: in progress
       Preserve empty multicast/unicast DNS-SD TXT records using wire-label service instance names.
 - [x] Validate DER algorithm identifiers, signature and key bit strings, and name fields before using them as certificate verification inputs.
       — claimed: Afloat16, branch bugfix/r3.12-der-verification-fields
+- [x] Distinguish literal punctuation and multi-valued attributes in the displayed X.509 issuer and subject.
+      — claimed: Afloat16, branch bugfix/r3.12-certificate-name-rendering
 - [x] Read HTTP Host fields only from the header section.
       — claimed: Afloat16, branch bugfix/r3.12-http-host-boundary-20261105
 - [x] Keep capture flow timestamps in chronological order.
