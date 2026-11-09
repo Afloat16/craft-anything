@@ -1516,12 +1516,16 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-elf-versioned-import-slot-fallback-20261109
 - [x] Keep Mach-O load-command facts within their command.
       — claimed: Afloat16, branch bugfix/r3.12-macho-load-command-framing-20261105
+- [x] Resolve Mach-O UNIXTHREAD entry points from a complete state record for the image CPU, including later state records.
+      — claimed: Afloat16, branch bugfix/r3.12-macho-thread-state-20261109
 - [x] Prevent Mach-O zero-fill sections from exposing unrelated file bytes during section lookup.
       — claimed: Afloat16, branch bugfix/r3.12-macho-zerofill-section-data
 - [x] Keep native address translations and reads inside both the mapped range and its file-backed bytes.
       — claimed: Afloat16, branch bugfix/r3.12-binary-padding
 - [x] Keep Mach-O function starts within their declared payload.
       — claimed: Afloat16, branch bugfix/r3.12-macho-function-starts-payload-boundary-20261105
+- [x] Apply one indirect-import budget across all Mach-O sections and report when repeated table references exhaust it.
+      — claimed: Afloat16, branch bugfix/r3.12-macho-indirect-global-budget-20261109
 - [x] A Mach-O executable's entry point comes from the segment whose file bytes hold its
       `LC_MAIN` offset. A segment with no file bytes, such as a `__DATA` that holds only
       zero-fill sections, records file offset 0 like `__TEXT`, and the entry was placed in that
@@ -1597,6 +1601,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-sbpf-symbols
 - [x] Keep PE resource metadata within the resource directory.
       — claimed: Afloat16, branch bugfix/r3.12-pe-resource-directory-boundary-20261105
+- [x] Bound PE export-table work and returned aliases even when function slots are empty or one function has many names.
+      — claimed: Afloat16, branch bugfix/r3.12-pe-export-work-budget-20261109
 - [x] Keep PE version strings whose value is empty (stored with no value at all), such as
       `OleSelfRegister`, whose presence is the whole point.
       — claimed: Plastic-time, branch bugfix/r3.12-pe-empty-version-strings
@@ -1717,6 +1723,9 @@ Owner: open · Status: in progress
 - [x] Keep the comma inside a SQLite type's parentheses: `DECIMAL(10, 2)` is listed as
       `DECIMAL(10 2)`. The type keeps the comma inside its parentheses, and the schema overview
       shows it unchanged. — claimed: AlexJoaquimPereira, branch bugfix/r3.12-sqlite-type-comma
+- [x] Keep shortened IL2CPP literals within their UTF-8 output budget without inventing a partial character.
+      — claimed: Afloat16, branch bugfix/r3.12-il2cpp-literal-byte-budget-20261109
+      Source `d81b7d570546`; [format checks](https://github.com/Afloat16/claude-mem/actions/runs/42634877637/job/129220281761) and [compatibility gates](https://github.com/Afloat16/claude-mem/actions/runs/42642583301/job/129247271153) passed.
 - [x] Check that IL2CPP method ranges agree with each method's declaring type before reporting names and ownership.
       — claimed: Afloat16, branch bugfix/r3.12-il2cpp-method-owners
 - [x] Asset catalogs name each rendition key attribute as CoreUI reads it. When the deployment
