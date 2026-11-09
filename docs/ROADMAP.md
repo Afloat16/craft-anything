@@ -1324,6 +1324,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-tensor-zero-dimension-product-20261105
 - [x] Find APK signatures through valid ZIP comments and framed central directories.
       — claimed: Afloat16, branch bugfix/r3.12-apk-sign-eocd-comment-boundary-20261105
+- [ ] Read 16-bit native pointers without consuming adjacent bytes.
+      — claimed: Afloat16, branch bugfix/r3.12-binary-pointer
 - [x] Keep Mach-O load-command facts within their command.
       — claimed: Afloat16, branch bugfix/r3.12-macho-load-command-framing-20261105
 - [x] Keep Mach-O function starts within their declared payload.
