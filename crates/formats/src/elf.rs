@@ -604,9 +604,9 @@ pub fn dynamic_symbols(data: &[u8], b: &Binary) -> Option<DynamicSymbols> {
         return segment_dynamic_symbols(data, &e);
     };
     let off_of = |name: &str| b.sections.iter().find(|s| s.name == name).and_then(|s| s.file_offset).and_then(|o| usize::try_from(o).ok());
-    let defs = off_of(".gnu.version_d").map(|o| version_defs(&e, o, strs)).unwrap_or_default();
-    let needs = off_of(".gnu.version_r").map(|o| version_needs(&e, o, strs)).unwrap_or_default();
-    let versym = off_of(".gnu.version");
+    let defs = section_bytes(data, b, ".gnu.version_d").map(|bytes| version_defs(&E { r: Reader::new(bytes), ..e }, 0, strs)).unwrap_or_default();
+    let needs = section_bytes(data, b, ".gnu.version_r").map(|bytes| version_needs(&E { r: Reader::new(bytes), ..e }, 0, strs)).unwrap_or_default();
+    let versym = section_bytes(data, b, ".gnu.version");
     let syms_off = off_of(".dynsym")?;
     let mut out = DynamicSymbols::default();
     read_dynsyms(&e, (syms_off, syms.len() / ent), strs, versym, &defs, &needs, &mut out);
@@ -635,7 +635,7 @@ fn segment_dynamic_symbols(data: &[u8], e: &E<'_>) -> Option<DynamicSymbols> {
         out.truncated = true;
         out.warnings.push(format!("the symbol table ends early: {room} of {count} entries are in the file"));
     }
-    read_dynsyms(e, (symtab, count.min(room)), strs, off_of(DT_VERSYM), &defs, &needs, &mut out);
+    read_dynsyms(e, (symtab, count.min(room)), strs, off_of(DT_VERSYM).and_then(|off| data.get(off..)), &defs, &needs, &mut out);
     Some(out)
 }
 
@@ -645,7 +645,7 @@ fn read_dynsyms(
     e: &E<'_>,
     (syms_off, count): (usize, usize),
     strs: &[u8],
-    versym: Option<usize>,
+    versym: Option<&[u8]>,
     defs: &BTreeMap<u16, String>,
     needs: &Needs,
     out: &mut DynamicSymbols,
@@ -676,7 +676,7 @@ fn read_dynsyms(
             _ => "other",
         };
         let Some(text) = str_at(strs, name).filter(|t| !t.is_empty()) else { continue };
-        let index = versym.and_then(|v| v.checked_add(i.checked_mul(2)?)).and_then(|v| e.u16(v)).map(|v| v & 0x7fff);
+        let index = versym.and_then(|bytes| E { r: Reader::new(bytes), ..*e }.u16(i.checked_mul(2)?)).map(|v| v & 0x7fff);
         let defined = shndx != 0;
         let (version, library) = match index {
             Some(ix) if ix >= 2 => {
