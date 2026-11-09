@@ -1400,8 +1400,10 @@ Owner: open · Status: in progress
 - [x] Keep PE version strings whose value is empty (stored with no value at all), such as
       `OleSelfRegister`, whose presence is the whole point.
       — claimed: Plastic-time, branch bugfix/r3.12-pe-empty-version-strings
-- [ ] Read PE version strings stored as binary (wType 0), which some linkers write; they're
-      dropped today (`FileDescription` in `pthreadVC2.dll`).
+- [x] Read PE version strings stored as binary (wType 0), which some linkers write; they're
+      dropped today (`FileDescription` in `pthreadVC2.dll`). A binary leaf at the string depth is
+      decoded as UTF-16LE; a binary node with children stays a container.
+      — claimed: AlexJoaquimPereira, branch bugfix/r3.12-pe-binary-version-strings
 - [x] Decode inline source-map data URLs without treating their URL fragments as payload; recognize case-insensitive scheme and base64 markers.
       — claimed: Afloat16, branch bugfix/r3.12-source-map-data-url-fragment
 - [x] Accept only valid WebAssembly names when reporting custom-section debug and source map URLs.
