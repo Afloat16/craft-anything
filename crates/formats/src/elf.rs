@@ -7,7 +7,7 @@ use crate::{FormatError, hex_addr};
 use object::Object;
 use serde::Serialize;
 use serde_json::json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const MAX_PHDRS: usize = 4096;
 const MAX_DYN: usize = 65_536;
@@ -309,9 +309,9 @@ pub fn enrich(data: &[u8], file: &object::File<'_>, b: &mut Binary) {
         "dt_flags": format!("{flags:#x}"),
         "dt_flags_1": format!("{flags1:#x}"),
     });
-    // With no section headers `object` finds no symbols; the dynamic section still points at them.
-    if b.sections.is_empty()
-        && let Some(ds) = dynamic_symbols(data, b)
+    // Other sections may survive after the dynamic-symbol section was removed.
+    if file.dynamic_symbols().next().is_none()
+        && let Some(ds) = segment_dynamic_symbols(data, &e)
     {
         add_dynamic_symbols(b, ds);
     }
@@ -321,7 +321,11 @@ pub fn enrich(data: &[u8], file: &object::File<'_>, b: &mut Binary) {
 fn add_dynamic_symbols(b: &mut Binary, ds: DynamicSymbols) {
     b.warnings.extend(ds.warnings.into_iter().map(|w| format!("dynamic symbols: {w}")));
     b.symbols_truncated |= ds.truncated;
+    let mut known: BTreeSet<(String, u64)> = b.symbols.iter().map(|s| (s.name.clone(), s.addr)).collect();
     for (s, defined) in ds.exports.iter().map(|s| (s, true)).chain(ds.imports.iter().map(|s| (s, false))) {
+        if !known.insert((s.name.clone(), s.addr)) {
+            continue;
+        }
         if b.symbols.len() >= MAX_SYMBOLS {
             b.symbols_truncated = true;
             break;
@@ -343,9 +347,20 @@ fn add_dynamic_symbols(b: &mut Binary, ds: DynamicSymbols) {
             dynamic: true,
         });
     }
-    b.exports.extend(ds.exports.iter().take(MAX_IMPORTS).map(|s| Export { name: s.name.clone(), addr: s.addr }));
+    let mut exports: BTreeSet<(String, u64)> = b.exports.iter().map(|s| (s.name.clone(), s.addr)).collect();
+    let room = MAX_IMPORTS.saturating_sub(b.exports.len());
+    b.exports.extend(
+        ds.exports.iter().filter(|s| exports.insert((s.name.clone(), s.addr))).take(room).map(|s| Export { name: s.name.clone(), addr: s.addr }),
+    );
+    let mut imports: BTreeSet<(String, Option<String>)> = b.imports.iter().map(|s| (s.name.clone(), s.library.clone())).collect();
     let room = MAX_IMPORTS.saturating_sub(b.imports.len());
-    b.imports.extend(ds.imports.into_iter().take(room).map(|s| Import { name: s.name, library: s.library, ordinal: None, slot: None }));
+    b.imports.extend(
+        ds.imports
+            .into_iter()
+            .filter(|s| imports.insert((s.name.clone(), s.library.clone())))
+            .take(room)
+            .map(|s| Import { name: s.name, library: s.library, ordinal: None, slot: None }),
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
