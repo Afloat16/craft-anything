@@ -665,13 +665,30 @@ fn parse_object(data: &[u8], slice_offset: u64) -> Result<Binary, FormatError> {
     let local_syms = b.symbols.iter().filter(|s| !s.dynamic && s.defined && !linker_header(s)).count();
     b.mitigations.stripped = local_syms == 0;
     // Import slots also name the imports.
-    let mut slot_of: BTreeMap<(&str, Option<&str>), u64> = BTreeMap::new();
+    let mut slot_of: BTreeMap<(&str, Option<&str>), Option<u64>> = BTreeMap::new();
     for s in &b.import_slots {
         if s.kind == "slot" {
-            slot_of.entry((s.name.as_str(), s.library.as_deref())).or_insert(s.addr);
+            slot_of
+                .entry((s.name.as_str(), s.library.as_deref()))
+                .and_modify(|addr| {
+                    if *addr != Some(s.addr) {
+                        *addr = None;
+                    }
+                })
+                .or_insert(Some(s.addr));
         }
     }
-    let slots: Vec<Option<u64>> = b.imports.iter().map(|i| i.slot.or_else(|| slot_of.get(&(i.name.as_str(), i.library.as_deref())).copied())).collect();
+    let slots: Vec<Option<u64>> = b
+        .imports
+        .iter()
+        .map(|i| {
+            i.slot.or_else(|| {
+                // ELF relocation slots do not carry the version's library name.
+                // Use an unlabelled slot only when all candidates agree on its address.
+                slot_of.get(&(i.name.as_str(), i.library.as_deref())).or_else(|| slot_of.get(&(i.name.as_str(), None))).copied().flatten()
+            })
+        })
+        .collect();
     for (imp, slot) in b.imports.iter_mut().zip(slots) {
         // PE enrichment leaves rejected addresses unknown; another row cannot supply that slot.
         if format != Format::Pe || imp.slot.is_some() {
