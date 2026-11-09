@@ -162,6 +162,9 @@ pub fn tar(data: &[u8], max_members: usize) -> Option<Listing> {
         }
         let data_off = pos + BLOCK;
         let Some(next) = round_up(size, BLOCK as u64).and_then(|s| u64::try_from(data_off).ok()?.checked_add(s)).and_then(|n| usize::try_from(n).ok()) else {
+            if matches!(typeflag, b'L' | b'K') {
+                out.stop_reason = Some(StopReason::GnuMetadataTruncated);
+            }
             out.warnings.push(format!("size overflows at {pos:#x}"));
             out.length = pos as u64;
             break;
@@ -169,9 +172,9 @@ pub fn tar(data: &[u8], max_members: usize) -> Option<Listing> {
         let body = r.slice(data_off, usize::try_from(size).unwrap_or(usize::MAX));
         match typeflag {
             b'L' | b'K' => {
-                let Some(body) = body else {
+                let Some(body) = body.filter(|_| next <= data.len()) else {
                     out.stop_reason = Some(StopReason::GnuMetadataTruncated);
-                    out.warnings.push(format!("GNU long-name data ends early at {pos:#x}"));
+                    out.warnings.push(format!("GNU long-name record ends early at {pos:#x}"));
                     out.length = data.len() as u64;
                     break;
                 };
@@ -598,6 +601,26 @@ mod tests {
         assert_eq!(member_data(&data, &listing.members[0]).unwrap(), b"kept");
         let cpio_listing = cpio(&fx::cpio_newc(&[("file", b"kept", 0o100644)]), 10).unwrap();
         assert_eq!(cpio_listing.stop_reason, None);
+    }
+
+    #[test]
+    fn gnu_metadata_requires_its_complete_padded_record() {
+        let body = b"next\0";
+        for kind in *b"LK" {
+            let data = fx::tar_entries(&[("before", b'0', b"kept", ""), ("././@LongLink", kind, body, ""), ("fallback", if kind == b'L' { b'0' } else { b'2' }, b"", "fallback")]);
+            for padding in [0, 1, BLOCK - body.len() - 1] {
+                let short = &data[..3 * BLOCK + body.len() + padding];
+                let listing = tar(short, 10).unwrap();
+                assert_eq!(listing.stop_reason, Some(StopReason::GnuMetadataTruncated));
+                assert!(!listing.complete);
+                assert_eq!(listing.members.len(), 1);
+                assert_eq!(member_data(short, &listing.members[0]).unwrap(), b"kept");
+            }
+            let listing = tar(&data, 10).unwrap();
+            assert!(listing.complete);
+            assert_eq!(listing.stop_reason, None);
+            assert_eq!(listing.members.len(), 2);
+        }
     }
 
     #[test]

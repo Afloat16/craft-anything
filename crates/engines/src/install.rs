@@ -625,6 +625,64 @@ mod tests {
         assert_eq!(err.code, ErrorCode::GarbledOutput);
     }
 
+    fn assert_gnu_record_extent_refused(kind: u8, overflow: bool) {
+        use craft_anything_testkit::firmware as fx;
+        let body = b"next\0";
+        let mut tar = fx::tar_entries(&[("pkg/bin/tool", b'0', b"replacement", ""), ("././@LongLink", kind, body, "")]);
+        if overflow {
+            let header = &mut tar[1024..1536];
+            header[124..136].fill(0);
+            header[124] = 0x80;
+            header[128..136].copy_from_slice(&u64::MAX.to_be_bytes());
+            header[148..156].fill(b' ');
+            let checksum: usize = header.iter().map(|byte| usize::from(*byte)).sum();
+            header[148..156].copy_from_slice(format!("{checksum:06o}\0 ").as_bytes());
+        } else {
+            tar.truncate(1536 + body.len());
+        }
+        let listing = craft_anything_formats::tarcpio::tar(&tar, 100).unwrap();
+        assert_eq!(listing.members.len(), 1);
+        assert!(!listing.complete);
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("bin")).unwrap();
+        let installed = dir.path().join("bin/tool");
+        std::fs::write(&installed, b"installed").unwrap();
+        let result = unpack_tar(&tar, dir.path(), Some("pkg/"), None, &|_| {});
+        let retained = std::fs::read(&installed).unwrap();
+        assert!(result.is_err() && retained == b"installed", "{kind:?}, overflow: {overflow}, result: {result:?}, retained: {retained:?}");
+        assert_eq!(result.unwrap_err().code, ErrorCode::GarbledOutput);
+    }
+
+    #[test]
+    fn tar_metadata_padding_guard_refuses_short_long_name_padding() {
+        assert_gnu_record_extent_refused(b'L', false);
+    }
+
+    #[test]
+    fn tar_metadata_padding_guard_refuses_short_long_link_padding() {
+        assert_gnu_record_extent_refused(b'K', false);
+    }
+
+    #[test]
+    fn tar_metadata_padding_guard_refuses_overflowing_long_name_extent() {
+        assert_gnu_record_extent_refused(b'L', true);
+    }
+
+    #[test]
+    fn tar_metadata_padding_guard_refuses_overflowing_long_link_extent() {
+        assert_gnu_record_extent_refused(b'K', true);
+    }
+
+    #[test]
+    fn tar_metadata_padding_guard_keeps_regular_member_compatibility() {
+        use craft_anything_testkit::firmware as fx;
+        let mut tar = fx::tar_entries(&[("pkg/bin/tool", b'0', b"tool", "")]);
+        tar.truncate(512 + 4);
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(unpack_tar(&tar, dir.path(), Some("pkg/"), None, &|_| {}).unwrap(), 1);
+        assert_eq!(std::fs::read(dir.path().join("bin/tool")).unwrap(), b"tool");
+    }
+
     #[test]
     fn unpacks_tar_xz() {
         // pkg/ (dir), pkg/bin/tool (file), pkg/evil -> /etc/passwd (symlink), ../escape (file).
