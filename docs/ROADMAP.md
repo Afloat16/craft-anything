@@ -1448,7 +1448,7 @@ Owner: open · Status: in progress
       — claimed: Chr0mium24, branch bugfix/r3.12-codesign-flag-names
 - [x] Keep code-signature children and verification reads within their declared superblob.
       — claimed: Afloat16, branch bugfix/r3.12-codesign-superblob-length-boundary-20261105
-- [ ] Reject out-of-range or unterminated library names in the ELF dynamic string table.
+- [x] Reject out-of-range or unterminated library names in the ELF dynamic string table.
       — claimed: Afloat16, branch bugfix/r3.12-elf-dynamic-names
 - [x] Refuse short ELF64 header and section records and handle section-table offsets at the address limit safely.
       — claimed: Afloat16, branch bugfix/r3.12-sbpf-records
