@@ -146,6 +146,35 @@ pub(crate) fn lzma_raw_complete(input: &[u8], out_len: u32) -> Result<Vec<u8>, D
     decode(Some(u64::from(out_len)))
 }
 
+/// Decode the property bytes and raw stream of a ZIP method-14 member.
+pub(crate) fn lzma_zip(input: &[u8], expected_size: u64, has_end_marker: bool, max_out: u64) -> Result<Vec<u8>, DecompressError> {
+    let cap = cap_of(max_out).min(isize::MAX as usize);
+    if expected_size > cap as u64 {
+        return Err(DecompressError::TooLarge);
+    }
+    let (properties, stream) = input.split_at_checked(5).ok_or(DecompressError::Truncated)?;
+    let [property, d0, d1, d2, d3] = <[u8; 5]>::try_from(properties).map_err(|_| DecompressError::Truncated)?;
+    let window_limit = u32::try_from(cap).unwrap_or(u32::MAX).max(4096);
+    let dictionary = u32::from_le_bytes([d0, d1, d2, d3]).max(4096).min(window_limit);
+    let [d0, d1, d2, d3] = dictionary.to_le_bytes();
+    let properties = [property, d0, d1, d2, d3];
+    let size = if has_end_marker { None } else { Some(expected_size) };
+    let options = lzma_rs::decompress::Options {
+        unpacked_size: lzma_rs::decompress::UnpackedSize::UseProvided(size),
+        memlimit: Some(dictionary as usize),
+        ..Default::default()
+    };
+    let mut out = CapWrite::new(cap);
+    let mut cursor = io::Cursor::new(properties).chain(io::Cursor::new(stream));
+    match lzma_rs::lzma_decompress_with_options(&mut cursor, &mut out, &options) {
+        Ok(()) if cursor.get_ref().1.position() == stream.len() as u64 => Ok(out.buf),
+        Ok(()) => Err(DecompressError::Corrupt),
+        Err(_) if out.exceeded => Err(DecompressError::TooLarge),
+        Err(lzma_rs::error::Error::HeaderTooShort(_)) => Err(DecompressError::Truncated),
+        Err(_) => Err(DecompressError::Corrupt),
+    }
+}
+
 /// Decompress a bzip2 stream, producing at most `max_out` bytes.
 pub fn bzip2(input: &[u8], max_out: u64) -> Result<Vec<u8>, DecompressError> {
     read_capped(bzip2_rs::DecoderReader::new(input), cap_of(max_out))
