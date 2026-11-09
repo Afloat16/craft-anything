@@ -1281,7 +1281,7 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Distinguish multi-valued RDNs, render literal delimiters safely and decode non-UTF8 directory strings without inventing attributes.
+- [x] Distinguish multi-valued RDNs, render literal delimiters safely and decode non-UTF8 directory strings without inventing attributes.
       — claimed: Afloat16, branch bugfix/r3.12-certificate-name-identity
 - [x] Bound rejected ASAR names by the archive listing limit.
       — claimed: Afloat16, branch bugfix/r3.12-asar-limit-bounds-20261107

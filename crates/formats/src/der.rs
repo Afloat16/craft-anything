@@ -169,17 +169,57 @@ fn text(data: &[u8], t: &Tlv) -> String {
     }
 }
 
-/// A distinguished name as `CN=…, O=…`.
+/// Render an attribute value without turning punctuation in it into a second attribute.
+fn name_value(data: &[u8], v: &Tlv) -> String {
+    use std::fmt::Write;
+    let bytes = v.bytes(data).unwrap_or_default();
+    let value = match v.tag {
+        0x0c => std::str::from_utf8(bytes).ok().map(str::to_owned),
+        0x13 | 0x16 if bytes.is_ascii() => std::str::from_utf8(bytes).ok().map(str::to_owned),
+        0x1e if bytes.len().is_multiple_of(2) => bytes.as_chunks::<2>().0.iter().map(|unit| char::from_u32(u32::from(u16::from_be_bytes(*unit)))).collect(),
+        0x1c if bytes.len().is_multiple_of(4) => bytes.as_chunks::<4>().0.iter().map(|unit| char::from_u32(u32::from_be_bytes(*unit))).collect(),
+        _ => None,
+    };
+    let Some(value): Option<String> = value else {
+        let mut encoded = String::from("#");
+        for b in v.whole(data).unwrap_or_default() {
+            let _ = write!(encoded, "{b:02x}");
+        }
+        return encoded;
+    };
+    let mut escaped = String::new();
+    for (i, c) in value.char_indices() {
+        if c.is_control() {
+            for b in c.encode_utf8(&mut [0; 4]).bytes() {
+                let _ = write!(escaped, "\\{b:02x}");
+            }
+        } else {
+            if matches!(c, ',' | '+' | '"' | '\\' | '<' | '>' | ';' | '=') || i == 0 && c == '#' || c == ' ' && (i == 0 || i + 1 == value.len()) {
+                escaped.push('\\');
+            }
+            escaped.push(c);
+        }
+    }
+    escaped
+}
+
+/// A distinguished name, retaining grouping within each relative distinguished name.
 pub fn name(data: &[u8], seq: &Tlv) -> String {
     let mut parts = Vec::new();
-    for set in children(data, seq) {
-        for atv in children(data, &set) {
+    for set in children(data, seq).into_iter().filter(|t| t.tag == 0x31) {
+        let mut attrs = Vec::new();
+        for atv in children(data, &set).into_iter().filter(|t| t.tag == 0x30) {
             let kids = children(data, &atv);
-            if let (Some(o), Some(v)) = (kids.first(), kids.get(1)) {
+            if let [o, v] = kids.as_slice()
+                && o.tag == 0x06
+            {
                 let id = oid(o.bytes(data).unwrap_or(&[]));
                 let key = oid_name(&id).map(str::to_string).unwrap_or(id);
-                parts.push(format!("{key}={}", text(data, v)));
+                attrs.push(format!("{key}={}", name_value(data, v)));
             }
+        }
+        if !attrs.is_empty() {
+            parts.push(attrs.join("+"));
         }
     }
     parts.join(", ")
