@@ -1,7 +1,7 @@
 {
   "repository": "storytold/craft-anything",
   "purpose": "Updated bodies after ordinary merges of upstream main, retaining both parents.",
-  "ready_count": 5,
+  "ready_count": 6,
   "merged_primary_count": 6,
   "entries": [
     {
@@ -57,8 +57,8 @@
       "run_status": "in_progress",
       "run_conclusion": null,
       "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
-      "job_status": "in_progress",
-      "job_conclusion": null
+      "job_status": "completed",
+      "job_conclusion": "success"
     },
     {
       "number": 2,
@@ -169,8 +169,8 @@
       "run_status": "in_progress",
       "run_conclusion": null,
       "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
-      "job_status": "in_progress",
-      "job_conclusion": null
+      "job_status": "completed",
+      "job_conclusion": "success"
     },
     {
       "number": 4,
@@ -225,8 +225,8 @@
       "run_status": "in_progress",
       "run_conclusion": null,
       "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
-      "job_status": "in_progress",
-      "job_conclusion": null
+      "job_status": "completed",
+      "job_conclusion": "success"
     },
     {
       "number": 5,
@@ -281,8 +281,8 @@
       "run_status": "in_progress",
       "run_conclusion": null,
       "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
-      "job_status": "in_progress",
-      "job_conclusion": null
+      "job_status": "completed",
+      "job_conclusion": "success"
     },
     {
       "number": 6,
@@ -393,8 +393,8 @@
       "run_status": "in_progress",
       "run_conclusion": null,
       "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
-      "job_status": "in_progress",
-      "job_conclusion": null
+      "job_status": "completed",
+      "job_conclusion": "success"
     },
     {
       "number": 9,
@@ -404,14 +404,20 @@
       "merged": false,
       "branch": "bugfix/r3.12-tar-pax-sparse-20261109",
       "current_head": "5d18e4ee2a33fc75e84d2322160b0a02100b755f",
-      "verified_source_sha": "daaeb4fe6c2db3f805fb9b02f9fbdfe55d80eb4a",
+      "verified_source_sha": "576b1d0bc3b9ac26b00bfa748de20ca7b44bb702",
       "ready": false,
-      "body": "## Problem\nGNU PAX sparse archives store extents (and, in version 1.0, a sparse map) instead of the full logical file. The tar walker ignored the sparse metadata and listed these bytes as an ordinary file, allowing extraction of incorrect contents.\n\n## Change\nRecognize GNU.sparse metadata, retain GNU.sparse.name when present, and mark the member unsupported with an explicit reconstruction warning. Carry this state across extension headers and clear it after the member, so following ordinary files remain readable.\n\n## Validation\nAdded original synthetic sparse 0.0/0.1/1.0 fixtures, member alignment and following-file controls, plus intervening GNU/PAX extensions.\n\nExact source commit `daaeb4fe6c2db3f805fb9b02f9fbdfe55d80eb4a` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895529). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `gnu_sparse_pax_members_are_not_regular_file_bytes` and `sparse_metadata_survives_other_extension_headers`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).\n\nBranch head `5d18e4ee2a33fc75e84d2322160b0a02100b755f` merges upstream `cdc8a880f1e60bce757ebac59e3f7983f084a1f8` with both parents retained. [Exact-head verification](https://github.com/Afloat16/claude-mem/actions/runs/42653593224) is in progress; the successful checks above refer to the earlier verified source.\n\nRoadmap: R3.12.",
+      "body": "## Problem\nGNU PAX sparse archives store extents (and, in version 1.0, a sparse map) instead of the full logical file. The tar walker ignored the sparse metadata and listed these bytes as an ordinary file, allowing extraction of incorrect contents.\n\n## Change\nRecognize GNU.sparse metadata, retain GNU.sparse.name when present, and mark the member unsupported with an explicit reconstruction warning. Carry this state across extension headers and clear it after the member, so following ordinary files remain readable.\n\n## Validation\nAdded original synthetic sparse 0.0/0.1/1.0 fixtures, member alignment and following-file controls, plus intervening GNU/PAX extensions.\n\nExact source commit `576b1d0bc3b9ac26b00bfa748de20ca7b44bb702` passed formatting, the complete formats test suite, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `gnu_sparse_pax_members_are_not_regular_file_bytes` and `sparse_metadata_survives_other_extension_headers`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386).\n\nBranch head `5d18e4ee2a33fc75e84d2322160b0a02100b755f` merges upstream `cdc8a880f1e60bce757ebac59e3f7983f084a1f8` with both parents retained. [Exact-head verification](https://github.com/Afloat16/claude-mem/actions/runs/42653593224) is in progress; the successful checks above refer to the earlier verified source.\n\nRoadmap: R3.12.",
       "last_verified_source": {
-        "sha": "daaeb4fe6c2db3f805fb9b02f9fbdfe55d80eb4a",
+        "sha": "576b1d0bc3b9ac26b00bfa748de20ca7b44bb702",
         "status": "success",
-        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895529",
-        "passed_tests": 952
+        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
+        "passed_tests": null,
+        "confirmed_steps": [
+          "Archive 9 formatting",
+          "Archive 9 regression tests",
+          "Archive 9 clippy",
+          "Archive 9 L0 gates"
+        ]
       },
       "current_head_steps": [
         {
@@ -454,47 +460,53 @@
       "merged": false,
       "branch": "feature/r3.12-xz-concatenation-20261109",
       "current_head": "f25796a28ead5c1f0b5233778a5578a8bd944684",
-      "verified_source_sha": "cd5d8c7006070db9b220d9397346de9cecd89900",
-      "ready": false,
-      "body": "## Problem\nThe existing XZ decoder expects EOF immediately after one footer. It rejects valid standalone .xz files containing concatenated streams or the standard four-byte stream padding.\n\n## Change\nFind stream boundaries backwards using checksummed footers and indexes, then decode each bounded stream in order through one capped sink. Validate index integer encodings, aggregate declared output and padding alignment. No search for magic bytes inside compressed payloads is needed.\n\nFormat reference: [XZ file format sections 2 and 4](https://tukaani.org/xz/xz-file-format.txt).\n\n## Validation\nAdded reference/generated fixtures for multiple and empty streams, padding, exact/insufficient aggregate budgets, truncated later members, damaged checksums and malformed index fields. This retains the existing backing decoder; it does not add a separate hard bound to that decoder's internal XZ block allocation.\n\nExact source commit `cd5d8c7006070db9b220d9397346de9cecd89900` passed formatting, all 953 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895411). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `xz_concatenated_streams_and_padding_share_one_budget`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).\n\nBranch head `f25796a28ead5c1f0b5233778a5578a8bd944684` merges upstream `7073462fcca6088989f9127f3473b95471a758b1` with both parents retained. [Exact-head verification](https://github.com/Afloat16/claude-mem/actions/runs/42649592140) is in progress; the successful checks above refer to the earlier verified source.\n\nRoadmap: R3.12.",
+      "verified_source_sha": "f25796a28ead5c1f0b5233778a5578a8bd944684",
+      "ready": true,
+      "body": "## Problem\nThe existing XZ decoder expects EOF immediately after one footer. It rejects valid standalone .xz files containing concatenated streams or the standard four-byte stream padding.\n\n## Change\nFind stream boundaries backwards using checksummed footers and indexes, then decode each bounded stream in order through one capped sink. Validate index integer encodings, aggregate declared output and padding alignment. No search for magic bytes inside compressed payloads is needed.\n\nFormat reference: [XZ file format sections 2 and 4](https://tukaani.org/xz/xz-file-format.txt).\n\n## Validation\nAdded reference/generated fixtures for multiple and empty streams, padding, exact/insufficient aggregate budgets, truncated later members, damaged checksums and malformed index fields. This retains the existing backing decoder; it does not add a separate hard bound to that decoder's internal XZ block allocation.\n\nExact source commit `f25796a28ead5c1f0b5233778a5578a8bd944684` passed formatting, the complete formats test suite, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `xz_concatenated_streams_and_padding_share_one_budget`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386).\n\nBranch head `f25796a28ead5c1f0b5233778a5578a8bd944684` merges upstream `7073462fcca6088989f9127f3473b95471a758b1` with both parents retained; the exact merged source passed the verification above.\n\nRoadmap: R3.12.",
       "last_verified_source": {
-        "sha": "cd5d8c7006070db9b220d9397346de9cecd89900",
+        "sha": "f25796a28ead5c1f0b5233778a5578a8bd944684",
         "status": "success",
-        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895411",
-        "passed_tests": 953
+        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
+        "passed_tests": null,
+        "confirmed_steps": [
+          "Archive 10 formatting",
+          "Archive 10 regression tests",
+          "Archive 10 clippy",
+          "Archive 10 L0 gates"
+        ]
       },
       "current_head_steps": [
         {
           "name": "Archive 10 formatting",
           "source_sha": "f25796a28ead5c1f0b5233778a5578a8bd944684",
-          "status": "pending",
-          "conclusion": null
+          "status": "completed",
+          "conclusion": "success"
         },
         {
           "name": "Archive 10 regression tests",
           "source_sha": "f25796a28ead5c1f0b5233778a5578a8bd944684",
-          "status": "pending",
-          "conclusion": null
+          "status": "completed",
+          "conclusion": "success"
         },
         {
           "name": "Archive 10 clippy",
           "source_sha": "f25796a28ead5c1f0b5233778a5578a8bd944684",
-          "status": "pending",
-          "conclusion": null
+          "status": "completed",
+          "conclusion": "success"
         },
         {
           "name": "Archive 10 L0 gates",
           "source_sha": "f25796a28ead5c1f0b5233778a5578a8bd944684",
-          "status": "pending",
-          "conclusion": null
+          "status": "completed",
+          "conclusion": "success"
         }
       ],
       "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
       "run_status": "in_progress",
       "run_conclusion": null,
       "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
-      "job_status": "in_progress",
-      "job_conclusion": null
+      "job_status": "completed",
+      "job_conclusion": "success"
     }
   ],
   "run_scope_note": "Use each exact source's job and source-specific steps as evidence. Run 42649592140 also contains an obsolete installer job that failed formatting on d29f336; corrected 3e588c5 passed separate run 42649935938. Run 42653593224 verifies only the three newly conflicting primary heads and installer follow-up after another ordinary main merge.",
