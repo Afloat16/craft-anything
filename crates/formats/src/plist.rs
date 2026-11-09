@@ -470,6 +470,35 @@ fn decode_entities(s: &str) -> String {
     out
 }
 
+/// Skip a declaration without interpreting or fetching any entity. A DOCTYPE's
+/// internal subset can itself contain declarations, quoted delimiters, comments and PIs.
+fn after_declaration(mut rest: &str) -> Result<&str, FormatError> {
+    let mut quote = None;
+    let mut brackets = 0usize;
+    while let Some(ch) = rest.chars().next() {
+        if quote.is_none() {
+            if let Some(comment) = rest.strip_prefix("<!--") {
+                rest = comment.split_once("-->").ok_or_else(|| FormatError::Truncated("comment in declaration".into()))?.1;
+                continue;
+            }
+            if let Some(pi) = rest.strip_prefix("<?") {
+                rest = pi.split_once("?>").ok_or_else(|| FormatError::Truncated("processing instruction in declaration".into()))?.1;
+                continue;
+            }
+        }
+        rest = rest.get(ch.len_utf8()..).unwrap_or("");
+        match (quote, ch) {
+            (Some(q), c) if q == c => quote = None,
+            (None, '\'' | '"') => quote = Some(ch),
+            (None, '[') => brackets += 1,
+            (None, ']') => brackets = brackets.saturating_sub(1),
+            (None, '>') if brackets == 0 => return Ok(rest),
+            _ => {}
+        }
+    }
+    Err(FormatError::Truncated("declaration".into()))
+}
+
 fn tokenize(text: &str) -> Result<Vec<Tok>, FormatError> {
     let mut toks = Vec::new();
     let mut rest = text;
@@ -508,9 +537,8 @@ fn tokenize(text: &str) -> Result<Vec<Tok>, FormatError> {
             rest = r.get(end + 2..).unwrap_or("");
             continue;
         }
-        if rest.starts_with("<!") {
-            let e = rest.find('>').ok_or_else(|| FormatError::Truncated("declaration".into()))?;
-            rest = rest.get(e + 1..).unwrap_or("");
+        if let Some(declaration) = rest.strip_prefix("<!") {
+            rest = after_declaration(declaration)?;
             continue;
         }
         let e = rest.find('>').ok_or_else(|| FormatError::Truncated("tag".into()))?;
@@ -739,6 +767,13 @@ mod tests {
             bytes.push(0);
             assert!(parse_xml(&bytes).is_err());
         }
+    }
+
+    #[test]
+    fn a_doctype_internal_subset_is_skipped_as_one_declaration() {
+        let doc = br#"<!DOCTYPE plist [<!ELEMENT plist (string)><!ENTITY text "x]>y"><!-- ]> --><?note ]> ?>]><plist><string>ok</string></plist>"#;
+        assert_eq!(parse_xml(doc).unwrap().as_str(), Some("ok"));
+        assert!(parse_xml(b"<!DOCTYPE plist [<!ELEMENT plist ANY><plist><true/></plist>").is_err());
     }
 
     #[test]
