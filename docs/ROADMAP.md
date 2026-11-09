@@ -1514,6 +1514,8 @@ Owner: open · Status: in progress
       and added extensions, so a later `A…` reference named the wrong node
       (`[Swift.String : Swift.String]` where the symbol says `Swift.String?`) or fell out of range.
       — claimed: Chr0mium24, branch bugfix/r3.12-swift-demangle-substitutions
+- [ ] Require a complete Cargo package version before a registry or vendor path becomes Rust dependency evidence.
+      — claimed: Afloat16, branch bugfix/r3.12-rust-dependency-versions
 - [x] Decode binary plist markers and dictionary keys according to their stored types.
       — claimed: Afloat16, branch bugfix/r3.12-bplist-typed-objects
 - [x] Apply the extracted-string limit in file-offset order across UTF-16LE and narrow strings, so an early wide string is not hidden by later ASCII.
