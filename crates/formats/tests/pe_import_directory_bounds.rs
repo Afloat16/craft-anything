@@ -99,3 +99,24 @@ fn complete_import_directories_keep_names_referenced_outside_the_descriptor_span
     assert_eq!(table.bound_modules[0].name, "one.dll");
     assert_eq!(table.bound_modules[0].forwarders, ["two.dll"]);
 }
+
+#[test]
+fn repeated_invalid_bound_forwarder_names_produce_one_module_warning() {
+    let (mut data, headers) = bound(288, 32);
+    data[0x800..0x920].fill(0);
+    data[0x800..0x804].copy_from_slice(&1u32.to_le_bytes());
+    data[0x804..0x806].copy_from_slice(&272u16.to_le_bytes());
+    data[0x806..0x808].copy_from_slice(&32u16.to_le_bytes());
+    for i in 0..32 {
+        let at = 0x808 + i * 8;
+        data[at..at + 4].copy_from_slice(&2u32.to_le_bytes());
+        data[at + 4..at + 6].copy_from_slice(&u16::MAX.to_le_bytes());
+    }
+    data[0x910..0x918].copy_from_slice(b"one.dll\0");
+    let table = pe::import_table(&data, &headers);
+    assert!(table.truncated);
+    assert_eq!(table.bound_modules.len(), 1);
+    assert_eq!(table.bound_modules[0].name, "one.dll");
+    assert!(table.bound_modules[0].forwarders.is_empty());
+    assert_eq!(table.warnings, ["a bound forwarder name is outside its directory"]);
+}
