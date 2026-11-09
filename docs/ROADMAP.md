@@ -860,6 +860,8 @@ Owner: open · Status: in progress
       nothing), in a build, a chat and a question, and have runs act on that, once the decision above
       is made. Today Codex, Gemini CLI, OpenCode, Antigravity, Hermes and Maki are not held to
       Clean room in a chat (their own sandbox, if any, is not established)
+- [x] A Deep build through Claude Code can start subagents again: `--tools` left out `Agent` when
+      #637 trimmed the list (#1105) — claimed: justinjohn0306, branch bugfix/r2.2-builder-subagents
 - [ ] Check live that a Clean room chat with Claude Code can't read a file outside its folder, and
       that an ACP chat in Clean room still reaches our tools (its permission requests for them are
       allowed, only its own read/write/command/fetch are refused)
@@ -1308,6 +1310,9 @@ Owner: open · Status: todo
 Owner: open · Status: in progress
 - [ ] Unity: sounds out (the stored stream, usually FSB5; PCM ones as WAV)
 - [ ] Unity: crunched textures (DXT1Crunched, DXT5Crunched; two of the games checked use them)
+- [x] Unity: decode R16 and RG16 texture pixels through the shared bounded PNG export path.
+      — claimed: Afloat16, branch feature/r3.9-unity-integer-textures-20261109
+      Source `540b4947aa1b`; [format checks](https://github.com/Afloat16/claude-mem/actions/runs/42633003467/job/129213811395) and [compatibility gates](https://github.com/Afloat16/claude-mem/actions/runs/42642583301/job/129247271153) passed.
 - [x] Unity: the float formats (RHalf, RGHalf, RGBAHalf, RFloat, RGFloat, RGBAFloat)
       — claimed: Afloat16, branch feature/r3.9-unity-float-textures
 - [ ] Unreal 5 and Oodle: IoStore packages, unversioned properties and Oodle-compressed paks
@@ -1361,6 +1366,11 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
+- [x] Refuse oversized GNU tar long names and link targets instead of silently truncating member identities.
+      — claimed: Afloat16, branch bugfix/r3.12-tar-long-identities-20261109
+      Source [`de2c6390`](https://github.com/Afloat16/craft-anything/commit/de2c63908909cab675887103921ed2601b1bae9b) passed [formats tests, fmt and clippy](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663)
+      and [layers, locks, secret scanning, wasm checks and Cargo.lock stability](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).
+      The [unchanged-code baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) reproduces the long-name identity regression.
 - [x] Extract legacy PyInstaller PYZ data as raw files and report modern namespace packages without fabricating bytecode.
       — claimed: Afloat16, branch bugfix/r3.12-pyz-member-kinds
 - [x] Bound rejected ASAR names by the archive listing limit.
@@ -1370,6 +1380,9 @@ Owner: open · Status: in progress
       Source `9744a0569a7c`; [format checks](https://github.com/Afloat16/claude-mem/actions/runs/42633003467/job/129213811429) and [compatibility gates](https://github.com/Afloat16/claude-mem/actions/runs/42642583301/job/129247271153) passed.
 - [x] Keep .NET bundle member reads before the manifest.
       — claimed: Afloat16, branch bugfix/r3.12-dotnet-data-bounds-20261107
+- [x] Bound retained Node SEA asset and argument metadata while still validating the complete blob layout.
+      — claimed: Afloat16, branch bugfix/r3.12-node-sea-retained-budget-20261109
+      Source `ce34c2446499`; [format checks](https://github.com/Afloat16/claude-mem/actions/runs/42642329977/job/129246378958) and [compatibility gates](https://github.com/Afloat16/claude-mem/actions/runs/42642329977/job/129246378958) passed.
 - [x] Check the decoded byte count for packed files whose manifest declares their original size.
       — claimed: Afloat16, branch bugfix/r3.12-packed-member-size
 - [x] Decode all frames of concatenated Zstandard members and account for their combined output.
@@ -1500,6 +1513,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-android-script-locale
 - [x] Read 16-bit native pointers without consuming adjacent bytes.
       — claimed: Afloat16, branch bugfix/r3.12-binary-pointer
+- [x] Keep same-named imported functions attached to their own library and preserve an explicitly recorded pointer slot.
+      — claimed: Afloat16, branch bugfix/r3.12-import-library-slots-20261109
 - [x] Keep Mach-O load-command facts within their command.
       — claimed: Afloat16, branch bugfix/r3.12-macho-load-command-framing-20261105
 - [x] Prevent Mach-O zero-fill sections from exposing unrelated file bytes during section lookup.
@@ -1516,6 +1531,16 @@ Owner: open · Status: in progress
 - [x] Name DriverKit and visionOS simulator Mach-O binaries in the binary view: its platform table
       stopped at 9 and 11, so a `.dext` read "unknown" while the dependency view said "driverkit".
       — claimed: Chr0mium24, branch bugfix/r3.12-macho-platform-names
+- [x] Swift symbols with a protocol type decode. In a protocol list (`…_p`) each protocol is a
+      context and a name with no `P` kind letter, but the demangler expected a type there, so an
+      existential of a protocol named this way was reported invalid ("expected a type"):
+      `_$sSS6encode2toys7Encoder_p_tKF` is `Swift.String.encode(to: Swift.Encoder) throws -> ()`.
+      — claimed: Chr0mium24, branch bugfix/r3.12-swift-demangle-existentials
+- [x] Swift enum case symbols decode. A symbol ending `WC` is the function that builds an enum
+      case, but the demangler read `WC` as an unknown witness kind and reported it invalid
+      ("unsupported witness kind"): `_$s10FindMyBase3BitO3oneyA2CmFWC` is
+      `enum case for FindMyBase.Bit.one(FindMyBase.Bit.Type) -> FindMyBase.Bit`.
+      — claimed: Chr0mium24, branch bugfix/r3.12-swift-demangle-enum-cases
 - [x] Swift symbols name the right type after an optional, an associated type or an extension.
       The demangler's substitution list left out `Sg` optionals and `Qz`/`Qy` associated types
       and added extensions, so a later `A…` reference named the wrong node
@@ -1529,8 +1554,19 @@ Owner: open · Status: in progress
       — claimed: Chr0mium24, branch bugfix/r3.12-swift-demangle-equatable
 - [x] Require a complete Cargo package version before a registry or vendor path becomes Rust dependency evidence.
       — claimed: Afloat16, branch bugfix/r3.12-rust-dependency-versions
+- [x] Swift symbols name the right generic parameter in an associated type. `Qy` numbers its
+      parameter the way `q` does (`Qy_` is the second parameter `B`, `Qy0_` the third), but the
+      demangler read `Qy_` as `A`, so `Swift.Zip2Sequence.Iterator.next()` returned
+      `(A.Element, A.Element)?` where the symbol says `(A.Element, B.Element)?`.
+      — claimed: Chr0mium24, branch bugfix/r3.12-swift-demangle-associated-type-index
 - [x] Decode binary plist markers and dictionary keys according to their stored types.
       — claimed: Afloat16, branch bugfix/r3.12-bplist-typed-objects
+- [x] Swift initialisers of structs, enums, protocols and extensions read `init`. The demangler
+      printed every allocating initialiser (`fC`) as `__allocating_init`, a name `swift-demangle`
+      keeps for a class's own initialisers, so `_$sSdyS2dcfC` read
+      `Swift.Double.__allocating_init(Swift.Double) -> Swift.Double` for
+      `Swift.Double.init(Swift.Double) -> Swift.Double`.
+      — claimed: Chr0mium24, branch bugfix/r3.12-swift-demangle-init-names
 - [x] Apply the extracted-string limit in file-offset order across UTF-16LE and narrow strings, so an early wide string is not hidden by later ASCII.
       — claimed: Afloat16, branch bugfix/r3.12-earliest-extracted-strings
 - [x] Visit XML plist values only inside a complete, correctly encoded document.
@@ -1546,12 +1582,18 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-codesign-superblob-length-boundary-20261105
 - [x] Reject out-of-range or unterminated library names in the ELF dynamic string table.
       — claimed: Afloat16, branch bugfix/r3.12-elf-dynamic-names
+- [x] Recover dynamic symbols through PT_DYNAMIC when an ELF retains other section headers but has no usable dynamic-symbol section.
+      — claimed: Afloat16, branch bugfix/r3.12-elf-partial-section-symbols-20261109
 - [x] Refuse short ELF64 header and section records and handle section-table offsets at the address limit safely.
       — claimed: Afloat16, branch bugfix/r3.12-sbpf-records
+- [x] Keep ELF version definitions, requirements and indices within their declared section byte ranges.
+      — claimed: Afloat16, branch bugfix/r3.12-elf-version-section-bounds-20261109
 - [x] Keep PE optional-header reads within the declared header.
       — claimed: Afloat16, branch bugfix/r3.12-pe-optional-header-framing-20261105
 - [x] Use the PE image's declared header extent when an RVA is not mapped by a section.
       — claimed: Afloat16, branch bugfix/r3.12-pe-header-rva-span
+- [x] Keep PE entry points, import slots and exception function starts from wrapping image-base arithmetic into unrelated addresses.
+      — claimed: Afloat16, branch bugfix/r3.12-pe-virtual-address-overflow-20261109
 - [x] Keep relocation symbol indices inside a linked symbol table and require a linked string table before reporting a syscall name.
       — claimed: Afloat16, branch bugfix/r3.12-sbpf-symbols
 - [x] Keep PE resource metadata within the resource directory.
@@ -1583,6 +1625,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-dart-note
 - [x] Locate ELF core mapping names after the complete declared table.
       — claimed: Afloat16, branch bugfix/r3.12-elf-core-file-name-count-cap-20261105
+- [x] Advance ELF core NT_FILE path cursors by complete original byte strings, even when a displayed path is lossy or capped.
+      — claimed: Afloat16, branch bugfix/r3.12-elf-core-path-cursor-20261109
 - [x] Validate index source map section offsets and stop an unresolved section from borrowing mappings from the preceding section.
       — claimed: Afloat16, branch bugfix/r3.12-index-map-boundaries
 - [x] Preserve the URL delimiter in source-map roots when resolving a relative source file.
@@ -1674,6 +1718,9 @@ Owner: open · Status: in progress
 - [x] Keep the comma inside a SQLite type's parentheses: `DECIMAL(10, 2)` is listed as
       `DECIMAL(10 2)`. The type keeps the comma inside its parentheses, and the schema overview
       shows it unchanged. — claimed: AlexJoaquimPereira, branch bugfix/r3.12-sqlite-type-comma
+- [x] Keep shortened IL2CPP literals within their UTF-8 output budget without inventing a partial character.
+      — claimed: Afloat16, branch bugfix/r3.12-il2cpp-literal-byte-budget-20261109
+      Source `d81b7d570546`; [format checks](https://github.com/Afloat16/claude-mem/actions/runs/42634877637/job/129220281761) and [compatibility gates](https://github.com/Afloat16/claude-mem/actions/runs/42642583301/job/129247271153) passed.
 - [x] Check that IL2CPP method ranges agree with each method's declaring type before reporting names and ownership.
       — claimed: Afloat16, branch bugfix/r3.12-il2cpp-method-owners
 - [x] Asset catalogs name each rendition key attribute as CoreUI reads it. When the deployment
@@ -1682,10 +1729,21 @@ Owner: open · Status: in progress
       isn't read: the key format lists `placeholder` and a Display P3 variant's key shows
       `placeholder: 1` instead of `display-gamut: 1`.
       — claimed: Chr0mium24, branch bugfix/r3.12-car-key-format-workaround
+- [x] Swift optionals of function types keep their parentheses. The demangler printed the type
+      inside `?` or `!` as is, so an optional closure read as a closure that returns an optional:
+      `WeatherKit.WDSEndpoint.portOverrideProvider` read `() -> Swift.Int?` where `swift-demangle`
+      prints `(() -> Swift.Int)?`. An optional protocol composition read `main.P & main.Q?` for
+      `(main.P & main.Q)?`.
+      — claimed: Chr0mium24, branch bugfix/r3.12-swift-demangle-optional-functions
 - [x] Python 3.5.0, 3.5.1 and 3.5.2 wrote magic number 3350 into their `.pyc` files, and 3.5.3
       moved to 3351. A file with 3350 is reported as a 3.5 pre-release (`is_release: false`), with
       a note that its code layout may differ. Count 3350 and 3351 as releases of 3.5.
       — claimed: Chr0mium24, branch bugfix/r3.12-pyc-3-5-release-magic
+- [x] Swift addressors decode. After `a` (mutable) or `l`, an addressor has a letter for its kind
+      (`u` for unsafe), but the demangler read only the `a` and took the kind letter for another
+      operator, so every addressor was reported invalid: `_$s5Books19PAGETURNLOG_ENABLEDSbvau` is
+      `Books.PAGETURNLOG_ENABLED.unsafeMutableAddressor : Swift.Bool`.
+      — claimed: Chr0mium24, branch bugfix/r3.12-swift-demangle-addressors
 - [x] Name the glyph weight (26) and glyph size (27) key attributes of asset catalogs, which hold
       SF Symbol style images; they're listed as `attribute-26` and `attribute-27` today.
       — claimed: Chr0mium24, branch bugfix/r3.12-car-glyph-attributes
