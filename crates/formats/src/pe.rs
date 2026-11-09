@@ -433,14 +433,18 @@ fn bound_modules(data: &[u8], h: &PeHeaders, out: &mut ImportTable) {
         let complete = directory.len().saturating_sub(refs_start) / 8;
         let count = usize::from(refs).min(complete);
         let mut forwarders = Vec::new();
+        let mut bad_forwarder = false;
         for i in 0..count {
             let at = refs_start + i * 8;
             if let Some(name) = directory.u16_le(at + 4).and_then(name_of) {
                 forwarders.push(name);
             } else {
-                out.truncated = true;
-                out.warnings.push("a bound forwarder name is outside its directory".into());
+                bad_forwarder = true;
             }
+        }
+        if bad_forwarder {
+            out.truncated = true;
+            out.warnings.push("a bound forwarder name is outside its directory".into());
         }
         out.bound_modules.push(BoundModule { name: name.unwrap_or_default(), timestamp: stamp, forwarders });
         if count < usize::from(refs) {
