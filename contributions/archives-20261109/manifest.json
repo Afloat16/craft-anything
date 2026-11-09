@@ -3,7 +3,7 @@
   "fork": "Afloat16/craft-anything",
   "base": "1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1",
   "published_independent_changes": 10,
-  "upstream_pull_requests_created": 3,
+  "upstream_pull_requests_created": 5,
   "merged": 0,
   "deduplication_scope": "Full text of 927 upstream pull requests and 206 historical user pull requests was reviewed by the parent task; candidate-specific matches were checked against current production paths.",
   "baseline": {
@@ -388,6 +388,17 @@
           "docs/STATUS.md"
         ],
         "source_files_unchanged": true
+      },
+      "upstream_pull_request": {
+        "number": 1371,
+        "url": "https://github.com/storytold/craft-anything/pull/1371",
+        "state": "open",
+        "merged": false,
+        "head_sha": "839304aa2892c5d8db92a2191dc31e47be6ea6c1",
+        "head_branch": "bugfix/r3.12-gzip-header-crc-20261109",
+        "body": "## Problem\nGzip headers with an FHCRC were accepted even when the header checksum was wrong, while otherwise readable streams were rejected solely for informational XFL or OS values.\n\n## Change\nCheck the low 16 bits of the header CRC-32 when FHCRC is present. Accept informational encoder bytes and preserve checks for the compression method, reserved flag bits, optional-field boundaries and trailer integrity.\n\nThe framing follows [RFC 1952 section 2.3.1](https://www.rfc-editor.org/rfc/rfc1952#section-2.3.1).\n\n## Validation\nAdded complete optional-header fixtures, header-bit corruption, truncated FHCRC, informational-byte coverage and reserved-bit controls.\n\nExact source commit `dde4aa0233be968f9b55bd3316204b880b8dbf2e` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891865). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `gzip_checks_the_optional_header_checksum` and `gzip_accepts_informational_bytes_but_rejects_reserved_flags`. The same regression cases pass in this branch.\n\nThe same source revision passed `cargo xtask layers`, `cargo xtask locks`, `cargo xtask secrets`, and `cargo xtask wasm`; Cargo.lock stayed unchanged. See the `Archive 3 L0 gates` step in [supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663). The final follow-up updates ROADMAP and STATUS only; production and regression-test bytes are unchanged.\n\nRoadmap: R3.12.",
+        "created_at": "2026-11-09T15:16:08Z",
+        "draft": false
       }
     },
     {
@@ -460,13 +471,24 @@
           "docs/STATUS.md"
         ],
         "source_files_unchanged": true
+      },
+      "upstream_pull_request": {
+        "number": 1372,
+        "url": "https://github.com/storytold/craft-anything/pull/1372",
+        "state": "open",
+        "merged": false,
+        "head_sha": "c7018010cf98d4e69223645d4dbfbfeb7461f6b8",
+        "head_branch": "bugfix/r3.12-packed-gzip-integrity-20261109",
+        "body": "## Problem\nThe packed-file reader stripped a gzip header and inflated only the first DEFLATE stream. It could return damaged contents without checking CRC/ISIZE, accept missing trailers, and silently drop later gzip members.\n\n## Change\nUse the shared gzip reader to validate each member and consume the entire stored range. Concatenated members share the caller's output budget; size-limit failures retain the TooLarge error, while damaged or trailing bytes produce an error. Manifest-size checks remain in place.\n\n## Validation\nAdded trailer corruption/truncation, trailing garbage, concatenation, empty-stream and aggregate-limit regressions. Updated the optional-header fixture to carry a real header checksum and trailer.\n\nExact source commit `3f3ec6a4bd97bb987d9cad906ce4b2f5028ff88b` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891924). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `gzip_members_require_complete_valid_trailers` and `gzip_concatenation_shares_the_output_limit`. The same regression cases pass in this branch.\n\nThe same source revision passed `cargo xtask layers`, `cargo xtask locks`, `cargo xtask secrets`, and `cargo xtask wasm`; Cargo.lock stayed unchanged. See the `Archive 4 L0 gates` step in [supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663). The final follow-up updates ROADMAP and STATUS only; production and regression-test bytes are unchanged.\n\nRoadmap: R3.12.",
+        "created_at": "2026-11-09T15:16:16Z",
+        "draft": false
       }
     },
     {
       "number": 5,
       "title": "Extract ZIP entries compressed with bzip2 or XZ",
       "branch": "feature/r3.12-zip-bzip2-xz-20261109",
-      "latest_head": "4cac36386e426e332bd89cb2cfa63894f3a367a5",
+      "latest_head": "2c069f4b042ead31ec9a78c726bad5f67228271b",
       "source_sha": "4cac36386e426e332bd89cb2cfa63894f3a367a5",
       "source_url": "https://github.com/Afloat16/craft-anything/commit/4cac36386e426e332bd89cb2cfa63894f3a367a5",
       "base": "1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1",
@@ -480,8 +502,8 @@
         "bzip2_and_xz_zip_entries_keep_size_crc_and_output_checks"
       ],
       "deduplication": "ZIP methods 12 and 95 extraction using already present codecs; no substantive matching PR in the reviewed full-body history.",
-      "body": "## Problem\nThe ZIP directory recognized bzip2 (12) and XZ (95), but extraction rejected both even though the formats crate already includes pure-Rust decoders for these streams.\n\n## Change\nRoute both ZIP methods through the existing decompressors, preserving TooLarge errors, decoded-size validation and CRC checks. This adds no dependency and keeps encrypted entries unsupported.\n\n## Validation\nAdded complete ZIP fixtures using the existing reference-encoder streams, plus corrupted data, understated directory sizes, exact/insufficient limits, CRC mismatch and encrypted controls.\n\nExact source commit `4cac36386e426e332bd89cb2cfa63894f3a367a5` passed formatting, all 951 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226892219). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `bzip2_and_xz_zip_entries_keep_size_crc_and_output_checks`. The same regression cases pass in this branch.\n\nSupplementary layers, locks, secret scanning and WebAssembly verification is in progress.\n\nRoadmap: R3.12.",
-      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:feature/r3.12-zip-bzip2-xz-20261109?expand=1&title=Extract%20ZIP%20entries%20compressed%20with%20bzip2%20or%20XZ&body=%23%23%20Problem%0AThe%20ZIP%20directory%20recognized%20bzip2%20(12)%20and%20XZ%20(95)%2C%20but%20extraction%20rejected%20both%20even%20though%20the%20formats%20crate%20already%20includes%20pure-Rust%20decoders%20for%20these%20streams.%0A%0A%23%23%20Change%0ARoute%20both%20ZIP%20methods%20through%20the%20existing%20decompressors%2C%20preserving%20TooLarge%20errors%2C%20decoded-size%20validation%20and%20CRC%20checks.%20This%20adds%20no%20dependency%20and%20keeps%20encrypted%20entries%20unsupported.%0A%0A%23%23%20Validation%0AAdded%20complete%20ZIP%20fixtures%20using%20the%20existing%20reference-encoder%20streams%2C%20plus%20corrupted%20data%2C%20understated%20directory%20sizes%2C%20exact%2Finsufficient%20limits%2C%20CRC%20mismatch%20and%20encrypted%20controls.%0A%0AExact%20source%20commit%20%604cac36386e426e332bd89cb2cfa63894f3a367a5%60%20passed%20formatting%2C%20all%20951%20formats%20tests%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226892219).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60bzip2_and_xz_zip_entries_keep_size_crc_and_output_checks%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ASupplementary%20layers%2C%20locks%2C%20secret%20scanning%20and%20WebAssembly%20verification%20is%20in%20progress.%0A%0ARoadmap%3A%20R3.12.",
+      "body": "## Problem\nThe ZIP directory recognized bzip2 (12) and XZ (95), but extraction rejected both even though the formats crate already includes pure-Rust decoders for these streams.\n\n## Change\nRoute both ZIP methods through the existing decompressors, preserving TooLarge errors, decoded-size validation and CRC checks. This adds no dependency and keeps encrypted entries unsupported.\n\n## Validation\nAdded complete ZIP fixtures using the existing reference-encoder streams, plus corrupted data, understated directory sizes, exact/insufficient limits, CRC mismatch and encrypted controls.\n\nExact source commit `4cac36386e426e332bd89cb2cfa63894f3a367a5` passed formatting, all 951 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226892219). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `bzip2_and_xz_zip_entries_keep_size_crc_and_output_checks`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).\n\nBranch head `2c069f4b042ead31ec9a78c726bad5f67228271b` adds only ROADMAP and STATUS verification notes after the tested source commit; source and test files are unchanged.\n\nRoadmap: R3.12.",
+      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:feature/r3.12-zip-bzip2-xz-20261109?expand=1&title=Extract%20ZIP%20entries%20compressed%20with%20bzip2%20or%20XZ&body=%23%23%20Problem%0AThe%20ZIP%20directory%20recognized%20bzip2%20(12)%20and%20XZ%20(95)%2C%20but%20extraction%20rejected%20both%20even%20though%20the%20formats%20crate%20already%20includes%20pure-Rust%20decoders%20for%20these%20streams.%0A%0A%23%23%20Change%0ARoute%20both%20ZIP%20methods%20through%20the%20existing%20decompressors%2C%20preserving%20TooLarge%20errors%2C%20decoded-size%20validation%20and%20CRC%20checks.%20This%20adds%20no%20dependency%20and%20keeps%20encrypted%20entries%20unsupported.%0A%0A%23%23%20Validation%0AAdded%20complete%20ZIP%20fixtures%20using%20the%20existing%20reference-encoder%20streams%2C%20plus%20corrupted%20data%2C%20understated%20directory%20sizes%2C%20exact%2Finsufficient%20limits%2C%20CRC%20mismatch%20and%20encrypted%20controls.%0A%0AExact%20source%20commit%20%604cac36386e426e332bd89cb2cfa63894f3a367a5%60%20passed%20formatting%2C%20all%20951%20formats%20tests%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226892219).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60bzip2_and_xz_zip_entries_keep_size_crc_and_output_checks%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ALayers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20an%20unchanged%20Cargo.lock%20also%20passed%20for%20this%20exact%20revision%20in%20%5Bthe%20supplementary%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42640688213%2Fjob%2F129240669663).%0A%0ABranch%20head%20%602c069f4b042ead31ec9a78c726bad5f67228271b%60%20adds%20only%20ROADMAP%20and%20STATUS%20verification%20notes%20after%20the%20tested%20source%20commit%3B%20source%20and%20test%20files%20are%20unchanged.%0A%0ARoadmap%3A%20R3.12.",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:feature/r3.12-zip-bzip2-xz-20261109",
       "validation": {
         "status": "success",
@@ -497,20 +519,40 @@
         ],
         "scope": "Formatting, complete formats crate tests including new regressions, and all-targets clippy.",
         "l0_gates": {
-          "status": "in_progress",
-          "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42640688213"
+          "status": "success",
+          "source_sha": "4cac36386e426e332bd89cb2cfa63894f3a367a5",
+          "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663",
+          "step": "Archive 5 L0 gates",
+          "commands": [
+            "cargo run --locked -p xtask -- layers",
+            "cargo run --locked -p xtask -- locks",
+            "cargo run --locked -p xtask -- secrets",
+            "cargo run --locked -p xtask -- wasm",
+            "git diff --exit-code -- Cargo.lock"
+          ]
         },
         "baseline_failures": [
           "bzip2_and_xz_zip_entries_keep_size_crc_and_output_checks"
         ],
-        "baseline_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582"
+        "baseline_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582",
+        "fork_validation_state": "closed"
       },
       "revisions": [
         {
           "sha": "da0ff86ed236f16428a4d2eca5177c80d7de7ee6",
           "result": "format check failed; runner rustfmt output applied"
         }
-      ]
+      ],
+      "latest_head_url": "https://github.com/Afloat16/craft-anything/commit/2c069f4b042ead31ec9a78c726bad5f67228271b",
+      "documentation_followup": {
+        "sha": "2c069f4b042ead31ec9a78c726bad5f67228271b",
+        "source_sha": "4cac36386e426e332bd89cb2cfa63894f3a367a5",
+        "files": [
+          "docs/ROADMAP.md",
+          "docs/STATUS.md"
+        ],
+        "source_files_unchanged": true
+      }
     },
     {
       "number": 6,
