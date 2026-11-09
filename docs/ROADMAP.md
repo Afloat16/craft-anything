@@ -1627,6 +1627,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-android-xml-events
 - [x] Find the method parameter terminator outside object type names in JVM descriptors.
       — claimed: Afloat16, branch bugfix/r3.12-java-descriptor-boundary
+- [ ] Stop capped DEX member and handler lists from interpreting unread records as the following field or a catch-all.
+      — claimed: Afloat16, branch bugfix/r3.12-dex-capped-table-alignment-20261109
 - [x] Address the combined parser review: preserve partial Java reference coverage,
       enforce DEX signed 32-bit LEB128 limits, recover legacy AAPT UTF-8 lengths within
       their pool with a shared recovery probe limit, and distinguish missing ext indirect
