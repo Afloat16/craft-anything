@@ -473,7 +473,11 @@ pub fn export_table(data: &[u8], h: &PeHeaders) -> Option<ExportTable> {
         return Some(out);
     };
     let dir_end = u64::from(dir_rva).saturating_add(u64::from(dir_size));
-    for i in 0..nfuncs {
+    if nfuncs as usize > MAX_EXPORTS {
+        out.truncated = true;
+        out.warnings.push(format!("only the first {MAX_EXPORTS} export function slots were examined"));
+    }
+    for i in 0..nfuncs.min(MAX_EXPORTS as u32) {
         if out.entries.len() >= MAX_EXPORTS {
             out.truncated = true;
             break;
@@ -492,7 +496,11 @@ pub fn export_table(data: &[u8], h: &PeHeaders) -> Option<ExportTable> {
             (u64::from(rva) >= u64::from(dir_rva) && u64::from(rva) < dir_end).then(|| h.rva_to_offset(rva).and_then(|o| r.cstr(o, 512)).unwrap_or_default());
         match named.remove(&i) {
             Some(list) => {
-                for name in list {
+                let room = MAX_EXPORTS.saturating_sub(out.entries.len());
+                if list.len() > room {
+                    out.truncated = true;
+                }
+                for name in list.into_iter().take(room) {
                     out.entries.push(PeExport { ordinal, name: Some(name), rva, forwarder: forwarder.clone() });
                 }
             }
