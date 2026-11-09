@@ -394,7 +394,7 @@
       "number": 4,
       "title": "Read complete gzip packed members and verify their trailers",
       "branch": "bugfix/r3.12-packed-gzip-integrity-20261109",
-      "latest_head": "3f3ec6a4bd97bb987d9cad906ce4b2f5028ff88b",
+      "latest_head": "c7018010cf98d4e69223645d4dbfbfeb7461f6b8",
       "source_sha": "3f3ec6a4bd97bb987d9cad906ce4b2f5028ff88b",
       "source_url": "https://github.com/Afloat16/craft-anything/commit/3f3ec6a4bd97bb987d9cad906ce4b2f5028ff88b",
       "base": "1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1",
@@ -409,8 +409,8 @@
         "gzip_concatenation_shares_the_output_limit"
       ],
       "deduplication": "Packed gzip trailer integrity and complete member consumption; separate from earlier manifest decoded-size checks.",
-      "body": "## Problem\nThe packed-file reader stripped a gzip header and inflated only the first DEFLATE stream. It could return damaged contents without checking CRC/ISIZE, accept missing trailers, and silently drop later gzip members.\n\n## Change\nUse the shared gzip reader to validate each member and consume the entire stored range. Concatenated members share the caller's output budget; size-limit failures retain the TooLarge error, while damaged or trailing bytes produce an error. Manifest-size checks remain in place.\n\n## Validation\nAdded trailer corruption/truncation, trailing garbage, concatenation, empty-stream and aggregate-limit regressions. Updated the optional-header fixture to carry a real header checksum and trailer.\n\nExact source commit `3f3ec6a4bd97bb987d9cad906ce4b2f5028ff88b` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891924). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `gzip_members_require_complete_valid_trailers` and `gzip_concatenation_shares_the_output_limit`. The same regression cases pass in this branch.\n\nSupplementary layers, locks, secret scanning and WebAssembly verification is in progress.\n\nRoadmap: R3.12.",
-      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-packed-gzip-integrity-20261109?expand=1&title=Read%20complete%20gzip%20packed%20members%20and%20verify%20their%20trailers&body=%23%23%20Problem%0AThe%20packed-file%20reader%20stripped%20a%20gzip%20header%20and%20inflated%20only%20the%20first%20DEFLATE%20stream.%20It%20could%20return%20damaged%20contents%20without%20checking%20CRC%2FISIZE%2C%20accept%20missing%20trailers%2C%20and%20silently%20drop%20later%20gzip%20members.%0A%0A%23%23%20Change%0AUse%20the%20shared%20gzip%20reader%20to%20validate%20each%20member%20and%20consume%20the%20entire%20stored%20range.%20Concatenated%20members%20share%20the%20caller's%20output%20budget%3B%20size-limit%20failures%20retain%20the%20TooLarge%20error%2C%20while%20damaged%20or%20trailing%20bytes%20produce%20an%20error.%20Manifest-size%20checks%20remain%20in%20place.%0A%0A%23%23%20Validation%0AAdded%20trailer%20corruption%2Ftruncation%2C%20trailing%20garbage%2C%20concatenation%2C%20empty-stream%20and%20aggregate-limit%20regressions.%20Updated%20the%20optional-header%20fixture%20to%20carry%20a%20real%20header%20checksum%20and%20trailer.%0A%0AExact%20source%20commit%20%603f3ec6a4bd97bb987d9cad906ce4b2f5028ff88b%60%20passed%20formatting%2C%20all%20952%20formats%20tests%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226891924).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60gzip_members_require_complete_valid_trailers%60%20and%20%60gzip_concatenation_shares_the_output_limit%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ASupplementary%20layers%2C%20locks%2C%20secret%20scanning%20and%20WebAssembly%20verification%20is%20in%20progress.%0A%0ARoadmap%3A%20R3.12.",
+      "body": "## Problem\nThe packed-file reader stripped a gzip header and inflated only the first DEFLATE stream. It could return damaged contents without checking CRC/ISIZE, accept missing trailers, and silently drop later gzip members.\n\n## Change\nUse the shared gzip reader to validate each member and consume the entire stored range. Concatenated members share the caller's output budget; size-limit failures retain the TooLarge error, while damaged or trailing bytes produce an error. Manifest-size checks remain in place.\n\n## Validation\nAdded trailer corruption/truncation, trailing garbage, concatenation, empty-stream and aggregate-limit regressions. Updated the optional-header fixture to carry a real header checksum and trailer.\n\nExact source commit `3f3ec6a4bd97bb987d9cad906ce4b2f5028ff88b` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891924). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `gzip_members_require_complete_valid_trailers` and `gzip_concatenation_shares_the_output_limit`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).\n\nBranch head `c7018010cf98d4e69223645d4dbfbfeb7461f6b8` adds only ROADMAP and STATUS verification notes after the tested source commit; source and test files are unchanged.\n\nRoadmap: R3.12.",
+      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-packed-gzip-integrity-20261109?expand=1&title=Read%20complete%20gzip%20packed%20members%20and%20verify%20their%20trailers&body=%23%23%20Problem%0AThe%20packed-file%20reader%20stripped%20a%20gzip%20header%20and%20inflated%20only%20the%20first%20DEFLATE%20stream.%20It%20could%20return%20damaged%20contents%20without%20checking%20CRC%2FISIZE%2C%20accept%20missing%20trailers%2C%20and%20silently%20drop%20later%20gzip%20members.%0A%0A%23%23%20Change%0AUse%20the%20shared%20gzip%20reader%20to%20validate%20each%20member%20and%20consume%20the%20entire%20stored%20range.%20Concatenated%20members%20share%20the%20caller's%20output%20budget%3B%20size-limit%20failures%20retain%20the%20TooLarge%20error%2C%20while%20damaged%20or%20trailing%20bytes%20produce%20an%20error.%20Manifest-size%20checks%20remain%20in%20place.%0A%0A%23%23%20Validation%0AAdded%20trailer%20corruption%2Ftruncation%2C%20trailing%20garbage%2C%20concatenation%2C%20empty-stream%20and%20aggregate-limit%20regressions.%20Updated%20the%20optional-header%20fixture%20to%20carry%20a%20real%20header%20checksum%20and%20trailer.%0A%0AExact%20source%20commit%20%603f3ec6a4bd97bb987d9cad906ce4b2f5028ff88b%60%20passed%20formatting%2C%20all%20952%20formats%20tests%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226891924).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60gzip_members_require_complete_valid_trailers%60%20and%20%60gzip_concatenation_shares_the_output_limit%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ALayers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20an%20unchanged%20Cargo.lock%20also%20passed%20for%20this%20exact%20revision%20in%20%5Bthe%20supplementary%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42640688213%2Fjob%2F129240669663).%0A%0ABranch%20head%20%60c7018010cf98d4e69223645d4dbfbfeb7461f6b8%60%20adds%20only%20ROADMAP%20and%20STATUS%20verification%20notes%20after%20the%20tested%20source%20commit%3B%20source%20and%20test%20files%20are%20unchanged.%0A%0ARoadmap%3A%20R3.12.",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-packed-gzip-integrity-20261109",
       "validation": {
         "status": "success",
@@ -426,21 +426,41 @@
         ],
         "scope": "Formatting, complete formats crate tests including new regressions, and all-targets clippy.",
         "l0_gates": {
-          "status": "in_progress",
-          "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42640688213"
+          "status": "success",
+          "source_sha": "3f3ec6a4bd97bb987d9cad906ce4b2f5028ff88b",
+          "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663",
+          "step": "Archive 4 L0 gates",
+          "commands": [
+            "cargo run --locked -p xtask -- layers",
+            "cargo run --locked -p xtask -- locks",
+            "cargo run --locked -p xtask -- secrets",
+            "cargo run --locked -p xtask -- wasm",
+            "git diff --exit-code -- Cargo.lock"
+          ]
         },
         "baseline_failures": [
           "gzip_members_require_complete_valid_trailers",
           "gzip_concatenation_shares_the_output_limit"
         ],
-        "baseline_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582"
+        "baseline_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582",
+        "fork_validation_state": "closed"
       },
       "revisions": [
         {
           "sha": "695cc0ae45c486ccfe00a04e49162aff4d75cef4",
           "result": "format check failed; runner rustfmt output applied"
         }
-      ]
+      ],
+      "latest_head_url": "https://github.com/Afloat16/craft-anything/commit/c7018010cf98d4e69223645d4dbfbfeb7461f6b8",
+      "documentation_followup": {
+        "sha": "c7018010cf98d4e69223645d4dbfbfeb7461f6b8",
+        "source_sha": "3f3ec6a4bd97bb987d9cad906ce4b2f5028ff88b",
+        "files": [
+          "docs/ROADMAP.md",
+          "docs/STATUS.md"
+        ],
+        "source_files_unchanged": true
+      }
     },
     {
       "number": 5,
