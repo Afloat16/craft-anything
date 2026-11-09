@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-11-09 15:20:07 UTC",
+  "updated_at": "2026-11-09 15:22:08 UTC",
   "repository": "storytold/craft-anything",
   "fork": "Afloat16/craft-anything",
   "scope": "Ten independent other-format contributions",
@@ -249,11 +249,11 @@
       "key": "node",
       "title": "Bound retained metadata when listing Node SEA programs (R3.12)",
       "branch": "bugfix/r3.12-node-sea-retained-budget-20261109",
-      "head": "ce34c2446499f8740c9c0ad7855af845f8e8355c",
+      "head": "a91f5e8afecf0e88a23d7dc906a7aaf863e88666",
       "source_head": "ce34c2446499f8740c9c0ad7855af845f8e8355c",
-      "source_tested_sha": null,
+      "source_tested_sha": "ce34c2446499f8740c9c0ad7855af845f8e8355c",
       "base": "3f4c54bdd4066f9c6bd1708c215ac64bf776927a",
-      "tree": "399d47b18c9a8d5fb6bb96b0244c3aaa907ca6ae",
+      "tree": "472647f14d949e95d7bb3f730e72fddbbac47bc2",
       "files": [
         "crates/formats/src/node_sea.rs",
         "crates/formats/tests/node_sea_metadata_budget.rs"
@@ -272,14 +272,52 @@
       "related_prs": [],
       "deduplication": "No matching Node SEA retained-inventory or decoded-text budget change appeared in the checked histories.",
       "format_references": [],
-      "ci": [],
+      "ci": [
+        {
+          "key": "node",
+          "job_id": 129246378958,
+          "run_id": 42642329977,
+          "url": "https://github.com/Afloat16/claude-mem/actions/runs/42642329977/job/129246378958",
+          "log_chars": 190457,
+          "suites": 89,
+          "totals": {
+            "passed": 960,
+            "failed": 0,
+            "ignored": 0
+          },
+          "source_ref": "ref: ce34c2446499f8740c9c0ad7855af845f8e8355c",
+          "conclusion": "success",
+          "before": {
+            "sha": "755e24ed5cd7947ae95b73b787e66972d2daee87",
+            "passed": 0,
+            "failed": 1,
+            "reason": "Retained argument count is 200001 before the fix; limit is 200000."
+          }
+        }
+      ],
       "upstream_pr_url": null,
       "merged": false,
-      "publication_status": "source_committed_to_fork",
-      "verification_status": "corrected fixtures: exact-source verification running",
+      "publication_status": "ready_for_upstream",
+      "verification_status": "independent formats and compatibility gates passed; source unchanged by documentation completion",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-node-sea-retained-budget-20261109",
-      "prefilled_compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-node-sea-retained-budget-20261109?expand=1&title=Bound%20retained%20metadata%20when%20listing%20Node%20SEA%20programs%20(R3.12)&body=%23%23%20Roadmap%0A%0AR3.12%3A%20Bound%20retained%20Node%20SEA%20asset%20and%20argument%20metadata%20while%20still%20validating%20the%20complete%20blob%20layout.%0A%0A%23%23%20Problem%0A%0ASEA%20parsing%20retained%20every%20declared%20asset%20and%20argument%20before%20applying%20the%20output%20entry%20cap.%20Argument%20strings%20and%20asset%20keys%20could%20also%20expand%20without%20a%20shared%20decoded%20text%20budget.%0A%0A%23%23%20Change%0A%0ARetain%20only%20the%20bounded%20asset%2Fargument%20inventory%20and%20at%20most%208%20MiB%20of%20decoded%20metadata%20text%2C%20including%20replacement-character%20expansion.%20Omit%20oversized%20fields%20whole%2C%20preserve%20declared%20totals%2C%20mark%20truncation%2C%20and%20continue%20validating%20every%20skipped%20binary%20field.%0A%0A%23%23%20Verification%0A%0A7%20new%20integration%20tests.%20Entry%20limits%20including%20empty%20arguments%2C%20oversized%20paths%2Fkeys%2C%20invalid%20UTF-8%20expansion%2C%20malformed%20bytes%20after%20the%20retained%20prefix%20and%20ordinary%20metadata.%20The%20fixtures%20use%20synthetic%20bytes.%0A%0AVerification%20of%20the%20current%20source%20head%20%60ce34c2446499f8740c9c0ad7855af845f8e8355c%60%20is%20running%3B%20no%20passing%20result%20is%20claimed%20yet%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42642329977%0A%0A%23%23%20Related%20work%0A%0ANo%20matching%20Node%20SEA%20retained-inventory%20or%20decoded-text%20budget%20change%20appeared%20in%20the%20checked%20histories.%0A",
-      "body": "## Roadmap\n\nR3.12: Bound retained Node SEA asset and argument metadata while still validating the complete blob layout.\n\n## Problem\n\nSEA parsing retained every declared asset and argument before applying the output entry cap. Argument strings and asset keys could also expand without a shared decoded text budget.\n\n## Change\n\nRetain only the bounded asset/argument inventory and at most 8 MiB of decoded metadata text, including replacement-character expansion. Omit oversized fields whole, preserve declared totals, mark truncation, and continue validating every skipped binary field.\n\n## Verification\n\n7 new integration tests. Entry limits including empty arguments, oversized paths/keys, invalid UTF-8 expansion, malformed bytes after the retained prefix and ordinary metadata. The fixtures use synthetic bytes.\n\nVerification of the current source head `ce34c2446499f8740c9c0ad7855af845f8e8355c` is running; no passing result is claimed yet: https://github.com/Afloat16/claude-mem/actions/runs/42642329977\n\n## Related work\n\nNo matching Node SEA retained-inventory or decoded-text budget change appeared in the checked histories.\n"
+      "prefilled_compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-node-sea-retained-budget-20261109?expand=1&title=Bound%20retained%20metadata%20when%20listing%20Node%20SEA%20programs%20(R3.12)&body=%23%23%20Roadmap%0A%0AR3.12%3A%20Bound%20retained%20Node%20SEA%20asset%20and%20argument%20metadata%20while%20still%20validating%20the%20complete%20blob%20layout.%0A%0A%23%23%20Problem%0A%0ASEA%20parsing%20retained%20every%20declared%20asset%20and%20argument%20before%20applying%20the%20output%20entry%20cap.%20Argument%20strings%20and%20asset%20keys%20could%20also%20expand%20without%20a%20shared%20decoded%20text%20budget.%0A%0A%23%23%20Change%0A%0ARetain%20only%20the%20bounded%20asset%2Fargument%20inventory%20and%20at%20most%208%20MiB%20of%20decoded%20metadata%20text%2C%20including%20replacement-character%20expansion.%20Omit%20oversized%20fields%20whole%2C%20preserve%20declared%20totals%2C%20mark%20truncation%2C%20and%20continue%20validating%20every%20skipped%20binary%20field.%0A%0A%23%23%20Verification%0A%0A7%20new%20integration%20tests.%20Entry%20limits%20including%20empty%20arguments%2C%20oversized%20paths%2Fkeys%2C%20invalid%20UTF-8%20expansion%2C%20malformed%20bytes%20after%20the%20retained%20prefix%20and%20ordinary%20metadata.%20The%20fixtures%20use%20synthetic%20bytes.%0A%0AThe%20exact%20source%20head%20%60ce34c2446499f8740c9c0ad7855af845f8e8355c%60%20passed%20960%20formats-crate%20tests%2C%20%60cargo%20fmt%20--all%20--check%60%20and%20formats-crate%20Clippy%20with%20warnings%20denied%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42642329977%2Fjob%2F129246378958%0A%0AThe%20same%20independent%20source%20passed%20the%20layer%2C%20lock%2Fawait%2C%20secret%20and%20WebAssembly%20compatibility%20gates%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42642329977%2Fjob%2F129246378958%0A%0AThe%20final%20documentation%20commit%20only%20completes%20the%20roadmap%20entry%20and%20records%20the%20checked%20behavior%20in%20STATUS%3B%20production%20and%20regression-test%20bytes%20are%20unchanged.%0A%0A%23%23%20Related%20work%0A%0ANo%20matching%20Node%20SEA%20retained-inventory%20or%20decoded-text%20budget%20change%20appeared%20in%20the%20checked%20histories.%0A",
+      "body": "## Roadmap\n\nR3.12: Bound retained Node SEA asset and argument metadata while still validating the complete blob layout.\n\n## Problem\n\nSEA parsing retained every declared asset and argument before applying the output entry cap. Argument strings and asset keys could also expand without a shared decoded text budget.\n\n## Change\n\nRetain only the bounded asset/argument inventory and at most 8 MiB of decoded metadata text, including replacement-character expansion. Omit oversized fields whole, preserve declared totals, mark truncation, and continue validating every skipped binary field.\n\n## Verification\n\n7 new integration tests. Entry limits including empty arguments, oversized paths/keys, invalid UTF-8 expansion, malformed bytes after the retained prefix and ordinary metadata. The fixtures use synthetic bytes.\n\nThe exact source head `ce34c2446499f8740c9c0ad7855af845f8e8355c` passed 960 formats-crate tests, `cargo fmt --all --check` and formats-crate Clippy with warnings denied: https://github.com/Afloat16/claude-mem/actions/runs/42642329977/job/129246378958\n\nThe same independent source passed the layer, lock/await, secret and WebAssembly compatibility gates: https://github.com/Afloat16/claude-mem/actions/runs/42642329977/job/129246378958\n\nThe final documentation commit only completes the roadmap entry and records the checked behavior in STATUS; production and regression-test bytes are unchanged.\n\n## Related work\n\nNo matching Node SEA retained-inventory or decoded-text budget change appeared in the checked histories.\n",
+      "docs_head": "a91f5e8afecf0e88a23d7dc906a7aaf863e88666",
+      "documentation_complete": true,
+      "docs_only_since_source": true,
+      "compatibility_ci": {
+        "source_sha": "ce34c2446499f8740c9c0ad7855af845f8e8355c",
+        "run": 42642329977,
+        "job": 129246378958,
+        "result": "success",
+        "url": "https://github.com/Afloat16/claude-mem/actions/runs/42642329977/job/129246378958",
+        "commands": [
+          "cargo xtask layers",
+          "cargo xtask locks",
+          "cargo xtask secrets",
+          "cargo xtask wasm"
+        ]
+      }
     },
     {
       "n": 4,
@@ -359,11 +397,11 @@
       "key": "unity_integer",
       "title": "Decode Unity R16 and RG16 textures (R3.9)",
       "branch": "feature/r3.9-unity-integer-textures-20261109",
-      "head": "540b4947aa1bc7a7195d67eabcbff5582b8a3127",
+      "head": "ab2f5b83f33ae9a309bb7265055314e70ed84208",
       "source_head": "540b4947aa1bc7a7195d67eabcbff5582b8a3127",
       "source_tested_sha": "540b4947aa1bc7a7195d67eabcbff5582b8a3127",
       "base": "3f4c54bdd4066f9c6bd1708c215ac64bf776927a",
-      "tree": "52dae92ebb6727f126dcc5c38f20b361ad739ebd",
+      "tree": "64eff0d490308b8926850948d1f456471ca76edc",
       "files": [
         "crates/formats/src/pixels.rs",
         "crates/formats/src/unity_texture.rs",
@@ -406,11 +444,29 @@
       ],
       "upstream_pr_url": null,
       "merged": false,
-      "publication_status": "source_committed_to_fork",
-      "verification_status": "formats tests, fmt and Clippy passed; compatibility gates running",
+      "publication_status": "ready_for_upstream",
+      "verification_status": "independent formats and compatibility gates passed; source unchanged by documentation completion",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:feature/r3.9-unity-integer-textures-20261109",
-      "prefilled_compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:feature/r3.9-unity-integer-textures-20261109?expand=1&title=Decode%20Unity%20R16%20and%20RG16%20textures%20(R3.9)&body=%23%23%20Roadmap%0A%0AR3.9%3A%20Unity%3A%20decode%20R16%20and%20RG16%20texture%20pixels%20through%20the%20shared%20bounded%20PNG%20export%20path.%0A%0A%23%23%20Problem%0A%0AThe%20texture%20exporter%20rejected%20Unity's%20R16%20and%20RG16%20formats%20even%20though%20they%20can%20be%20decoded%20using%20the%20existing%20bounded%20pixel%20pipeline.%0A%0A%23%23%20Change%0A%0AAdd%20little-endian%20unsigned%20R16%20grayscale%20decoding%20and%20RG16's%20two%20eight-bit%20red%2Fgreen%20channels.%20Preserve%20Unity%20row%20inversion%2C%20first-mip%20handling%20and%20output%20allocation%20limits.%0A%0A%23%23%20Verification%0A%0A4%20new%20integration%20tests.%20Unsigned%20extrema%20and%20quantization%20boundaries%2C%20red%2Fgreen%20channel%20order%2C%20Unity%20row%20inversion%2C%20first-mip%20length%2C%20truncated%20pixels%2C%20zero%2Fhuge%20dimensions%20and%20output%20budgets.%20The%20fixtures%20use%20synthetic%20bytes.%0A%0AThe%20exact%20source%20head%20%60540b4947aa1bc7a7195d67eabcbff5582b8a3127%60%20passed%20957%20formats-crate%20tests%2C%20%60cargo%20fmt%20--all%20--check%60%20and%20formats-crate%20Clippy%20with%20warnings%20denied%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42633003467%2Fjob%2F129213811395%0A%0A%23%23%20Related%20work%0A%0AExisting%20float-texture%20support%20uses%20different%20layouts%3B%20this%20adds%20the%20missing%20integer%20formats.%0A",
-      "body": "## Roadmap\n\nR3.9: Unity: decode R16 and RG16 texture pixels through the shared bounded PNG export path.\n\n## Problem\n\nThe texture exporter rejected Unity's R16 and RG16 formats even though they can be decoded using the existing bounded pixel pipeline.\n\n## Change\n\nAdd little-endian unsigned R16 grayscale decoding and RG16's two eight-bit red/green channels. Preserve Unity row inversion, first-mip handling and output allocation limits.\n\n## Verification\n\n4 new integration tests. Unsigned extrema and quantization boundaries, red/green channel order, Unity row inversion, first-mip length, truncated pixels, zero/huge dimensions and output budgets. The fixtures use synthetic bytes.\n\nThe exact source head `540b4947aa1bc7a7195d67eabcbff5582b8a3127` passed 957 formats-crate tests, `cargo fmt --all --check` and formats-crate Clippy with warnings denied: https://github.com/Afloat16/claude-mem/actions/runs/42633003467/job/129213811395\n\n## Related work\n\nExisting float-texture support uses different layouts; this adds the missing integer formats.\n"
+      "prefilled_compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:feature/r3.9-unity-integer-textures-20261109?expand=1&title=Decode%20Unity%20R16%20and%20RG16%20textures%20(R3.9)&body=%23%23%20Roadmap%0A%0AR3.9%3A%20Unity%3A%20decode%20R16%20and%20RG16%20texture%20pixels%20through%20the%20shared%20bounded%20PNG%20export%20path.%0A%0A%23%23%20Problem%0A%0AThe%20texture%20exporter%20rejected%20Unity's%20R16%20and%20RG16%20formats%20even%20though%20they%20can%20be%20decoded%20using%20the%20existing%20bounded%20pixel%20pipeline.%0A%0A%23%23%20Change%0A%0AAdd%20little-endian%20unsigned%20R16%20grayscale%20decoding%20and%20RG16's%20two%20eight-bit%20red%2Fgreen%20channels.%20Preserve%20Unity%20row%20inversion%2C%20first-mip%20handling%20and%20output%20allocation%20limits.%0A%0A%23%23%20Verification%0A%0A4%20new%20integration%20tests.%20Unsigned%20extrema%20and%20quantization%20boundaries%2C%20red%2Fgreen%20channel%20order%2C%20Unity%20row%20inversion%2C%20first-mip%20length%2C%20truncated%20pixels%2C%20zero%2Fhuge%20dimensions%20and%20output%20budgets.%20The%20fixtures%20use%20synthetic%20bytes.%0A%0AThe%20exact%20source%20head%20%60540b4947aa1bc7a7195d67eabcbff5582b8a3127%60%20passed%20957%20formats-crate%20tests%2C%20%60cargo%20fmt%20--all%20--check%60%20and%20formats-crate%20Clippy%20with%20warnings%20denied%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42633003467%2Fjob%2F129213811395%0A%0AThe%20same%20independent%20source%20passed%20the%20layer%2C%20lock%2Fawait%2C%20secret%20and%20WebAssembly%20compatibility%20gates%3A%20https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42642583301%2Fjob%2F129247271153%0A%0AThe%20final%20documentation%20commit%20only%20completes%20the%20roadmap%20entry%20and%20records%20the%20checked%20behavior%20in%20STATUS%3B%20production%20and%20regression-test%20bytes%20are%20unchanged.%0A%0A%23%23%20Related%20work%0A%0AExisting%20float-texture%20support%20uses%20different%20layouts%3B%20this%20adds%20the%20missing%20integer%20formats.%0A",
+      "body": "## Roadmap\n\nR3.9: Unity: decode R16 and RG16 texture pixels through the shared bounded PNG export path.\n\n## Problem\n\nThe texture exporter rejected Unity's R16 and RG16 formats even though they can be decoded using the existing bounded pixel pipeline.\n\n## Change\n\nAdd little-endian unsigned R16 grayscale decoding and RG16's two eight-bit red/green channels. Preserve Unity row inversion, first-mip handling and output allocation limits.\n\n## Verification\n\n4 new integration tests. Unsigned extrema and quantization boundaries, red/green channel order, Unity row inversion, first-mip length, truncated pixels, zero/huge dimensions and output budgets. The fixtures use synthetic bytes.\n\nThe exact source head `540b4947aa1bc7a7195d67eabcbff5582b8a3127` passed 957 formats-crate tests, `cargo fmt --all --check` and formats-crate Clippy with warnings denied: https://github.com/Afloat16/claude-mem/actions/runs/42633003467/job/129213811395\n\nThe same independent source passed the layer, lock/await, secret and WebAssembly compatibility gates: https://github.com/Afloat16/claude-mem/actions/runs/42642583301/job/129247271153\n\nThe final documentation commit only completes the roadmap entry and records the checked behavior in STATUS; production and regression-test bytes are unchanged.\n\n## Related work\n\nExisting float-texture support uses different layouts; this adds the missing integer formats.\n",
+      "docs_head": "ab2f5b83f33ae9a309bb7265055314e70ed84208",
+      "documentation_complete": true,
+      "docs_only_since_source": true,
+      "compatibility_ci": {
+        "source_sha": "540b4947aa1bc7a7195d67eabcbff5582b8a3127",
+        "run": 42642583301,
+        "job": 129247271153,
+        "step": "unity_integer exact-source compatibility",
+        "result": "success",
+        "url": "https://github.com/Afloat16/claude-mem/actions/runs/42642583301/job/129247271153",
+        "commands": [
+          "cargo xtask status",
+          "cargo xtask layers",
+          "cargo xtask locks",
+          "cargo xtask secrets",
+          "cargo xtask wasm"
+        ]
+      }
     },
     {
       "n": 6,
@@ -717,7 +773,8 @@
     ],
     "completed": [
       "godot",
-      "il2cpp"
+      "il2cpp",
+      "unity_integer"
     ]
   }
 }
