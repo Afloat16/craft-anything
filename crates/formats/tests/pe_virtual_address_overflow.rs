@@ -81,3 +81,13 @@ fn representable_high_addresses_still_decode() {
         assert_eq!(binary.imports.iter().find(|import| import.name == "puts").unwrap().slot, Some(base + PE_IAT_RVA));
     }
 }
+
+#[test]
+fn an_overflowed_slot_is_not_recovered_from_a_same_named_valid_import() {
+    let mut data = image(false, 0, 0);
+    data[0x710..0x714].copy_from_slice(&0xffff_fffcu32.to_le_bytes());
+    data[0x744..0x748].copy_from_slice(&0x2180u32.to_le_bytes());
+    let binary = parse_binary(&data).unwrap();
+    let slots: Vec<_> = binary.imports.iter().filter(|import| import.name == "puts").map(|import| import.slot).collect();
+    assert_eq!(slots, [Some(u64::from(0xffff_fffcu32)), None]);
+}
