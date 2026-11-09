@@ -4,7 +4,7 @@
   "base": "1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1",
   "published_independent_changes": 10,
   "upstream_pull_requests_created": 10,
-  "merged": 1,
+  "merged": 6,
   "deduplication_scope": "Full text of 927 upstream pull requests and 206 historical user pull requests was reviewed by the parent task; candidate-specific matches were checked against current production paths.",
   "baseline": {
     "branch": "validate/archive-regressions-base-20261109",
@@ -235,17 +235,17 @@
       "upstream_pull_request": {
         "number": 1363,
         "url": "https://github.com/storytold/craft-anything/pull/1363",
-        "state": "open",
-        "merged": false,
+        "state": "closed",
+        "merged": true,
         "head_sha": "a574cde8b266b8a07f84b0ad70a809a08e8f4d95",
         "head_branch": "bugfix/r3.12-carchive-payload-range-20261109",
         "body": "## Problem\nCArchive member offsets were checked against the whole executable when reading. A malformed table could therefore expose the archive table, cookie or bytes appended by signing as member contents, and an out-of-range PYZ could supply a fabricated nested listing.\n\n## Change\nRequire each stored member range to end before the CArchive table. Keep the outer listing and valid members, mark invalid ranges unreadable, and explain the limitation. Empty runtime options at the payload boundary remain valid.\n\n## Validation\nAdded regressions for both cookie formats, crossing the payload boundary, table/cookie/signed-tail offsets, empty options and a valid PYZ placed in the signed tail.\n\nExact source commit `a5bcfaedcb1ad67c8bb7f06c7143befc8292409c` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891917). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `members_cannot_read_the_table_cookie_or_signed_tail` and `a_pyz_in_the_signed_tail_does_not_supply_nested_members`. The same regression cases pass in this branch.\n\nThe same source revision passed `cargo xtask layers`, `cargo xtask locks`, `cargo xtask secrets`, and `cargo xtask wasm`; Cargo.lock stayed unchanged. See the `Archive 1 L0 gates` step in [supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663). The final follow-up updates ROADMAP and STATUS only; production and regression-test bytes are unchanged.\n\nRoadmap: R3.12.",
         "created_at": "2026-11-09T15:13:08Z",
         "draft": false,
-        "merged_at": null,
-        "merge_commit_sha": null,
-        "mergeable": false,
-        "mergeable_state": "dirty"
+        "merged_at": "2026-11-09T16:09:01Z",
+        "merge_commit_sha": "f19f304482af2753bc4f9c2eff03440e0a571a30",
+        "mergeable": null,
+        "mergeable_state": "unknown"
       },
       "integration": {
         "head_sha": "a574cde8b266b8a07f84b0ad70a809a08e8f4d95",
@@ -334,7 +334,7 @@
       "number": 2,
       "title": "Reject ASAR manifest nodes with invalid file metadata",
       "branch": "bugfix/r3.12-asar-node-shapes-20261109",
-      "latest_head": "1613476ae0e8af07bf09e69f6454705047ec1e90",
+      "latest_head": "2c5df5307f4733355a4e88be1ebf58bbfb0b95d1",
       "source_sha": "1613476ae0e8af07bf09e69f6454705047ec1e90",
       "source_url": "https://github.com/Afloat16/craft-anything/commit/1613476ae0e8af07bf09e69f6454705047ec1e90",
       "base": "1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1",
@@ -349,8 +349,8 @@
         "valid_empty_unpacked_and_link_nodes_keep_their_kinds"
       ],
       "deduplication": "Manifest node grammar and required file metadata; earlier #702 is header framing, #1142 rejected-name budgets and #533 output names.",
-      "body": "## Problem\nASAR JSON nodes with the wrong shape or missing file metadata were silently treated as empty files, and a non-object files map was accepted as an empty archive. That produces a plausible but incorrect inventory of damaged manifests.\n\n## Change\nValidate directory maps, node objects, link values, unsigned file sizes, packed offsets and unpacked markers. Keep valid empty files, numeric offsets, links and unpacked files supported, while retaining existing name and listing limits.\n\n## Validation\nAdded malformed-manifest fixtures and valid controls.\n\nExact source commit `1613476ae0e8af07bf09e69f6454705047ec1e90` passed formatting, the complete formats test suite, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `malformed_nodes_do_not_become_empty_files`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386).\n\nBranch head `1613476ae0e8af07bf09e69f6454705047ec1e90` merges upstream `7073462fcca6088989f9127f3473b95471a758b1` with both parents retained; the exact merged source passed the verification above.\n\nRoadmap: R3.12.",
-      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-asar-node-shapes-20261109?expand=1&title=Reject%20ASAR%20manifest%20nodes%20with%20invalid%20file%20metadata&body=%23%23%20Problem%0AASAR%20JSON%20nodes%20with%20the%20wrong%20shape%20or%20missing%20file%20metadata%20were%20silently%20treated%20as%20empty%20files%2C%20and%20a%20non-object%20files%20map%20was%20accepted%20as%20an%20empty%20archive.%20That%20produces%20a%20plausible%20but%20incorrect%20inventory%20of%20damaged%20manifests.%0A%0A%23%23%20Change%0AValidate%20directory%20maps%2C%20node%20objects%2C%20link%20values%2C%20unsigned%20file%20sizes%2C%20packed%20offsets%20and%20unpacked%20markers.%20Keep%20valid%20empty%20files%2C%20numeric%20offsets%2C%20links%20and%20unpacked%20files%20supported%2C%20while%20retaining%20existing%20name%20and%20listing%20limits.%0A%0A%23%23%20Validation%0AAdded%20malformed-manifest%20fixtures%20and%20valid%20controls.%0A%0AExact%20source%20commit%20%601613476ae0e8af07bf09e69f6454705047ec1e90%60%20passed%20formatting%2C%20the%20complete%20formats%20test%20suite%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140%2Fjob%2F129272016386).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60malformed_nodes_do_not_become_empty_files%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ALayers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20an%20unchanged%20Cargo.lock%20also%20passed%20for%20this%20exact%20revision%20in%20%5Bthe%20supplementary%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140%2Fjob%2F129272016386).%0A%0ABranch%20head%20%601613476ae0e8af07bf09e69f6454705047ec1e90%60%20merges%20upstream%20%607073462fcca6088989f9127f3473b95471a758b1%60%20with%20both%20parents%20retained%3B%20the%20exact%20merged%20source%20passed%20the%20verification%20above.%0A%0ARoadmap%3A%20R3.12.",
+      "body": "## Problem\nASAR JSON nodes with the wrong shape or missing file metadata were silently treated as empty files, and a non-object files map was accepted as an empty archive. That produces a plausible but incorrect inventory of damaged manifests.\n\n## Change\nValidate directory maps, node objects, link values, unsigned file sizes, packed offsets and unpacked markers. Keep valid empty files, numeric offsets, links and unpacked files supported, while retaining existing name and listing limits.\n\n## Validation\nAdded malformed-manifest fixtures and valid controls.\n\nExact source commit `1613476ae0e8af07bf09e69f6454705047ec1e90` passed formatting, the complete formats test suite, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `malformed_nodes_do_not_become_empty_files`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386).\n\nBranch head `2c5df5307f4733355a4e88be1ebf58bbfb0b95d1` merges upstream `cdc8a880f1e60bce757ebac59e3f7983f084a1f8` with both parents retained. [Exact-head verification](https://github.com/Afloat16/claude-mem/actions/runs/42653593224) is in progress; the successful checks above refer to the earlier verified source.\n\nRoadmap: R3.12.",
+      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-asar-node-shapes-20261109?expand=1&title=Reject%20ASAR%20manifest%20nodes%20with%20invalid%20file%20metadata&body=%23%23%20Problem%0AASAR%20JSON%20nodes%20with%20the%20wrong%20shape%20or%20missing%20file%20metadata%20were%20silently%20treated%20as%20empty%20files%2C%20and%20a%20non-object%20files%20map%20was%20accepted%20as%20an%20empty%20archive.%20That%20produces%20a%20plausible%20but%20incorrect%20inventory%20of%20damaged%20manifests.%0A%0A%23%23%20Change%0AValidate%20directory%20maps%2C%20node%20objects%2C%20link%20values%2C%20unsigned%20file%20sizes%2C%20packed%20offsets%20and%20unpacked%20markers.%20Keep%20valid%20empty%20files%2C%20numeric%20offsets%2C%20links%20and%20unpacked%20files%20supported%2C%20while%20retaining%20existing%20name%20and%20listing%20limits.%0A%0A%23%23%20Validation%0AAdded%20malformed-manifest%20fixtures%20and%20valid%20controls.%0A%0AExact%20source%20commit%20%601613476ae0e8af07bf09e69f6454705047ec1e90%60%20passed%20formatting%2C%20the%20complete%20formats%20test%20suite%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140%2Fjob%2F129272016386).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60malformed_nodes_do_not_become_empty_files%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ALayers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20an%20unchanged%20Cargo.lock%20also%20passed%20for%20this%20exact%20revision%20in%20%5Bthe%20supplementary%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140%2Fjob%2F129272016386).%0A%0ABranch%20head%20%602c5df5307f4733355a4e88be1ebf58bbfb0b95d1%60%20merges%20upstream%20%60cdc8a880f1e60bce757ebac59e3f7983f084a1f8%60%20with%20both%20parents%20retained.%20%5BExact-head%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42653593224)%20is%20in%20progress%3B%20the%20successful%20checks%20above%20refer%20to%20the%20earlier%20verified%20source.%0A%0ARoadmap%3A%20R3.12.",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-asar-node-shapes-20261109",
       "validation": {
         "status": "success",
@@ -398,7 +398,7 @@
           "result": "format check failed; rustfmt-only changes applied from runner log"
         }
       ],
-      "latest_head_url": "https://github.com/Afloat16/craft-anything/commit/1613476ae0e8af07bf09e69f6454705047ec1e90",
+      "latest_head_url": "https://github.com/Afloat16/craft-anything/commit/2c5df5307f4733355a4e88be1ebf58bbfb0b95d1",
       "documentation_followup": {
         "sha": "b09a93a40ec1cdb37f32f6c52760855ce73d31bd",
         "source_sha": "351002eab7e69791a9eb6cd3764c35e1c3cbc130",
@@ -413,50 +413,27 @@
         "url": "https://github.com/storytold/craft-anything/pull/1364",
         "state": "open",
         "merged": false,
-        "head_sha": "1613476ae0e8af07bf09e69f6454705047ec1e90",
+        "head_sha": "2c5df5307f4733355a4e88be1ebf58bbfb0b95d1",
         "head_branch": "bugfix/r3.12-asar-node-shapes-20261109",
         "body": "## Problem\nASAR JSON nodes with the wrong shape or missing file metadata were silently treated as empty files, and a non-object files map was accepted as an empty archive. That produces a plausible but incorrect inventory of damaged manifests.\n\n## Change\nValidate directory maps, node objects, link values, unsigned file sizes, packed offsets and unpacked markers. Keep valid empty files, numeric offsets, links and unpacked files supported, while retaining existing name and listing limits.\n\n## Validation\nAdded malformed-manifest fixtures and valid controls.\n\nExact source commit `351002eab7e69791a9eb6cd3764c35e1c3cbc130` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891843). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `malformed_nodes_do_not_become_empty_files`. The same regression cases pass in this branch.\n\nThe same source revision passed `cargo xtask layers`, `cargo xtask locks`, `cargo xtask secrets`, and `cargo xtask wasm`; Cargo.lock stayed unchanged. See the `Archive 2 L0 gates` step in [supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663). The final follow-up updates ROADMAP and STATUS only; production and regression-test bytes are unchanged.\n\nRoadmap: R3.12.",
         "created_at": "2026-11-09T15:13:15Z",
         "draft": false,
         "merged_at": null,
         "merge_commit_sha": null,
-        "mergeable": false,
-        "mergeable_state": "dirty"
+        "mergeable": null,
+        "mergeable_state": "unknown"
       },
       "integration": {
-        "head_sha": "1613476ae0e8af07bf09e69f6454705047ec1e90",
-        "previous_head": "b09a93a40ec1cdb37f32f6c52760855ce73d31bd",
-        "base": "7073462fcca6088989f9127f3473b95471a758b1",
+        "head_sha": "2c5df5307f4733355a4e88be1ebf58bbfb0b95d1",
+        "previous_head": "1613476ae0e8af07bf09e69f6454705047ec1e90",
+        "base": "cdc8a880f1e60bce757ebac59e3f7983f084a1f8",
         "parents": [
-          "b09a93a40ec1cdb37f32f6c52760855ce73d31bd",
-          "7073462fcca6088989f9127f3473b95471a758b1"
+          "1613476ae0e8af07bf09e69f6454705047ec1e90",
+          "cdc8a880f1e60bce757ebac59e3f7983f084a1f8"
         ],
-        "validation_status": "success",
-        "validation_run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
-        "validation_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
-        "scope": {
-          "n": 2,
-          "sha": "1613476ae0e8af07bf09e69f6454705047ec1e90",
-          "base": "7073462fcca6088989f9127f3473b95471a758b1",
-          "behind_by": 0,
-          "files": [
-            {
-              "path": "crates/formats/src/asar.rs",
-              "additions": 78,
-              "deletions": 10
-            },
-            {
-              "path": "docs/ROADMAP.md",
-              "additions": 5,
-              "deletions": 0
-            },
-            {
-              "path": "docs/STATUS.md",
-              "additions": 1,
-              "deletions": 1
-            }
-          ]
-        }
+        "validation_status": "in_progress",
+        "validation_run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42653593224",
+        "validation_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135"
       },
       "verification_history": [
         {
@@ -501,6 +478,43 @@
               "docs/STATUS.md"
             ],
             "source_files_unchanged": true
+          }
+        }
+      ],
+      "integration_history": [
+        {
+          "head_sha": "1613476ae0e8af07bf09e69f6454705047ec1e90",
+          "previous_head": "b09a93a40ec1cdb37f32f6c52760855ce73d31bd",
+          "base": "7073462fcca6088989f9127f3473b95471a758b1",
+          "parents": [
+            "b09a93a40ec1cdb37f32f6c52760855ce73d31bd",
+            "7073462fcca6088989f9127f3473b95471a758b1"
+          ],
+          "validation_status": "success",
+          "validation_run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
+          "validation_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
+          "scope": {
+            "n": 2,
+            "sha": "1613476ae0e8af07bf09e69f6454705047ec1e90",
+            "base": "7073462fcca6088989f9127f3473b95471a758b1",
+            "behind_by": 0,
+            "files": [
+              {
+                "path": "crates/formats/src/asar.rs",
+                "additions": 78,
+                "deletions": 10
+              },
+              {
+                "path": "docs/ROADMAP.md",
+                "additions": 5,
+                "deletions": 0
+              },
+              {
+                "path": "docs/STATUS.md",
+                "additions": 1,
+                "deletions": 1
+              }
+            ]
           }
         }
       ]
@@ -587,17 +601,17 @@
       "upstream_pull_request": {
         "number": 1371,
         "url": "https://github.com/storytold/craft-anything/pull/1371",
-        "state": "open",
-        "merged": false,
+        "state": "closed",
+        "merged": true,
         "head_sha": "7f58bf1574fae2edfd2fa71de2176639cb9562e1",
         "head_branch": "bugfix/r3.12-gzip-header-crc-20261109",
         "body": "## Problem\nGzip headers with an FHCRC were accepted even when the header checksum was wrong, while otherwise readable streams were rejected solely for informational XFL or OS values.\n\n## Change\nCheck the low 16 bits of the header CRC-32 when FHCRC is present. Accept informational encoder bytes and preserve checks for the compression method, reserved flag bits, optional-field boundaries and trailer integrity.\n\nThe framing follows [RFC 1952 section 2.3.1](https://www.rfc-editor.org/rfc/rfc1952#section-2.3.1).\n\n## Validation\nAdded complete optional-header fixtures, header-bit corruption, truncated FHCRC, informational-byte coverage and reserved-bit controls.\n\nExact source commit `dde4aa0233be968f9b55bd3316204b880b8dbf2e` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891865). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `gzip_checks_the_optional_header_checksum` and `gzip_accepts_informational_bytes_but_rejects_reserved_flags`. The same regression cases pass in this branch.\n\nThe same source revision passed `cargo xtask layers`, `cargo xtask locks`, `cargo xtask secrets`, and `cargo xtask wasm`; Cargo.lock stayed unchanged. See the `Archive 3 L0 gates` step in [supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663). The final follow-up updates ROADMAP and STATUS only; production and regression-test bytes are unchanged.\n\nRoadmap: R3.12.",
         "created_at": "2026-11-09T15:16:08Z",
         "draft": false,
-        "merged_at": null,
-        "merge_commit_sha": null,
-        "mergeable": false,
-        "mergeable_state": "dirty"
+        "merged_at": "2026-11-09T16:09:07Z",
+        "merge_commit_sha": "a1c93f15b79d8679a5ea9c06a9afff6c6fae356a",
+        "mergeable": null,
+        "mergeable_state": "unknown"
       },
       "integration": {
         "head_sha": "7f58bf1574fae2edfd2fa71de2176639cb9562e1",
@@ -687,8 +701,8 @@
       "title": "Read complete gzip packed members and verify their trailers",
       "branch": "bugfix/r3.12-packed-gzip-integrity-20261109",
       "latest_head": "aadb52ee71b387e58d0d090bded25d8f6b6fea8d",
-      "source_sha": "3f3ec6a4bd97bb987d9cad906ce4b2f5028ff88b",
-      "source_url": "https://github.com/Afloat16/craft-anything/commit/3f3ec6a4bd97bb987d9cad906ce4b2f5028ff88b",
+      "source_sha": "aadb52ee71b387e58d0d090bded25d8f6b6fea8d",
+      "source_url": "https://github.com/Afloat16/craft-anything/commit/aadb52ee71b387e58d0d090bded25d8f6b6fea8d",
       "base": "1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1",
       "claim_sha": "c39ecb4132297c1e9803cbe8129154d8c4187602",
       "files": [
@@ -701,26 +715,26 @@
         "gzip_concatenation_shares_the_output_limit"
       ],
       "deduplication": "Packed gzip trailer integrity and complete member consumption; separate from earlier manifest decoded-size checks.",
-      "body": "## Problem\nThe packed-file reader stripped a gzip header and inflated only the first DEFLATE stream. It could return damaged contents without checking CRC/ISIZE, accept missing trailers, and silently drop later gzip members.\n\n## Change\nUse the shared gzip reader to validate each member and consume the entire stored range. Concatenated members share the caller's output budget; size-limit failures retain the TooLarge error, while damaged or trailing bytes produce an error. Manifest-size checks remain in place.\n\n## Validation\nAdded trailer corruption/truncation, trailing garbage, concatenation, empty-stream and aggregate-limit regressions. Updated the optional-header fixture to carry a real header checksum and trailer.\n\nExact source commit `3f3ec6a4bd97bb987d9cad906ce4b2f5028ff88b` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891924). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `gzip_members_require_complete_valid_trailers` and `gzip_concatenation_shares_the_output_limit`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).\n\nBranch head `aadb52ee71b387e58d0d090bded25d8f6b6fea8d` merges upstream `7073462fcca6088989f9127f3473b95471a758b1` with both parents retained. [Exact-head verification](https://github.com/Afloat16/claude-mem/actions/runs/42649592140) is in progress; the successful checks above refer to the earlier verified source.\n\nRoadmap: R3.12.",
-      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-packed-gzip-integrity-20261109?expand=1&title=Read%20complete%20gzip%20packed%20members%20and%20verify%20their%20trailers&body=%23%23%20Problem%0AThe%20packed-file%20reader%20stripped%20a%20gzip%20header%20and%20inflated%20only%20the%20first%20DEFLATE%20stream.%20It%20could%20return%20damaged%20contents%20without%20checking%20CRC%2FISIZE%2C%20accept%20missing%20trailers%2C%20and%20silently%20drop%20later%20gzip%20members.%0A%0A%23%23%20Change%0AUse%20the%20shared%20gzip%20reader%20to%20validate%20each%20member%20and%20consume%20the%20entire%20stored%20range.%20Concatenated%20members%20share%20the%20caller's%20output%20budget%3B%20size-limit%20failures%20retain%20the%20TooLarge%20error%2C%20while%20damaged%20or%20trailing%20bytes%20produce%20an%20error.%20Manifest-size%20checks%20remain%20in%20place.%0A%0A%23%23%20Validation%0AAdded%20trailer%20corruption%2Ftruncation%2C%20trailing%20garbage%2C%20concatenation%2C%20empty-stream%20and%20aggregate-limit%20regressions.%20Updated%20the%20optional-header%20fixture%20to%20carry%20a%20real%20header%20checksum%20and%20trailer.%0A%0AExact%20source%20commit%20%603f3ec6a4bd97bb987d9cad906ce4b2f5028ff88b%60%20passed%20formatting%2C%20all%20952%20formats%20tests%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226891924).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60gzip_members_require_complete_valid_trailers%60%20and%20%60gzip_concatenation_shares_the_output_limit%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ALayers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20an%20unchanged%20Cargo.lock%20also%20passed%20for%20this%20exact%20revision%20in%20%5Bthe%20supplementary%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42640688213%2Fjob%2F129240669663).%0A%0ABranch%20head%20%60aadb52ee71b387e58d0d090bded25d8f6b6fea8d%60%20merges%20upstream%20%607073462fcca6088989f9127f3473b95471a758b1%60%20with%20both%20parents%20retained.%20%5BExact-head%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140)%20is%20in%20progress%3B%20the%20successful%20checks%20above%20refer%20to%20the%20earlier%20verified%20source.%0A%0ARoadmap%3A%20R3.12.",
+      "body": "## Problem\nThe packed-file reader stripped a gzip header and inflated only the first DEFLATE stream. It could return damaged contents without checking CRC/ISIZE, accept missing trailers, and silently drop later gzip members.\n\n## Change\nUse the shared gzip reader to validate each member and consume the entire stored range. Concatenated members share the caller's output budget; size-limit failures retain the TooLarge error, while damaged or trailing bytes produce an error. Manifest-size checks remain in place.\n\n## Validation\nAdded trailer corruption/truncation, trailing garbage, concatenation, empty-stream and aggregate-limit regressions. Updated the optional-header fixture to carry a real header checksum and trailer.\n\nExact source commit `aadb52ee71b387e58d0d090bded25d8f6b6fea8d` passed formatting, the complete formats test suite, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `gzip_members_require_complete_valid_trailers` and `gzip_concatenation_shares_the_output_limit`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386).\n\nBranch head `aadb52ee71b387e58d0d090bded25d8f6b6fea8d` merges upstream `7073462fcca6088989f9127f3473b95471a758b1` with both parents retained; the exact merged source passed the verification above.\n\nRoadmap: R3.12.",
+      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-packed-gzip-integrity-20261109?expand=1&title=Read%20complete%20gzip%20packed%20members%20and%20verify%20their%20trailers&body=%23%23%20Problem%0AThe%20packed-file%20reader%20stripped%20a%20gzip%20header%20and%20inflated%20only%20the%20first%20DEFLATE%20stream.%20It%20could%20return%20damaged%20contents%20without%20checking%20CRC%2FISIZE%2C%20accept%20missing%20trailers%2C%20and%20silently%20drop%20later%20gzip%20members.%0A%0A%23%23%20Change%0AUse%20the%20shared%20gzip%20reader%20to%20validate%20each%20member%20and%20consume%20the%20entire%20stored%20range.%20Concatenated%20members%20share%20the%20caller's%20output%20budget%3B%20size-limit%20failures%20retain%20the%20TooLarge%20error%2C%20while%20damaged%20or%20trailing%20bytes%20produce%20an%20error.%20Manifest-size%20checks%20remain%20in%20place.%0A%0A%23%23%20Validation%0AAdded%20trailer%20corruption%2Ftruncation%2C%20trailing%20garbage%2C%20concatenation%2C%20empty-stream%20and%20aggregate-limit%20regressions.%20Updated%20the%20optional-header%20fixture%20to%20carry%20a%20real%20header%20checksum%20and%20trailer.%0A%0AExact%20source%20commit%20%60aadb52ee71b387e58d0d090bded25d8f6b6fea8d%60%20passed%20formatting%2C%20the%20complete%20formats%20test%20suite%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140%2Fjob%2F129272016386).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60gzip_members_require_complete_valid_trailers%60%20and%20%60gzip_concatenation_shares_the_output_limit%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ALayers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20an%20unchanged%20Cargo.lock%20also%20passed%20for%20this%20exact%20revision%20in%20%5Bthe%20supplementary%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140%2Fjob%2F129272016386).%0A%0ABranch%20head%20%60aadb52ee71b387e58d0d090bded25d8f6b6fea8d%60%20merges%20upstream%20%607073462fcca6088989f9127f3473b95471a758b1%60%20with%20both%20parents%20retained%3B%20the%20exact%20merged%20source%20passed%20the%20verification%20above.%0A%0ARoadmap%3A%20R3.12.",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-packed-gzip-integrity-20261109",
       "validation": {
         "status": "success",
-        "source_sha": "3f3ec6a4bd97bb987d9cad906ce4b2f5028ff88b",
+        "source_sha": "aadb52ee71b387e58d0d090bded25d8f6b6fea8d",
         "fork_validation_pr": "https://github.com/Afloat16/craft-anything/pull/14",
         "runs_url": "https://github.com/Afloat16/craft-anything/actions?query=branch%3Abugfix%2Fr3.12-packed-gzip-integrity-20261109",
-        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891924",
-        "passed_tests": 952,
+        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
+        "passed_tests": null,
         "commands": [
           "cargo fmt --all -- --check",
           "cargo test --locked -p craft-anything-formats",
           "cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings"
         ],
-        "scope": "Formatting, complete formats crate tests including new regressions, and all-targets clippy.",
+        "scope": "Exact merged source: full formats tests, formatting, all-targets clippy and L0 gates.",
         "l0_gates": {
           "status": "success",
-          "source_sha": "3f3ec6a4bd97bb987d9cad906ce4b2f5028ff88b",
-          "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663",
+          "source_sha": "aadb52ee71b387e58d0d090bded25d8f6b6fea8d",
+          "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
           "step": "Archive 4 L0 gates",
           "commands": [
             "cargo run --locked -p xtask -- layers",
@@ -728,14 +742,22 @@
             "cargo run --locked -p xtask -- secrets",
             "cargo run --locked -p xtask -- wasm",
             "git diff --exit-code -- Cargo.lock"
-          ]
+          ],
+          "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386"
         },
         "baseline_failures": [
           "gzip_members_require_complete_valid_trailers",
           "gzip_concatenation_shares_the_output_limit"
         ],
         "baseline_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582",
-        "fork_validation_state": "closed"
+        "fork_validation_state": "closed",
+        "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
+        "confirmed_steps": [
+          "Archive 4 formatting",
+          "Archive 4 regression tests",
+          "Archive 4 clippy",
+          "Archive 4 L0 gates"
+        ]
       },
       "revisions": [
         {
@@ -756,17 +778,17 @@
       "upstream_pull_request": {
         "number": 1372,
         "url": "https://github.com/storytold/craft-anything/pull/1372",
-        "state": "open",
-        "merged": false,
+        "state": "closed",
+        "merged": true,
         "head_sha": "aadb52ee71b387e58d0d090bded25d8f6b6fea8d",
         "head_branch": "bugfix/r3.12-packed-gzip-integrity-20261109",
         "body": "## Problem\nThe packed-file reader stripped a gzip header and inflated only the first DEFLATE stream. It could return damaged contents without checking CRC/ISIZE, accept missing trailers, and silently drop later gzip members.\n\n## Change\nUse the shared gzip reader to validate each member and consume the entire stored range. Concatenated members share the caller's output budget; size-limit failures retain the TooLarge error, while damaged or trailing bytes produce an error. Manifest-size checks remain in place.\n\n## Validation\nAdded trailer corruption/truncation, trailing garbage, concatenation, empty-stream and aggregate-limit regressions. Updated the optional-header fixture to carry a real header checksum and trailer.\n\nExact source commit `3f3ec6a4bd97bb987d9cad906ce4b2f5028ff88b` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891924). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `gzip_members_require_complete_valid_trailers` and `gzip_concatenation_shares_the_output_limit`. The same regression cases pass in this branch.\n\nThe same source revision passed `cargo xtask layers`, `cargo xtask locks`, `cargo xtask secrets`, and `cargo xtask wasm`; Cargo.lock stayed unchanged. See the `Archive 4 L0 gates` step in [supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663). The final follow-up updates ROADMAP and STATUS only; production and regression-test bytes are unchanged.\n\nRoadmap: R3.12.",
         "created_at": "2026-11-09T15:16:16Z",
         "draft": false,
-        "merged_at": null,
-        "merge_commit_sha": null,
-        "mergeable": false,
-        "mergeable_state": "dirty"
+        "merged_at": "2026-11-09T16:11:17Z",
+        "merge_commit_sha": "a9f7cf1fa5d5fdeae1ff787d2cc88ab72ee492a6",
+        "mergeable": null,
+        "mergeable_state": "unknown"
       },
       "integration": {
         "head_sha": "aadb52ee71b387e58d0d090bded25d8f6b6fea8d",
@@ -776,7 +798,7 @@
           "c7018010cf98d4e69223645d4dbfbfeb7461f6b8",
           "7073462fcca6088989f9127f3473b95471a758b1"
         ],
-        "validation_status": "in_progress",
+        "validation_status": "success",
         "validation_run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
         "validation_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
         "scope": {
@@ -802,15 +824,62 @@
             }
           ]
         }
-      }
+      },
+      "verification_history": [
+        {
+          "source_sha": "3f3ec6a4bd97bb987d9cad906ce4b2f5028ff88b",
+          "validation": {
+            "status": "success",
+            "source_sha": "3f3ec6a4bd97bb987d9cad906ce4b2f5028ff88b",
+            "fork_validation_pr": "https://github.com/Afloat16/craft-anything/pull/14",
+            "runs_url": "https://github.com/Afloat16/craft-anything/actions?query=branch%3Abugfix%2Fr3.12-packed-gzip-integrity-20261109",
+            "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891924",
+            "passed_tests": 952,
+            "commands": [
+              "cargo fmt --all -- --check",
+              "cargo test --locked -p craft-anything-formats",
+              "cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings"
+            ],
+            "scope": "Formatting, complete formats crate tests including new regressions, and all-targets clippy.",
+            "l0_gates": {
+              "status": "success",
+              "source_sha": "3f3ec6a4bd97bb987d9cad906ce4b2f5028ff88b",
+              "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663",
+              "step": "Archive 4 L0 gates",
+              "commands": [
+                "cargo run --locked -p xtask -- layers",
+                "cargo run --locked -p xtask -- locks",
+                "cargo run --locked -p xtask -- secrets",
+                "cargo run --locked -p xtask -- wasm",
+                "git diff --exit-code -- Cargo.lock"
+              ]
+            },
+            "baseline_failures": [
+              "gzip_members_require_complete_valid_trailers",
+              "gzip_concatenation_shares_the_output_limit"
+            ],
+            "baseline_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582",
+            "fork_validation_state": "closed"
+          },
+          "documentation_followup": {
+            "sha": "c7018010cf98d4e69223645d4dbfbfeb7461f6b8",
+            "source_sha": "3f3ec6a4bd97bb987d9cad906ce4b2f5028ff88b",
+            "files": [
+              "docs/ROADMAP.md",
+              "docs/STATUS.md"
+            ],
+            "source_files_unchanged": true
+          }
+        }
+      ]
     },
     {
       "number": 5,
       "title": "Extract ZIP entries compressed with bzip2 or XZ",
       "branch": "feature/r3.12-zip-bzip2-xz-20261109",
       "latest_head": "2ca31fb11dc780e9a96d9fa12beadf2e80ad4e53",
-      "source_sha": "4cac36386e426e332bd89cb2cfa63894f3a367a5",
-      "source_url": "https://github.com/Afloat16/craft-anything/commit/4cac36386e426e332bd89cb2cfa63894f3a367a5",
+      "source_sha": "2ca31fb11dc780e9a96d9fa12beadf2e80ad4e53",
+      "source_url": "https://github.com/Afloat16/craft-anything/commit/2ca31fb11dc780e9a96d9fa12beadf2e80ad4e53",
       "base": "1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1",
       "claim_sha": "dbf26bc62365c4f0f12ecafaa3cbe6b3d1effa67",
       "files": [
@@ -822,26 +891,26 @@
         "bzip2_and_xz_zip_entries_keep_size_crc_and_output_checks"
       ],
       "deduplication": "ZIP methods 12 and 95 extraction using already present codecs; no substantive matching PR in the reviewed full-body history.",
-      "body": "## Problem\nThe ZIP directory recognized bzip2 (12) and XZ (95), but extraction rejected both even though the formats crate already includes pure-Rust decoders for these streams.\n\n## Change\nRoute both ZIP methods through the existing decompressors, preserving TooLarge errors, decoded-size validation and CRC checks. This adds no dependency and keeps encrypted entries unsupported.\n\n## Validation\nAdded complete ZIP fixtures using the existing reference-encoder streams, plus corrupted data, understated directory sizes, exact/insufficient limits, CRC mismatch and encrypted controls.\n\nExact source commit `4cac36386e426e332bd89cb2cfa63894f3a367a5` passed formatting, all 951 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226892219). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `bzip2_and_xz_zip_entries_keep_size_crc_and_output_checks`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).\n\nBranch head `2ca31fb11dc780e9a96d9fa12beadf2e80ad4e53` merges upstream `7073462fcca6088989f9127f3473b95471a758b1` with both parents retained. [Exact-head verification](https://github.com/Afloat16/claude-mem/actions/runs/42649592140) is in progress; the successful checks above refer to the earlier verified source.\n\nRoadmap: R3.12.",
-      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:feature/r3.12-zip-bzip2-xz-20261109?expand=1&title=Extract%20ZIP%20entries%20compressed%20with%20bzip2%20or%20XZ&body=%23%23%20Problem%0AThe%20ZIP%20directory%20recognized%20bzip2%20(12)%20and%20XZ%20(95)%2C%20but%20extraction%20rejected%20both%20even%20though%20the%20formats%20crate%20already%20includes%20pure-Rust%20decoders%20for%20these%20streams.%0A%0A%23%23%20Change%0ARoute%20both%20ZIP%20methods%20through%20the%20existing%20decompressors%2C%20preserving%20TooLarge%20errors%2C%20decoded-size%20validation%20and%20CRC%20checks.%20This%20adds%20no%20dependency%20and%20keeps%20encrypted%20entries%20unsupported.%0A%0A%23%23%20Validation%0AAdded%20complete%20ZIP%20fixtures%20using%20the%20existing%20reference-encoder%20streams%2C%20plus%20corrupted%20data%2C%20understated%20directory%20sizes%2C%20exact%2Finsufficient%20limits%2C%20CRC%20mismatch%20and%20encrypted%20controls.%0A%0AExact%20source%20commit%20%604cac36386e426e332bd89cb2cfa63894f3a367a5%60%20passed%20formatting%2C%20all%20951%20formats%20tests%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226892219).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60bzip2_and_xz_zip_entries_keep_size_crc_and_output_checks%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ALayers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20an%20unchanged%20Cargo.lock%20also%20passed%20for%20this%20exact%20revision%20in%20%5Bthe%20supplementary%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42640688213%2Fjob%2F129240669663).%0A%0ABranch%20head%20%602ca31fb11dc780e9a96d9fa12beadf2e80ad4e53%60%20merges%20upstream%20%607073462fcca6088989f9127f3473b95471a758b1%60%20with%20both%20parents%20retained.%20%5BExact-head%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140)%20is%20in%20progress%3B%20the%20successful%20checks%20above%20refer%20to%20the%20earlier%20verified%20source.%0A%0ARoadmap%3A%20R3.12.",
+      "body": "## Problem\nThe ZIP directory recognized bzip2 (12) and XZ (95), but extraction rejected both even though the formats crate already includes pure-Rust decoders for these streams.\n\n## Change\nRoute both ZIP methods through the existing decompressors, preserving TooLarge errors, decoded-size validation and CRC checks. This adds no dependency and keeps encrypted entries unsupported.\n\n## Validation\nAdded complete ZIP fixtures using the existing reference-encoder streams, plus corrupted data, understated directory sizes, exact/insufficient limits, CRC mismatch and encrypted controls.\n\nExact source commit `2ca31fb11dc780e9a96d9fa12beadf2e80ad4e53` passed formatting, the complete formats test suite, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `bzip2_and_xz_zip_entries_keep_size_crc_and_output_checks`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386).\n\nBranch head `2ca31fb11dc780e9a96d9fa12beadf2e80ad4e53` merges upstream `7073462fcca6088989f9127f3473b95471a758b1` with both parents retained; the exact merged source passed the verification above.\n\nRoadmap: R3.12.",
+      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:feature/r3.12-zip-bzip2-xz-20261109?expand=1&title=Extract%20ZIP%20entries%20compressed%20with%20bzip2%20or%20XZ&body=%23%23%20Problem%0AThe%20ZIP%20directory%20recognized%20bzip2%20(12)%20and%20XZ%20(95)%2C%20but%20extraction%20rejected%20both%20even%20though%20the%20formats%20crate%20already%20includes%20pure-Rust%20decoders%20for%20these%20streams.%0A%0A%23%23%20Change%0ARoute%20both%20ZIP%20methods%20through%20the%20existing%20decompressors%2C%20preserving%20TooLarge%20errors%2C%20decoded-size%20validation%20and%20CRC%20checks.%20This%20adds%20no%20dependency%20and%20keeps%20encrypted%20entries%20unsupported.%0A%0A%23%23%20Validation%0AAdded%20complete%20ZIP%20fixtures%20using%20the%20existing%20reference-encoder%20streams%2C%20plus%20corrupted%20data%2C%20understated%20directory%20sizes%2C%20exact%2Finsufficient%20limits%2C%20CRC%20mismatch%20and%20encrypted%20controls.%0A%0AExact%20source%20commit%20%602ca31fb11dc780e9a96d9fa12beadf2e80ad4e53%60%20passed%20formatting%2C%20the%20complete%20formats%20test%20suite%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140%2Fjob%2F129272016386).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60bzip2_and_xz_zip_entries_keep_size_crc_and_output_checks%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ALayers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20an%20unchanged%20Cargo.lock%20also%20passed%20for%20this%20exact%20revision%20in%20%5Bthe%20supplementary%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140%2Fjob%2F129272016386).%0A%0ABranch%20head%20%602ca31fb11dc780e9a96d9fa12beadf2e80ad4e53%60%20merges%20upstream%20%607073462fcca6088989f9127f3473b95471a758b1%60%20with%20both%20parents%20retained%3B%20the%20exact%20merged%20source%20passed%20the%20verification%20above.%0A%0ARoadmap%3A%20R3.12.",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:feature/r3.12-zip-bzip2-xz-20261109",
       "validation": {
         "status": "success",
-        "source_sha": "4cac36386e426e332bd89cb2cfa63894f3a367a5",
+        "source_sha": "2ca31fb11dc780e9a96d9fa12beadf2e80ad4e53",
         "fork_validation_pr": "https://github.com/Afloat16/craft-anything/pull/16",
         "runs_url": "https://github.com/Afloat16/craft-anything/actions?query=branch%3Afeature%2Fr3.12-zip-bzip2-xz-20261109",
-        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226892219",
-        "passed_tests": 951,
+        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
+        "passed_tests": null,
         "commands": [
           "cargo fmt --all -- --check",
           "cargo test --locked -p craft-anything-formats",
           "cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings"
         ],
-        "scope": "Formatting, complete formats crate tests including new regressions, and all-targets clippy.",
+        "scope": "Exact merged source: full formats tests, formatting, all-targets clippy and L0 gates.",
         "l0_gates": {
           "status": "success",
-          "source_sha": "4cac36386e426e332bd89cb2cfa63894f3a367a5",
-          "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663",
+          "source_sha": "2ca31fb11dc780e9a96d9fa12beadf2e80ad4e53",
+          "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
           "step": "Archive 5 L0 gates",
           "commands": [
             "cargo run --locked -p xtask -- layers",
@@ -849,13 +918,21 @@
             "cargo run --locked -p xtask -- secrets",
             "cargo run --locked -p xtask -- wasm",
             "git diff --exit-code -- Cargo.lock"
-          ]
+          ],
+          "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386"
         },
         "baseline_failures": [
           "bzip2_and_xz_zip_entries_keep_size_crc_and_output_checks"
         ],
         "baseline_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582",
-        "fork_validation_state": "closed"
+        "fork_validation_state": "closed",
+        "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
+        "confirmed_steps": [
+          "Archive 5 formatting",
+          "Archive 5 regression tests",
+          "Archive 5 clippy",
+          "Archive 5 L0 gates"
+        ]
       },
       "revisions": [
         {
@@ -876,17 +953,17 @@
       "upstream_pull_request": {
         "number": 1374,
         "url": "https://github.com/storytold/craft-anything/pull/1374",
-        "state": "open",
-        "merged": false,
+        "state": "closed",
+        "merged": true,
         "head_sha": "2ca31fb11dc780e9a96d9fa12beadf2e80ad4e53",
         "head_branch": "feature/r3.12-zip-bzip2-xz-20261109",
         "body": "## Problem\nThe ZIP directory recognized bzip2 (12) and XZ (95), but extraction rejected both even though the formats crate already includes pure-Rust decoders for these streams.\n\n## Change\nRoute both ZIP methods through the existing decompressors, preserving TooLarge errors, decoded-size validation and CRC checks. This adds no dependency and keeps encrypted entries unsupported.\n\n## Validation\nAdded complete ZIP fixtures using the existing reference-encoder streams, plus corrupted data, understated directory sizes, exact/insufficient limits, CRC mismatch and encrypted controls.\n\nExact source commit `4cac36386e426e332bd89cb2cfa63894f3a367a5` passed formatting, all 951 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226892219). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `bzip2_and_xz_zip_entries_keep_size_crc_and_output_checks`. The same regression cases pass in this branch.\n\nThe same source revision passed `cargo xtask layers`, `cargo xtask locks`, `cargo xtask secrets`, and `cargo xtask wasm`; Cargo.lock stayed unchanged. See the `Archive 5 L0 gates` step in [supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663). The final follow-up updates ROADMAP and STATUS only; production and regression-test bytes are unchanged.\n\nRoadmap: R3.12.",
         "created_at": "2026-11-09T15:17:49Z",
         "draft": false,
-        "merged_at": null,
-        "merge_commit_sha": null,
-        "mergeable": false,
-        "mergeable_state": "dirty"
+        "merged_at": "2026-11-09T16:11:23Z",
+        "merge_commit_sha": "f2392fe9c7fc353451ca35a8182b335ae615673b",
+        "mergeable": null,
+        "mergeable_state": "unknown"
       },
       "integration": {
         "head_sha": "2ca31fb11dc780e9a96d9fa12beadf2e80ad4e53",
@@ -896,7 +973,7 @@
           "2c069f4b042ead31ec9a78c726bad5f67228271b",
           "7073462fcca6088989f9127f3473b95471a758b1"
         ],
-        "validation_status": "in_progress",
+        "validation_status": "success",
         "validation_run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
         "validation_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
         "scope": {
@@ -922,15 +999,61 @@
             }
           ]
         }
-      }
+      },
+      "verification_history": [
+        {
+          "source_sha": "4cac36386e426e332bd89cb2cfa63894f3a367a5",
+          "validation": {
+            "status": "success",
+            "source_sha": "4cac36386e426e332bd89cb2cfa63894f3a367a5",
+            "fork_validation_pr": "https://github.com/Afloat16/craft-anything/pull/16",
+            "runs_url": "https://github.com/Afloat16/craft-anything/actions?query=branch%3Afeature%2Fr3.12-zip-bzip2-xz-20261109",
+            "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226892219",
+            "passed_tests": 951,
+            "commands": [
+              "cargo fmt --all -- --check",
+              "cargo test --locked -p craft-anything-formats",
+              "cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings"
+            ],
+            "scope": "Formatting, complete formats crate tests including new regressions, and all-targets clippy.",
+            "l0_gates": {
+              "status": "success",
+              "source_sha": "4cac36386e426e332bd89cb2cfa63894f3a367a5",
+              "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663",
+              "step": "Archive 5 L0 gates",
+              "commands": [
+                "cargo run --locked -p xtask -- layers",
+                "cargo run --locked -p xtask -- locks",
+                "cargo run --locked -p xtask -- secrets",
+                "cargo run --locked -p xtask -- wasm",
+                "git diff --exit-code -- Cargo.lock"
+              ]
+            },
+            "baseline_failures": [
+              "bzip2_and_xz_zip_entries_keep_size_crc_and_output_checks"
+            ],
+            "baseline_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582",
+            "fork_validation_state": "closed"
+          },
+          "documentation_followup": {
+            "sha": "2c069f4b042ead31ec9a78c726bad5f67228271b",
+            "source_sha": "4cac36386e426e332bd89cb2cfa63894f3a367a5",
+            "files": [
+              "docs/ROADMAP.md",
+              "docs/STATUS.md"
+            ],
+            "source_files_unchanged": true
+          }
+        }
+      ]
     },
     {
       "number": 6,
       "title": "Extract ZIP LZMA members with checked framing and output limits",
       "branch": "feature/r3.12-zip-lzma-20261109",
-      "latest_head": "a298987d966e4e58f84afd6ed81d46d88dd4ec69",
-      "source_sha": "61fdab39da4849eb5a84196df53c55e19c869134",
-      "source_url": "https://github.com/Afloat16/craft-anything/commit/61fdab39da4849eb5a84196df53c55e19c869134",
+      "latest_head": "fc220b1a29572e2b2c17ed2b948e915c54fa6de6",
+      "source_sha": "a298987d966e4e58f84afd6ed81d46d88dd4ec69",
+      "source_url": "https://github.com/Afloat16/craft-anything/commit/a298987d966e4e58f84afd6ed81d46d88dd4ec69",
       "base": "1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1",
       "claim_sha": "0b025c9a83522100c486afda161ffab16a9f0350",
       "files": [
@@ -944,26 +1067,26 @@
         "zip_lzma_rejects_bad_properties_without_unbounded_dictionaries"
       ],
       "deduplication": "ZIP method 14 property/framing support; no substantive matching PR in the reviewed full-body history.",
-      "body": "## Problem\nZIP entries using LZMA method 14 are listed but cannot be read. Their property header and optional end-marker framing differ from standalone .lzma files, so passing the bytes to the existing standalone decoder would not work.\n\n## Change\nRead the ZIP-specific property header, select the decoder's size/end-marker mode from general-purpose bit 1, and bound the decoder dictionary and output. Require complete consumption and retain the existing decoded-size and CRC checks. No dependency is added.\n\nFormat reference: [PKWARE APPNOTE section 5.8](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT).\n\n## Validation\nAdded generated full ZIP fixtures for both framing modes, zero literals, limits, mismatched size/CRC, damaged properties, oversized dictionaries, truncated and trailing streams.\n\nExact source commit `61fdab39da4849eb5a84196df53c55e19c869134` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226892042). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `zip_lzma_reads_size_delimited_and_end_marked_streams` and `zip_lzma_rejects_bad_properties_without_unbounded_dictionaries`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).\n\nBranch head `a298987d966e4e58f84afd6ed81d46d88dd4ec69` merges upstream `7073462fcca6088989f9127f3473b95471a758b1` with both parents retained. [Exact-head verification](https://github.com/Afloat16/claude-mem/actions/runs/42649592140) is in progress; the successful checks above refer to the earlier verified source.\n\nRoadmap: R3.12.",
-      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:feature/r3.12-zip-lzma-20261109?expand=1&title=Extract%20ZIP%20LZMA%20members%20with%20checked%20framing%20and%20output%20limits&body=%23%23%20Problem%0AZIP%20entries%20using%20LZMA%20method%2014%20are%20listed%20but%20cannot%20be%20read.%20Their%20property%20header%20and%20optional%20end-marker%20framing%20differ%20from%20standalone%20.lzma%20files%2C%20so%20passing%20the%20bytes%20to%20the%20existing%20standalone%20decoder%20would%20not%20work.%0A%0A%23%23%20Change%0ARead%20the%20ZIP-specific%20property%20header%2C%20select%20the%20decoder's%20size%2Fend-marker%20mode%20from%20general-purpose%20bit%201%2C%20and%20bound%20the%20decoder%20dictionary%20and%20output.%20Require%20complete%20consumption%20and%20retain%20the%20existing%20decoded-size%20and%20CRC%20checks.%20No%20dependency%20is%20added.%0A%0AFormat%20reference%3A%20%5BPKWARE%20APPNOTE%20section%205.8%5D(https%3A%2F%2Fpkware.cachefly.net%2Fwebdocs%2Fcasestudies%2FAPPNOTE.TXT).%0A%0A%23%23%20Validation%0AAdded%20generated%20full%20ZIP%20fixtures%20for%20both%20framing%20modes%2C%20zero%20literals%2C%20limits%2C%20mismatched%20size%2FCRC%2C%20damaged%20properties%2C%20oversized%20dictionaries%2C%20truncated%20and%20trailing%20streams.%0A%0AExact%20source%20commit%20%6061fdab39da4849eb5a84196df53c55e19c869134%60%20passed%20formatting%2C%20all%20952%20formats%20tests%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226892042).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60zip_lzma_reads_size_delimited_and_end_marked_streams%60%20and%20%60zip_lzma_rejects_bad_properties_without_unbounded_dictionaries%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ALayers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20an%20unchanged%20Cargo.lock%20also%20passed%20for%20this%20exact%20revision%20in%20%5Bthe%20supplementary%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42640688213%2Fjob%2F129240669663).%0A%0ABranch%20head%20%60a298987d966e4e58f84afd6ed81d46d88dd4ec69%60%20merges%20upstream%20%607073462fcca6088989f9127f3473b95471a758b1%60%20with%20both%20parents%20retained.%20%5BExact-head%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140)%20is%20in%20progress%3B%20the%20successful%20checks%20above%20refer%20to%20the%20earlier%20verified%20source.%0A%0ARoadmap%3A%20R3.12.",
+      "body": "## Problem\nZIP entries using LZMA method 14 are listed but cannot be read. Their property header and optional end-marker framing differ from standalone .lzma files, so passing the bytes to the existing standalone decoder would not work.\n\n## Change\nRead the ZIP-specific property header, select the decoder's size/end-marker mode from general-purpose bit 1, and bound the decoder dictionary and output. Require complete consumption and retain the existing decoded-size and CRC checks. No dependency is added.\n\nFormat reference: [PKWARE APPNOTE section 5.8](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT).\n\n## Validation\nAdded generated full ZIP fixtures for both framing modes, zero literals, limits, mismatched size/CRC, damaged properties, oversized dictionaries, truncated and trailing streams.\n\nExact source commit `a298987d966e4e58f84afd6ed81d46d88dd4ec69` passed formatting, the complete formats test suite, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `zip_lzma_reads_size_delimited_and_end_marked_streams` and `zip_lzma_rejects_bad_properties_without_unbounded_dictionaries`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386).\n\nBranch head `fc220b1a29572e2b2c17ed2b948e915c54fa6de6` merges upstream `cdc8a880f1e60bce757ebac59e3f7983f084a1f8` with both parents retained. [Exact-head verification](https://github.com/Afloat16/claude-mem/actions/runs/42653593224) is in progress; the successful checks above refer to the earlier verified source.\n\nRoadmap: R3.12.",
+      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:feature/r3.12-zip-lzma-20261109?expand=1&title=Extract%20ZIP%20LZMA%20members%20with%20checked%20framing%20and%20output%20limits&body=%23%23%20Problem%0AZIP%20entries%20using%20LZMA%20method%2014%20are%20listed%20but%20cannot%20be%20read.%20Their%20property%20header%20and%20optional%20end-marker%20framing%20differ%20from%20standalone%20.lzma%20files%2C%20so%20passing%20the%20bytes%20to%20the%20existing%20standalone%20decoder%20would%20not%20work.%0A%0A%23%23%20Change%0ARead%20the%20ZIP-specific%20property%20header%2C%20select%20the%20decoder's%20size%2Fend-marker%20mode%20from%20general-purpose%20bit%201%2C%20and%20bound%20the%20decoder%20dictionary%20and%20output.%20Require%20complete%20consumption%20and%20retain%20the%20existing%20decoded-size%20and%20CRC%20checks.%20No%20dependency%20is%20added.%0A%0AFormat%20reference%3A%20%5BPKWARE%20APPNOTE%20section%205.8%5D(https%3A%2F%2Fpkware.cachefly.net%2Fwebdocs%2Fcasestudies%2FAPPNOTE.TXT).%0A%0A%23%23%20Validation%0AAdded%20generated%20full%20ZIP%20fixtures%20for%20both%20framing%20modes%2C%20zero%20literals%2C%20limits%2C%20mismatched%20size%2FCRC%2C%20damaged%20properties%2C%20oversized%20dictionaries%2C%20truncated%20and%20trailing%20streams.%0A%0AExact%20source%20commit%20%60a298987d966e4e58f84afd6ed81d46d88dd4ec69%60%20passed%20formatting%2C%20the%20complete%20formats%20test%20suite%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140%2Fjob%2F129272016386).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60zip_lzma_reads_size_delimited_and_end_marked_streams%60%20and%20%60zip_lzma_rejects_bad_properties_without_unbounded_dictionaries%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ALayers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20an%20unchanged%20Cargo.lock%20also%20passed%20for%20this%20exact%20revision%20in%20%5Bthe%20supplementary%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140%2Fjob%2F129272016386).%0A%0ABranch%20head%20%60fc220b1a29572e2b2c17ed2b948e915c54fa6de6%60%20merges%20upstream%20%60cdc8a880f1e60bce757ebac59e3f7983f084a1f8%60%20with%20both%20parents%20retained.%20%5BExact-head%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42653593224)%20is%20in%20progress%3B%20the%20successful%20checks%20above%20refer%20to%20the%20earlier%20verified%20source.%0A%0ARoadmap%3A%20R3.12.",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:feature/r3.12-zip-lzma-20261109",
       "validation": {
         "status": "success",
-        "source_sha": "61fdab39da4849eb5a84196df53c55e19c869134",
+        "source_sha": "a298987d966e4e58f84afd6ed81d46d88dd4ec69",
         "fork_validation_pr": "https://github.com/Afloat16/craft-anything/pull/17",
         "runs_url": "https://github.com/Afloat16/craft-anything/actions?query=branch%3Afeature%2Fr3.12-zip-lzma-20261109",
-        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226892042",
-        "passed_tests": 952,
+        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
+        "passed_tests": null,
         "commands": [
           "cargo fmt --all -- --check",
           "cargo test --locked -p craft-anything-formats",
           "cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings"
         ],
-        "scope": "Formatting, complete formats crate tests including new regressions, and all-targets clippy.",
+        "scope": "Exact merged source: full formats tests, formatting, all-targets clippy and L0 gates.",
         "l0_gates": {
           "status": "success",
-          "source_sha": "61fdab39da4849eb5a84196df53c55e19c869134",
-          "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663",
+          "source_sha": "a298987d966e4e58f84afd6ed81d46d88dd4ec69",
+          "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
           "step": "Archive 6 L0 gates",
           "commands": [
             "cargo run --locked -p xtask -- layers",
@@ -971,14 +1094,22 @@
             "cargo run --locked -p xtask -- secrets",
             "cargo run --locked -p xtask -- wasm",
             "git diff --exit-code -- Cargo.lock"
-          ]
+          ],
+          "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386"
         },
         "baseline_failures": [
           "zip_lzma_reads_size_delimited_and_end_marked_streams",
           "zip_lzma_rejects_bad_properties_without_unbounded_dictionaries"
         ],
         "baseline_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582",
-        "fork_validation_state": "closed"
+        "fork_validation_state": "closed",
+        "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
+        "confirmed_steps": [
+          "Archive 6 formatting",
+          "Archive 6 regression tests",
+          "Archive 6 clippy",
+          "Archive 6 L0 gates"
+        ]
       },
       "revisions": [
         {
@@ -986,7 +1117,7 @@
           "result": "format check failed; runner rustfmt output applied"
         }
       ],
-      "latest_head_url": "https://github.com/Afloat16/craft-anything/commit/a298987d966e4e58f84afd6ed81d46d88dd4ec69",
+      "latest_head_url": "https://github.com/Afloat16/craft-anything/commit/fc220b1a29572e2b2c17ed2b948e915c54fa6de6",
       "documentation_followup": {
         "sha": "9a812d00d14a24fcf3db106a3df4138c4bf1b26f",
         "source_sha": "61fdab39da4849eb5a84196df53c55e19c869134",
@@ -1001,56 +1132,117 @@
         "url": "https://github.com/storytold/craft-anything/pull/1375",
         "state": "open",
         "merged": false,
-        "head_sha": "a298987d966e4e58f84afd6ed81d46d88dd4ec69",
+        "head_sha": "fc220b1a29572e2b2c17ed2b948e915c54fa6de6",
         "head_branch": "feature/r3.12-zip-lzma-20261109",
         "body": "## Problem\nZIP entries using LZMA method 14 are listed but cannot be read. Their property header and optional end-marker framing differ from standalone .lzma files, so passing the bytes to the existing standalone decoder would not work.\n\n## Change\nRead the ZIP-specific property header, select the decoder's size/end-marker mode from general-purpose bit 1, and bound the decoder dictionary and output. Require complete consumption and retain the existing decoded-size and CRC checks. No dependency is added.\n\nFormat reference: [PKWARE APPNOTE section 5.8](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT).\n\n## Validation\nAdded generated full ZIP fixtures for both framing modes, zero literals, limits, mismatched size/CRC, damaged properties, oversized dictionaries, truncated and trailing streams.\n\nExact source commit `61fdab39da4849eb5a84196df53c55e19c869134` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226892042). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `zip_lzma_reads_size_delimited_and_end_marked_streams` and `zip_lzma_rejects_bad_properties_without_unbounded_dictionaries`. The same regression cases pass in this branch.\n\nThe same source revision passed `cargo xtask layers`, `cargo xtask locks`, `cargo xtask secrets`, and `cargo xtask wasm`; Cargo.lock stayed unchanged. See the `Archive 6 L0 gates` step in [supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663). The final follow-up updates ROADMAP and STATUS only; production and regression-test bytes are unchanged.\n\nRoadmap: R3.12.",
         "created_at": "2026-11-09T15:19:18Z",
         "draft": false,
         "merged_at": null,
-        "merge_commit_sha": null,
-        "mergeable": false,
-        "mergeable_state": "dirty"
+        "merge_commit_sha": "b55db0818accc867cb8f52103460e0740e0478d5",
+        "mergeable": null,
+        "mergeable_state": "unknown"
       },
       "integration": {
-        "head_sha": "a298987d966e4e58f84afd6ed81d46d88dd4ec69",
-        "previous_head": "9a812d00d14a24fcf3db106a3df4138c4bf1b26f",
-        "base": "7073462fcca6088989f9127f3473b95471a758b1",
+        "head_sha": "fc220b1a29572e2b2c17ed2b948e915c54fa6de6",
+        "previous_head": "a298987d966e4e58f84afd6ed81d46d88dd4ec69",
+        "base": "cdc8a880f1e60bce757ebac59e3f7983f084a1f8",
         "parents": [
-          "9a812d00d14a24fcf3db106a3df4138c4bf1b26f",
-          "7073462fcca6088989f9127f3473b95471a758b1"
+          "a298987d966e4e58f84afd6ed81d46d88dd4ec69",
+          "cdc8a880f1e60bce757ebac59e3f7983f084a1f8"
         ],
         "validation_status": "in_progress",
-        "validation_run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
-        "validation_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
-        "scope": {
-          "n": 6,
-          "sha": "a298987d966e4e58f84afd6ed81d46d88dd4ec69",
-          "base": "7073462fcca6088989f9127f3473b95471a758b1",
-          "behind_by": 0,
-          "files": [
-            {
-              "path": "crates/formats/src/decompress.rs",
-              "additions": 29,
-              "deletions": 0
+        "validation_run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42653593224",
+        "validation_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135"
+      },
+      "verification_history": [
+        {
+          "source_sha": "61fdab39da4849eb5a84196df53c55e19c869134",
+          "validation": {
+            "status": "success",
+            "source_sha": "61fdab39da4849eb5a84196df53c55e19c869134",
+            "fork_validation_pr": "https://github.com/Afloat16/craft-anything/pull/17",
+            "runs_url": "https://github.com/Afloat16/craft-anything/actions?query=branch%3Afeature%2Fr3.12-zip-lzma-20261109",
+            "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226892042",
+            "passed_tests": 952,
+            "commands": [
+              "cargo fmt --all -- --check",
+              "cargo test --locked -p craft-anything-formats",
+              "cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings"
+            ],
+            "scope": "Formatting, complete formats crate tests including new regressions, and all-targets clippy.",
+            "l0_gates": {
+              "status": "success",
+              "source_sha": "61fdab39da4849eb5a84196df53c55e19c869134",
+              "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663",
+              "step": "Archive 6 L0 gates",
+              "commands": [
+                "cargo run --locked -p xtask -- layers",
+                "cargo run --locked -p xtask -- locks",
+                "cargo run --locked -p xtask -- secrets",
+                "cargo run --locked -p xtask -- wasm",
+                "git diff --exit-code -- Cargo.lock"
+              ]
             },
-            {
-              "path": "crates/formats/src/zip.rs",
-              "additions": 72,
-              "deletions": 2
-            },
-            {
-              "path": "docs/ROADMAP.md",
-              "additions": 5,
-              "deletions": 0
-            },
-            {
-              "path": "docs/STATUS.md",
-              "additions": 1,
-              "deletions": 0
-            }
-          ]
+            "baseline_failures": [
+              "zip_lzma_reads_size_delimited_and_end_marked_streams",
+              "zip_lzma_rejects_bad_properties_without_unbounded_dictionaries"
+            ],
+            "baseline_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582",
+            "fork_validation_state": "closed"
+          },
+          "documentation_followup": {
+            "sha": "9a812d00d14a24fcf3db106a3df4138c4bf1b26f",
+            "source_sha": "61fdab39da4849eb5a84196df53c55e19c869134",
+            "files": [
+              "docs/ROADMAP.md",
+              "docs/STATUS.md"
+            ],
+            "source_files_unchanged": true
+          }
         }
-      }
+      ],
+      "integration_history": [
+        {
+          "head_sha": "a298987d966e4e58f84afd6ed81d46d88dd4ec69",
+          "previous_head": "9a812d00d14a24fcf3db106a3df4138c4bf1b26f",
+          "base": "7073462fcca6088989f9127f3473b95471a758b1",
+          "parents": [
+            "9a812d00d14a24fcf3db106a3df4138c4bf1b26f",
+            "7073462fcca6088989f9127f3473b95471a758b1"
+          ],
+          "validation_status": "success",
+          "validation_run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
+          "validation_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
+          "scope": {
+            "n": 6,
+            "sha": "a298987d966e4e58f84afd6ed81d46d88dd4ec69",
+            "base": "7073462fcca6088989f9127f3473b95471a758b1",
+            "behind_by": 0,
+            "files": [
+              {
+                "path": "crates/formats/src/decompress.rs",
+                "additions": 29,
+                "deletions": 0
+              },
+              {
+                "path": "crates/formats/src/zip.rs",
+                "additions": 72,
+                "deletions": 2
+              },
+              {
+                "path": "docs/ROADMAP.md",
+                "additions": 5,
+                "deletions": 0
+              },
+              {
+                "path": "docs/STATUS.md",
+                "additions": 1,
+                "deletions": 0
+              }
+            ]
+          }
+        }
+      ]
     },
     {
       "number": 7,
@@ -1121,17 +1313,17 @@
       "upstream_pull_request": {
         "number": 1381,
         "url": "https://github.com/storytold/craft-anything/pull/1381",
-        "state": "open",
-        "merged": false,
+        "state": "closed",
+        "merged": true,
         "head_sha": "f57923ea32733aa2d4e383bb44dd4b3892b9dfe5",
         "head_branch": "bugfix/r3.12-standalone-lzma-budget-20261109",
         "body": "## Problem\nThe standalone .lzma reader used default decoder options. Its capped output sink was reached only after the decoder flushed an internal dictionary, so small output budgets could still require large dictionary growth or processing of a damaged tail first.\n\n## Change\nRead the standalone size header before decoding, reject declared output above the budget, and bound the decoder's internal dictionary as well as the output sink. Preserve the decoder's 4 KiB minimum window and accept oversized dictionary properties for small valid streams.\n\nThis fixes the public standalone reader; the existing Unity raw-piece helper already has its own bounds and is unchanged.\n\n## Validation\nAdded public-reader regressions for declared sizes, dictionary properties, exact/zero budgets and an over-budget stream with a damaged tail.\n\nExact source commit `5da8880d3b56785498cf0c09ae46f300f070322d` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226892150). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `standalone_lzma_checks_declared_sizes_before_decoding` and `standalone_lzma_stops_before_a_large_window_reaches_a_damaged_tail`. The same regression cases pass in this branch.\n\nThe same source revision passed `cargo xtask layers`, `cargo xtask locks`, `cargo xtask secrets`, and `cargo xtask wasm`; Cargo.lock stayed unchanged. See the `Archive 7 L0 gates` step in [supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663). The final follow-up updates ROADMAP and STATUS only; production and regression-test bytes are unchanged.\n\nRoadmap: R3.12.",
         "created_at": "2026-11-09T15:23:44Z",
         "draft": false,
-        "merged_at": null,
-        "merge_commit_sha": null,
-        "mergeable": false,
-        "mergeable_state": "dirty"
+        "merged_at": "2026-11-09T16:11:29Z",
+        "merge_commit_sha": "cdc8a880f1e60bce757ebac59e3f7983f084a1f8",
+        "mergeable": null,
+        "mergeable_state": "unknown"
       },
       "integration": {
         "head_sha": "f57923ea32733aa2d4e383bb44dd4b3892b9dfe5",
@@ -1265,7 +1457,7 @@
       "number": 9,
       "title": "Keep GNU sparse tar payloads out of regular-file extraction",
       "branch": "bugfix/r3.12-tar-pax-sparse-20261109",
-      "latest_head": "576b1d0bc3b9ac26b00bfa748de20ca7b44bb702",
+      "latest_head": "5d18e4ee2a33fc75e84d2322160b0a02100b755f",
       "source_sha": "daaeb4fe6c2db3f805fb9b02f9fbdfe55d80eb4a",
       "source_url": "https://github.com/Afloat16/craft-anything/commit/daaeb4fe6c2db3f805fb9b02f9fbdfe55d80eb4a",
       "base": "1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1",
@@ -1280,8 +1472,8 @@
         "sparse_metadata_survives_other_extension_headers"
       ],
       "deduplication": "GNU sparse PAX interpretation and extraction classification; existing old-GNU type S and PAX framing fixes do not cover it.",
-      "body": "## Problem\nGNU PAX sparse archives store extents (and, in version 1.0, a sparse map) instead of the full logical file. The tar walker ignored the sparse metadata and listed these bytes as an ordinary file, allowing extraction of incorrect contents.\n\n## Change\nRecognize GNU.sparse metadata, retain GNU.sparse.name when present, and mark the member unsupported with an explicit reconstruction warning. Carry this state across extension headers and clear it after the member, so following ordinary files remain readable.\n\n## Validation\nAdded original synthetic sparse 0.0/0.1/1.0 fixtures, member alignment and following-file controls, plus intervening GNU/PAX extensions.\n\nExact source commit `daaeb4fe6c2db3f805fb9b02f9fbdfe55d80eb4a` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895529). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `gnu_sparse_pax_members_are_not_regular_file_bytes` and `sparse_metadata_survives_other_extension_headers`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).\n\nBranch head `576b1d0bc3b9ac26b00bfa748de20ca7b44bb702` merges upstream `7073462fcca6088989f9127f3473b95471a758b1` with both parents retained. [Exact-head verification](https://github.com/Afloat16/claude-mem/actions/runs/42649592140) is in progress; the successful checks above refer to the earlier verified source.\n\nRoadmap: R3.12.",
-      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-tar-pax-sparse-20261109?expand=1&title=Keep%20GNU%20sparse%20tar%20payloads%20out%20of%20regular-file%20extraction&body=%23%23%20Problem%0AGNU%20PAX%20sparse%20archives%20store%20extents%20(and%2C%20in%20version%201.0%2C%20a%20sparse%20map)%20instead%20of%20the%20full%20logical%20file.%20The%20tar%20walker%20ignored%20the%20sparse%20metadata%20and%20listed%20these%20bytes%20as%20an%20ordinary%20file%2C%20allowing%20extraction%20of%20incorrect%20contents.%0A%0A%23%23%20Change%0ARecognize%20GNU.sparse%20metadata%2C%20retain%20GNU.sparse.name%20when%20present%2C%20and%20mark%20the%20member%20unsupported%20with%20an%20explicit%20reconstruction%20warning.%20Carry%20this%20state%20across%20extension%20headers%20and%20clear%20it%20after%20the%20member%2C%20so%20following%20ordinary%20files%20remain%20readable.%0A%0A%23%23%20Validation%0AAdded%20original%20synthetic%20sparse%200.0%2F0.1%2F1.0%20fixtures%2C%20member%20alignment%20and%20following-file%20controls%2C%20plus%20intervening%20GNU%2FPAX%20extensions.%0A%0AExact%20source%20commit%20%60daaeb4fe6c2db3f805fb9b02f9fbdfe55d80eb4a%60%20passed%20formatting%2C%20all%20952%20formats%20tests%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895529).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60gnu_sparse_pax_members_are_not_regular_file_bytes%60%20and%20%60sparse_metadata_survives_other_extension_headers%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ALayers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20an%20unchanged%20Cargo.lock%20also%20passed%20for%20this%20exact%20revision%20in%20%5Bthe%20supplementary%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42640688213%2Fjob%2F129240669663).%0A%0ABranch%20head%20%60576b1d0bc3b9ac26b00bfa748de20ca7b44bb702%60%20merges%20upstream%20%607073462fcca6088989f9127f3473b95471a758b1%60%20with%20both%20parents%20retained.%20%5BExact-head%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649592140)%20is%20in%20progress%3B%20the%20successful%20checks%20above%20refer%20to%20the%20earlier%20verified%20source.%0A%0ARoadmap%3A%20R3.12.",
+      "body": "## Problem\nGNU PAX sparse archives store extents (and, in version 1.0, a sparse map) instead of the full logical file. The tar walker ignored the sparse metadata and listed these bytes as an ordinary file, allowing extraction of incorrect contents.\n\n## Change\nRecognize GNU.sparse metadata, retain GNU.sparse.name when present, and mark the member unsupported with an explicit reconstruction warning. Carry this state across extension headers and clear it after the member, so following ordinary files remain readable.\n\n## Validation\nAdded original synthetic sparse 0.0/0.1/1.0 fixtures, member alignment and following-file controls, plus intervening GNU/PAX extensions.\n\nExact source commit `daaeb4fe6c2db3f805fb9b02f9fbdfe55d80eb4a` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895529). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `gnu_sparse_pax_members_are_not_regular_file_bytes` and `sparse_metadata_survives_other_extension_headers`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).\n\nBranch head `5d18e4ee2a33fc75e84d2322160b0a02100b755f` merges upstream `cdc8a880f1e60bce757ebac59e3f7983f084a1f8` with both parents retained. [Exact-head verification](https://github.com/Afloat16/claude-mem/actions/runs/42653593224) is in progress; the successful checks above refer to the earlier verified source.\n\nRoadmap: R3.12.",
+      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-tar-pax-sparse-20261109?expand=1&title=Keep%20GNU%20sparse%20tar%20payloads%20out%20of%20regular-file%20extraction&body=%23%23%20Problem%0AGNU%20PAX%20sparse%20archives%20store%20extents%20(and%2C%20in%20version%201.0%2C%20a%20sparse%20map)%20instead%20of%20the%20full%20logical%20file.%20The%20tar%20walker%20ignored%20the%20sparse%20metadata%20and%20listed%20these%20bytes%20as%20an%20ordinary%20file%2C%20allowing%20extraction%20of%20incorrect%20contents.%0A%0A%23%23%20Change%0ARecognize%20GNU.sparse%20metadata%2C%20retain%20GNU.sparse.name%20when%20present%2C%20and%20mark%20the%20member%20unsupported%20with%20an%20explicit%20reconstruction%20warning.%20Carry%20this%20state%20across%20extension%20headers%20and%20clear%20it%20after%20the%20member%2C%20so%20following%20ordinary%20files%20remain%20readable.%0A%0A%23%23%20Validation%0AAdded%20original%20synthetic%20sparse%200.0%2F0.1%2F1.0%20fixtures%2C%20member%20alignment%20and%20following-file%20controls%2C%20plus%20intervening%20GNU%2FPAX%20extensions.%0A%0AExact%20source%20commit%20%60daaeb4fe6c2db3f805fb9b02f9fbdfe55d80eb4a%60%20passed%20formatting%2C%20all%20952%20formats%20tests%2C%20and%20all-targets%20clippy%20with%20warnings%20denied%20in%20%5Bremote%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895529).%20The%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20this%20exact%20craft-anything%20revision.%0A%0AWith%20production%20code%20fixed%20at%20upstream%20%601b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1%60%2C%20the%20%5Btest-only%20baseline%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42636776430%2Fjob%2F129226895582)%20fails%20%60gnu_sparse_pax_members_are_not_regular_file_bytes%60%20and%20%60sparse_metadata_survives_other_extension_headers%60.%20The%20same%20regression%20cases%20pass%20in%20this%20branch.%0A%0ALayers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20an%20unchanged%20Cargo.lock%20also%20passed%20for%20this%20exact%20revision%20in%20%5Bthe%20supplementary%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42640688213%2Fjob%2F129240669663).%0A%0ABranch%20head%20%605d18e4ee2a33fc75e84d2322160b0a02100b755f%60%20merges%20upstream%20%60cdc8a880f1e60bce757ebac59e3f7983f084a1f8%60%20with%20both%20parents%20retained.%20%5BExact-head%20verification%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42653593224)%20is%20in%20progress%3B%20the%20successful%20checks%20above%20refer%20to%20the%20earlier%20verified%20source.%0A%0ARoadmap%3A%20R3.12.",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-tar-pax-sparse-20261109",
       "validation": {
         "status": "success",
@@ -1322,7 +1514,7 @@
           "result": "format check failed; runner rustfmt output applied"
         }
       ],
-      "latest_head_url": "https://github.com/Afloat16/craft-anything/commit/576b1d0bc3b9ac26b00bfa748de20ca7b44bb702",
+      "latest_head_url": "https://github.com/Afloat16/craft-anything/commit/5d18e4ee2a33fc75e84d2322160b0a02100b755f",
       "documentation_followup": {
         "sha": "764269976093b101de197c9c5b2bf2a1f4418109",
         "source_sha": "daaeb4fe6c2db3f805fb9b02f9fbdfe55d80eb4a",
@@ -1337,51 +1529,65 @@
         "url": "https://github.com/storytold/craft-anything/pull/1382",
         "state": "open",
         "merged": false,
-        "head_sha": "576b1d0bc3b9ac26b00bfa748de20ca7b44bb702",
+        "head_sha": "5d18e4ee2a33fc75e84d2322160b0a02100b755f",
         "head_branch": "bugfix/r3.12-tar-pax-sparse-20261109",
         "body": "## Problem\nGNU PAX sparse archives store extents (and, in version 1.0, a sparse map) instead of the full logical file. The tar walker ignored the sparse metadata and listed these bytes as an ordinary file, allowing extraction of incorrect contents.\n\n## Change\nRecognize GNU.sparse metadata, retain GNU.sparse.name when present, and mark the member unsupported with an explicit reconstruction warning. Carry this state across extension headers and clear it after the member, so following ordinary files remain readable.\n\n## Validation\nAdded original synthetic sparse 0.0/0.1/1.0 fixtures, member alignment and following-file controls, plus intervening GNU/PAX extensions.\n\nExact source commit `daaeb4fe6c2db3f805fb9b02f9fbdfe55d80eb4a` passed formatting, all 952 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895529). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `gnu_sparse_pax_members_are_not_regular_file_bytes` and `sparse_metadata_survives_other_extension_headers`. The same regression cases pass in this branch.\n\nThe same source revision passed `cargo xtask layers`, `cargo xtask locks`, `cargo xtask secrets`, and `cargo xtask wasm`; Cargo.lock stayed unchanged. See the `Archive 9 L0 gates` step in [supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663). The final follow-up updates ROADMAP and STATUS only; production and regression-test bytes are unchanged.\n\nRoadmap: R3.12.",
         "created_at": "2026-11-09T15:23:58Z",
         "draft": false,
         "merged_at": null,
         "merge_commit_sha": null,
-        "mergeable": false,
-        "mergeable_state": "dirty"
+        "mergeable": null,
+        "mergeable_state": "unknown"
       },
       "integration": {
-        "head_sha": "576b1d0bc3b9ac26b00bfa748de20ca7b44bb702",
-        "previous_head": "764269976093b101de197c9c5b2bf2a1f4418109",
-        "base": "7073462fcca6088989f9127f3473b95471a758b1",
+        "head_sha": "5d18e4ee2a33fc75e84d2322160b0a02100b755f",
+        "previous_head": "576b1d0bc3b9ac26b00bfa748de20ca7b44bb702",
+        "base": "cdc8a880f1e60bce757ebac59e3f7983f084a1f8",
         "parents": [
-          "764269976093b101de197c9c5b2bf2a1f4418109",
-          "7073462fcca6088989f9127f3473b95471a758b1"
+          "576b1d0bc3b9ac26b00bfa748de20ca7b44bb702",
+          "cdc8a880f1e60bce757ebac59e3f7983f084a1f8"
         ],
         "validation_status": "in_progress",
-        "validation_run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
-        "validation_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
-        "scope": {
-          "n": 9,
-          "sha": "576b1d0bc3b9ac26b00bfa748de20ca7b44bb702",
+        "validation_run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42653593224",
+        "validation_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135"
+      },
+      "integration_history": [
+        {
+          "head_sha": "576b1d0bc3b9ac26b00bfa748de20ca7b44bb702",
+          "previous_head": "764269976093b101de197c9c5b2bf2a1f4418109",
           "base": "7073462fcca6088989f9127f3473b95471a758b1",
-          "behind_by": 0,
-          "files": [
-            {
-              "path": "crates/formats/src/tarcpio.rs",
-              "additions": 68,
-              "deletions": 3
-            },
-            {
-              "path": "docs/ROADMAP.md",
-              "additions": 5,
-              "deletions": 0
-            },
-            {
-              "path": "docs/STATUS.md",
-              "additions": 1,
-              "deletions": 0
-            }
-          ]
+          "parents": [
+            "764269976093b101de197c9c5b2bf2a1f4418109",
+            "7073462fcca6088989f9127f3473b95471a758b1"
+          ],
+          "validation_status": "in_progress",
+          "validation_run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140",
+          "validation_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649592140/job/129272016386",
+          "scope": {
+            "n": 9,
+            "sha": "576b1d0bc3b9ac26b00bfa748de20ca7b44bb702",
+            "base": "7073462fcca6088989f9127f3473b95471a758b1",
+            "behind_by": 0,
+            "files": [
+              {
+                "path": "crates/formats/src/tarcpio.rs",
+                "additions": 68,
+                "deletions": 3
+              },
+              {
+                "path": "docs/ROADMAP.md",
+                "additions": 5,
+                "deletions": 0
+              },
+              {
+                "path": "docs/STATUS.md",
+                "additions": 1,
+                "deletions": 0
+              }
+            ]
+          }
         }
-      }
+      ]
     },
     {
       "number": 10,
@@ -1460,9 +1666,9 @@
         "created_at": "2026-11-09T15:24:07Z",
         "draft": false,
         "merged_at": null,
-        "merge_commit_sha": null,
-        "mergeable": false,
-        "mergeable_state": "dirty"
+        "merge_commit_sha": "588b1f2e7ccbce614f534a52199e4a39bac1e1a4",
+        "mergeable": null,
+        "mergeable_state": "unknown"
       },
       "integration": {
         "head_sha": "f25796a28ead5c1f0b5233778a5578a8bd944684",
@@ -1510,7 +1716,7 @@
     "scope": "Each workflow checks out the listed exact source SHA. Format jobs run formatting, all formats tests and all-targets clippy. Supplementary job validates revised archive 8, then layers, locks, secrets and wasm for ten source heads.",
     "supplementary_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663"
   },
-  "open_upstream_pull_requests": 9,
+  "open_upstream_pull_requests": 4,
   "post_merge_followups": [
     {
       "original_change": 8,
@@ -1533,10 +1739,10 @@
       "validation_run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649935938",
       "validation_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42649935938/job/129273248608",
       "counts_as_additional_planned_change": false,
-      "latest_head": "1007aae934ea3d17fbe341daa7851a1c79eda7a6",
-      "body": "## Problem\n\nA tar listing can retain earlier members after a GNU long-name or long-link record is refused. The managed engine installer previously treated that partial inventory as a successful extraction whenever an earlier regular file existed. That can replace an engine installation with incomplete contents.\n\nThis is a follow-up to #1362, prepared from upstream `efddbdeb6868f10a3d8d53f114d47aed72b89612` after that PR merged.\n\n## Change\n\n- Record an explicit typed stop reason for oversized or truncated GNU name metadata, while retaining earlier members for inspection.\n- Check that reason in the installer before writing any member. Oversized metadata returns `OverLimit`; truncated metadata returns `GarbledOutput`.\n- Keep the existing compatibility for readable tar members without an end-of-archive marker. CPIO behavior and successful bounded GNU names remain unchanged.\n\n## Regression evidence\n\nThe test-only revision `24d844ce89c6ea660e41f30be676411b25b06490` keeps production code at upstream `efddbdeb6868f10a3d8d53f114d47aed72b89612`. Its [actual baseline run](https://github.com/Afloat16/claude-mem/actions/runs/42648642576/job/129268658248) reports **4 failed and 2 passed**: oversized/truncated long names and long links each write an earlier file on the old code; missing end markers and valid bounded metadata are passing controls.\n\nThe fixed tests also assert that an existing installed file is unchanged when extraction is refused. Formats tests check that partial listing bytes remain readable and that absent end markers do not receive the new stop reason.\n\n## Verification\n\nExact source revision: `3e588c5589ee56ab50004dd0e87cc47f4f2455da`.\nThe [exact-source validation](https://github.com/Afloat16/claude-mem/actions/runs/42649935938/job/129273248608) passed formatting, all **1,141 tests** (**124 engines + 1,017 formats**), all-targets clippy with warnings denied, layers, locks, secret scanning, WebAssembly checks and Cargo.lock stability. One existing network-download test remains ignored. The workflow checks out this craft-anything revision in Afloat16/claude-mem.\n\nBranch head `1007aae934ea3d17fbe341daa7851a1c79eda7a6` adds only the completed roadmap entry, status evidence and the parser/installer lesson in `docs/pitfalls.md`; source and test files are unchanged from the tested revision.\n\nRoadmap: R3.12.\n",
+      "latest_head": "c88767b601aef15b8e2604b607f069734fef5a09",
+      "body": "## Problem\n\nA tar listing can retain earlier members after a GNU long-name or long-link record is refused. The managed engine installer previously treated that partial inventory as a successful extraction whenever an earlier regular file existed. That can replace an engine installation with incomplete contents.\n\nThis is a follow-up to #1362, prepared from upstream `efddbdeb6868f10a3d8d53f114d47aed72b89612` after that PR merged.\n\n## Change\n\n- Record an explicit typed stop reason for oversized or truncated GNU name metadata, while retaining earlier members for inspection.\n- Check that reason in the installer before writing any member. Oversized metadata returns `OverLimit`; truncated metadata returns `GarbledOutput`.\n- Keep the existing compatibility for readable tar members without an end-of-archive marker. CPIO behavior and successful bounded GNU names remain unchanged.\n\n## Regression evidence\n\nThe test-only revision `24d844ce89c6ea660e41f30be676411b25b06490` keeps production code at upstream `efddbdeb6868f10a3d8d53f114d47aed72b89612`. Its [actual baseline run](https://github.com/Afloat16/claude-mem/actions/runs/42648642576/job/129268658248) reports **4 failed and 2 passed**: oversized/truncated long names and long links each write an earlier file on the old code; missing end markers and valid bounded metadata are passing controls.\n\nThe fixed tests also assert that an existing installed file is unchanged when extraction is refused. Formats tests check that partial listing bytes remain readable and that absent end markers do not receive the new stop reason.\n\n## Verification\n\nExact source revision: `3e588c5589ee56ab50004dd0e87cc47f4f2455da`.\nThe [exact-source validation](https://github.com/Afloat16/claude-mem/actions/runs/42649935938/job/129273248608) passed formatting, all **1,141 tests** (**124 engines + 1,017 formats**), all-targets clippy with warnings denied, layers, locks, secret scanning, WebAssembly checks and Cargo.lock stability. One existing network-download test remains ignored. The workflow checks out this craft-anything revision in Afloat16/claude-mem.\n\nBranch head `c88767b601aef15b8e2604b607f069734fef5a09` merges upstream `cdc8a880f1e60bce757ebac59e3f7983f084a1f8` with both parents retained. The source files changed by this fix remain identical to the verified revision above; [validation of the integrated head](https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135) is in progress.\n\nRoadmap: R3.12.\n",
       "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-tar-install-stop-reasons-20261109",
-      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-tar-install-stop-reasons-20261109?expand=1&title=Refuse%20incomplete%20tar%20engine%20installs%20after%20GNU%20metadata%20stops&body=%23%23%20Problem%0A%0AA%20tar%20listing%20can%20retain%20earlier%20members%20after%20a%20GNU%20long-name%20or%20long-link%20record%20is%20refused.%20The%20managed%20engine%20installer%20previously%20treated%20that%20partial%20inventory%20as%20a%20successful%20extraction%20whenever%20an%20earlier%20regular%20file%20existed.%20That%20can%20replace%20an%20engine%20installation%20with%20incomplete%20contents.%0A%0AThis%20is%20a%20follow-up%20to%20%231362%2C%20prepared%20from%20upstream%20%60efddbdeb6868f10a3d8d53f114d47aed72b89612%60%20after%20that%20PR%20merged.%0A%0A%23%23%20Change%0A%0A-%20Record%20an%20explicit%20typed%20stop%20reason%20for%20oversized%20or%20truncated%20GNU%20name%20metadata%2C%20while%20retaining%20earlier%20members%20for%20inspection.%0A-%20Check%20that%20reason%20in%20the%20installer%20before%20writing%20any%20member.%20Oversized%20metadata%20returns%20%60OverLimit%60%3B%20truncated%20metadata%20returns%20%60GarbledOutput%60.%0A-%20Keep%20the%20existing%20compatibility%20for%20readable%20tar%20members%20without%20an%20end-of-archive%20marker.%20CPIO%20behavior%20and%20successful%20bounded%20GNU%20names%20remain%20unchanged.%0A%0A%23%23%20Regression%20evidence%0A%0AThe%20test-only%20revision%20%6024d844ce89c6ea660e41f30be676411b25b06490%60%20keeps%20production%20code%20at%20upstream%20%60efddbdeb6868f10a3d8d53f114d47aed72b89612%60.%20Its%20%5Bactual%20baseline%20run%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42648642576%2Fjob%2F129268658248)%20reports%20**4%20failed%20and%202%20passed**%3A%20oversized%2Ftruncated%20long%20names%20and%20long%20links%20each%20write%20an%20earlier%20file%20on%20the%20old%20code%3B%20missing%20end%20markers%20and%20valid%20bounded%20metadata%20are%20passing%20controls.%0A%0AThe%20fixed%20tests%20also%20assert%20that%20an%20existing%20installed%20file%20is%20unchanged%20when%20extraction%20is%20refused.%20Formats%20tests%20check%20that%20partial%20listing%20bytes%20remain%20readable%20and%20that%20absent%20end%20markers%20do%20not%20receive%20the%20new%20stop%20reason.%0A%0A%23%23%20Verification%0A%0AExact%20source%20revision%3A%20%603e588c5589ee56ab50004dd0e87cc47f4f2455da%60.%0AThe%20%5Bexact-source%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649935938%2Fjob%2F129273248608)%20passed%20formatting%2C%20all%20**1%2C141%20tests**%20(**124%20engines%20%2B%201%2C017%20formats**)%2C%20all-targets%20clippy%20with%20warnings%20denied%2C%20layers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20Cargo.lock%20stability.%20One%20existing%20network-download%20test%20remains%20ignored.%20The%20workflow%20checks%20out%20this%20craft-anything%20revision%20in%20Afloat16%2Fclaude-mem.%0A%0ABranch%20head%20%601007aae934ea3d17fbe341daa7851a1c79eda7a6%60%20adds%20only%20the%20completed%20roadmap%20entry%2C%20status%20evidence%20and%20the%20parser%2Finstaller%20lesson%20in%20%60docs%2Fpitfalls.md%60%3B%20source%20and%20test%20files%20are%20unchanged%20from%20the%20tested%20revision.%0A%0ARoadmap%3A%20R3.12.%0A",
+      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:bugfix/r3.12-tar-install-stop-reasons-20261109?expand=1&title=Refuse%20incomplete%20tar%20engine%20installs%20after%20GNU%20metadata%20stops&body=%23%23%20Problem%0A%0AA%20tar%20listing%20can%20retain%20earlier%20members%20after%20a%20GNU%20long-name%20or%20long-link%20record%20is%20refused.%20The%20managed%20engine%20installer%20previously%20treated%20that%20partial%20inventory%20as%20a%20successful%20extraction%20whenever%20an%20earlier%20regular%20file%20existed.%20That%20can%20replace%20an%20engine%20installation%20with%20incomplete%20contents.%0A%0AThis%20is%20a%20follow-up%20to%20%231362%2C%20prepared%20from%20upstream%20%60efddbdeb6868f10a3d8d53f114d47aed72b89612%60%20after%20that%20PR%20merged.%0A%0A%23%23%20Change%0A%0A-%20Record%20an%20explicit%20typed%20stop%20reason%20for%20oversized%20or%20truncated%20GNU%20name%20metadata%2C%20while%20retaining%20earlier%20members%20for%20inspection.%0A-%20Check%20that%20reason%20in%20the%20installer%20before%20writing%20any%20member.%20Oversized%20metadata%20returns%20%60OverLimit%60%3B%20truncated%20metadata%20returns%20%60GarbledOutput%60.%0A-%20Keep%20the%20existing%20compatibility%20for%20readable%20tar%20members%20without%20an%20end-of-archive%20marker.%20CPIO%20behavior%20and%20successful%20bounded%20GNU%20names%20remain%20unchanged.%0A%0A%23%23%20Regression%20evidence%0A%0AThe%20test-only%20revision%20%6024d844ce89c6ea660e41f30be676411b25b06490%60%20keeps%20production%20code%20at%20upstream%20%60efddbdeb6868f10a3d8d53f114d47aed72b89612%60.%20Its%20%5Bactual%20baseline%20run%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42648642576%2Fjob%2F129268658248)%20reports%20**4%20failed%20and%202%20passed**%3A%20oversized%2Ftruncated%20long%20names%20and%20long%20links%20each%20write%20an%20earlier%20file%20on%20the%20old%20code%3B%20missing%20end%20markers%20and%20valid%20bounded%20metadata%20are%20passing%20controls.%0A%0AThe%20fixed%20tests%20also%20assert%20that%20an%20existing%20installed%20file%20is%20unchanged%20when%20extraction%20is%20refused.%20Formats%20tests%20check%20that%20partial%20listing%20bytes%20remain%20readable%20and%20that%20absent%20end%20markers%20do%20not%20receive%20the%20new%20stop%20reason.%0A%0A%23%23%20Verification%0A%0AExact%20source%20revision%3A%20%603e588c5589ee56ab50004dd0e87cc47f4f2455da%60.%0AThe%20%5Bexact-source%20validation%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42649935938%2Fjob%2F129273248608)%20passed%20formatting%2C%20all%20**1%2C141%20tests**%20(**124%20engines%20%2B%201%2C017%20formats**)%2C%20all-targets%20clippy%20with%20warnings%20denied%2C%20layers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20Cargo.lock%20stability.%20One%20existing%20network-download%20test%20remains%20ignored.%20The%20workflow%20checks%20out%20this%20craft-anything%20revision%20in%20Afloat16%2Fclaude-mem.%0A%0ABranch%20head%20%60c88767b601aef15b8e2604b607f069734fef5a09%60%20merges%20upstream%20%60cdc8a880f1e60bce757ebac59e3f7983f084a1f8%60%20with%20both%20parents%20retained.%20The%20source%20files%20changed%20by%20this%20fix%20remain%20identical%20to%20the%20verified%20revision%20above%3B%20%5Bvalidation%20of%20the%20integrated%20head%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42653593224%2Fjob%2F129286113135)%20is%20in%20progress.%0A%0ARoadmap%3A%20R3.12.%0A",
       "validation": {
         "status": "success",
         "source_sha": "3e588c5589ee56ab50004dd0e87cc47f4f2455da",
@@ -1625,6 +1831,22 @@
             "passed": 2
           }
         }
+      },
+      "number": 1394,
+      "url": "https://github.com/storytold/craft-anything/pull/1394",
+      "state": "open",
+      "merged": false,
+      "integration": {
+        "head_sha": "c88767b601aef15b8e2604b607f069734fef5a09",
+        "previous_head": "1007aae934ea3d17fbe341daa7851a1c79eda7a6",
+        "base": "cdc8a880f1e60bce757ebac59e3f7983f084a1f8",
+        "parents": [
+          "1007aae934ea3d17fbe341daa7851a1c79eda7a6",
+          "cdc8a880f1e60bce757ebac59e3f7983f084a1f8"
+        ],
+        "validation_status": "in_progress",
+        "validation_run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42653593224",
+        "validation_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135"
       }
     }
   ]
