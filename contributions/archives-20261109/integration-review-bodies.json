@@ -194,23 +194,30 @@
       },
       "merged_at": "2026-11-09T16:34:38Z",
       "merge_commit_sha": "69e7f5773d48368b18f22c2e7abe79d115589174",
-      "follows_pr": 1362
+      "follows_pr": 1362,
+      "original_review_resolution": {
+        "thread": "PRRT_kwDOVeM_1M61UMi_",
+        "reply_id": 4515588389,
+        "resolved": true,
+        "confirmed_by": "parent API readback",
+        "covered_by_pr": 1394
+      }
     },
     {
       "original_change": 8,
       "original_pr": 1362,
       "follows_pr": 1394,
-      "title": "Require complete padded GNU tar metadata records",
+      "title": "fix(formats): reject incomplete GNU tar record extents",
       "branch": "bugfix/r3.12-gnu-tar-padded-records-20261109",
       "base": "69e7f5773d48368b18f22c2e7abe79d115589174",
       "claim_sha": "9778dc5d1681df75db4590daba2e3827148140b7",
-      "latest_head": "9778dc5d1681df75db4590daba2e3827148140b7",
-      "head_role": "Roadmap claim; source candidate remains on its validation branch until checks pass.",
+      "latest_head": "541e27bacfb18cb7b060f25cb6f37b48daadd700",
+      "head_role": "Documentation completion after the exact tested source; source and test files unchanged.",
       "candidate_branch": "validation/gnu-tar-record-extents-fixed-20261109",
       "candidate_sha": "25c45ef05d81bfee699dd3c7d351aefc27d83224",
       "source_sha": "25c45ef05d81bfee699dd3c7d351aefc27d83224",
-      "source_published_to_contribution_branch": false,
-      "validation_status": "in_progress",
+      "source_published_to_contribution_branch": true,
+      "validation_status": "success",
       "validation_run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42659466852",
       "validation_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42659466852/job/129306793039",
       "baseline": {
@@ -218,12 +225,153 @@
         "sha": "bec699d80a3f4d9ae977d20e6ceecc50af1e5dfe",
         "tree": "2be6fe3f88c6cadcce10717c0c45d7388a59272b",
         "base": "69e7f5773d48368b18f22c2e7abe79d115589174",
-        "production_unchanged": true
+        "production_unchanged": true,
+        "source_sha": "bec699d80a3f4d9ae977d20e6ceecc50af1e5dfe",
+        "production_base": "69e7f5773d48368b18f22c2e7abe79d115589174",
+        "passed_tests": 7,
+        "failed_tests": 4,
+        "ignored_tests": 0,
+        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42659466852/job/129306793039",
+        "step": "Reproduce four extent failures with seven passing controls",
+        "step_conclusion": "success",
+        "expected_failure_observed": true,
+        "duplicate_summary_note": "The shell greps and prints the same summary a second time; counts represent one execution."
       },
       "review_url": "https://github.com/storytold/craft-anything/pull/1394#discussion_r4515122829",
-      "counts_as_additional_planned_change": false
+      "counts_as_additional_planned_change": false,
+      "source_url": "https://github.com/Afloat16/craft-anything/commit/25c45ef05d81bfee699dd3c7d351aefc27d83224",
+      "ready": true,
+      "body": "## Problem\nA GNU long-name or long-link record can contain its complete body but end before its 512-byte padding. The parser stopped with an earlier member list without setting the typed metadata stop reason, allowing the installer to overwrite an existing file and report success for a partial archive. An overflowing padded extent took the same unclassified stop path.\n\nThis follows the remaining record-extent case reported on #1394 after that PR was merged; #1394 already covers oversized identities and truncated metadata bodies.\n\n## Change\nRequire the complete padded extent of GNU `L` and `K` records and set `GnuMetadataTruncated` when padding is missing or checked extent arithmetic fails. The existing installer guard then rejects the archive before writing any member. Earlier members remain available for inspection, and ordinary files with complete data remain readable without trailing padding or an end marker.\n\n## Validation\nThe [exact-revision run](https://github.com/Afloat16/claude-mem/actions/runs/42659466852/job/129306793039) completed successfully and includes both the reproduction and the correction:\n\n- Test-only baseline `bec699d80a3f4d9ae977d20e6ceecc50af1e5dfe` leaves production code at upstream `69e7f5773d48368b18f22c2e7abe79d115589174`. Four new installer guards fail while seven controls pass; each failing case returns `Ok(1)` and replaces the pre-existing file.\n- Corrected source `25c45ef05d81bfee699dd3c7d351aefc27d83224` passes the complete formats and engines test suites: **1,200 passed, 0 failed, 1 existing network-download test ignored**. Added cases cover both GNU record kinds, missing padding, overflowing extents, retained existing files, fully padded records, and ordinary-member compatibility.\n- Formatting, all-targets clippy with warnings denied, layers, locks, secret scanning, WebAssembly checks and Cargo.lock stability all pass for that exact source.\n\nThe workflow runs in Afloat16/claude-mem and checks out the named craft-anything revisions. Final head `541e27bacfb18cb7b060f25cb6f37b48daadd700` adds only ROADMAP and STATUS verification notes after the tested source; source and test files are unchanged.\n\nRoadmap: R3.12.\n",
+      "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-gnu-tar-padded-records-20261109",
+      "state": "prepared",
+      "merged": false,
+      "files": [
+        "crates/formats/src/tarcpio.rs",
+        "crates/engines/src/install.rs"
+      ],
+      "documentation_followup": {
+        "head_sha": "541e27bacfb18cb7b060f25cb6f37b48daadd700",
+        "parent_sha": "25c45ef05d81bfee699dd3c7d351aefc27d83224",
+        "files": [
+          "docs/ROADMAP.md",
+          "docs/STATUS.md"
+        ],
+        "source_and_tests_unchanged": true
+      },
+      "validation": {
+        "status": "success",
+        "source_sha": "25c45ef05d81bfee699dd3c7d351aefc27d83224",
+        "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42659466852",
+        "run_status": "completed",
+        "run_conclusion": "success",
+        "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42659466852/job/129306793039",
+        "job_status": "completed",
+        "job_conclusion": "success",
+        "passed_tests": 1200,
+        "failed_tests": 0,
+        "ignored_tests": 1,
+        "confirmed_steps": [
+          "GNU extent correction formatting",
+          "GNU extent correction regression tests",
+          "GNU extent correction clippy",
+          "GNU extent correction L0 gates"
+        ],
+        "l0_gates": [
+          "layers",
+          "locks",
+          "secrets",
+          "wasm",
+          "Cargo.lock unchanged"
+        ]
+      },
+      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-gnu-tar-padded-records-20261109?expand=1&title=fix(formats)%3A%20reject%20incomplete%20GNU%20tar%20record%20extents&body=%23%23%20Problem%0AA%20GNU%20long-name%20or%20long-link%20record%20can%20contain%20its%20complete%20body%20but%20end%20before%20its%20512-byte%20padding.%20The%20parser%20stopped%20with%20an%20earlier%20member%20list%20without%20setting%20the%20typed%20metadata%20stop%20reason%2C%20allowing%20the%20installer%20to%20overwrite%20an%20existing%20file%20and%20report%20success%20for%20a%20partial%20archive.%20An%20overflowing%20padded%20extent%20took%20the%20same%20unclassified%20stop%20path.%0A%0AThis%20follows%20the%20remaining%20record-extent%20case%20reported%20on%20%231394%20after%20that%20PR%20was%20merged%3B%20%231394%20already%20covers%20oversized%20identities%20and%20truncated%20metadata%20bodies.%0A%0A%23%23%20Change%0ARequire%20the%20complete%20padded%20extent%20of%20GNU%20%60L%60%20and%20%60K%60%20records%20and%20set%20%60GnuMetadataTruncated%60%20when%20padding%20is%20missing%20or%20checked%20extent%20arithmetic%20fails.%20The%20existing%20installer%20guard%20then%20rejects%20the%20archive%20before%20writing%20any%20member.%20Earlier%20members%20remain%20available%20for%20inspection%2C%20and%20ordinary%20files%20with%20complete%20data%20remain%20readable%20without%20trailing%20padding%20or%20an%20end%20marker.%0A%0A%23%23%20Validation%0AThe%20%5Bexact-revision%20run%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42659466852%2Fjob%2F129306793039)%20completed%20successfully%20and%20includes%20both%20the%20reproduction%20and%20the%20correction%3A%0A%0A-%20Test-only%20baseline%20%60bec699d80a3f4d9ae977d20e6ceecc50af1e5dfe%60%20leaves%20production%20code%20at%20upstream%20%6069e7f5773d48368b18f22c2e7abe79d115589174%60.%20Four%20new%20installer%20guards%20fail%20while%20seven%20controls%20pass%3B%20each%20failing%20case%20returns%20%60Ok(1)%60%20and%20replaces%20the%20pre-existing%20file.%0A-%20Corrected%20source%20%6025c45ef05d81bfee699dd3c7d351aefc27d83224%60%20passes%20the%20complete%20formats%20and%20engines%20test%20suites%3A%20**1%2C200%20passed%2C%200%20failed%2C%201%20existing%20network-download%20test%20ignored**.%20Added%20cases%20cover%20both%20GNU%20record%20kinds%2C%20missing%20padding%2C%20overflowing%20extents%2C%20retained%20existing%20files%2C%20fully%20padded%20records%2C%20and%20ordinary-member%20compatibility.%0A-%20Formatting%2C%20all-targets%20clippy%20with%20warnings%20denied%2C%20layers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20Cargo.lock%20stability%20all%20pass%20for%20that%20exact%20source.%0A%0AThe%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20the%20named%20craft-anything%20revisions.%20Final%20head%20%60541e27bacfb18cb7b060f25cb6f37b48daadd700%60%20adds%20only%20ROADMAP%20and%20STATUS%20verification%20notes%20after%20the%20tested%20source%3B%20source%20and%20test%20files%20are%20unchanged.%0A%0ARoadmap%3A%20R3.12.%0A",
+      "review_reply": "The remaining padding path is reproduced on production commit `69e7f5773d48368b18f22c2e7abe79d115589174`: four new cases (long name/link with short padding or overflowing extents) returned `Ok(1)` and overwrote the existing file, while seven controls passed. The follow-up marks these unavailable GNU record extents as `GnuMetadataTruncated`, so the existing installer check rejects them before writes. Ordinary members without trailing padding remain accepted. Exact corrected source `25c45ef05d81bfee699dd3c7d351aefc27d83224` passed formats and engines tests (1,200 passed, one existing network-download test ignored), fmt, clippy and all L0 gates: https://github.com/Afloat16/claude-mem/actions/runs/42659466852/job/129306793039."
     }
   ],
+  "padding_followup": {
+    "original_change": 8,
+    "original_pr": 1362,
+    "follows_pr": 1394,
+    "title": "fix(formats): reject incomplete GNU tar record extents",
+    "branch": "bugfix/r3.12-gnu-tar-padded-records-20261109",
+    "base": "69e7f5773d48368b18f22c2e7abe79d115589174",
+    "claim_sha": "9778dc5d1681df75db4590daba2e3827148140b7",
+    "latest_head": "541e27bacfb18cb7b060f25cb6f37b48daadd700",
+    "head_role": "Documentation completion after the exact tested source; source and test files unchanged.",
+    "candidate_branch": "validation/gnu-tar-record-extents-fixed-20261109",
+    "candidate_sha": "25c45ef05d81bfee699dd3c7d351aefc27d83224",
+    "source_sha": "25c45ef05d81bfee699dd3c7d351aefc27d83224",
+    "source_published_to_contribution_branch": true,
+    "validation_status": "success",
+    "validation_run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42659466852",
+    "validation_job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42659466852/job/129306793039",
+    "baseline": {
+      "branch": "validation/gnu-tar-record-extents-before-20261109",
+      "sha": "bec699d80a3f4d9ae977d20e6ceecc50af1e5dfe",
+      "tree": "2be6fe3f88c6cadcce10717c0c45d7388a59272b",
+      "base": "69e7f5773d48368b18f22c2e7abe79d115589174",
+      "production_unchanged": true,
+      "source_sha": "bec699d80a3f4d9ae977d20e6ceecc50af1e5dfe",
+      "production_base": "69e7f5773d48368b18f22c2e7abe79d115589174",
+      "passed_tests": 7,
+      "failed_tests": 4,
+      "ignored_tests": 0,
+      "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42659466852/job/129306793039",
+      "step": "Reproduce four extent failures with seven passing controls",
+      "step_conclusion": "success",
+      "expected_failure_observed": true,
+      "duplicate_summary_note": "The shell greps and prints the same summary a second time; counts represent one execution."
+    },
+    "review_url": "https://github.com/storytold/craft-anything/pull/1394#discussion_r4515122829",
+    "counts_as_additional_planned_change": false,
+    "source_url": "https://github.com/Afloat16/craft-anything/commit/25c45ef05d81bfee699dd3c7d351aefc27d83224",
+    "ready": true,
+    "body": "## Problem\nA GNU long-name or long-link record can contain its complete body but end before its 512-byte padding. The parser stopped with an earlier member list without setting the typed metadata stop reason, allowing the installer to overwrite an existing file and report success for a partial archive. An overflowing padded extent took the same unclassified stop path.\n\nThis follows the remaining record-extent case reported on #1394 after that PR was merged; #1394 already covers oversized identities and truncated metadata bodies.\n\n## Change\nRequire the complete padded extent of GNU `L` and `K` records and set `GnuMetadataTruncated` when padding is missing or checked extent arithmetic fails. The existing installer guard then rejects the archive before writing any member. Earlier members remain available for inspection, and ordinary files with complete data remain readable without trailing padding or an end marker.\n\n## Validation\nThe [exact-revision run](https://github.com/Afloat16/claude-mem/actions/runs/42659466852/job/129306793039) completed successfully and includes both the reproduction and the correction:\n\n- Test-only baseline `bec699d80a3f4d9ae977d20e6ceecc50af1e5dfe` leaves production code at upstream `69e7f5773d48368b18f22c2e7abe79d115589174`. Four new installer guards fail while seven controls pass; each failing case returns `Ok(1)` and replaces the pre-existing file.\n- Corrected source `25c45ef05d81bfee699dd3c7d351aefc27d83224` passes the complete formats and engines test suites: **1,200 passed, 0 failed, 1 existing network-download test ignored**. Added cases cover both GNU record kinds, missing padding, overflowing extents, retained existing files, fully padded records, and ordinary-member compatibility.\n- Formatting, all-targets clippy with warnings denied, layers, locks, secret scanning, WebAssembly checks and Cargo.lock stability all pass for that exact source.\n\nThe workflow runs in Afloat16/claude-mem and checks out the named craft-anything revisions. Final head `541e27bacfb18cb7b060f25cb6f37b48daadd700` adds only ROADMAP and STATUS verification notes after the tested source; source and test files are unchanged.\n\nRoadmap: R3.12.\n",
+    "compare_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-gnu-tar-padded-records-20261109",
+    "state": "prepared",
+    "merged": false,
+    "files": [
+      "crates/formats/src/tarcpio.rs",
+      "crates/engines/src/install.rs"
+    ],
+    "documentation_followup": {
+      "head_sha": "541e27bacfb18cb7b060f25cb6f37b48daadd700",
+      "parent_sha": "25c45ef05d81bfee699dd3c7d351aefc27d83224",
+      "files": [
+        "docs/ROADMAP.md",
+        "docs/STATUS.md"
+      ],
+      "source_and_tests_unchanged": true
+    },
+    "validation": {
+      "status": "success",
+      "source_sha": "25c45ef05d81bfee699dd3c7d351aefc27d83224",
+      "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42659466852",
+      "run_status": "completed",
+      "run_conclusion": "success",
+      "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42659466852/job/129306793039",
+      "job_status": "completed",
+      "job_conclusion": "success",
+      "passed_tests": 1200,
+      "failed_tests": 0,
+      "ignored_tests": 1,
+      "confirmed_steps": [
+        "GNU extent correction formatting",
+        "GNU extent correction regression tests",
+        "GNU extent correction clippy",
+        "GNU extent correction L0 gates"
+      ],
+      "l0_gates": [
+        "layers",
+        "locks",
+        "secrets",
+        "wasm",
+        "Cargo.lock unchanged"
+      ]
+    },
+    "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-gnu-tar-padded-records-20261109?expand=1&title=fix(formats)%3A%20reject%20incomplete%20GNU%20tar%20record%20extents&body=%23%23%20Problem%0AA%20GNU%20long-name%20or%20long-link%20record%20can%20contain%20its%20complete%20body%20but%20end%20before%20its%20512-byte%20padding.%20The%20parser%20stopped%20with%20an%20earlier%20member%20list%20without%20setting%20the%20typed%20metadata%20stop%20reason%2C%20allowing%20the%20installer%20to%20overwrite%20an%20existing%20file%20and%20report%20success%20for%20a%20partial%20archive.%20An%20overflowing%20padded%20extent%20took%20the%20same%20unclassified%20stop%20path.%0A%0AThis%20follows%20the%20remaining%20record-extent%20case%20reported%20on%20%231394%20after%20that%20PR%20was%20merged%3B%20%231394%20already%20covers%20oversized%20identities%20and%20truncated%20metadata%20bodies.%0A%0A%23%23%20Change%0ARequire%20the%20complete%20padded%20extent%20of%20GNU%20%60L%60%20and%20%60K%60%20records%20and%20set%20%60GnuMetadataTruncated%60%20when%20padding%20is%20missing%20or%20checked%20extent%20arithmetic%20fails.%20The%20existing%20installer%20guard%20then%20rejects%20the%20archive%20before%20writing%20any%20member.%20Earlier%20members%20remain%20available%20for%20inspection%2C%20and%20ordinary%20files%20with%20complete%20data%20remain%20readable%20without%20trailing%20padding%20or%20an%20end%20marker.%0A%0A%23%23%20Validation%0AThe%20%5Bexact-revision%20run%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fclaude-mem%2Factions%2Fruns%2F42659466852%2Fjob%2F129306793039)%20completed%20successfully%20and%20includes%20both%20the%20reproduction%20and%20the%20correction%3A%0A%0A-%20Test-only%20baseline%20%60bec699d80a3f4d9ae977d20e6ceecc50af1e5dfe%60%20leaves%20production%20code%20at%20upstream%20%6069e7f5773d48368b18f22c2e7abe79d115589174%60.%20Four%20new%20installer%20guards%20fail%20while%20seven%20controls%20pass%3B%20each%20failing%20case%20returns%20%60Ok(1)%60%20and%20replaces%20the%20pre-existing%20file.%0A-%20Corrected%20source%20%6025c45ef05d81bfee699dd3c7d351aefc27d83224%60%20passes%20the%20complete%20formats%20and%20engines%20test%20suites%3A%20**1%2C200%20passed%2C%200%20failed%2C%201%20existing%20network-download%20test%20ignored**.%20Added%20cases%20cover%20both%20GNU%20record%20kinds%2C%20missing%20padding%2C%20overflowing%20extents%2C%20retained%20existing%20files%2C%20fully%20padded%20records%2C%20and%20ordinary-member%20compatibility.%0A-%20Formatting%2C%20all-targets%20clippy%20with%20warnings%20denied%2C%20layers%2C%20locks%2C%20secret%20scanning%2C%20WebAssembly%20checks%20and%20Cargo.lock%20stability%20all%20pass%20for%20that%20exact%20source.%0A%0AThe%20workflow%20runs%20in%20Afloat16%2Fclaude-mem%20and%20checks%20out%20the%20named%20craft-anything%20revisions.%20Final%20head%20%60541e27bacfb18cb7b060f25cb6f37b48daadd700%60%20adds%20only%20ROADMAP%20and%20STATUS%20verification%20notes%20after%20the%20tested%20source%3B%20source%20and%20test%20files%20are%20unchanged.%0A%0ARoadmap%3A%20R3.12.%0A",
+    "review_reply": "The remaining padding path is reproduced on production commit `69e7f5773d48368b18f22c2e7abe79d115589174`: four new cases (long name/link with short padding or overflowing extents) returned `Ok(1)` and overwrote the existing file, while seven controls passed. The follow-up marks these unavailable GNU record extents as `GnuMetadataTruncated`, so the existing installer check rejects them before writes. Ordinary members without trailing padding remain accepted. Exact corrected source `25c45ef05d81bfee699dd3c7d351aefc27d83224` passed formats and engines tests (1,200 passed, one existing network-download test ignored), fmt, clippy and all L0 gates: https://github.com/Afloat16/claude-mem/actions/runs/42659466852/job/129306793039."
+  },
   "merged_primary_count": 8,
   "entries": [
     {
@@ -301,14 +449,20 @@
       "current_head": "7ff2027b989fdd3ed6b9ee4d927779b29b69e895",
       "verified_source_sha": "7ff2027b989fdd3ed6b9ee4d927779b29b69e895",
       "ready": true,
-      "body": "## Problem\nASAR JSON nodes with the wrong shape or missing file metadata were silently treated as empty files, and a non-object files map was accepted as an empty archive. That produces a plausible but incorrect inventory of damaged manifests.\n\n## Change\nValidate directory maps, node objects, link values, unsigned file sizes, packed offsets and unpacked markers. Keep valid empty files, numeric offsets, links and unpacked files supported, while retaining existing name and listing limits.\n\n## Validation\nAdded malformed-manifest fixtures and valid controls.\n\nExact source commit `7ff2027b989fdd3ed6b9ee4d927779b29b69e895` passed formatting, the complete formats test suite, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42659466852/job/129306793039). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `malformed_nodes_do_not_become_empty_files`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42659466852/job/129306793039).\n\nBranch head `7ff2027b989fdd3ed6b9ee4d927779b29b69e895` merges upstream `69e7f5773d48368b18f22c2e7abe79d115589174` with both parents retained; the exact merged source passed the verification above.\n\nRoadmap: R3.12.",
-      "published_review_body": null,
+      "body": "## Problem\nASAR JSON nodes with the wrong shape or missing file metadata were silently treated as empty files, and a non-object files map was accepted as an empty archive. That produces a plausible but incorrect inventory of damaged manifests.\n\n## Change\nValidate directory maps, node objects, link values, unsigned file sizes, packed offsets and unpacked markers. Keep valid empty files, numeric offsets, links and unpacked files supported, while retaining existing name and listing limits.\n\n## Validation\nAdded malformed-manifest fixtures and valid controls.\n\nExact source commit `7ff2027b989fdd3ed6b9ee4d927779b29b69e895` passed formatting, all 1072 formats tests, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42659466852/job/129306793039). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\n\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `malformed_nodes_do_not_become_empty_files`. The same regression cases pass in this branch.\n\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42659466852/job/129306793039).\n\nBranch head `7ff2027b989fdd3ed6b9ee4d927779b29b69e895` merges upstream `69e7f5773d48368b18f22c2e7abe79d115589174` with both parents retained; the exact merged source passed the verification above.\n\nRoadmap: R3.12.",
+      "published_review_body": {
+        "verified_via": "GitHub pull request API",
+        "observed_updated_at": "2026-11-09T16:54:54Z",
+        "head_sha": "7ff2027b989fdd3ed6b9ee4d927779b29b69e895",
+        "body": "## Problem\r\nASAR JSON nodes with the wrong shape or missing file metadata were silently treated as empty files, and a non-object files map was accepted as an empty archive. That produces a plausible but incorrect inventory of damaged manifests.\r\n\r\n## Change\r\nValidate directory maps, node objects, link values, unsigned file sizes, packed offsets and unpacked markers. Keep valid empty files, numeric offsets, links and unpacked files supported, while retaining existing name and listing limits.\r\n\r\n## Validation\r\nAdded malformed-manifest fixtures and valid controls.\r\n\r\nExact source commit `2c5df5307f4733355a4e88be1ebf58bbfb0b95d1` passed formatting, the complete formats test suite, and all-targets clippy with warnings denied in [remote validation](https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135). The workflow runs in Afloat16/claude-mem and checks out this exact craft-anything revision.\r\n\r\nWith production code fixed at upstream `1b5f516b07277036e9e6cca5e75c0a5ebdfcd9f1`, the [test-only baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) fails `malformed_nodes_do_not_become_empty_files`. The same regression cases pass in this branch.\r\n\r\nLayers, locks, secret scanning, WebAssembly checks and an unchanged Cargo.lock also passed for this exact revision in [the supplementary verification](https://github.com/Afloat16/claude-mem/actions/runs/42653593224/job/129286113135).\r\n\r\nBranch head `2c5df5307f4733355a4e88be1ebf58bbfb0b95d1` merges upstream `cdc8a880f1e60bce757ebac59e3f7983f084a1f8` with both parents retained; the exact merged source passed the verification above.\r\n\r\nRoadmap: R3.12.\r\n\r\n<!-- This is an auto-generated comment: release notes by coderabbit.ai -->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n  * Malformed ASAR directory, link, and file entries now return errors instead of being silently ignored or represented with fabricated default values.\n  * Valid packed files accept offsets expressed as decimal strings or unsigned numbers. Valid unpacked files may omit offsets.\n* **Documentation**\n  * Updated the format status and roadmap to describe ASAR validation behavior and related test coverage.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+        "equal_to_current_prepared_body": false
+      },
       "prepared_body_role": "Prepared update; published text is recorded separately and may differ in wording, counts or retained bot footer.",
       "last_verified_source": {
         "sha": "7ff2027b989fdd3ed6b9ee4d927779b29b69e895",
         "status": "success",
         "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42659466852/job/129306793039",
-        "passed_tests": null,
+        "passed_tests": 1072,
         "confirmed_steps": [
           "ASAR third formatting",
           "ASAR third regression tests",
@@ -343,11 +497,11 @@
         }
       ],
       "run_url": "https://github.com/Afloat16/claude-mem/actions/runs/42659466852",
-      "run_status": "in_progress",
-      "run_conclusion": null,
+      "run_status": "completed",
+      "run_conclusion": "success",
       "job_url": "https://github.com/Afloat16/claude-mem/actions/runs/42659466852/job/129306793039",
-      "job_status": "in_progress",
-      "job_conclusion": null
+      "job_status": "completed",
+      "job_conclusion": "success"
     },
     {
       "number": 3,
@@ -984,6 +1138,13 @@
     "merged_at": "2026-11-09T16:34:38Z",
     "merge_commit_sha": "69e7f5773d48368b18f22c2e7abe79d115589174",
     "follows_pr": 1362,
+    "original_review_resolution": {
+      "thread": "PRRT_kwDOVeM_1M61UMi_",
+      "reply_id": 4515588389,
+      "resolved": true,
+      "confirmed_by": "parent API readback",
+      "covered_by_pr": 1394
+    },
     "ready": true,
     "current_head_steps": [
       {
