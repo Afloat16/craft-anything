@@ -1,3 +1,4 @@
+use craft_anything_formats::FormatError;
 use craft_anything_formats::node_sea::NodeSea;
 use craft_anything_formats::packed::{MAX_ENTRIES, PackedFormat};
 
@@ -39,7 +40,11 @@ fn asset_retention_includes_the_main_entry_in_its_limit() {
 
 #[test]
 fn argument_retention_is_bounded_even_for_empty_strings() {
-    let arguments = vec![b"".as_slice(); MAX_ENTRIES + 1];
+    let mut arguments = vec![b"".as_slice(); MAX_ENTRIES + 1];
+    let ambiguous = blob(b"main.js", &[], &arguments);
+    assert!(matches!(NodeSea.list(&ambiguous), Err(FormatError::Unsupported(message)) if message.contains("more than one")));
+    // A nonempty final argument keeps legacy layouts from accepting the empty records as padding.
+    arguments[MAX_ENTRIES] = b"--end";
     let bytes = blob(b"main.js", &[], &arguments);
     let listing = NodeSea.list(&bytes).unwrap();
     assert_eq!(listing.facts["exec_argv"].as_array().unwrap().len(), MAX_ENTRIES);

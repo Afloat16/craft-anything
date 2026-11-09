@@ -115,12 +115,28 @@ fn a_truncated_bag_header_cannot_borrow_its_parent_from_a_sibling() {
 
 #[test]
 fn well_formed_table_entries_and_pools_are_unchanged() {
-    let table = parse(&resources_arsc(), Limits::default()).unwrap();
-    assert!(table.warnings.is_empty(), "{:?}", table.warnings);
-    assert_eq!(table.packages.len(), 1);
-    assert_eq!(table.packages[0].keys, 3);
-    assert_eq!(table.entries.len(), 5);
-    let strings = table.strings_by_locale();
-    assert_eq!(strings["fr"][0], ("app_name".to_string(), "Notes FR".to_string()));
-    assert_eq!(table.entries[4].parent.as_deref(), Some("@0x01030005"));
+    for legacy in [false, true] {
+        let mut bytes = resources_arsc();
+        if legacy {
+            let start = package_start(&bytes);
+            let size = u32_at(&bytes, start + 4);
+            let types = u32_at(&bytes, start + 268);
+            let keys = u32_at(&bytes, start + 276);
+            bytes.drain(start + 284..start + 288);
+            bytes[start + 2..start + 4].copy_from_slice(&284u16.to_le_bytes());
+            put32(&mut bytes, start + 4, size - 4);
+            put32(&mut bytes, start + 268, types - 4);
+            put32(&mut bytes, start + 276, keys - 4);
+            let len = bytes.len();
+            put32(&mut bytes, 4, len);
+        }
+        let table = parse(&bytes, Limits::default()).unwrap();
+        assert!(table.warnings.is_empty(), "{:?}", table.warnings);
+        assert_eq!(table.packages.len(), 1);
+        assert_eq!(table.packages[0].keys, 3);
+        assert_eq!(table.entries.len(), 5);
+        let strings = table.strings_by_locale();
+        assert_eq!(strings["fr"][0], ("app_name".to_string(), "Notes FR".to_string()));
+        assert_eq!(table.entries[4].parent.as_deref(), Some("@0x01030005"));
+    }
 }
