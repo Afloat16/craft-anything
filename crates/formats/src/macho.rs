@@ -150,6 +150,30 @@ fn nibble_version(v: u32) -> String {
     format!("{}.{}.{}", v >> 16, (v >> 8) & 0xff, v & 0xff)
 }
 
+// A thread command can carry several flavor/count/state records. Counts are 32-bit words.
+fn unixthread_pc(data: &[u8], cpu: u32, is64: bool) -> Option<u64> {
+    let r = Reader::new(data);
+    let mut pos = 0usize;
+    for _ in 0..MAX_CMDS {
+        let flavor = r.u32_le(pos)?;
+        let count = r.u32_le(pos.checked_add(4)?)?;
+        let state = pos.checked_add(8)?;
+        let size = usize::try_from(count).ok()?.checked_mul(4)?;
+        let record = Reader::new(r.slice(state, size)?);
+        let pc = match (cpu, is64, flavor) {
+            (0x0100_0007, true, 4) if count >= 42 => record.u64_le(16 * 8),
+            (0x0100_000c, true, 6) if count >= 68 => record.u64_le(32 * 8),
+            (7, false, 1) if count >= 16 => record.u32_le(10 * 4).map(u64::from),
+            _ => None,
+        };
+        if pc.is_some() {
+            return pc;
+        }
+        pos = state.checked_add(size)?;
+    }
+    None
+}
+
 /// Add Mach-O facts. `data` is the (thin) slice.
 pub fn enrich(data: &[u8], b: &mut Binary) {
     let r = Reader::new(data);
@@ -278,14 +302,7 @@ pub fn enrich(data: &[u8], b: &mut Binary) {
             }
             0x8000_0028 => entryoff = r.u64_le(pos + 8),
             0x5 => {
-                // flavor, count, state…
-                let state = pos + 16;
-                thread_pc = match r.u32_le(pos + 8) {
-                    Some(4) => r.u64_le(state + 16 * 8),                         // x86_THREAD_STATE64: rip
-                    Some(6) => r.u64_le(state + 32 * 8),                         // ARM_THREAD_STATE64: pc
-                    Some(1) if !is64 => r.u32_le(state + 10 * 4).map(u64::from), // i386: eip
-                    _ => None,
-                };
+                thread_pc = thread_pc.or_else(|| unixthread_pc(data.get(pos + 8..end)?, r.u32_le(4)?, is64));
             }
             0x26 => fstarts = Some((r.u32_le(pos + 8).unwrap_or(0), r.u32_le(pos + 12).unwrap_or(0))),
             0x1d => b.mitigations.code_signature = Some(true),
