@@ -26,7 +26,7 @@
     "source": "1179870c55203d946bb8a7412b9b8f1088352fe3",
     "before": "3ad1f5b0d33a336b744b6f653f85eb1635622422",
     "ownership_before": "f607786f68c16bdc85968ea35ec4ac76ff3d320f",
-    "status": "published upstream follow-up PR",
+    "status": "merged upstream follow-up PR",
     "validation": "https://github.com/Afloat16/claude-mem/actions/runs/42649963480/job/129273346728",
     "counts_as_new_target": false,
     "title": "Preserve unambiguous ELF import slots across version-library metadata (R3.12)",
@@ -36,13 +36,25 @@
     "upstream_pr": {
       "number": 1393,
       "url": "https://github.com/storytold/craft-anything/pull/1393",
-      "state": "open",
-      "merged": false,
+      "state": "closed",
+      "merged": true,
       "head": "ca4e03b2991ff6641a230f36e6b53b57047e2535",
       "base": "cdc8a880f1e60bce757ebac59e3f7983f084a1f8",
-      "mergeable": true,
+      "mergeable": null,
       "maintainer_can_modify": false,
-      "verified_at": "2026-11-09T16:14:26Z"
+      "verified_at": "2026-11-09T16:47:10Z",
+      "merged_at": "2026-11-09T16:29:57Z",
+      "merge_commit_sha": "4a0c164da8b2de270afe773098b5282571cccc5a"
+    },
+    "original_review_closure": {
+      "thread_id": "PRRT_kwDOVeM_1M61UEA9",
+      "resolved": true,
+      "verified_at": "2026-11-09T16:47:10Z",
+      "reply_id": 4515322355,
+      "reply_url": "https://github.com/storytold/craft-anything/pull/1365#discussion_r4515322355",
+      "reply_body": "Fixed in merged #1393. Explicit parser slots and exact library matches stay preferred; the unlabelled ELF fallback now requires both a unique slot address and an unambiguous import-library identity.\r\n\r\nThree additional parse_binary regressions cover versioned GLOB_DAT/JUMP_SLOT recovery, distinct candidate addresses, and same-named imports from different GNU version libraries. All five import-slot integration tests, the complete formats suite, fmt, clippy and required L0 checks passed at 1179870c55203d946bb8a7412b9b8f1088352fe3: https://github.com/Afloat16/claude-mem/actions/runs/42649963480/job/129273346728 . The follow-up was merged as 4a0c164da8b2de270afe773098b5282571cccc5a.",
+      "followup_pr": "https://github.com/storytold/craft-anything/pull/1393",
+      "followup_merge_commit": "4a0c164da8b2de270afe773098b5282571cccc5a"
     }
   }
 }

@@ -9,7 +9,7 @@
     "implemented_independent_fork_branches": 10,
     "upstream_prs_created": 10,
     "merged": 9,
-    "validation": "All ten original implementations and both review corrections passed the recorded tests and gates. The merged ELF-slot item now has follow-up PR #1393; it does not increase the ten-item target.",
+    "validation": "All ten original implementations and both review corrections passed the recorded tests and gates. Follow-up PR #1393 for the merged ELF-slot item has also merged and its original review thread is resolved; it does not increase the ten-item target.",
     "blockers": [],
     "ready_for_submission": [],
     "new_regression_and_control_tests": 39,
@@ -17,13 +17,15 @@
     "control_cases": 11,
     "publication": "Ten original upstream PRs; 9 merged and 1 open at this snapshot.",
     "upstream_prs_open": 1,
-    "publication_verified_at": "2026-11-09T16:14:26Z",
+    "publication_verified_at": "2026-11-09T16:46:15Z",
     "review_followups_pending": [],
     "followup_pr_ready": false,
     "original_pr_test_cases": 36,
     "followup_pr_test_cases": 3,
     "followup_prs_created": 1,
-    "followup_prs_counted_as_new_target": 0
+    "followup_prs_counted_as_new_target": 0,
+    "followup_prs_merged": 1,
+    "followup_verified_at": "2026-11-09T16:47:10Z"
   },
   "entries": [
     {
@@ -118,13 +120,61 @@
       "integration_before_validation": null,
       "validation_pr_closed": true,
       "review_correction": {
-        "previous_head": "b450b193912c0d0766abab7c339ac5c5f8bec44a",
-        "before": "460e4243f8373735a0c6ea93952b34a8522a75eb",
-        "before_branch": "test/r3.12-native-review-1-20261109",
-        "after": "cf95f3b705efa60f7910c4506fadda22f75a3bbc",
-        "after_branch": "validation/r3.12-native-review-1-20261109",
-        "tree": "66f39a0bc938dae362c1a791da82a2682110ddb2",
-        "status": "verification_pending"
+        "original_attempt": {
+          "previous_head": "b450b193912c0d0766abab7c339ac5c5f8bec44a",
+          "before": "460e4243f8373735a0c6ea93952b34a8522a75eb",
+          "before_branch": "test/r3.12-native-review-1-20261109",
+          "after": "cf95f3b705efa60f7910c4506fadda22f75a3bbc",
+          "after_branch": "validation/r3.12-native-review-1-20261109",
+          "tree": "66f39a0bc938dae362c1a791da82a2682110ddb2",
+          "status": "superseded by current-main follow-up"
+        },
+        "status": "merged and original review resolved",
+        "upstream_pr": {
+          "number": 1393,
+          "url": "https://github.com/storytold/craft-anything/pull/1393",
+          "state": "closed",
+          "merged": true,
+          "head": "ca4e03b2991ff6641a230f36e6b53b57047e2535",
+          "base": "cdc8a880f1e60bce757ebac59e3f7983f084a1f8",
+          "mergeable": null,
+          "maintainer_can_modify": false,
+          "verified_at": "2026-11-09T16:47:10Z",
+          "merged_at": "2026-11-09T16:29:57Z",
+          "merge_commit_sha": "4a0c164da8b2de270afe773098b5282571cccc5a"
+        },
+        "source_tested_sha": "1179870c55203d946bb8a7412b9b8f1088352fe3",
+        "before": "3ad1f5b0d33a336b744b6f653f85eb1635622422",
+        "ownership_before": "f607786f68c16bdc85968ea35ec4ac76ff3d320f",
+        "verification": {
+          "status": "success",
+          "sha": "1179870c55203d946bb8a7412b9b8f1088352fe3",
+          "run": 42649963480,
+          "job": 129273346728,
+          "url": "https://github.com/Afloat16/claude-mem/actions/runs/42649963480/job/129273346728",
+          "commands": [
+            "cargo fmt --all -- --check",
+            "cargo test --locked -p craft-anything-formats",
+            "cargo clippy --locked -p craft-anything-formats --all-targets -- -D warnings",
+            "cargo xtask layers",
+            "cargo xtask locks",
+            "cargo xtask secrets",
+            "cargo xtask wasm",
+            "git diff --exit-code -- Cargo.lock"
+          ],
+          "new_integration_tests": 3
+        },
+        "original_review_closure": {
+          "thread_id": "PRRT_kwDOVeM_1M61UEA9",
+          "resolved": true,
+          "verified_at": "2026-11-09T16:47:10Z",
+          "reply_id": 4515322355,
+          "reply_url": "https://github.com/storytold/craft-anything/pull/1365#discussion_r4515322355",
+          "reply_body": "Fixed in merged #1393. Explicit parser slots and exact library matches stay preferred; the unlabelled ELF fallback now requires both a unique slot address and an unambiguous import-library identity.\r\n\r\nThree additional parse_binary regressions cover versioned GLOB_DAT/JUMP_SLOT recovery, distinct candidate addresses, and same-named imports from different GNU version libraries. All five import-slot integration tests, the complete formats suite, fmt, clippy and required L0 checks passed at 1179870c55203d946bb8a7412b9b8f1088352fe3: https://github.com/Afloat16/claude-mem/actions/runs/42649963480/job/129273346728 . The follow-up was merged as 4a0c164da8b2de270afe773098b5282571cccc5a.",
+          "followup_pr": "https://github.com/storytold/craft-anything/pull/1393",
+          "followup_merge_commit": "4a0c164da8b2de270afe773098b5282571cccc5a"
+        },
+        "counts_as_new_target": false
       }
     },
     {
@@ -1096,7 +1146,7 @@
       "original_item": 1,
       "original_pr": 1365,
       "counts_as_new_target": false,
-      "status": "published upstream follow-up PR",
+      "status": "merged upstream follow-up PR",
       "branch": "bugfix/r3.12-elf-versioned-import-slot-fallback-20261109",
       "base": "efddbdeb6868f10a3d8d53f114d47aed72b89612",
       "claim": "d3e6bf46c064bd4d4a28c5859ce60ecb1254fe6a",
@@ -1147,13 +1197,25 @@
       "upstream_pr": {
         "number": 1393,
         "url": "https://github.com/storytold/craft-anything/pull/1393",
-        "state": "open",
-        "merged": false,
+        "state": "closed",
+        "merged": true,
         "head": "ca4e03b2991ff6641a230f36e6b53b57047e2535",
         "base": "cdc8a880f1e60bce757ebac59e3f7983f084a1f8",
-        "mergeable": true,
+        "mergeable": null,
         "maintainer_can_modify": false,
-        "verified_at": "2026-11-09T16:14:26Z"
+        "verified_at": "2026-11-09T16:47:10Z",
+        "merged_at": "2026-11-09T16:29:57Z",
+        "merge_commit_sha": "4a0c164da8b2de270afe773098b5282571cccc5a"
+      },
+      "original_review_closure": {
+        "thread_id": "PRRT_kwDOVeM_1M61UEA9",
+        "resolved": true,
+        "verified_at": "2026-11-09T16:47:10Z",
+        "reply_id": 4515322355,
+        "reply_url": "https://github.com/storytold/craft-anything/pull/1365#discussion_r4515322355",
+        "reply_body": "Fixed in merged #1393. Explicit parser slots and exact library matches stay preferred; the unlabelled ELF fallback now requires both a unique slot address and an unambiguous import-library identity.\r\n\r\nThree additional parse_binary regressions cover versioned GLOB_DAT/JUMP_SLOT recovery, distinct candidate addresses, and same-named imports from different GNU version libraries. All five import-slot integration tests, the complete formats suite, fmt, clippy and required L0 checks passed at 1179870c55203d946bb8a7412b9b8f1088352fe3: https://github.com/Afloat16/claude-mem/actions/runs/42649963480/job/129273346728 . The follow-up was merged as 4a0c164da8b2de270afe773098b5282571cccc5a.",
+        "followup_pr": "https://github.com/storytold/craft-anything/pull/1393",
+        "followup_merge_commit": "4a0c164da8b2de270afe773098b5282571cccc5a"
       }
     },
     {
