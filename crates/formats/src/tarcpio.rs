@@ -31,6 +31,14 @@ pub struct Member {
     pub mode: u32,
 }
 
+/// Why GNU tar name metadata stopped a walk that still retains earlier members.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopReason {
+    GnuMetadataTooLong,
+    GnuMetadataTruncated,
+}
+
 /// The members of an archive.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct Listing {
@@ -43,6 +51,9 @@ pub struct Listing {
     pub complete: bool,
     /// True when `max_members` stopped the walk.
     pub truncated: bool,
+    /// GNU metadata that prevented reading the remaining member identities.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<StopReason>,
     pub warnings: Vec<String>,
 }
 
@@ -158,12 +169,14 @@ pub fn tar(data: &[u8], max_members: usize) -> Option<Listing> {
         match typeflag {
             b'L' | b'K' => {
                 let Some(body) = body else {
+                    out.stop_reason = Some(StopReason::GnuMetadataTruncated);
                     out.warnings.push(format!("GNU long-name data ends early at {pos:#x}"));
                     out.length = data.len() as u64;
                     break;
                 };
                 let end = body.iter().take(MAX_NAME + 1).position(|&byte| byte == 0).unwrap_or(body.len());
                 if end > MAX_NAME {
+                    out.stop_reason = Some(StopReason::GnuMetadataTooLong);
                     out.warnings.push(format!("GNU long name or link exceeds {MAX_NAME} bytes at {pos:#x}"));
                     out.length = pos as u64;
                     break;
@@ -470,6 +483,7 @@ mod tests {
             ]);
             let listing = tar(&data, 10).unwrap();
             assert!(!listing.complete);
+            assert_eq!(listing.stop_reason, Some(StopReason::GnuMetadataTooLong));
             assert_eq!(listing.members.len(), 1);
             assert_eq!(listing.members[0].name, "before");
             assert_eq!(member_data(&data, &listing.members[0]).unwrap(), b"kept");
@@ -497,6 +511,29 @@ mod tests {
         padded.resize(MAX_NAME + 100, 0);
         let data = fx::tar_entries(&[("././@LongLink", b'L', &padded, ""), ("fallback", b'0', b"payload", "")]);
         assert_eq!(tar(&data, 10).unwrap().members[0].name, "short");
+    }
+
+
+    #[test]
+    fn gnu_metadata_stop_reasons_keep_partial_listings_and_marker_compatibility() {
+        for kind in *b"LK" {
+            let mut data = fx::tar_entries(&[("before", b'0', b"kept", ""), ("././@LongLink", kind, b"long\0", ""), ("fallback", b'0', b"later", "")]);
+            data.truncate(3 * BLOCK + 2);
+            let listing = tar(&data, 10).unwrap();
+            assert_eq!(listing.stop_reason, Some(StopReason::GnuMetadataTruncated));
+            assert!(!listing.complete);
+            assert!(!listing.truncated);
+            assert_eq!(listing.members.len(), 1);
+            assert_eq!(member_data(&data, &listing.members[0]).unwrap(), b"kept");
+        }
+        let mut data = fx::tar_entries(&[("file", b'0', b"kept", "")]);
+        data.truncate(2 * BLOCK);
+        let listing = tar(&data, 10).unwrap();
+        assert!(!listing.complete);
+        assert_eq!(listing.stop_reason, None);
+        assert_eq!(member_data(&data, &listing.members[0]).unwrap(), b"kept");
+        let cpio_listing = cpio(&fx::cpio_newc(&[("file", b"kept", 0o100644)]), 10).unwrap();
+        assert_eq!(cpio_listing.stop_reason, None);
     }
 
     #[test]
