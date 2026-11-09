@@ -449,6 +449,7 @@ been run live.
 - [ ] The carry-on and follow-up prompts (`continue_prompt`, `follow_up`) ask an API-loop builder
       to check its work with rebuild_check, which the loop refuses while it builds; only its first
       message says so. Say "Craft Anything checks it after your turn" there instead
+      — claimed: Afloat16, branch bugfix/r5.4-api-follow-up-check
 - [x] When a server refuses a request for its context window and says the size (Ollama, llama.cpp,
       OpenAI-style), fit the conversation to that window and ask once more, else say how to raise it (#962)
 - [x] Ollama fits a long prompt to its context by dropping the oldest messages, and a Qwen 3.8 model
