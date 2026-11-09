@@ -1312,6 +1312,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch feature/r3.9-unity-float-textures
 - [ ] Unreal 5 and Oodle: IoStore packages, unversioned properties and Oodle-compressed paks
 - [ ] Game files: save pictures from IoStore containers (needs the Unreal 5 support above)
+- [ ] Unreal: decode cooked half- and full-precision floating-point textures with the shared bounded pixel reader.
+      — claimed: Afloat16, branch feature/r3.9-unreal-float-textures-20261109
 - [ ] Unreal: sounds and meshes out (so a Deep-mode rebuild needs no outside converter for them)
 
 ### R3.11 Single-file apps, game files and stand-in backends
