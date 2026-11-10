@@ -267,6 +267,10 @@ only when it's green and a maintainer has fully reviewed it, code as well as wor
       — claimed: Codex, branch docs/r5.2-headless-status
 - [x] A spinner on screen no longer makes the window redraw at the display's rate: egui's own asks
       for a frame at once every frame, ours at the animation's pace (`widgets::Spinner`, #579)
+- [x] A job whose progress isn't known no longer makes the window redraw at the display's rate:
+      the jobs list used egui's animated `ProgressBar`, which asks for a frame at once every frame
+      like egui's spinner did (`widgets::ProgressBar`)
+      — claimed: Claude, branch bugfix/r5.2-paced-progress-bar
 - [ ] Measure #579 on Windows 11 (0.3.0 portable): the app's CPU while idle, while a build runs and
       during a website capture, before and after; and why a website capture is slow and sits for a
       long time (no details were given, so nothing was changed for it)
@@ -1902,7 +1906,7 @@ Owner: open · Status: in progress
       and [layers, locks, secret scanning, wasm checks and Cargo.lock stability](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).
       The [unchanged-code baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) reproduces the new regression cases.
 
-- [ ] Recover zero-filled holes in cramfs file block runs without treating an empty stored block as failed compressed data.
+- [x] Recover zero-filled holes in cramfs file block runs without treating an empty stored block as failed compressed data.
       — claimed: Afloat16, branch feature/r3.12-cramfs-sparse-blocks-20261110
 
 ### R3.13 Web inspection correctness

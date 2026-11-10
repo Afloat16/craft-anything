@@ -574,3 +574,11 @@ their immediate model directory as a task hint, with either path separator. Name
 publisher prefixes and unrelated words are not classified by arbitrary ancestor directories.
 Regression tests cover mixed model lists and servers listing only specialised models through
 the local discovery API. Classification remains a name heuristic; it does not probe model capabilities.
+
+## Sparse cramfs file data
+
+The cramfs reader expands zero-length stored blocks into their logical zero-filled spans,
+including a short final block, without moving the next compressed block. Sparse bytes consume
+the same per-file and total recovery budgets as compressed data. Regression tests cover mixed
+compressed/sparse runs, short tails and the existing nested-file reader; a generated sparse
+filesystem also recovers both original file payloads.

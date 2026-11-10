@@ -121,10 +121,14 @@ fn file_data(data: &[u8], ino: &Inode, limits: &Limits, img: &mut FsImage) -> Op
             img.complete = false;
             return None;
         }
+        let expected = ino.size.saturating_sub(i.saturating_mul(BLK)).min(BLK);
+        if end == block_start {
+            out.resize(out.len().checked_add(expected)?, 0);
+            continue;
+        }
         let comp = data.get(block_start..end)?;
         match crate::firmware::inflate(comp, true, BLK as u64, true) {
             Ok(inf) => {
-                let expected = ino.size.saturating_sub(i.saturating_mul(BLK)).min(BLK);
                 if inf.produced != expected as u64 {
                     img.warn("cramfs block output does not match the file size");
                     img.complete = false;
@@ -148,6 +152,48 @@ fn file_data(data: &[u8], ino: &Inode, limits: &Limits, img: &mut FsImage) -> Op
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cramfs_sparse_final_block_keeps_its_declared_size() {
+        let mut data = craft_anything_testkit::firmware::cramfs_image();
+        // The first file has one block: an unchanged end pointer represents a hole.
+        data[136..140].copy_from_slice(&140u32.to_le_bytes());
+        let img = read(&data, &Limits::default());
+        assert!(img.complete, "{:?}", img.warnings);
+        let file = img.entries.iter().find(|entry| entry.path == "hello.txt").unwrap();
+        assert_eq!(file.size, 19);
+        assert_eq!(file.data.as_deref(), Some([0u8; 19].as_slice()));
+        assert_eq!(img.entries.iter().find(|entry| entry.path == "dir/inner").unwrap().data.as_deref(), Some(b"nested".as_slice()));
+        assert_eq!(img.bytes, 25);
+    }
+
+    #[test]
+    fn cramfs_sparse_blocks_keep_following_compressed_data_in_place() {
+        let body = vec![b'x'; BLK];
+        let first = craft_anything_testkit::firmware::zlib(&body);
+        let tail = craft_anything_testkit::firmware::zlib(b"tail");
+        let end = 12 + first.len();
+        let mut data = Vec::new();
+        for pointer in [end, end, end + tail.len()] {
+            data.extend_from_slice(&(pointer as u32).to_le_bytes());
+        }
+        data.extend_from_slice(&first);
+        data.extend_from_slice(&tail);
+        let inode = Inode { mode: 0x8000, size: BLK * 2 + 4, namelen: 0, offset: 0 };
+        let mut img = FsImage::new("cramfs");
+        let recovered = file_data(&data, &inode, &Limits::default(), &mut img).unwrap();
+        assert_eq!(&recovered[..BLK], body);
+        assert_eq!(&recovered[BLK..BLK * 2], vec![0u8; BLK]);
+        assert_eq!(&recovered[BLK * 2..], b"tail");
+        assert_eq!(img.bytes, inode.size as u64);
+        assert!(img.complete, "{:?}", img.warnings);
+
+        let mut limited = FsImage::new("cramfs");
+        let limits = Limits { max_total_bytes: inode.size as u64 - 1, ..Limits::default() };
+        assert!(file_data(&data, &inode, &limits, &mut limited).is_none());
+        assert_eq!(limited.bytes, 0);
+        assert!(!limited.complete);
+    }
 
     #[test]
     fn reads_a_small_image() {
