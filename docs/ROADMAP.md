@@ -1559,7 +1559,7 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Read the explicit module-format byte in current Node SEA blobs while retaining the older layouts;
+- [x] Read the explicit module-format byte in current Node SEA blobs while retaining the older layouts;
       report the stored format and recover the main script, assets and execution arguments at their real offsets.
       — claimed: Afloat16, branch bugfix/r3.12-node-sea-module-format-20261110
 - [x] Keep sequence splitting from introducing JavaScript strict-mode directives.
