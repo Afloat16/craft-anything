@@ -448,7 +448,8 @@ pub struct ApkSigner {
     pub digest_matches: bool,
     /// The signer's first certificate's public key matched the signing public key.
     pub public_key_matches_certificate: bool,
-    /// Overall: signature valid AND content digest matches AND key matches the certificate.
+    /// Overall: required signer fields agree, signature valid, content digest matches and
+    /// the signing key matches the certificate.
     pub verified: bool,
     pub algorithm: Option<String>,
     /// SHA-256 of the signer's first certificate: the fingerprint users compare.
@@ -478,6 +479,9 @@ fn apk_algorithm(id: u32) -> Option<(SigScheme, Digest, bool)> {
 /// Verify one APK v2/v3 signer against the full APK bytes.
 pub fn verify_apk_signer(apk: &[u8], block_offset: u64, signer: &crate::apk_sign::Signer) -> ApkSigner {
     let mut notes = Vec::new();
+    if let Some(reason) = signer.verification_error {
+        notes.push(reason.into());
+    }
     let certificate_sha256 = signer.certificates.first().map(|c| sha256_hex(c));
     let public_key_matches_certificate = match (signer.certificates.first(), der::spki_parts(&signer.public_key)) {
         (Some(c), Some((_, _))) => der::certificate_spki(c) == Some(signer.public_key.as_slice()),
@@ -527,7 +531,7 @@ pub fn verify_apk_signer(apk: &[u8], block_offset: u64, signer: &crate::apk_sign
             }
         }
     };
-    let verified = signature_valid.is_valid() && digest_matches && public_key_matches_certificate;
+    let verified = signer.verification_error.is_none() && signature_valid.is_valid() && digest_matches && public_key_matches_certificate;
     ApkSigner {
         scheme: signer.scheme,
         signature_valid,
