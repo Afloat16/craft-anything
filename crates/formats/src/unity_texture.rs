@@ -148,6 +148,7 @@ const FORMATS: &[(i32, &str)] = &[
     (27, "BC5"),
     (28, "DXT1Crunched"),
     (29, "DXT5Crunched"),
+    (34, "ETC_RGB4"),
     (62, "RG16"),
     (63, "R8"),
 ];
@@ -182,6 +183,7 @@ fn layout(format: i32) -> Option<Layout> {
         25 => Layout::Bc7,
         26 => Layout::Bc4,
         27 => Layout::Bc5,
+        34 => Layout::Etc1,
         62 => Layout::Rg8,
         63 => Layout::R8,
         _ => return None,

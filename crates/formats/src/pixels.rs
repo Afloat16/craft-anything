@@ -1,5 +1,5 @@
 //! Turning game textures' stored pixels into RGBA: uncompressed layouts and the 4×4 block formats
-//! (DXT1/BC1, DXT3/BC2, DXT5/BC3, BC4, BC5, BC6H and BC7). Shared by the Unity and Unreal readers; rows come out in the
+//! (DXT1/BC1, DXT3/BC2, DXT5/BC3, BC4, BC5, BC6H, BC7 and ETC1). Shared by the Unity and Unreal readers; rows come out in the
 //! order they're stored (Unity stores the bottom row first, Unreal the top).
 
 use crate::bptc;
@@ -47,6 +47,8 @@ pub enum Layout {
     /// BC6H with signed half floats.
     Bc6hSigned,
     Bc7,
+    /// ETC1 RGB, with individual or differential base colours.
+    Etc1,
 }
 
 /// Bytes of a `width`×`height` picture in `layout`.
@@ -60,7 +62,7 @@ pub fn size(layout: Layout, width: u32, height: u32) -> Option<usize> {
         Layout::Rgba32 | Layout::Argb32 | Layout::Bgra32 | Layout::RgHalf | Layout::RFloat | Layout::Rgb9e5 => w.checked_mul(h)?.checked_mul(4),
         Layout::RgbaHalf | Layout::RgFloat => w.checked_mul(h)?.checked_mul(8),
         Layout::RgbaFloat => w.checked_mul(h)?.checked_mul(16),
-        Layout::Dxt1 | Layout::Bc4 => blocks.checked_mul(8),
+        Layout::Dxt1 | Layout::Bc4 | Layout::Etc1 => blocks.checked_mul(8),
         Layout::Dxt3 | Layout::Dxt5 | Layout::Bc5 | Layout::Bc6h | Layout::Bc6hSigned | Layout::Bc7 => blocks.checked_mul(16),
     }
 }
@@ -114,6 +116,44 @@ fn dxt_texels(b: &[u8; 8], punch: bool) -> [[u8; 4]; 16] {
     let colours = dxt_colours(b, punch);
     let bits = u32::from_le_bytes([b[4], b[5], b[6], b[7]]);
     std::array::from_fn(|k| colours[((bits >> (2 * k)) & 3) as usize])
+}
+
+/// ETC1 uses big-endian blocks and column-major selector bits, independently of the split.
+/// Differential bases outside RGB555 are undefined by the format and are refused.
+fn etc1(block: &[u8; 8]) -> Option<[[u8; 4]; 16]> {
+    const MODIFIERS: [[i16; 2]; 8] = [[2, 8], [5, 17], [9, 29], [13, 42], [18, 60], [24, 80], [33, 106], [47, 183]];
+    let bits = u64::from_be_bytes(*block);
+    let differential = bits & (1 << 33) != 0;
+    let horizontal = bits & (1 << 32) != 0;
+    let mut bases = [[0i16; 3]; 2];
+    for (channel, shift) in [56, 48, 40].into_iter().enumerate() {
+        let value = ((bits >> shift) & 255) as i16;
+        let (first, second) = if differential {
+            let first = value >> 3;
+            let delta = ((value & 7) ^ 4) - 4;
+            let second = first + delta;
+            if !(0..=31).contains(&second) {
+                return None;
+            }
+            ((first << 3) | (first >> 2), (second << 3) | (second >> 2))
+        } else {
+            ((value >> 4) * 17, (value & 15) * 17)
+        };
+        bases[0][channel] = first;
+        bases[1][channel] = second;
+    }
+    let first_table = MODIFIERS.get(((bits >> 37) & 7) as usize)?;
+    let second_table = MODIFIERS.get(((bits >> 34) & 7) as usize)?;
+    Some(std::array::from_fn(|pixel| {
+        let (x, y) = (pixel % 4, pixel / 4);
+        let second = if horizontal { y >= 2 } else { x >= 2 };
+        let (base, table) = if second { (bases[1], second_table) } else { (bases[0], first_table) };
+        let selector = x * 4 + y;
+        let magnitude = if bits & (1 << selector) == 0 { table[0] } else { table[1] };
+        let delta = if bits & (1 << (selector + 16)) == 0 { magnitude } else { -magnitude };
+        let rgb = base.map(|channel| (channel + delta).clamp(0, 255) as u8);
+        [rgb[0], rgb[1], rgb[2], 255]
+    }))
 }
 
 /// The 16 values of an 8-byte single-channel block (DXT5's alpha, BC4, each half of BC5).
@@ -272,6 +312,18 @@ pub fn decode_with_limit(layout: Layout, width: u32, height: u32, data: &[u8], m
         Layout::Bc6h => blocks(&mut out, w, h, data.as_chunks::<16>().0.iter().map(|b| bptc::bc6h(b, false))),
         Layout::Bc6hSigned => blocks(&mut out, w, h, data.as_chunks::<16>().0.iter().map(|b| bptc::bc6h(b, true))),
         Layout::Bc7 => blocks(&mut out, w, h, data.as_chunks::<16>().0.iter().map(bptc::bc7)),
+        Layout::Etc1 => {
+            let mut valid = true;
+            let texels = data.as_chunks::<8>().0.iter().map_while(|block| {
+                let pixels = etc1(block);
+                valid &= pixels.is_some();
+                pixels
+            });
+            blocks(&mut out, w, h, texels);
+            if !valid {
+                return Err(FormatError::Malformed("ETC1 differential colour is outside its five-bit range".into()));
+            }
+        }
     }
     Ok(out)
 }
