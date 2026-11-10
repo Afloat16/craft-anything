@@ -1810,6 +1810,8 @@ Owner: open · Status: in progress
       and added extensions, so a later `A…` reference named the wrong node
       (`[Swift.String : Swift.String]` where the symbol says `Swift.String?`) or fell out of range.
       — claimed: Chr0mium24, branch bugfix/r3.12-swift-demangle-substitutions
+- [ ] Charge saved Swift substitution trees and repeated copies against the expansion budget before cloning.
+      — claimed: Afloat16, branch bugfix/r3.12-swift-substitution-copy-budget-20261110
 - [x] Swift symbols read `SQ` as `Swift.Equatable`. The demangler's table of standard types mapped
       it to the enum `Swift.ImplicitlyUnwrappedOptional`, so `_$sSQMp` read "protocol descriptor for
       Swift.ImplicitlyUnwrappedOptional", a requirement read `A: Swift.ImplicitlyUnwrappedOptional`,
