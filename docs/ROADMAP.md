@@ -1920,7 +1920,7 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-go-pclntab-prefix-20261110
 - [x] Keep the report's function display limit from marking a valid large WebAssembly module as mismatched.
       — claimed: Afloat16, branch bugfix/r3.12-wasm-function-count
-- [ ] Reject TypeSpec handles where CLI class/value-type and generic signatures require TypeDef or TypeRef, while retaining standalone TypeSpec and custom-modifier decoding.
+- [x] Reject TypeSpec handles where CLI class/value-type and generic signatures require TypeDef or TypeRef, while retaining standalone TypeSpec and custom-modifier decoding.
       — claimed: Afloat16, branch bugfix/r3.12-dotnet-signature-type-handles-20261110
 - [x] Preserve complete Unicode characters in shortened .NET strings.
       — claimed: Afloat16, branch bugfix/r3.12-dotnet-user-string-surrogate-limit-20261105
