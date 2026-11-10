@@ -1987,7 +1987,7 @@ Owner: open · Status: in progress
 - [x] Reject Java Long and Double constants without their reserved constant-pool slot, including the maximum u16 pool boundary.
       — claimed: Afloat16, branch bugfix/r3.12-java-wide-pool-slot-20261109
       Source `e0dbc3a5b60b`; [full Linux gate](https://github.com/Afloat16/craft-anything/actions/runs/42629757277) passed.
-- [ ] Borrow Java attribute names from the constant pool so repeated references cannot multiply temporary parser memory.
+- [x] Borrow Java attribute names from the constant pool so repeated references cannot multiply temporary parser memory.
       — claimed: Afloat16, branch bugfix/r3.12-java-attribute-name-borrowing-20261110
 - [x] Unfold JAR manifest attributes as bytes before UTF-8 decoding, preserve value whitespace, and recognize every specified line ending so entry digests use the original filenames.
       — claimed: Afloat16, branch bugfix/r3.12-jar-attribute-bytes-20261110
