@@ -1462,6 +1462,9 @@ Owner: open · Status: in progress
       Source `75b507c0b96f`; [format checks](https://github.com/Afloat16/claude-mem/actions/runs/42634877637/job/129220281335) and [compatibility gates](https://github.com/Afloat16/claude-mem/actions/runs/42642583301/job/129247271153) passed.
 - [ ] Unreal: sounds and meshes out (so a Deep-mode rebuild needs no outside converter for them)
 
+- [x] Decode Unreal DXT3 (BC2) texture blocks, including explicit alpha and clipped edge blocks.
+      — claimed: Afloat16, branch feature/r3.9-dxt3-textures-20261110
+
 ### R3.11 Single-file apps, game files and stand-in backends
 Owner: open · Status: in progress
 - [x] Validate the remaining loopback fixture corrections for complete and fragmented request
