@@ -68,6 +68,11 @@ fn varint(r: &Reader<'_>, pos: &mut usize) -> Option<u64> {
     for i in 0..10u32 {
         let b = r.u8(*pos)?;
         *pos = pos.checked_add(1)?;
+        // Only bit 63 remains in the tenth group. Shifting any other payload bits would
+        // discard them and let an out-of-range length or index alias a smaller value.
+        if i == 9 && b & 0x7f > 1 {
+            return None;
+        }
         v |= u64::from(b & 0x7f).checked_shl(7 * i)?;
         if b & 0x80 != 0 {
             return Some(v);
@@ -444,6 +449,59 @@ pub fn graph(doc: &IbDocument, max_objects: usize, max_connections: usize) -> Gr
 mod tests {
     use super::*;
     use craft_anything_testkit::apple as fx;
+
+    #[test]
+    fn varint_rejects_overflow_in_the_tenth_byte() {
+        for high in 2..=127u8 {
+            let mut bytes = vec![0; 9];
+            bytes.push(high | 0x80);
+            assert_eq!(varint(&Reader::new(&bytes), &mut 0), None, "high bits {high}");
+        }
+    }
+
+    #[test]
+    fn varint_retains_the_full_unsigned_range() {
+        for (bytes, expected) in [(vec![0x80], 0), (vec![0x7f, 0x80], 127), ([vec![0x7f; 9], vec![0x81]].concat(), u64::MAX)] {
+            let mut pos = 0;
+            assert_eq!(varint(&Reader::new(&bytes), &mut pos), Some(expected));
+            assert_eq!(pos, bytes.len());
+        }
+        assert_eq!(varint(&Reader::new(&[0; 10]), &mut 0), None);
+    }
+
+    #[test]
+    fn overflowing_nib_integers_cannot_alias_valid_lengths_or_indices() {
+        let original = fx::nib_write(&[("View", vec![("label", fx::NV::Bytes(vec![1, 2, 3]))])]);
+        let r = Reader::new(&original);
+        let object = r.u32_le(22).unwrap() as usize;
+        let key = r.u32_le(30).unwrap() as usize;
+        let value = r.u32_le(38).unwrap() as usize;
+        let class = r.u32_le(46).unwrap() as usize;
+        for (name, at) in [
+            ("object class", object),
+            ("object value start", object + 1),
+            ("object value count", object + 2),
+            ("key length", key),
+            ("value key", value),
+            ("data length", value + 2),
+            ("class length", class),
+            ("class extra count", class + 1),
+        ] {
+            let mut data = original.clone();
+            let mut overflow = vec![0; 10];
+            overflow[0] = data[at] & 0x7f;
+            overflow[9] = 0x82;
+            data.splice(at..at + 1, overflow);
+            for field in [22, 30, 38, 46] {
+                let offset = Reader::new(&data).u32_le(field).unwrap();
+                if offset as usize > at {
+                    data[field..field + 4].copy_from_slice(&(offset + 9).to_le_bytes());
+                }
+            }
+            assert!(parse_nib_archive(&data).is_err(), "{name}");
+        }
+        assert_eq!(parse_nib_archive(&original).unwrap().objects[0].values[0].1, IbValue::Data(vec![1, 2, 3]));
+    }
 
     #[test]
     fn decodes_a_nib_archive() {
