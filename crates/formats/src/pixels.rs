@@ -25,6 +25,8 @@ pub enum Layout {
     RFloat,
     RgFloat,
     RgbaFloat,
+    /// Nine-bit RGB mantissas with a shared five-bit exponent, displayed as opaque sRGB.
+    Rgb9e5,
     Rgb24,
     Rgba32,
     Argb32,
@@ -55,7 +57,7 @@ pub fn size(layout: Layout, width: u32, height: u32) -> Option<usize> {
         Layout::Alpha8 | Layout::R8 => w.checked_mul(h),
         Layout::Rgb565 | Layout::Rgba4444 | Layout::Argb4444 | Layout::RHalf | Layout::R16 | Layout::Rg8 => w.checked_mul(h)?.checked_mul(2),
         Layout::Rgb24 => w.checked_mul(h)?.checked_mul(3),
-        Layout::Rgba32 | Layout::Argb32 | Layout::Bgra32 | Layout::RgHalf | Layout::RFloat => w.checked_mul(h)?.checked_mul(4),
+        Layout::Rgba32 | Layout::Argb32 | Layout::Bgra32 | Layout::RgHalf | Layout::RFloat | Layout::Rgb9e5 => w.checked_mul(h)?.checked_mul(4),
         Layout::RgbaHalf | Layout::RgFloat => w.checked_mul(h)?.checked_mul(8),
         Layout::RgbaFloat => w.checked_mul(h)?.checked_mul(16),
         Layout::Dxt1 | Layout::Bc4 => blocks.checked_mul(8),
@@ -242,6 +244,12 @@ pub fn decode_with_limit(layout: Layout, width: u32, height: u32, data: &[u8], m
         Layout::RFloat => put(&mut float_pixels(floats, 1)),
         Layout::RgFloat => put(&mut float_pixels(floats, 2)),
         Layout::RgbaFloat => put(&mut float_pixels(floats, 4)),
+        Layout::Rgb9e5 => put(&mut data.as_chunks::<4>().0.iter().map(|bytes| {
+            let packed = u32::from_le_bytes(*bytes);
+            let scale = 2.0f32.powi((packed >> 27) as i32 - 24);
+            let channel = |shift: u32| bptc::srgb8(((packed >> shift) & 0x1ff) as f32 * scale);
+            [channel(0), channel(9), channel(18), 255]
+        })),
         Layout::Alpha8 => put(&mut data.iter().map(|a| [255, 255, 255, *a])),
         Layout::R8 => put(&mut data.iter().map(|r| [*r, *r, *r, 255])),
         Layout::R16 => put(&mut u16s.map(|value| {

@@ -1465,6 +1465,8 @@ Owner: open · Status: in progress
       Source `540b4947aa1b`; [format checks](https://github.com/Afloat16/claude-mem/actions/runs/42633003467/job/129213811395) and [compatibility gates](https://github.com/Afloat16/claude-mem/actions/runs/42642583301/job/129247271153) passed.
 - [x] Unity: the float formats (RHalf, RGHalf, RGBAHalf, RFloat, RGFloat, RGBAFloat)
       — claimed: Afloat16, branch feature/r3.9-unity-float-textures
+- [x] Decode Unity RGB9e5 shared-exponent textures through the existing bounded picture exporter.
+      — claimed: Afloat16, branch feature/r3.9-rgb9e5-textures-20261110
 - [ ] Unreal 5 and Oodle: IoStore packages, unversioned properties and Oodle-compressed paks
 - [ ] Game files: save pictures from IoStore containers (needs the Unreal 5 support above)
 - [x] Unreal: decode cooked half- and full-precision floating-point textures with the shared bounded pixel reader.
