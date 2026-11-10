@@ -1906,6 +1906,9 @@ Owner: open · Status: in progress
       and [layers, locks, secret scanning, wasm checks and Cargo.lock stability](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).
       The [unchanged-code baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) reproduces the new regression cases.
 
+- [ ] Distinguish the keyed archive's null sentinel at object zero from ordinary stored strings containing the same text.
+      — claimed: Afloat16, branch bugfix/r3.12-keyed-archive-null-string-20261110
+
 ### R3.13 Web inspection correctness
 Owner: open · Status: in progress
 - [x] Report received HAR response body sizes separately from decoded content sizes and identify entries whose sizes are unknown.
