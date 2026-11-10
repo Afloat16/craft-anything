@@ -1850,6 +1850,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-wasm-function-count
 - [x] Preserve complete Unicode characters in shortened .NET strings.
       — claimed: Afloat16, branch bugfix/r3.12-dotnet-user-string-surrogate-limit-20261105
+- [x] Validate CIL method exception-section kinds, extents and complete clause records before reading exception handlers.
+      — claimed: Afloat16, branch bugfix/r3.12-cil-exception-framing-20261110
 - [x] Read Dart version hashes and feature strings only from the bytes belonging to that snapshot.
       — claimed: Afloat16, branch bugfix/r3.12-dart-snapshot-extent
 - [x] Read a Dart ELF build ID only when its name and descriptor fit the declared note.
