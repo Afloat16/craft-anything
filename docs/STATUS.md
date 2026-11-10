@@ -594,3 +594,13 @@ overflowing shapes remain unknown with a diagnostic. Truncation checks include q
 payloads and use nonwrapping offset arithmetic. Synthetic headers cover all 21 supported
 quantized layouts, exact and short files, multiple rows, unknown types and overflowing offsets.
 Tensor data is not decoded, and no model inference was run for this change.
+
+## sBPF symbol record boundaries
+
+sBPF inspection requires each ELF symbol record, including its declared padding, to fit
+inside the file. Missing or undersized entry strides and partial trailing records produce
+diagnostics. Symbol and section names come only from a linked string-table section with a
+NUL terminator inside its declared bytes. Invalid names remain unknown instead of creating
+false entrypoint or syscall identities. Five synthetic regression tests exercise oversized
+offsets, malformed strides, missing padding, broken string-table links and incomplete names;
+all five fail against the unchanged parser. No Solana program was deployed or executed.

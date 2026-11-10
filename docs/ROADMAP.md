@@ -2004,6 +2004,9 @@ Owner: open · Status: in progress
 - [x] Calculate GGUF quantized tensor byte ranges from their block layout and diagnose invalid row widths.
       — claimed: Afloat16, branch bugfix/r3.12-gguf-quantized-extents-20261110
 
+- [x] Require complete sBPF symbol records and their declared string-table links before reporting symbol identities.
+      — claimed: Afloat16, branch bugfix/r3.12-sbpf-symbol-framing-20261110
+
 ### R3.13 Web inspection correctness
 Owner: open · Status: in progress
 - [x] Report received HAR response body sizes separately from decoded content sizes and identify entries whose sizes are unknown.
