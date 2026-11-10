@@ -1899,9 +1899,9 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-wasm-custom-inventory-budget-20261109
 - [x] Bound bytes retained when WebAssembly types and function names are expanded through references, reuse formatted type signatures, and disclose omitted derived metadata.
       — claimed: Afloat16, branch bugfix/r3.12-wasm-reference-bytes-20261110
-- [ ] Report WebAssembly metadata truncation accurately in summary and complete tool views, including byte-budget exhaustion before entry limits (follow-up to #1540).
-      — claimed: Afloat16, branch bugfix/r3.12-wasm-metadata-limits-20261110
       Source `232100030ace`; [format checks](https://github.com/Afloat16/claude-mem/actions/runs/42642340046/job/129246412808) and [compatibility gates](https://github.com/Afloat16/claude-mem/actions/runs/42642340046/job/129246412808) passed.
+- [x] Report WebAssembly metadata truncation accurately in summary and complete tool views, including byte-budget exhaustion before entry limits (follow-up to #1540).
+      — claimed: Afloat16, branch bugfix/r3.12-wasm-metadata-limits-20261110
 - [x] Accept only valid WebAssembly names when reporting custom-section debug and source map URLs.
       — claimed: Afloat16, branch bugfix/r3.12-wasm-debug-names
 - [x] Decode the full signed 32-bit source map VLQ range and refuse mapping fields outside it.
