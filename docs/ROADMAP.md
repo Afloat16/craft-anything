@@ -1905,7 +1905,7 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-go-pclntab-section-boundary-20261105
 - [x] Preserve complete Go functions before a damaged later table entry and report partial coverage when the scan stops at structural damage or its unreadable-name limit.
       — claimed: Afloat16, branch bugfix/r3.12-go-pclntab-prefix-20261110
-- [ ] Bound retained Go function-name bytes when pclntab records share name references, preserving recovered functions and explicitly disclosing omitted names.
+- [x] Bound retained Go function-name bytes when pclntab records share name references, preserving recovered functions and explicitly disclosing omitted names.
       — claimed: Afloat16, branch bugfix/r3.12-go-name-bytes-20261110
 - [x] Keep the report's function display limit from marking a valid large WebAssembly module as mismatched.
       — claimed: Afloat16, branch bugfix/r3.12-wasm-function-count
