@@ -1676,7 +1676,7 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-http-host-boundary-20261105
 - [x] Select certificate issuers by successful signature verification among matching names, follow self-issued key rollover, and report interrupted chains as incomplete.
       — claimed: Afloat16, branch bugfix/r3.12-certificate-issuer-selection-20261110
-- [ ] Distinguish certificate-chain cycles from the 16-link walk limit when explaining why issuer verification stopped (follow-up to #1518).
+- [x] Distinguish certificate-chain cycles from the 16-link walk limit when explaining why issuer verification stopped (follow-up to #1518).
       — claimed: Afloat16, branch bugfix/r3.12-certificate-cycle-note-20261110
 - [x] Keep capture flow timestamps in chronological order.
       — claimed: Afloat16, branch bugfix/r3.12-capture-flow-time-range-20261105
