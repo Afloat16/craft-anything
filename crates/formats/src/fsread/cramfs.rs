@@ -1,7 +1,7 @@
 //! cramfs (`Compressed ROMFS`, magic `0x28cd3d45`): a compressed read-only filesystem. Little
 //! -endian only (the rare big-endian variant is reported, not read). Inodes are 12 bytes; a
 //! directory's children sit consecutively in its data span; a regular file's data is a run of
-//! zlib-compressed 4 KiB blocks preceded by their end-offset pointers. Bounded against cycles,
+//! 4 KiB blocks, stored as zlib streams or zero-filled holes, preceded by end-offset pointers. Bounded against cycles,
 //! huge sizes and corrupt offsets.
 
 use super::{FsEntry, FsImage, FsKind, Limits, join};
@@ -121,10 +121,14 @@ fn file_data(data: &[u8], ino: &Inode, limits: &Limits, img: &mut FsImage) -> Op
             img.complete = false;
             return None;
         }
+        let expected = ino.size.saturating_sub(i.saturating_mul(BLK)).min(BLK);
+        if end == block_start {
+            out.resize(out.len().checked_add(expected)?, 0);
+            continue;
+        }
         let comp = data.get(block_start..end)?;
         match crate::firmware::inflate(comp, true, BLK as u64, true) {
             Ok(inf) => {
-                let expected = ino.size.saturating_sub(i.saturating_mul(BLK)).min(BLK);
                 if inf.produced != expected as u64 {
                     img.warn("cramfs block output does not match the file size");
                     img.complete = false;
