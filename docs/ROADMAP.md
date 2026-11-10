@@ -1961,7 +1961,7 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-java-descriptor-boundary
 - [x] Validate complete JVM switch payloads before reserving pairs, and reject duplicate or descending lookup keys instead of emitting invalid control-flow facts.
       — claimed: Afloat16, branch bugfix/r3.12-java-switch-tables-20261110
-- [ ] Bound aggregate DEX payload copies while attaching shared switch and array data to decoded instructions.
+- [x] Bound aggregate DEX payload copies while attaching shared switch and array data to decoded instructions.
       — claimed: Afloat16, branch bugfix/r3.12-dex-payload-memory-20261110
 - [x] Stop capped DEX member and handler lists from interpreting unread records as the following field or a catch-all.
       — claimed: Afloat16, branch bugfix/r3.12-dex-capped-table-alignment-20261109
