@@ -574,3 +574,10 @@ their immediate model directory as a task hint, with either path separator. Name
 publisher prefixes and unrelated words are not classified by arbitrary ancestor directories.
 Regression tests cover mixed model lists and servers listing only specialised models through
 the local discovery API. Classification remains a name heuristic; it does not probe model capabilities.
+
+## Big-endian cramfs images
+
+The cramfs reader follows the image byte order through superblock detection, native-order inode
+bitfields and compressed-file block pointers. Big-endian images keep the same directory and
+byte budgets as little-endian images. Tests compare both encodings, oversized pointers and
+truncated inputs; an independently generated big-endian filesystem recovers its original bytes.
