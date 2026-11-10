@@ -1,0 +1,445 @@
+{
+  "batch": "batch130",
+  "target": 50,
+  "updated_at": "2026-11-10T04:12:00Z",
+  "base": "a56e0cc3f7f5371c608b1c28dea645d63bacfc38",
+  "verified": 2,
+  "primary_prs": 0,
+  "merged": 0,
+  "items": [
+    {
+      "number": 1,
+      "slug": "cramfs-sparse-blocks",
+      "prefix": "feature",
+      "title": "Recover sparse blocks in cramfs files",
+      "claim": "Recover zero-filled holes in cramfs file block runs without treating an empty stored block as failed compressed data.",
+      "files": [
+        "crates/formats/src/fsread/cramfs.rs"
+      ],
+      "dedup": [
+        704,
+        722,
+        1246
+      ],
+      "difference": "Earlier changes validate decoded block lengths and names; none recover the format's zero-length sparse blocks.",
+      "branch": "feature/r3.12-cramfs-sparse-blocks-20261110",
+      "status": "published",
+      "base": "30e916536a8adf9fad47602c2a8bcf26bcfa930b",
+      "claim_sha": "e6da23c33585ecfc27fdc82f22fbf46c42a59a3b",
+      "claim_tree": "e9085d966b73c39ee5810ac13669899cf817b56c",
+      "claim_text": "- [ ] Recover zero-filled holes in cramfs file block runs without treating an empty stored block as failed compressed data.\n      — claimed: Afloat16, branch feature/r3.12-cramfs-sparse-blocks-20261110\n\n",
+      "local_source_sha": "c7e0d7b32b737dc9a63e7bed48df843e2ef62f2f",
+      "local_head": "de4d7393ee15307b979b41db04e350ef4f7b87cc",
+      "verified_tree": "5514c439567f40e9921cac1d94c34107a206f8ba",
+      "test_count": 1075,
+      "tests_failed": 0,
+      "ignored": 0,
+      "source_blob": "1d2a36e159a66502b315d45874ba26e09e2fd748",
+      "gate_results": "craft-01-gates.json",
+      "real_fixture": {
+        "tool": "mkcramfs",
+        "tool_commit": "a95eecbf899479f8b3d65fb2822c5b7cbcdacfdd",
+        "flags": "-q -z -L",
+        "before": "complete=false, 0 recovered bytes, two block inflation failures",
+        "after": "complete=true, 16389 recovered bytes, two exact file payloads"
+      },
+      "integrated_main": "a56e0cc3f7f5371c608b1c28dea645d63bacfc38",
+      "head_sha": "6b6027481b84df835d2938a7b303e0210bc42988",
+      "pr_title": "feat(formats): recover sparse cramfs file blocks",
+      "pr_body": "## Problem\n\nCramfs sparse files encode holes with repeated block-end pointers. The reader currently sends the resulting empty range to zlib, so valid filesystem images lose file content and are reported incomplete.\n\n## Change\n\nRecover each empty stored block as the corresponding zero-filled logical span, including a short final block. Existing per-file and aggregate output budgets still apply. Compressed blocks retain their exact decoded-length checks.\n\n## Validation\n\n- Two new regression tests cover short holes, mixed compressed and sparse blocks, and output budgets.\n- The complete formats suite passed: **1,075 tests, 0 failures, 0 ignored**. Formatting, all-target Clippy with warnings denied, layer boundaries, lock rules, secret scanning, and the L0–L2 wasm check passed.\n- An independently generated `mkcramfs -q -z -L` image contains 16,389 original bytes across two files. The old reader reports two inflation failures and recovers no payload. The new reader recovers both files byte-for-byte with `complete=true`.\n- The gate executable used for the final layer/lock/secret/wasm checks was built from the same unchanged checked-in gate sources; the wasm gate checked the changed source.\n- Integration with main `a56e0cc3f7f5371c608b1c28dea645d63bacfc38` changes no format or build inputs. The published tree `5514c439567f40e9921cac1d94c34107a206f8ba` exactly matches the locally verified tree.\n\n## Scope and prior work\n\nThis implements sparse-block semantics. Prior #704, #722 and #1246 cover corrupt decoded lengths and bounded names; they do not recover valid zero-length stored blocks. R3.12 was claimed on this branch before implementation.\n",
+      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:feature/r3.12-cramfs-sparse-blocks-20261110?expand=1&title=feat(formats)%3A%20recover%20sparse%20cramfs%20file%20blocks&body=%23%23%20Problem%0A%0ACramfs%20sparse%20files%20encode%20holes%20with%20repeated%20block-end%20pointers.%20The%20reader%20currently%20sends%20the%20resulting%20empty%20range%20to%20zlib%2C%20so%20valid%20filesystem%20images%20lose%20file%20content%20and%20are%20reported%20incomplete.%0A%0A%23%23%20Change%0A%0ARecover%20each%20empty%20stored%20block%20as%20the%20corresponding%20zero-filled%20logical%20span%2C%20including%20a%20short%20final%20block.%20Existing%20per-file%20and%20aggregate%20output%20budgets%20still%20apply.%20Compressed%20blocks%20retain%20their%20exact%20decoded-length%20checks.%0A%0A%23%23%20Validation%0A%0A-%20Two%20new%20regression%20tests%20cover%20short%20holes%2C%20mixed%20compressed%20and%20sparse%20blocks%2C%20and%20output%20budgets.%0A-%20The%20complete%20formats%20suite%20passed%3A%20**1%2C075%20tests%2C%200%20failures%2C%200%20ignored**.%20Formatting%2C%20all-target%20Clippy%20with%20warnings%20denied%2C%20layer%20boundaries%2C%20lock%20rules%2C%20secret%20scanning%2C%20and%20the%20L0%E2%80%93L2%20wasm%20check%20passed.%0A-%20An%20independently%20generated%20%60mkcramfs%20-q%20-z%20-L%60%20image%20contains%2016%2C389%20original%20bytes%20across%20two%20files.%20The%20old%20reader%20reports%20two%20inflation%20failures%20and%20recovers%20no%20payload.%20The%20new%20reader%20recovers%20both%20files%20byte-for-byte%20with%20%60complete%3Dtrue%60.%0A-%20The%20gate%20executable%20used%20for%20the%20final%20layer%2Flock%2Fsecret%2Fwasm%20checks%20was%20built%20from%20the%20same%20unchanged%20checked-in%20gate%20sources%3B%20the%20wasm%20gate%20checked%20the%20changed%20source.%0A-%20Integration%20with%20main%20%60a56e0cc3f7f5371c608b1c28dea645d63bacfc38%60%20changes%20no%20format%20or%20build%20inputs.%20The%20published%20tree%20%605514c439567f40e9921cac1d94c34107a206f8ba%60%20exactly%20matches%20the%20locally%20verified%20tree.%0A%0A%23%23%20Scope%20and%20prior%20work%0A%0AThis%20implements%20sparse-block%20semantics.%20Prior%20%23704%2C%20%23722%20and%20%231246%20cover%20corrupt%20decoded%20lengths%20and%20bounded%20names%3B%20they%20do%20not%20recover%20valid%20zero-length%20stored%20blocks.%20R3.12%20was%20claimed%20on%20this%20branch%20before%20implementation.%0A",
+      "upstream_pr": null
+    },
+    {
+      "number": 2,
+      "slug": "cramfs-big-endian",
+      "prefix": "feature",
+      "title": "Read big-endian cramfs filesystem images",
+      "claim": "Read big-endian cramfs superblocks, inode bitfields and block pointers while retaining the existing bounded recovery path.",
+      "files": [
+        "crates/formats/src/fsread/cramfs.rs"
+      ],
+      "dedup": [
+        704,
+        722,
+        1246
+      ],
+      "difference": "The existing reader explicitly refuses the big-endian format; earlier changes only correct little-endian parsing.",
+      "branch": "feature/r3.12-cramfs-big-endian-20261110",
+      "status": "published",
+      "base": "30e916536a8adf9fad47602c2a8bcf26bcfa930b",
+      "claim_sha": "0ac8d2967943619ce26764584197193cc7763557",
+      "claim_tree": "f2833e5e817ecef3703943ed98dd314f5d732db0",
+      "claim_text": "- [ ] Read big-endian cramfs superblocks, inode bitfields and block pointers while retaining the existing bounded recovery path.\n      — claimed: Afloat16, branch feature/r3.12-cramfs-big-endian-20261110\n\n",
+      "verified_tree": "6b8168c7236ce7249fe4fd5f4412b9c07506ddf2",
+      "source_blob": "cd02da4dec49fc9b7814bf40b8f4e3464766ef79",
+      "integrated_main": "a56e0cc3f7f5371c608b1c28dea645d63bacfc38",
+      "gate_results": "craft-02-gates.json",
+      "head_sha": "37090fca06fabedd7ad5f1c08bd8a0e7be098ddc",
+      "test_count": 1075,
+      "tests_failed": 0,
+      "ignored": 0,
+      "pr_title": "feat(formats): read big-endian cramfs images",
+      "pr_body": "## Problem\n\nValid big-endian cramfs images are rejected before directory recovery. Byte-swapping scalar headers alone is insufficient because cramfs also stores native-order inode bitfields and block pointers.\n\n## Change\n\nCarry the detected byte order through scalar reads, inode size/name/offset fields, directory traversal, and compressed-file block pointers. Existing size, nesting and total-output limits apply in either encoding.\n\n## Validation\n\n- New regressions compare both encodings of the same filesystem and exercise budgets, malformed pointers and truncated inputs.\n- The complete formats suite passed: **1,075 tests, 0 failures, 0 ignored**. Formatting, all-target Clippy with warnings denied, layer boundaries, lock rules, secret scanning, and the L0–L2 wasm check passed.\n- An independently generated `mkcramfs -q -B` filesystem was rejected by the old reader. The new reader reports `complete=true` and recovers its two original files byte-for-byte, totaling 16,389 bytes.\n- The gate executable was reused only after verifying that its checked-in sources and build inputs were unchanged; its wasm check compiled the changed format source.\n- Integration with main `a56e0cc3f7f5371c608b1c28dea645d63bacfc38` changes no format or build inputs. The published tree `6b8168c7236ce7249fe4fd5f4412b9c07506ddf2` exactly matches the locally verified tree.\n\n## Scope and prior work\n\nThe previous reader explicitly refused this byte order. Prior #704, #722 and #1246 correct bounded little-endian recovery and do not add big-endian support. This branch does not include the separate sparse-block change. R3.12 was claimed before implementation.\n",
+      "prefilled_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:craft-anything:feature/r3.12-cramfs-big-endian-20261110?expand=1&title=feat(formats)%3A%20read%20big-endian%20cramfs%20images&body=%23%23%20Problem%0A%0AValid%20big-endian%20cramfs%20images%20are%20rejected%20before%20directory%20recovery.%20Byte-swapping%20scalar%20headers%20alone%20is%20insufficient%20because%20cramfs%20also%20stores%20native-order%20inode%20bitfields%20and%20block%20pointers.%0A%0A%23%23%20Change%0A%0ACarry%20the%20detected%20byte%20order%20through%20scalar%20reads%2C%20inode%20size%2Fname%2Foffset%20fields%2C%20directory%20traversal%2C%20and%20compressed-file%20block%20pointers.%20Existing%20size%2C%20nesting%20and%20total-output%20limits%20apply%20in%20either%20encoding.%0A%0A%23%23%20Validation%0A%0A-%20New%20regressions%20compare%20both%20encodings%20of%20the%20same%20filesystem%20and%20exercise%20budgets%2C%20malformed%20pointers%20and%20truncated%20inputs.%0A-%20The%20complete%20formats%20suite%20passed%3A%20**1%2C075%20tests%2C%200%20failures%2C%200%20ignored**.%20Formatting%2C%20all-target%20Clippy%20with%20warnings%20denied%2C%20layer%20boundaries%2C%20lock%20rules%2C%20secret%20scanning%2C%20and%20the%20L0%E2%80%93L2%20wasm%20check%20passed.%0A-%20An%20independently%20generated%20%60mkcramfs%20-q%20-B%60%20filesystem%20was%20rejected%20by%20the%20old%20reader.%20The%20new%20reader%20reports%20%60complete%3Dtrue%60%20and%20recovers%20its%20two%20original%20files%20byte-for-byte%2C%20totaling%2016%2C389%20bytes.%0A-%20The%20gate%20executable%20was%20reused%20only%20after%20verifying%20that%20its%20checked-in%20sources%20and%20build%20inputs%20were%20unchanged%3B%20its%20wasm%20check%20compiled%20the%20changed%20format%20source.%0A-%20Integration%20with%20main%20%60a56e0cc3f7f5371c608b1c28dea645d63bacfc38%60%20changes%20no%20format%20or%20build%20inputs.%20The%20published%20tree%20%606b8168c7236ce7249fe4fd5f4412b9c07506ddf2%60%20exactly%20matches%20the%20locally%20verified%20tree.%0A%0A%23%23%20Scope%20and%20prior%20work%0A%0AThe%20previous%20reader%20explicitly%20refused%20this%20byte%20order.%20Prior%20%23704%2C%20%23722%20and%20%231246%20correct%20bounded%20little-endian%20recovery%20and%20do%20not%20add%20big-endian%20support.%20This%20branch%20does%20not%20include%20the%20separate%20sparse-block%20change.%20R3.12%20was%20claimed%20before%20implementation.%0A",
+      "upstream_pr": null
+    },
+    {
+      "number": 3,
+      "slug": "cramfs-v2-image-size",
+      "prefix": "bugfix",
+      "title": "Keep version-two cramfs reads inside the declared filesystem",
+      "claim": "Respect version-two cramfs filesystem sizes when following directory and file pointers, without imposing that field on legacy images.",
+      "files": [
+        "crates/formats/src/fsread/cramfs.rs"
+      ],
+      "dedup": [
+        1246
+      ],
+      "difference": "The earlier filesystem patch bounds cramfs directory names, not the v2 superblock's image size.",
+      "branch": "bugfix/r3.12-cramfs-v2-image-size-20261110",
+      "status": "claimed",
+      "base": "a56e0cc3f7f5371c608b1c28dea645d63bacfc38",
+      "claim_sha": "4b78de2877ebb9099393e5008ad330460f4f5277",
+      "claim_tree": "67ddf4715871a6c52c8cb631f218aceac13f8626",
+      "claim_text": "- [ ] Respect version-two cramfs filesystem sizes when following directory and file pointers, without imposing that field on legacy images.\n      — claimed: Afloat16, branch bugfix/r3.12-cramfs-v2-image-size-20261110\n\n"
+    },
+    {
+      "number": 4,
+      "slug": "romfs-file-hardlinks",
+      "prefix": "feature",
+      "title": "Recover ROMFS file content through hard links",
+      "claim": "Resolve bounded ROMFS hard-link chains to regular files and symlinks without losing the alias path or following cycles.",
+      "files": [
+        "crates/formats/src/fsread/romfs.rs"
+      ],
+      "dedup": [
+        703,
+        722,
+        1246
+      ],
+      "difference": "Earlier root and byte-budget corrections leave type-zero hard links classified as Other.",
+      "branch": "feature/r3.12-romfs-file-hardlinks-20261110",
+      "status": "claimed",
+      "base": "a56e0cc3f7f5371c608b1c28dea645d63bacfc38",
+      "claim_sha": "49d9dc79d2985cdde0b5c921342847f0d42792b9",
+      "claim_tree": "3774172f5277707ac56f2fb3e5744bcfc87e3664",
+      "claim_text": "- [ ] Resolve bounded ROMFS hard-link chains to regular files and symlinks without losing the alias path or following cycles.\n      — claimed: Afloat16, branch feature/r3.12-romfs-file-hardlinks-20261110\n\n"
+    },
+    {
+      "number": 5,
+      "slug": "jffs2-truncate-regrowth",
+      "prefix": "bugfix",
+      "title": "Keep truncated JFFS2 bytes out of later file growth",
+      "claim": "Apply recorded JFFS2 file truncations before replaying later extents so regrown gaps do not contain stale bytes from an older version.",
+      "files": [
+        "crates/formats/src/fsread/jffs2.rs"
+      ],
+      "dedup": [
+        708,
+        722,
+        1246
+      ],
+      "difference": "Earlier fixes preserve final declared sizes and bound zero extents; they do not replay intermediate truncation history.",
+      "branch": "bugfix/r3.12-jffs2-truncate-regrowth-20261110",
+      "status": "claimed",
+      "base": "30e916536a8adf9fad47602c2a8bcf26bcfa930b",
+      "claim_sha": "b55a8e0facd182651c5bf09a338ab1ec4eab3db5",
+      "claim_tree": "9cabd2d53b64f94974a216015ffd3674c9aff894",
+      "claim_text": "- [ ] Apply recorded JFFS2 file truncations before replaying later extents so regrown gaps do not contain stale bytes from an older version.\n      — claimed: Afloat16, branch bugfix/r3.12-jffs2-truncate-regrowth-20261110\n\n"
+    },
+    {
+      "number": 6,
+      "slug": "ext4-unavailable-extent-map",
+      "prefix": "bugfix",
+      "title": "Refuse file recovery from unavailable ext4 extent metadata",
+      "claim": "Treat malformed, truncated or unavailable ext4 extent metadata as an unrecovered mapping rather than invented sparse zero bytes.",
+      "files": [
+        "crates/formats/src/fsread/extfs.rs"
+      ],
+      "dedup": [
+        391,
+        705,
+        706,
+        766
+      ],
+      "difference": "Prior missing-metadata work explicitly covers classic indirect blocks; ext4 extent metadata is still a void walker that leaves unknown entries as sparse holes.",
+      "branch": "bugfix/r3.12-ext4-unavailable-extent-map-20261110",
+      "status": "claimed",
+      "base": "a56e0cc3f7f5371c608b1c28dea645d63bacfc38",
+      "claim_sha": "e2ea23d856531331ed634ae124e88d13c956c463",
+      "claim_tree": "6005d325cedc07916da9a95d2abb67721f137ab8",
+      "claim_text": "- [ ] Treat malformed, truncated or unavailable ext4 extent metadata as an unrecovered mapping rather than invented sparse zero bytes.\n      — claimed: Afloat16, branch bugfix/r3.12-ext4-unavailable-extent-map-20261110\n\n"
+    },
+    {
+      "number": 7,
+      "slug": "ext-triple-indirect",
+      "prefix": "feature",
+      "title": "Read ext files through triple-indirect block tables",
+      "claim": "Follow bounded ext triple-indirect block tables with the correct sparse logical spans and existing unavailable-block checks.",
+      "files": [
+        "crates/formats/src/fsread/extfs.rs"
+      ],
+      "dedup": [
+        705,
+        706,
+        766
+      ],
+      "difference": "The current reader explicitly rejects triple-indirect roots; previous sparse-span work handles direct, single and double indirection only.",
+      "branch": "feature/r3.12-ext-triple-indirect-20261110",
+      "status": "claimed",
+      "base": "a56e0cc3f7f5371c608b1c28dea645d63bacfc38",
+      "claim_sha": "243d94eae830a19fdf83ae43bd3e400cf1cd065d",
+      "claim_tree": "c0baf2ba4f8be0c63852a4d6c33f22b4891f56de",
+      "claim_text": "- [ ] Follow bounded ext triple-indirect block tables with the correct sparse logical spans and existing unavailable-block checks.\n      — claimed: Afloat16, branch feature/r3.12-ext-triple-indirect-20261110\n\n"
+    },
+    {
+      "number": 8,
+      "slug": "ext4-small-inline-files",
+      "prefix": "feature",
+      "title": "Recover small ext4 inline regular files",
+      "claim": "Read ext4 inline regular-file payloads that fit in the inode while reporting larger xattr-backed payloads as unsupported.",
+      "files": [
+        "crates/formats/src/fsread/extfs.rs"
+      ],
+      "dedup": [
+        391,
+        705,
+        706,
+        766,
+        1246
+      ],
+      "difference": "Inline data remains explicitly unsupported; the existing block mapper interprets the inode bytes as block pointers.",
+      "branch": "feature/r3.12-ext4-small-inline-files-20261110",
+      "status": "claimed",
+      "base": "a56e0cc3f7f5371c608b1c28dea645d63bacfc38",
+      "claim_sha": "16c165d7ed3f140f08f4e3e81c9d7ea6df803030",
+      "claim_tree": "5f9da7436ead149d3a171c90a6160a5b87cef310",
+      "claim_text": "- [ ] Read ext4 inline regular-file payloads that fit in the inode while reporting larger xattr-backed payloads as unsupported.\n      — claimed: Afloat16, branch feature/r3.12-ext4-small-inline-files-20261110\n\n"
+    },
+    {
+      "number": 9,
+      "slug": "squashfs-lz4",
+      "prefix": "feature",
+      "title": "Recover LZ4-compressed SquashFS files and metadata",
+      "claim": "Decode bounded LZ4 blocks for SquashFS metadata, regular files and fragments through the existing pure-Rust decoder.",
+      "files": [
+        "crates/formats/src/fsread/squashfs.rs",
+        "crates/formats/src/decompress.rs"
+      ],
+      "dedup": [
+        384,
+        434,
+        1246,
+        1262
+      ],
+      "difference": "SquashFS explicitly reports LZ4 as unsupported; previous changes cover inode layouts and metadata table boundaries.",
+      "branch": "feature/r3.12-squashfs-lz4-20261110",
+      "status": "claimed",
+      "base": "a56e0cc3f7f5371c608b1c28dea645d63bacfc38",
+      "claim_sha": "4c35b14ae94441b92568f932af05f2e04585c39f",
+      "claim_tree": "e0c13cc245989bc557fae3849299585c666aa09c",
+      "claim_text": "- [ ] Decode bounded LZ4 blocks for SquashFS metadata, regular files and fragments through the existing pure-Rust decoder.\n      — claimed: Afloat16, branch feature/r3.12-squashfs-lz4-20261110\n\n"
+    },
+    {
+      "number": 10,
+      "slug": "squashfs-block-output-size",
+      "prefix": "bugfix",
+      "title": "Preserve SquashFS file block boundaries during recovery",
+      "claim": "Check decoded and uncompressed SquashFS file blocks against their logical output spans so short blocks cannot shift later data and oversized blocks cannot evade file budgets.",
+      "files": [
+        "crates/formats/src/fsread/squashfs.rs"
+      ],
+      "dedup": [
+        384,
+        434,
+        1246,
+        1262
+      ],
+      "difference": "Earlier SquashFS fixes concern inode layouts, declared image/table ranges and metadata blocks, not logical regular-file output spans.",
+      "branch": "bugfix/r3.12-squashfs-block-output-size-20261110",
+      "status": "claimed",
+      "base": "a56e0cc3f7f5371c608b1c28dea645d63bacfc38",
+      "claim_sha": "a3e8c08a74f42b4b3376639fcdb8f62dd3782819",
+      "claim_tree": "90d227478ab3e9bc27eca54471c5773354830690",
+      "claim_text": "- [ ] Check decoded and uncompressed SquashFS file blocks against their logical output spans so short blocks cannot shift later data and oversized blocks cannot evade file budgets.\n      — claimed: Afloat16, branch bugfix/r3.12-squashfs-block-output-size-20261110\n\n"
+    },
+    {
+      "number": 11,
+      "slug": "wasm-component-layout",
+      "prefix": "bugfix",
+      "title": "Report the top-level layout of WebAssembly components",
+      "claim": "Report component top-level sections without folding nested core-module contents into the outer inventory.",
+      "files": [
+        "crates/formats/src/wasm.rs"
+      ],
+      "dedup": [
+        441,
+        1125,
+        1126,
+        1129,
+        1390
+      ],
+      "difference": "The current component branch stops at its header and reports no sections; earlier work addresses core-module imports, locals and custom metadata limits.",
+      "branch": "bugfix/r3.12-wasm-component-layout-20261110",
+      "status": "claimed",
+      "base": "a56e0cc3f7f5371c608b1c28dea645d63bacfc38",
+      "claim_sha": "1e0bd2e0a399afab8b6962f3f301abe265bd3fab",
+      "claim_tree": "8401e4e47ba3442623ad8bb75e356a2edc170dc3",
+      "claim_text": "- [ ] Report component top-level sections without folding nested core-module contents into the outer inventory.\n      — claimed: Afloat16, branch bugfix/r3.12-wasm-component-layout-20261110\n\n"
+    },
+    {
+      "number": 12,
+      "slug": "jffs2-big-endian",
+      "prefix": "feature",
+      "title": "Recover files from big-endian JFFS2 images",
+      "claim": "Read big-endian JFFS2 node headers, directory records and inode fields through the existing bounded recovery path.",
+      "files": [
+        "crates/formats/src/fsread/jffs2.rs"
+      ],
+      "dedup": [
+        708,
+        722,
+        1246
+      ],
+      "difference": "The reader currently refuses big-endian images; earlier submissions concern bounded little-endian recovery.",
+      "branch": "feature/r3.12-jffs2-big-endian-20261110",
+      "status": "claimed",
+      "base": "a56e0cc3f7f5371c608b1c28dea645d63bacfc38",
+      "claim_sha": "c3155abdc418a934d5a6d533de1440b8004cc7f0",
+      "claim_tree": "7608acdb471dccd3301f721616ca0ff3d2437c38",
+      "claim_text": "- [ ] Read big-endian JFFS2 node headers, directory records and inode fields through the existing bounded recovery path.\n      — claimed: Afloat16, branch feature/r3.12-jffs2-big-endian-20261110\n\n"
+    },
+    {
+      "number": 13,
+      "slug": "gguf-quantized-extents",
+      "prefix": "feature",
+      "title": "Measure and check GGUF quantized tensor data extents",
+      "claim": "Calculate block-quantized GGUF tensor sizes from their stored block layouts and report invalid row shapes or out-of-file data ranges.",
+      "files": [
+        "crates/formats/src/ai_model.rs"
+      ],
+      "dedup": [
+        675,
+        1257,
+        1267
+      ],
+      "difference": "Previous model work changes discovery and safetensors; GGUF quantized types currently have no data-size check.",
+      "branch": "feature/r3.12-gguf-quantized-extents-20261110",
+      "status": "claimed",
+      "base": "a56e0cc3f7f5371c608b1c28dea645d63bacfc38",
+      "claim_sha": "fb5f366a9d07408931a6ebb365239b1842a1c091",
+      "claim_tree": "e0dd39022da25c2f1b8f4e45398b476d040ec549",
+      "claim_text": "- [ ] Calculate block-quantized GGUF tensor sizes from their stored block layouts and report invalid row shapes or out-of-file data ranges.\n      — claimed: Afloat16, branch feature/r3.12-gguf-quantized-extents-20261110\n\n"
+    },
+    {
+      "number": 14,
+      "slug": "cil-nonfinite-hashes",
+      "prefix": "bugfix",
+      "title": "Keep nonfinite CIL constants distinct in normalized method hashes",
+      "claim": "Preserve distinct nonfinite floating-point constants when hashing normalized CIL instructions instead of collapsing them to JSON null.",
+      "files": [
+        "crates/formats/src/dotnet/cil.rs"
+      ],
+      "dedup": [],
+      "difference": "No previous CIL hash change appears in the complete PR corpus.",
+      "branch": "bugfix/r3.12-cil-nonfinite-hashes-20261110",
+      "status": "claimed",
+      "base": "a56e0cc3f7f5371c608b1c28dea645d63bacfc38",
+      "claim_sha": "598cd1ae9cc54ab52c3f0cf7d571ae39a49b4c57",
+      "claim_tree": "378b56e545cc118bd84964aaec6d4e520ee37f43",
+      "claim_text": "- [ ] Preserve distinct nonfinite floating-point constants when hashing normalized CIL instructions instead of collapsing them to JSON null.\n      — claimed: Afloat16, branch bugfix/r3.12-cil-nonfinite-hashes-20261110\n\n"
+    },
+    {
+      "number": 15,
+      "slug": "plist-fractional-dates",
+      "prefix": "bugfix",
+      "title": "Preserve fractional seconds in binary plist date projections",
+      "claim": "Keep the fractional part of Apple absolute timestamps when projecting binary plist dates to ISO-8601 text.",
+      "files": [
+        "crates/formats/src/plist.rs"
+      ],
+      "dedup": [
+        607,
+        608,
+        652,
+        1219,
+        1263,
+        1264
+      ],
+      "difference": "Previous plist work handles structural framing, widths, XML documents and repeated-reference budgets, not timestamp precision.",
+      "branch": "bugfix/r3.12-plist-fractional-dates-20261110",
+      "status": "claimed",
+      "base": "a56e0cc3f7f5371c608b1c28dea645d63bacfc38",
+      "claim_sha": "64febd0f68bd701d0832ca4f69e14158a9f3cbde",
+      "claim_tree": "0c13e7cc875112613a053c0f0929dc81b1f04ba1",
+      "claim_text": "- [ ] Keep the fractional part of Apple absolute timestamps when projecting binary plist dates to ISO-8601 text.\n      — claimed: Afloat16, branch bugfix/r3.12-plist-fractional-dates-20261110\n\n"
+    },
+    {
+      "number": 16,
+      "slug": "keyed-archive-null-string",
+      "prefix": "bugfix",
+      "title": "Preserve literal null-marker text in keyed archives",
+      "claim": "Distinguish the keyed archive's null sentinel at object zero from ordinary stored strings containing the same text.",
+      "files": [
+        "crates/formats/src/keyed_archive.rs"
+      ],
+      "dedup": [
+        1255,
+        1265
+      ],
+      "difference": "Earlier projection work follows reference edges and budgets; it does not distinguish the sentinel's object-table position.",
+      "branch": "bugfix/r3.12-keyed-archive-null-string-20261110",
+      "status": "claimed",
+      "base": "a56e0cc3f7f5371c608b1c28dea645d63bacfc38",
+      "claim_sha": "ad8ba6f28985682ba226e6243ce5e6b55e993e1c",
+      "claim_tree": "fd753e890f7157d5c404dbf06f398d7263d0b21e",
+      "claim_text": "- [ ] Distinguish the keyed archive's null sentinel at object zero from ordinary stored strings containing the same text.\n      — claimed: Afloat16, branch bugfix/r3.12-keyed-archive-null-string-20261110\n\n"
+    },
+    {
+      "number": 17,
+      "slug": "java-array-operands",
+      "prefix": "bugfix",
+      "title": "Reject impossible JVM array allocation operands",
+      "claim": "Stop JVM bytecode decoding on invalid primitive array type codes or zero-dimensional multidimensional allocations while retaining valid allocations.",
+      "files": [
+        "crates/formats/src/java_ops.rs"
+      ],
+      "dedup": [
+        437,
+        691,
+        692,
+        722
+      ],
+      "difference": "Earlier changes validate wide/invoke operands and class-usage normalization, not array allocation encoding.",
+      "branch": "bugfix/r3.12-java-array-operands-20261110",
+      "status": "claimed",
+      "base": "a56e0cc3f7f5371c608b1c28dea645d63bacfc38",
+      "claim_sha": "8dc9530838879444c795491769f7f6a7465b38c6",
+      "claim_tree": "ec35758849457fb5bc1e2c12145076b233cf0a97",
+      "claim_text": "- [ ] Stop JVM bytecode decoding on invalid primitive array type codes or zero-dimensional multidimensional allocations while retaining valid allocations.\n      — claimed: Afloat16, branch bugfix/r3.12-java-array-operands-20261110\n\n"
+    },
+    {
+      "number": 18,
+      "slug": "java-switch-key-order",
+      "prefix": "bugfix",
+      "title": "Reject unsorted JVM lookup-switch keys",
+      "claim": "Require lookup-switch keys to be strictly increasing so malformed switch payloads cannot produce a misleading decoded control-flow table.",
+      "files": [
+        "crates/formats/src/java_ops.rs"
+      ],
+      "dedup": [
+        691,
+        692,
+        722
+      ],
+      "difference": "No previous switch-key ordering work appears in the PR corpus; existing checks only bound count and bytes.",
+      "branch": "bugfix/r3.12-java-switch-key-order-20261110",
+      "status": "claimed",
+      "base": "a56e0cc3f7f5371c608b1c28dea645d63bacfc38",
+      "claim_sha": "4cf2ddd33c96277584f60b4f2f978f32b7851259",
+      "claim_tree": "f8c94c201a3c0648236d6ef63009ea6a1dcfbb16",
+      "claim_text": "- [ ] Require lookup-switch keys to be strictly increasing so malformed switch payloads cannot produce a misleading decoded control-flow table.\n      — claimed: Afloat16, branch bugfix/r3.12-java-switch-key-order-20261110\n\n"
+    }
+  ]
+}
