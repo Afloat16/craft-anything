@@ -123,7 +123,7 @@ struct D<'a> {
     subs: Vec<N>,
     words: Vec<String>,
     max_param: Option<u64>,
-    /// Nodes we may still copy out of substitutions (guards against exponential growth).
+    /// Nodes we may still copy into or out of substitutions (guards against expansion).
     budget: usize,
 }
 
@@ -195,6 +195,7 @@ impl<'a> D<'a> {
         if self.subs.len() >= MAX_SUBST {
             return Err("too many substitutions".into());
         }
+        self.budget = self.budget.checked_sub(weight(n, 0)).ok_or("symbol expands too much")?;
         self.subs.push(n.clone());
         Ok(())
     }
@@ -345,16 +346,20 @@ impl<'a> D<'a> {
     }
 
     fn push_sub(&mut self, idx: u64, count: u64) -> R<()> {
-        let n = usize::try_from(idx).ok().and_then(|i| self.subs.get(i)).cloned().ok_or("substitution out of range")?;
+        let n = usize::try_from(idx).ok().and_then(|i| self.subs.get(i)).ok_or("substitution out of range")?;
         if count > 64 {
             return Err("substitution repeat too large".into());
         }
-        let cost = weight(&n, 0).saturating_mul(usize::try_from(count).unwrap_or(usize::MAX));
+        let cost = weight(n, 0).saturating_mul(usize::try_from(count).unwrap_or(usize::MAX));
         self.budget = self.budget.checked_sub(cost).ok_or("symbol expands too much")?;
-        for _ in 0..count {
+        if count == 0 {
+            return Ok(());
+        }
+        let n = n.clone();
+        for _ in 1..count {
             self.push(n.clone())?;
         }
-        Ok(())
+        self.push(n)
     }
 
     fn standard(&mut self) -> R<()> {
