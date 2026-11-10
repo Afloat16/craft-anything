@@ -1725,6 +1725,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-evm-cbor
 - [x] Require evidence of a rejecting payment branch before labelling EVM functions nonpayable; reading CALLVALUE alone accepts payments.
       — claimed: Afloat16, branch bugfix/r3.12-evm-payment-guards
+- [x] Avoid rescanning every retained EVM selector for repeated dispatcher comparisons.
+      — claimed: Afloat16, branch bugfix/r3.12-evm-selector-dedup-20261110
 - [x] Reject invalid marshal long integer digits.
       — claimed: Afloat16, branch bugfix/r3.12-pyc-long-limb-validation-20261105
 - [x] Check expanded RGBA image sizes and enforce output budgets before allocation.
