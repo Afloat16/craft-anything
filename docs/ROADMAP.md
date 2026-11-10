@@ -1517,8 +1517,6 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Reject duplicate keys in safetensors headers before they silently replace tensor descriptions or model metadata.
-      — claimed: Afloat16, branch bugfix/r3.12-safetensors-duplicate-keys-20261110
 - [x] Refuse oversized GNU tar long names and link targets instead of silently truncating member identities.
       — claimed: Afloat16, branch bugfix/r3.12-tar-long-identities-20261109
       Source [`de2c6390`](https://github.com/Afloat16/craft-anything/commit/de2c63908909cab675887103921ed2601b1bae9b) passed [formats tests, fmt and clippy](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663)
@@ -1695,6 +1693,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-pyc-long-limb-validation-20261105
 - [x] Check expanded RGBA image sizes and enforce output budgets before allocation.
       — claimed: Afloat16, branch bugfix/r3.12-pixel-rgba-output-overflow-20261105
+- [x] Reject duplicate keys in safetensors headers before they silently replace tensor descriptions or model metadata.
+      — claimed: Afloat16, branch bugfix/r3.12-safetensors-duplicate-keys-20261110
 - [x] Report malformed safetensors metadata, element widths and payload coverage.
       — claimed: Afloat16, branch bugfix/r3.12-safetensors-layout
 - [x] Read Apple BOM block indices and named variables only within the directory byte ranges declared by the container.
