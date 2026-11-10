@@ -1890,6 +1890,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-cil-exception-framing-20261110
 - [x] Read Dart version hashes and feature strings only from the bytes belonging to that snapshot.
       — claimed: Afloat16, branch bugfix/r3.12-dart-snapshot-extent
+- [ ] Keep Dart string-pool duplicate tracking within the retained URI and token limits.
+      — claimed: Afloat16, branch bugfix/r3.12-dart-retained-string-budgets-20261110
 - [x] Read a Dart ELF build ID only when its name and descriptor fit the declared note.
       — claimed: Afloat16, branch bugfix/r3.12-dart-note
 - [x] Locate ELF core mapping names after the complete declared table.
