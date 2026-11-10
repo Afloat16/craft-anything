@@ -1906,6 +1906,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-sbpf-rela
 - [x] Use the sorted section and segment boundaries during source-map position lookups so repeated symbolication visits only matching positions.
       — claimed: Afloat16, branch bugfix/r3.12-source-map-lookup-work
+- [x] Bound generated source-map lines across indexed sections, including empty lines that consume no segment budget.
+      — claimed: Afloat16, branch bugfix/r3.12-sourcemap-line-budget-20261110
 - [x] Parsers refuse what they used to half-read: binary plists keep objects inside their object
       area and reject unrepresentable widths, base64 (plists, source maps) refuses damaged tails
       and incomplete quanta through one shared decoder, OIDs must be minimally encoded, and string
