@@ -1870,7 +1870,7 @@ Owner: open · Status: in progress
 - [x] Keep PE version strings whose value is empty (stored with no value at all), such as
       `OleSelfRegister`, whose presence is the whole point.
       — claimed: Plastic-time, branch bugfix/r3.12-pe-empty-version-strings
-- [ ] Keep fixed PE file and product versions inside a complete declared VS_FIXEDFILEINFO value and its enclosing version node.
+- [x] Keep fixed PE file and product versions inside a complete declared VS_FIXEDFILEINFO value and its enclosing version node.
       — claimed: Afloat16, branch bugfix/r3.12-pe-fixed-version-bounds-20261110
 - [x] Read PE version strings stored as binary (wType 0), which some linkers write; they're
       dropped today (`FileDescription` in `pthreadVC2.dll`). A binary leaf at the string depth is
