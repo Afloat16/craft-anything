@@ -1566,6 +1566,9 @@ Owner: open · Status: in progress
 - [x] Read the explicit module-format byte in current Node SEA blobs while retaining the older layouts;
       report the stored format and recover the main script, assets and execution arguments at their real offsets.
       — claimed: Afloat16, branch bugfix/r3.12-node-sea-module-format-20261110
+- [ ] Bound retained expanded PYZ paths across nested archives before allocating repeated prefixes;
+      preserve complete entry identities and declared module counts in partial listings.
+      — claimed: Afloat16, branch bugfix/r3.12-pyz-expanded-path-budget-20261110
 - [x] Keep sequence splitting from introducing JavaScript strict-mode directives.
       — claimed: Plastic-time, branch rrfz/bugfix-r3.12-js-sequence-directives
 - [x] Allocate distinct recovered module paths after repeated content-hash collisions.
