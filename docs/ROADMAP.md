@@ -2149,7 +2149,7 @@ Owner: open · Status: in progress
 
 - [x] Require complete sBPF symbol records and their declared string-table links before reporting symbol identities.
       — claimed: Afloat16, branch bugfix/r3.12-sbpf-symbol-framing-20261110
-- [ ] Bound retained PE import/export name and forwarder bytes across repeated references; preserve bounded prefixes and report byte-budget truncation. — claimed: Afloat16, branch bugfix/r3.12-pe-table-text-budget-20261110
+- [x] Bound retained PE import/export name and forwarder bytes across repeated references; preserve bounded prefixes and report byte-budget truncation.
 
 
 ### R3.13 Web inspection correctness
