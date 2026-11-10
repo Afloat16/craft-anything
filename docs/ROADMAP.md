@@ -1566,9 +1566,6 @@ Owner: open · Status: in progress
 - [x] Read the explicit module-format byte in current Node SEA blobs while retaining the older layouts;
       report the stored format and recover the main script, assets and execution arguments at their real offsets.
       — claimed: Afloat16, branch bugfix/r3.12-node-sea-module-format-20261110
-- [ ] Bound retained ASAR entry and rejected-name paths before expanding shared directory prefixes;
-      preserve complete member identities and report a partial listing when the byte budget is reached.
-      — claimed: Afloat16, branch bugfix/r3.12-asar-path-budget-20261110
 - [x] Keep sequence splitting from introducing JavaScript strict-mode directives.
       — claimed: Plastic-time, branch rrfz/bugfix-r3.12-js-sequence-directives
 - [x] Allocate distinct recovered module paths after repeated content-hash collisions.
@@ -1595,6 +1592,10 @@ Owner: open · Status: in progress
       The [unchanged-code baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) reproduces the new regression cases.
 - [x] Bound rejected ASAR names by the archive listing limit.
       — claimed: Afloat16, branch bugfix/r3.12-asar-limit-bounds-20261107
+- [x] Bound retained ASAR entry and rejected-name paths before expanding shared directory prefixes;
+      preserve complete member identities and report a partial listing when the byte budget is reached.
+      Extract recovered members with partial coverage and no claimed total when a listing is incomplete.
+      — claimed: Afloat16, branch bugfix/r3.12-asar-path-budget-20261110
 - [x] Keep embedded Godot pack tables and member reads before the executable's pack trailer.
       — claimed: Afloat16, branch bugfix/r3.12-godot-trailer-boundary-20261109
       Source `9744a0569a7c`; [format checks](https://github.com/Afloat16/claude-mem/actions/runs/42633003467/job/129213811429) and [compatibility gates](https://github.com/Afloat16/claude-mem/actions/runs/42642583301/job/129247271153) passed.
