@@ -1928,6 +1928,8 @@ Owner: open · Status: in progress
 - [x] Reject Java Long and Double constants without their reserved constant-pool slot, including the maximum u16 pool boundary.
       — claimed: Afloat16, branch bugfix/r3.12-java-wide-pool-slot-20261109
       Source `e0dbc3a5b60b`; [full Linux gate](https://github.com/Afloat16/craft-anything/actions/runs/42629757277) passed.
+- [ ] Unfold JAR manifest attributes as bytes before UTF-8 decoding, preserve value whitespace, and recognize every specified line ending so entry digests use the original filenames.
+      — claimed: Afloat16, branch bugfix/r3.12-jar-attribute-bytes-20261110
 - [x] Find the method parameter terminator outside object type names in JVM descriptors.
       — claimed: Afloat16, branch bugfix/r3.12-java-descriptor-boundary
 - [x] Stop capped DEX member and handler lists from interpreting unread records as the following field or a catch-all.
