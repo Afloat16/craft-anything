@@ -738,10 +738,12 @@ pub fn base64(data: &[u8]) -> String {
     out
 }
 
-/// The digest (and its algorithm) a JAR section records, trying SHA-256 then SHA-1.
+const JAR_DIGESTS: [(Digest, &str); 3] = [(Digest::Sha256, "SHA-256-Digest"), (Digest::Sha512, "SHA-512-Digest"), (Digest::Sha1, "SHA1-Digest")];
+
+/// The digest (and its algorithm) a JAR section records, in supported preference order.
 fn section_digest(section: &JarSection, suffix: &str) -> Option<(Digest, String)> {
-    for (d, prefix) in [(Digest::Sha256, "SHA-256"), (Digest::Sha512, "SHA-512"), (Digest::Sha1, "SHA1")] {
-        if let Some(v) = attr(section, &format!("{prefix}-Digest{suffix}")) {
+    for (d, key) in JAR_DIGESTS {
+        if let Some(v) = attr(section, &format!("{key}{suffix}")) {
             return Some((d, v.to_string()));
         }
     }
@@ -771,15 +773,26 @@ pub fn verify_jar_integrity(manifest_mf: &[u8], sf: &[u8], mut read_entry: impl 
         notes.push("the signature file records no whole-manifest digest; per-file digests are still checked".into());
     }
     let sections = parse_jar_sections(manifest_mf);
+    // Repeated sections describe one entry. Only attributes present in a later section replace
+    // earlier values; preserve the other algorithms before selecting a preferred digest.
+    let mut entries: std::collections::BTreeMap<&str, [Option<&str>; 3]> = std::collections::BTreeMap::new();
+    for section in &sections {
+        let Some(name) = section.name.as_deref() else { continue };
+        let digests = entries.entry(name).or_insert([None; 3]);
+        for (slot, (_, key)) in digests.iter_mut().zip(JAR_DIGESTS) {
+            if let Some(value) = attr(section, key) {
+                *slot = Some(value);
+            }
+        }
+    }
     let mut files_listed = 0;
     let mut files_matched = 0;
     let mut files_mismatched = 0;
     let mut files_unchecked = 0;
     let mut mismatched_names = Vec::new();
-    for s in sections.iter().filter(|s| s.name.is_some()) {
-        let Some(name) = &s.name else { continue };
+    for (name, digests) in entries {
         files_listed += 1;
-        let Some((d, want)) = section_digest(s, "") else {
+        let Some((d, want)) = digests.into_iter().zip(JAR_DIGESTS).find_map(|(want, (digest, _))| want.map(|want| (digest, want))) else {
             files_unchecked += 1;
             continue;
         };
@@ -790,7 +803,7 @@ pub fn verify_jar_integrity(manifest_mf: &[u8], sf: &[u8], mut read_entry: impl 
                 } else {
                     files_mismatched += 1;
                     if mismatched_names.len() < 32 {
-                        mismatched_names.push(name.clone());
+                        mismatched_names.push(name.to_string());
                     }
                 }
             }
