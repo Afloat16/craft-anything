@@ -1735,7 +1735,7 @@ Owner: open · Status: in progress
 - [x] Check that Unity bundle compressed blocks end before the trailing block table, or the declared
       bundle end for front-positioned tables, so bytes outside the data region cannot supply block contents.
       — claimed: Codex, branch bugfix/r3.12-unity-bundle-data-region; PR #1021
-- [ ] Require Unity bundle member ranges to fit the complete uncompressed block stream before listing or reading them, with checked ends and valid cross-block or empty entries preserved.
+- [x] Check Unity bundle member ranges against the complete uncompressed block stream, retain invalid entries as unreadable with explicit listing warnings, and preserve valid sibling members, cross-block ranges and empty entries.
       — claimed: Afloat16, branch bugfix/r3.12-unity-node-ranges-20261110
 - [x] Validate Unity serialized metadata offsets and lengths before reading so short inputs cannot panic or borrow object bytes.
       — claimed: Afloat16, branch bugfix/r3.12-unity-metadata-range-20261109
