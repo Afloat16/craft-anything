@@ -224,6 +224,7 @@ pub struct ChainLink {
     pub sha256: String,
     /// Whether this certificate's signature was verified against its issuer in the set.
     pub signature_verified: Verified,
+    /// The subject equals the issuer and the certificate's own key verified its signature.
     pub self_signed: bool,
 }
 
@@ -231,7 +232,7 @@ pub struct ChainLink {
 #[derive(Debug, Clone, Serialize)]
 pub struct ChainResult {
     pub links: Vec<ChainLink>,
-    /// Every non-root link verified against its issuer.
+    /// Every link verified and the walk reached a verified self-signed top certificate.
     pub fully_linked: bool,
     pub root_subject: Option<String>,
     pub root_sha256: Option<String>,
@@ -256,16 +257,19 @@ fn verify_cert_by(child: &[u8], issuer: &[u8]) -> Verified {
 pub fn verify_chain(certs: &[&[u8]]) -> ChainResult {
     let mut links: Vec<ChainLink> = Vec::new();
     let mut notes = Vec::new();
-    let mut fully_linked = true;
+    let mut fully_linked = false;
     let mut seen: Vec<String> = Vec::new();
     let Some(&first) = certs.first() else {
         return ChainResult { links, fully_linked: false, root_subject: None, root_sha256: None, trusted_root: None, notes: vec!["no certificates".into()] };
     };
     let mut current = first;
-    for _ in 0..certs.len().min(16) {
+    if certs.len() > 64 {
+        notes.push("issuer search is limited to the first 64 certificates".into());
+    }
+    let walk_limit = certs.len().min(16);
+    for depth in 0..walk_limit {
         let Some(parts) = der::certificate_parts(current) else {
             notes.push("a certificate in the chain could not be parsed".into());
-            fully_linked = false;
             break;
         };
         let sha = sha256_hex(current);
@@ -274,29 +278,48 @@ pub fn verify_chain(certs: &[&[u8]]) -> ChainResult {
             break;
         }
         seen.push(sha.clone());
-        let self_signed = parts.subject == parts.issuer;
         let info = der::certificate(current);
         let subject = info.as_ref().map(|c| c.subject.clone()).unwrap_or_default();
         let issuer = info.as_ref().map(|c| c.issuer.clone()).unwrap_or_default();
-        // Find the issuer certificate in the set (by matching DN), else self for a root.
-        let issuer_cert =
-            if self_signed { Some(current) } else { certs.iter().copied().find(|c| der::certificate_parts(c).is_some_and(|p| p.subject == parts.issuer)) };
-        let signature_verified = match issuer_cert {
-            Some(ic) => verify_cert_by(current, ic),
-            None => {
-                fully_linked = false;
-                Verified::unsupported("issuer certificate not present in the signature")
+        let mut issuer_cert = None;
+        let mut signature_verified = Verified::unsupported("issuer certificate not present in the signature");
+        if parts.subject == parts.issuer {
+            signature_verified = verify_cert_by(current, current);
+            if signature_verified.is_valid() {
+                issuer_cert = Some(current);
             }
-        };
-        if !signature_verified.is_valid() && issuer_cert.is_some() {
-            fully_linked = false;
         }
+        // Equal names do not establish which key signed the certificate. A self-issued
+        // rollover can also need a different certificate with the same name.
+        if issuer_cert.is_none() {
+            for candidate in certs.iter().copied().take(64) {
+                if candidate == current || !der::certificate_parts(candidate).is_some_and(|p| p.subject == parts.issuer) {
+                    continue;
+                }
+                let verified = verify_cert_by(current, candidate);
+                if verified.is_valid() {
+                    issuer_cert = Some(candidate);
+                    signature_verified = verified;
+                    break;
+                }
+                if verified == Verified::Invalid || !matches!(signature_verified, Verified::Invalid) {
+                    signature_verified = verified;
+                }
+            }
+        }
+        let self_signed = issuer_cert == Some(current);
         links.push(ChainLink { subject, issuer, sha256: sha, signature_verified, self_signed });
         if self_signed {
+            fully_linked = true;
             break;
         }
         match issuer_cert {
-            Some(ic) if ic != current => current = ic,
+            Some(ic) => {
+                current = ic;
+                if depth + 1 == walk_limit {
+                    notes.push("certificate chain walk limit reached; stopped".into());
+                }
+            }
             _ => break,
         }
     }
@@ -888,6 +911,98 @@ mod tests {
         // A single self-signed certificate verifies against itself.
         let ss = crypto::self_signed_rsa("Solo", "Org");
         assert!(verify_chain(&[&ss]).links[0].signature_verified.is_valid());
+    }
+
+    #[test]
+    fn chain_tries_later_issuers_with_the_same_name() {
+        use craft_anything_testkit::{
+            android::{der, der_oid},
+            crypto,
+        };
+        use p256::{
+            ecdsa::{Signature, SigningKey, signature::Signer},
+            elliptic_curve::rand_core::OsRng,
+        };
+        let decoy_key = SigningKey::random(&mut OsRng);
+        let point = decoy_key.verifying_key().to_encoded_point(false);
+        let algorithm = der(0x30, &[der_oid(EC_PUBLIC_KEY), der_oid("1.2.840.10045.3.1.7")].concat());
+        let spki = der(0x30, &[algorithm, der(0x03, &[&[0], point.as_bytes()].concat())].concat());
+        let decoy = crypto::make_cert("Shared CA", "Fixture Org", "Shared CA", &spki, "1.2.840.10045.4.3.2", &|message| {
+            let signature: Signature = decoy_key.sign(message);
+            signature.to_der().as_bytes().to_vec()
+        });
+        let issuer = crypto::make_cert("Shared CA", "Fixture Org", "Shared CA", &crypto::p256_spki(), "1.2.840.10045.4.3.2", &crypto::p256_sign_sha256);
+        let leaf = crypto::make_cert("Leaf", "Fixture Org", "Shared CA", &crypto::rsa_spki(), "1.2.840.10045.4.3.2", &crypto::p256_sign_sha256);
+        assert!(verify_cert_by(&decoy, &decoy).is_valid());
+        assert_eq!(verify_cert_by(&leaf, &decoy), Verified::Invalid);
+        assert!(verify_cert_by(&leaf, &issuer).is_valid());
+        for certs in [[leaf.as_slice(), decoy.as_slice(), issuer.as_slice()], [leaf.as_slice(), issuer.as_slice(), decoy.as_slice()]] {
+            let chain = verify_chain(&certs);
+            assert!(chain.fully_linked, "{chain:?}");
+            assert_eq!(chain.links.len(), 2);
+            assert_eq!(chain.root_sha256.as_deref(), Some(sha256_hex(&issuer).as_str()));
+            assert!(chain.links.iter().all(|link| link.signature_verified.is_valid()));
+            assert_eq!(chain.trusted_root, None);
+        }
+        let absent = verify_chain(&[&leaf, &decoy]);
+        assert!(!absent.fully_linked);
+        assert_eq!(absent.links.len(), 1);
+        assert_eq!(absent.links[0].signature_verified, Verified::Invalid);
+        let mut bounded = vec![leaf.as_slice()];
+        bounded.extend(std::iter::repeat_n(decoy.as_slice(), 62));
+        bounded.push(issuer.as_slice());
+        assert!(verify_chain(&bounded).fully_linked);
+        bounded.insert(1, decoy.as_slice());
+        let omitted = verify_chain(&bounded);
+        assert!(!omitted.fully_linked);
+        assert!(omitted.notes.iter().any(|note| note.contains("first 64 certificates")));
+    }
+
+    #[test]
+    fn self_issued_rollover_follows_the_actual_issuer_key() {
+        use craft_anything_testkit::crypto;
+        let root = crypto::self_signed_rsa("Rollover CA", "Fixture Org");
+        let rollover = crypto::make_cert("Rollover CA", "Fixture Org", "Rollover CA", &crypto::p256_spki(), "1.2.840.113549.1.1.11", &crypto::rsa_sign_sha256);
+        assert!(!verify_cert_by(&rollover, &rollover).is_valid());
+        assert!(verify_cert_by(&rollover, &root).is_valid());
+        let chain = verify_chain(&[&rollover, &root]);
+        assert!(chain.fully_linked, "{chain:?}");
+        assert_eq!(chain.links.len(), 2);
+        assert!(!chain.links[0].self_signed);
+        assert!(chain.links[1].self_signed);
+        assert_eq!(chain.root_sha256.as_deref(), Some(sha256_hex(&root).as_str()));
+        let missing = verify_chain(&[&rollover]);
+        assert!(!missing.fully_linked);
+        assert!(!missing.links[0].self_signed);
+    }
+
+    #[test]
+    fn verified_links_without_a_root_do_not_complete_a_chain() {
+        use craft_anything_testkit::crypto;
+        let a = crypto::make_cert("Cycle A", "Fixture Org", "Cycle B", &crypto::rsa_spki(), "1.2.840.10045.4.3.2", &crypto::p256_sign_sha256);
+        let b = crypto::make_cert("Cycle B", "Fixture Org", "Cycle A", &crypto::p256_spki(), "1.2.840.113549.1.1.11", &crypto::rsa_sign_sha256);
+        let cycle = verify_chain(&[&a, &b]);
+        assert!(cycle.links.iter().all(|link| link.signature_verified.is_valid()));
+        assert!(!cycle.fully_linked, "{cycle:?}");
+        assert!(cycle.trusted_root.is_none());
+
+        let mut certificates = Vec::new();
+        for i in 0..18 {
+            certificates.push(crypto::make_cert(
+                &format!("Depth {i}"),
+                "Fixture Org",
+                &format!("Depth {}", (i + 1).min(17)),
+                &crypto::rsa_spki(),
+                "1.2.840.113549.1.1.11",
+                &crypto::rsa_sign_sha256,
+            ));
+        }
+        let refs: Vec<_> = certificates.iter().map(Vec::as_slice).collect();
+        let bounded = verify_chain(&refs);
+        assert_eq!(bounded.links.len(), 16);
+        assert!(bounded.links.iter().all(|link| link.signature_verified.is_valid()));
+        assert!(!bounded.fully_linked, "{bounded:?}");
+        assert!(bounded.notes.iter().any(|note| note.contains("walk limit")));
     }
 
     #[test]
