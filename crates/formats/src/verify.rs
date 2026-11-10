@@ -624,19 +624,22 @@ pub struct JarSection {
 }
 
 /// Parse a JAR `MANIFEST.MF` or `.SF` file into its main section and per-entry sections.
-/// Handles the 72-byte line-folding (continuation lines begin with a single space).
+/// Unfolds physical byte lines before decoding UTF-8 and accepts CR, LF or CRLF terminators.
 pub fn parse_jar_sections(data: &[u8]) -> Vec<JarSection> {
-    let text = String::from_utf8_lossy(data);
-    let mut logical: Vec<String> = Vec::new();
-    for raw in text.split('\n') {
-        let line = raw.strip_suffix('\r').unwrap_or(raw);
-        if let Some(rest) = line.strip_prefix(' ')
-            && let Some(last) = logical.last_mut()
-        {
-            last.push_str(rest);
+    let mut logical: Vec<Vec<u8>> = Vec::new();
+    let mut remaining = data;
+    while !remaining.is_empty() {
+        let end = remaining.iter().position(|byte| matches!(byte, b'\r' | b'\n')).unwrap_or(remaining.len());
+        let line = remaining.get(..end).unwrap_or_default();
+        let tail = remaining.get(end..).unwrap_or_default();
+        remaining = tail.strip_prefix(b"\r\n").or_else(|| tail.get(1..)).unwrap_or_default();
+        if let Some(rest) = line.strip_prefix(b" ") {
+            if let Some(last) = logical.last_mut().filter(|line| !line.is_empty()) {
+                last.extend_from_slice(rest);
+            }
             continue;
         }
-        logical.push(line.to_string());
+        logical.push(line.to_vec());
     }
     let mut sections = Vec::new();
     let mut attrs: Vec<(String, String)> = Vec::new();
@@ -651,9 +654,10 @@ pub fn parse_jar_sections(data: &[u8]) -> Vec<JarSection> {
             flush(&mut attrs, &mut name, &mut sections);
             continue;
         }
+        let line = String::from_utf8_lossy(&line);
         if let Some((k, v)) = line.split_once(':') {
             let k = k.trim().to_string();
-            let v = v.trim().to_string();
+            let v = v.strip_prefix(' ').unwrap_or(v).to_string();
             if k.eq_ignore_ascii_case("Name") {
                 name = Some(v);
             } else {
@@ -773,6 +777,60 @@ mod tests {
         assert_eq!(s.len(), 2);
         assert_eq!(s[1].name.as_deref(), Some("a/b/really-long-name.txt"));
         assert_eq!(attr(&s[1], "SHA-256-Digest"), Some("AAA="));
+    }
+
+    #[test]
+    fn jar_unfolds_utf8_bytes_before_decoding_a_filename() {
+        let name = format!("{}é.txt", "a".repeat(65));
+        let header = format!("Name: {name}");
+        assert_eq!(header.as_bytes()[71], 0xc3);
+        let content = b"the named entry";
+        let mut manifest = b"Manifest-Version: 1.0\r\n\r\n".to_vec();
+        manifest.extend_from_slice(&header.as_bytes()[..72]);
+        manifest.extend_from_slice(b"\r\n ");
+        manifest.extend_from_slice(&header.as_bytes()[72..]);
+        manifest.extend_from_slice(format!("\r\nSHA-256-Digest: {}\r\n\r\n", base64(&Digest::Sha256.hash(content))).as_bytes());
+        let sections = parse_jar_sections(&manifest);
+        assert_eq!(sections[1].name.as_deref(), Some(name.as_str()));
+        let checked = verify_jar_integrity(&manifest, b"", |requested| (requested == name).then(|| content.to_vec()));
+        assert_eq!((checked.files_listed, checked.files_matched, checked.files_mismatched, checked.files_unchecked), (1, 1, 0, 0));
+    }
+
+    #[test]
+    fn jar_values_preserve_spaces_beyond_the_separator() {
+        let name = " leading and trailing.txt  ";
+        let content = b"entry with a whitespace-sensitive name";
+        let manifest = format!("Manifest-Version: 1.0\nCreated-By:  original  \n\nName: {name}\nSHA-256-Digest: {}\n\n", base64(&Digest::Sha256.hash(content)));
+        let sections = parse_jar_sections(manifest.as_bytes());
+        assert_eq!(attr(&sections[0], "Created-By"), Some(" original  "));
+        assert_eq!(sections[1].name.as_deref(), Some(name));
+        let checked = verify_jar_integrity(manifest.as_bytes(), b"", |requested| (requested == name).then(|| content.to_vec()));
+        assert_eq!((checked.files_matched, checked.files_mismatched, checked.files_unchecked), (1, 0, 0));
+    }
+
+    #[test]
+    fn jar_sections_accept_cr_lf_and_crlf_newlines() {
+        for newline in ["\r", "\n", "\r\n"] {
+            let manifest =
+                ["Manifest-Version: 1.0", "", "Name: file", " .txt", "SHA-256-Digest: AAA=", "", "Name: other.txt", "SHA1-Digest: BBB=", ""].join(newline);
+            let sections = parse_jar_sections(manifest.as_bytes());
+            assert_eq!(sections.len(), 3, "newline {newline:?}");
+            assert_eq!(sections[1].name.as_deref(), Some("file.txt"));
+            assert_eq!(attr(&sections[1], "SHA-256-Digest"), Some("AAA="));
+            assert_eq!(sections[2].name.as_deref(), Some("other.txt"));
+        }
+        let mixed = parse_jar_sections(b"Manifest-Version: 1.0\r\n\rName: file\n .txt\rSHA-256-Digest: AAA=\n\r\n");
+        assert_eq!(mixed.len(), 2);
+        assert_eq!(mixed[1].name.as_deref(), Some("file.txt"));
+    }
+
+    #[test]
+    fn jar_orphan_continuations_do_not_join_sections() {
+        let sections = parse_jar_sections(b" orphan at start\nManifest-Version: 1.0\n\n Created-By: orphan\nName: file.txt\nSHA1-Digest: AAA=\n");
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections[0].name, None);
+        assert_eq!(attr(&sections[0], "Created-By"), None);
+        assert_eq!(sections[1].name.as_deref(), Some("file.txt"));
     }
 
     #[test]
