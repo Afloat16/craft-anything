@@ -87,6 +87,11 @@ pub fn release_named(version: &str) -> Option<&'static Release> {
     RELEASES.iter().find(|r| r.version == version)
 }
 
+/// Header bytes written by a known release, or the modern 16-byte form for an unknown magic.
+pub fn header_size(magic: u16) -> usize {
+    release_for_magic(magic).map_or(16, |r| r.header)
+}
+
 /// How a `.pyc` says whether it is still up to date with its source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -132,7 +137,7 @@ pub fn parse_header(data: &[u8]) -> Result<PycHeader, FormatError> {
     let magic = u16::from_le_bytes([b0, b1]);
     let release = release_for_magic(magic);
     // An unknown number is newer than our table, and every recent release uses the 16-byte form.
-    let size = release.map_or(16, |r| r.header);
+    let size = header_size(magic);
     if data.len() < size {
         return Err(short());
     }
@@ -644,10 +649,11 @@ pub fn read_pyc(data: &[u8]) -> Result<PycFile, FormatError> {
 
 /// A `.pyc` around bare marshalled code: the magic number and a timestamp-style header of zeros.
 pub fn wrap_marshal(magic: u16, marshal: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(marshal.len().saturating_add(16));
+    let size = header_size(magic);
+    let mut out = Vec::with_capacity(marshal.len().saturating_add(size));
     out.extend(magic.to_le_bytes());
     out.extend([0x0d, 0x0a]);
-    out.extend([0u8; 12]);
+    out.resize(size, 0);
     out.extend(marshal);
     out
 }
@@ -967,5 +973,18 @@ mod tests {
     fn a_wrapped_marshal_reads_as_a_pyc() {
         let file = read_pyc(&wrap_marshal(3531, &sample_311())).unwrap();
         assert_eq!(file.code.unwrap().root.name, "<module>");
+    }
+
+    #[test]
+    fn wrapped_marshal_uses_the_release_header_width() {
+        let body = b"marshal payload";
+        for (magic, size) in [(62211, 8), (3180, 8), (3230, 12), (3351, 12), (3379, 12), (3394, 16), (3531, 16), (4000, 16)] {
+            let wrapped = wrap_marshal(magic, body);
+            let header = parse_header(&wrapped).unwrap();
+            assert_eq!(header.size, size);
+            assert_eq!(&wrapped[size..], body, "magic {magic}");
+            assert_eq!(wrapped.len(), size + body.len());
+            assert!(wrapped[4..size].iter().all(|byte| *byte == 0));
+        }
     }
 }

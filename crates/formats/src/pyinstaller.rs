@@ -389,10 +389,11 @@ impl PackedFormat for PyInstaller {
 /// A member's bytes: a PYZ module gets the `.pyc` header its magic number asks for, any other
 /// member is handed back as stored.
 fn read_member(data: &[u8], entry: &PackedEntry, max_bytes: u64) -> Result<Vec<u8>, FormatError> {
-    const PYC_HEADER_BYTES: u64 = 16;
     let magic = entry.kind.as_deref().and_then(|k| k.strip_prefix(PYZ_KIND)).and_then(|m| u16::from_str_radix(m, 16).ok());
     let body_limit = match magic {
-        Some(_) => max_bytes.checked_sub(PYC_HEADER_BYTES).ok_or_else(|| FormatError::TooLarge(format!("{} needs a .pyc header", entry.path)))?,
+        Some(magic) => {
+            max_bytes.checked_sub(pyc::header_size(magic) as u64).ok_or_else(|| FormatError::TooLarge(format!("{} needs a .pyc header", entry.path)))?
+        }
         None => max_bytes,
     };
     let body = read_stored(data, entry, body_limit)?;
@@ -746,6 +747,40 @@ mod tests {
         assert!(matches!(PyInstaller.read(&data, util, 15), Err(FormatError::TooLarge(_))));
         assert!(matches!(PyInstaller.read(&data, util, (full.len() - 1) as u64), Err(FormatError::TooLarge(_))));
         assert_eq!(PyInstaller.read(&data, util, full.len() as u64).unwrap(), full);
+    }
+
+    #[test]
+    fn legacy_pyz_modules_keep_their_marshal_payload_at_the_header_boundary() {
+        let body = b"marshal payload";
+        for (magic, header_size) in [(62211, 8), (3379, 12), (3531, 16)] {
+            let archive = pyz(magic, &[("module", 0, body)], true, true);
+            let nested = pyinstaller(&[("PYZ.pyz", b'z', &archive, false)], false, 27);
+            for (reader, data, path) in [
+                (&PyzArchive as &dyn PackedFormat, archive.as_slice(), "pyz.modules/module.pyc"),
+                (&PyInstaller as &dyn PackedFormat, nested.as_slice(), "PYZ.pyz.modules/module.pyc"),
+            ] {
+                let listing = reader.list(data).unwrap();
+                let entry = find(&listing, path);
+                let full = reader.read(data, entry, 1024).unwrap();
+                assert_eq!(pyc::parse_header(&full).unwrap().size, header_size);
+                assert_eq!(&full[header_size..], body, "magic {magic}, {path}");
+            }
+        }
+    }
+
+    #[test]
+    fn pyz_output_limits_charge_the_release_header_width() {
+        let body = b"marshal payload";
+        for (magic, header_size) in [(62211, 8), (3379, 12), (3531, 16)] {
+            let archive = pyz(magic, &[("module", 0, body)], false, true);
+            let listing = PyzArchive.list(&archive).unwrap();
+            let entry = find(&listing, "pyz.modules/module.pyc");
+            let limit = (header_size + body.len()) as u64;
+            let full = PyzArchive.read(&archive, entry, limit).unwrap();
+            assert_eq!(full.len() as u64, limit);
+            assert!(matches!(PyzArchive.read(&archive, entry, limit - 1), Err(FormatError::TooLarge(_))));
+            assert!(matches!(PyzArchive.read(&archive, entry, header_size as u64 - 1), Err(FormatError::TooLarge(_))));
+        }
     }
 
     #[test]
