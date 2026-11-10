@@ -1517,6 +1517,8 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
+- [ ] Write the Python release's 8-, 12- or 16-byte header when extracting PYZ modules, and charge the actual header against the output limit.
+      — claimed: Afloat16, branch bugfix/r3.12-pyz-versioned-headers-20261110
 - [x] Refuse oversized GNU tar long names and link targets instead of silently truncating member identities.
       — claimed: Afloat16, branch bugfix/r3.12-tar-long-identities-20261109
       Source [`de2c6390`](https://github.com/Afloat16/craft-anything/commit/de2c63908909cab675887103921ed2601b1bae9b) passed [formats tests, fmt and clippy](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663)
