@@ -585,3 +585,12 @@ their immediate model directory as a task hint, with either path separator. Name
 publisher prefixes and unrelated words are not classified by arbitrary ancestor directories.
 Regression tests cover mixed model lists and servers listing only specialised models through
 the local discovery API. Classification remains a name heuristic; it does not probe model capabilities.
+
+## Quantized GGUF tensor ranges
+
+Model-header inspection calculates byte lengths for the supported Q4/Q5/Q8, K and IQ block
+formats, including their scales. A row must contain whole blocks; malformed row widths and
+overflowing shapes remain unknown with a diagnostic. Truncation checks include quantized
+payloads and use nonwrapping offset arithmetic. Synthetic headers cover all 21 supported
+quantized layouts, exact and short files, multiple rows, unknown types and overflowing offsets.
+Tensor data is not decoded, and no model inference was run for this change.

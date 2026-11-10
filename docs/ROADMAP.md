@@ -2001,7 +2001,7 @@ Owner: open · Status: in progress
       and [layers, locks, secret scanning, wasm checks and Cargo.lock stability](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).
       The [unchanged-code baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) reproduces the new regression cases.
 
-- [ ] Calculate GGUF quantized tensor byte ranges from their block layout and diagnose invalid row widths.
+- [x] Calculate GGUF quantized tensor byte ranges from their block layout and diagnose invalid row widths.
       — claimed: Afloat16, branch bugfix/r3.12-gguf-quantized-extents-20261110
 
 ### R3.13 Web inspection correctness
