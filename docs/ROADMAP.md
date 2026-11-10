@@ -1666,6 +1666,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-certificate-name-rendering
 - [x] Read HTTP Host fields only from the header section.
       — claimed: Afloat16, branch bugfix/r3.12-http-host-boundary-20261105
+- [ ] Select certificate issuers by successful signature verification among matching names, follow self-issued key rollover, and report interrupted chains as incomplete.
+      — claimed: Afloat16, branch bugfix/r3.12-certificate-issuer-selection-20261110
 - [x] Keep capture flow timestamps in chronological order.
       — claimed: Afloat16, branch bugfix/r3.12-capture-flow-time-range-20261105
 - [x] Reject incomplete simple packet block payloads.
