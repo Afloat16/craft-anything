@@ -562,7 +562,8 @@ const MAX_COUNTED: usize = 16;
 /// names) decompress each block once.
 type BlockCache = Option<(usize, Vec<u8>)>;
 
-/// A range of a bundle's uncompressed data, decompressing only the blocks it touches.
+/// A range of a bundle's uncompressed data. Stored blocks are read directly; compressed blocks
+/// are decompressed only when touched and kept for subsequent reads from the same block.
 fn bundle_range(
     file: &mut File,
     path: &Path,
@@ -580,16 +581,29 @@ fn bundle_range(
     for (i, b) in blocks.iter().enumerate() {
         let uend = ustart + u64::from(b.uncompressed_size);
         if uend > start && ustart < end {
-            if cache.as_ref().is_none_or(|(at, _)| *at != i) {
-                let raw = read_at(file, path, cstart, u64::from(b.compressed_size))?;
-                let data =
-                    unity_bundle::decompress(u32::from(b.flags & 0x3f), &raw, b.uncompressed_size).map_err(|e| format_err(e, "a Unity bundle's data"))?;
-                *cache = Some((i, data));
+            let from = start.saturating_sub(ustart);
+            let to = end.min(uend) - ustart;
+            if b.flags & 0x3f == 0 {
+                if b.compressed_size != b.uncompressed_size {
+                    return Err(format_err(
+                        craft_anything_formats::FormatError::Malformed("stored block size differs from its output size".into()),
+                        "a Unity bundle's data",
+                    ));
+                }
+                let at = cstart.checked_add(from).ok_or_else(|| {
+                    format_err(craft_anything_formats::FormatError::Malformed("stored block offset overflow".into()), "a Unity bundle's data")
+                })?;
+                out.extend_from_slice(&read_at(file, path, at, to - from)?);
+            } else {
+                if cache.as_ref().is_none_or(|(at, _)| *at != i) {
+                    let raw = read_at(file, path, cstart, u64::from(b.compressed_size))?;
+                    let data =
+                        unity_bundle::decompress(u32::from(b.flags & 0x3f), &raw, b.uncompressed_size).map_err(|e| format_err(e, "a Unity bundle's data"))?;
+                    *cache = Some((i, data));
+                }
+                let data = cache.as_ref().map_or(&[][..], |(_, d)| d.as_slice());
+                out.extend_from_slice(data.get(from as usize..to as usize).unwrap_or_default());
             }
-            let data = cache.as_ref().map_or(&[][..], |(_, d)| d.as_slice());
-            let from = start.saturating_sub(ustart) as usize;
-            let to = (end.min(uend) - ustart) as usize;
-            out.extend_from_slice(data.get(from..to).unwrap_or_default());
         }
         if uend >= end {
             break;
@@ -1491,6 +1505,123 @@ mod tests {
         bundle.resize(64, 0);
         let bundle = craft_anything_testkit::temp_file("data.unity3d", &bundle);
         assert!(call(json!({"path": bundle})).unwrap_err().message.contains("Unity bundle"));
+    }
+
+    /// Write one stored block with a small serialized file at any offset, leaving the rest sparse.
+    fn unity_stored_fixture(path: &std::path::Path, uncompressed: u32, stored: u32, offset: u64) {
+        use std::io::{Seek, SeekFrom, Write};
+        let assets = craft_anything_testkit::games::unity_assets();
+        assert!(offset + assets.len() as u64 <= u64::from(stored));
+        let mut table = vec![0; 16];
+        table.extend_from_slice(&1i32.to_be_bytes());
+        table.extend_from_slice(&uncompressed.to_be_bytes());
+        table.extend_from_slice(&stored.to_be_bytes());
+        table.extend_from_slice(&0u16.to_be_bytes());
+        table.extend_from_slice(&1i32.to_be_bytes());
+        table.extend_from_slice(&offset.to_be_bytes());
+        table.extend_from_slice(&(assets.len() as u64).to_be_bytes());
+        table.extend_from_slice(&4u32.to_be_bytes());
+        table.extend_from_slice(b"CAB-stored\0");
+        let mut prefix = b"UnityFS\0".to_vec();
+        prefix.extend_from_slice(&8u32.to_be_bytes());
+        prefix.extend_from_slice(b"fixture\0fixture\0");
+        let size_at = prefix.len();
+        prefix.extend_from_slice(&0u64.to_be_bytes());
+        prefix.extend_from_slice(&(table.len() as u32).to_be_bytes());
+        prefix.extend_from_slice(&(table.len() as u32).to_be_bytes());
+        prefix.extend_from_slice(&0x240u32.to_be_bytes());
+        prefix.resize(prefix.len().next_multiple_of(16), 0);
+        prefix.extend_from_slice(&table);
+        prefix.resize(prefix.len().next_multiple_of(16), 0);
+        let data_at = prefix.len() as u64;
+        let size = data_at + u64::from(stored);
+        prefix[size_at..size_at + 8].copy_from_slice(&size.to_be_bytes());
+        let mut file = std::fs::File::create(path).unwrap();
+        file.write_all(&prefix).unwrap();
+        file.set_len(size).unwrap();
+        file.seek(SeekFrom::Start(data_at + offset)).unwrap();
+        file.write_all(&assets).unwrap();
+    }
+
+    /// Metadata at either end of a large stored block remains readable without taking the block.
+    #[cfg(unix)]
+    #[test]
+    fn unity_stored_large_blocks_support_bundle_listing() {
+        let e = Engine::new(crate::testing::session());
+        let dir = tempfile::tempdir().unwrap();
+        let block_size = (512 << 20) + 1;
+        let tail = u64::from(block_size) - craft_anything_testkit::games::unity_assets().len() as u64;
+        for offset in [0, tail] {
+            let path = dir.path().join(format!("stored-{offset}.bundle"));
+            unity_stored_fixture(&path, block_size, block_size, offset);
+            let v = e.call("game_unity_bundle_list", json!({"path": path}), CallOptions::new(Caller::Mcp)).unwrap().to_json();
+            assert_eq!(v["result"]["files"][0]["objects"]["object_count"], 4, "{v}");
+            assert!(!v["limitations"].as_array().unwrap().iter().any(|l| l["code"] == "objects_unread"), "{v}");
+        }
+    }
+
+    /// The public object-listing tool can read an object's name near a large block's end.
+    #[cfg(unix)]
+    #[test]
+    fn unity_stored_large_blocks_support_object_listing() {
+        let e = Engine::new(crate::testing::session());
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stored.bundle");
+        let block_size = (512 << 20) + 1;
+        let offset = u64::from(block_size) - craft_anything_testkit::games::unity_assets().len() as u64;
+        unity_stored_fixture(&path, block_size, block_size, offset);
+        let v = e.call("game_unity_list", json!({"path": path, "filter": "Grass"}), CallOptions::new(Caller::Mcp)).unwrap().to_json();
+        assert_eq!(v["result"]["matching"], 1, "{v}");
+        assert_eq!(v["result"]["objects"][0]["name"], "Grass");
+    }
+
+    /// A range shortcut must preserve the stored-versus-decoded length check for touched blocks.
+    #[test]
+    fn unity_stored_small_blocks_preserve_size_validation() {
+        let e = Engine::new(crate::testing::session());
+        let dir = tempfile::tempdir().unwrap();
+        let block_size = 1 << 20;
+        for stored in [block_size, block_size - 1, block_size + 1] {
+            let path = dir.path().join(format!("stored-{stored}.bundle"));
+            unity_stored_fixture(&path, block_size, stored, 0);
+            let result = e.call("game_unity_list", json!({"path": path}), CallOptions::new(Caller::Mcp));
+            if stored == block_size {
+                assert_eq!(result.unwrap().to_json()["result"]["object_count"], 4);
+            } else {
+                assert!(result.is_err(), "inconsistent stored block sizes must not become readable");
+            }
+        }
+    }
+
+    /// Mixed blocks and repeated reads keep their byte offsets across the two reading paths.
+    #[test]
+    fn unity_stored_ranges_cross_compressed_blocks() {
+        use craft_anything_formats::unity_bundle::{Block, Header};
+        let packed = craft_anything_testkit::games::lz4_literals(b"cde");
+        let bytes = [b"ab".as_slice(), packed.as_slice(), b"fgh".as_slice()].concat();
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut file, &bytes).unwrap();
+        let h = Header {
+            format_version: 8,
+            unity_version: "fixture".into(),
+            unity_revision: "fixture".into(),
+            size: bytes.len() as u64,
+            flags: 0,
+            table_offset: 0,
+            table_size: 0,
+            table_uncompressed_size: 0,
+            data_offset: 0,
+        };
+        let blocks = [
+            Block { uncompressed_size: 2, compressed_size: 2, flags: 0 },
+            Block { uncompressed_size: 3, compressed_size: packed.len() as u32, flags: 2 },
+            Block { uncompressed_size: 3, compressed_size: 3, flags: 0 },
+        ];
+        let path = file.path().to_path_buf();
+        let mut cache = None;
+        for (start, want) in [(1, b"bcdefg".as_slice()), (3, b"de"), (0, b"abcdefgh"), (7, b"h"), (4, b"")] {
+            assert_eq!(super::bundle_range(file.as_file_mut(), &path, &h, &blocks, start, want.len() as u64, &mut cache).unwrap(), want);
+        }
     }
 
     #[test]

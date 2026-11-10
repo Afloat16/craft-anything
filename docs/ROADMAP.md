@@ -1719,7 +1719,7 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-zip-multidisk-20261105
 - [x] Check Unity bundle blocks against their declared output lengths.
       — claimed: Afloat16, branch bugfix/r3.12-unity-bundle-decompressed-length-20261105
-- [ ] Read only requested byte ranges from uncompressed Unity bundle blocks so small metadata and asset reads do not allocate or reject entire stored blocks, while preserving size checks and compressed-block caching.
+- [x] Read only requested byte ranges from uncompressed Unity bundle blocks so small metadata and asset reads do not allocate or reject entire stored blocks, while preserving size checks and compressed-block caching.
       — claimed: Afloat16, branch bugfix/r3.12-unity-stored-block-ranges-20261110
 - [x] Apply standalone LZMA output budgets to its internal dictionary and reject oversized declared output before decoding.
       — claimed: Afloat16, branch bugfix/r3.12-standalone-lzma-budget-20261109
