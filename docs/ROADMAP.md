@@ -1921,7 +1921,7 @@ Owner: open · Status: in progress
       rowid alias and WITHOUT ROWID order: the column list opens at the first parenthesis outside
       quotes.
       — claimed: Plastic-time, branch bugfix/r3.12-sqlite-parenthesized-table-names
-- [ ] Use ordered page membership for SQLite row and count walks so a wide b-tree does not repeatedly scan every previously visited page.
+- [x] Use ordered page membership for SQLite row and count walks so a wide b-tree does not repeatedly scan every previously visited page.
       — claimed: Afloat16, branch bugfix/r3.12-sqlite-page-visits-20261110
 - [x] A comment after a SQLite column list that holds `)` (`... WITHOUT ROWID /* ) */`) still hides
       the WITHOUT ROWID marker: find the list's closing parenthesis by tokens, not `rfind(')')`.
