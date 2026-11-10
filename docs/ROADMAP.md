@@ -1779,6 +1779,8 @@ Owner: open · Status: in progress
       demangler read `Qy_` as `A`, so `Swift.Zip2Sequence.Iterator.next()` returned
       `(A.Element, A.Element)?` where the symbol says `(A.Element, B.Element)?`.
       — claimed: Chr0mium24, branch bugfix/r3.12-swift-demangle-associated-type-index
+- [ ] Reject NIB archive integers that exceed their decoded or addressable range instead of wrapping lengths and indices.
+      — claimed: Afloat16, branch bugfix/r3.12-nib-varint-ranges-20261110
 - [x] Decode binary plist markers and dictionary keys according to their stored types.
       — claimed: Afloat16, branch bugfix/r3.12-bplist-typed-objects
 - [x] Swift initialisers of structs, enums, protocols and extensions read `init`. The demangler
