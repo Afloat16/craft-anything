@@ -2029,6 +2029,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-java-attribute-name-borrowing-20261110
 - [x] Unfold JAR manifest attributes as bytes before UTF-8 decoding, preserve value whitespace, and recognize every specified line ending so entry digests use the original filenames.
       — claimed: Afloat16, branch bugfix/r3.12-jar-attribute-bytes-20261110
+- [ ] Merge digest attributes across repeated JAR manifest sections for the same entry, honoring later attribute values while retaining absent earlier values and checking each file once.
+      — claimed: Afloat16, branch bugfix/r3.12-jar-repeated-entry-sections-20261110
 - [x] Find the method parameter terminator outside object type names in JVM descriptors.
       — claimed: Afloat16, branch bugfix/r3.12-java-descriptor-boundary
 - [x] Validate complete JVM switch payloads before reserving pairs, and reject duplicate or descending lookup keys instead of emitting invalid control-flow facts.
