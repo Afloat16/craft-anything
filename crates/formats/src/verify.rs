@@ -142,9 +142,25 @@ pub fn verify_signature(spki: &[u8], scheme: SigScheme, msg: &[u8], sig: &[u8]) 
             if alg_oid != EC_PUBLIC_KEY {
                 return Verified::unsupported(format!("ECDSA signature but key is {alg_oid}"));
             }
-            ecdsa(key, d, msg, sig)
+            let Some(curve) = ec_named_curve(spki) else {
+                return Verified::unsupported("EC public key has no complete named-curve parameter");
+            };
+            ecdsa(&curve, key, d, msg, sig)
         }
     }
+}
+
+fn ec_named_curve(spki: &[u8]) -> Option<String> {
+    let root = der::read(spki, 0)?;
+    let algorithm = der::read(spki.get(..root.end())?, root.content)?;
+    let bounded = spki.get(..algorithm.end())?;
+    let oid = der::read(bounded, algorithm.content)?;
+    let curve = der::read(bounded, oid.end())?;
+    if curve.tag != 0x06 || curve.end() != algorithm.end() {
+        return None;
+    }
+    let name = der::oid(curve.bytes(spki)?);
+    (name != "invalid").then_some(name)
 }
 
 fn rsa_key(pkcs1_der: &[u8]) -> Option<rsa::RsaPublicKey> {
@@ -176,12 +192,12 @@ fn rsa_pss(pkcs1_der: &[u8], d: Digest, msg: &[u8], sig: &[u8]) -> Verified {
     if ok { Verified::Valid } else { Verified::Invalid }
 }
 
-/// ECDSA over a SEC1 public-key point. The curve is chosen by point length (P-256 vs P-384); the
+/// ECDSA over a SEC1 public-key point using the declared named curve. The
 /// digest used is the curve's standard one, so non-standard curve/hash pairings are reported
 /// unsupported rather than guessed.
-fn ecdsa(sec1: &[u8], d: Digest, msg: &[u8], der_sig: &[u8]) -> Verified {
-    match sec1.len() {
-        33 | 65 => {
+fn ecdsa(curve: &str, sec1: &[u8], d: Digest, msg: &[u8], der_sig: &[u8]) -> Verified {
+    match curve {
+        "1.2.840.10045.3.1.7" => {
             if d != Digest::Sha256 {
                 return Verified::unsupported(format!("ECDSA P-256 with {} is not checked", d.name()));
             }
@@ -190,7 +206,7 @@ fn ecdsa(sec1: &[u8], d: Digest, msg: &[u8], der_sig: &[u8]) -> Verified {
             let Ok(s) = Signature::from_der(der_sig) else { return Verified::Invalid };
             if vk.verify(msg, &s).is_ok() { Verified::Valid } else { Verified::Invalid }
         }
-        49 | 97 => {
+        "1.3.132.0.34" => {
             if d != Digest::Sha384 {
                 return Verified::unsupported(format!("ECDSA P-384 with {} is not checked", d.name()));
             }
@@ -199,7 +215,7 @@ fn ecdsa(sec1: &[u8], d: Digest, msg: &[u8], der_sig: &[u8]) -> Verified {
             let Ok(s) = Signature::from_der(der_sig) else { return Verified::Invalid };
             if vk.verify(msg, &s).is_ok() { Verified::Valid } else { Verified::Invalid }
         }
-        n => Verified::unsupported(format!("unsupported EC public-key point length {n} (only P-256/P-384)")),
+        _ => Verified::unsupported(format!("EC named curve {curve} is not checked (only P-256/P-384)")),
     }
 }
 
@@ -872,6 +888,78 @@ mod tests {
         let mut bad = msg.to_vec();
         bad[0] ^= 1;
         assert_eq!(verify_signature(&spki, SigScheme::Ecdsa(Digest::Sha256), &bad, &sig), Verified::Invalid);
+    }
+
+    fn ec_spki_with_parameters(parameters: &[u8], point: &[u8]) -> Vec<u8> {
+        use craft_anything_testkit::android::{der, der_oid};
+        let algorithm = der(0x30, &[der_oid(EC_PUBLIC_KEY), parameters.to_vec()].concat());
+        let key = der(0x03, &[&[0], point].concat());
+        der(0x30, &[algorithm, key].concat())
+    }
+
+    #[test]
+    fn ecdsa_never_guesses_a_curve_from_point_length() {
+        use craft_anything_testkit::{android::der_oid, crypto};
+        let original = crypto::p256_spki();
+        let (_, point) = der::spki_parts(&original).unwrap();
+        let message = b"the declared curve must select the verification group";
+        let signature = crypto::p256_sign_sha256(message);
+        assert!(verify_signature(&original, SigScheme::Ecdsa(Digest::Sha256), message, &signature).is_valid());
+        for curve in ["1.3.132.0.10", "1.3.132.0.34", "1.3.132.0.35", "1.2.3.4"] {
+            let spki = ec_spki_with_parameters(&der_oid(curve), point);
+            let result = verify_signature(&spki, SigScheme::Ecdsa(Digest::Sha256), message, &signature);
+            assert!(!result.is_valid(), "curve {curve}: {result:?}");
+        }
+    }
+
+    #[test]
+    fn ecdsa_requires_one_complete_named_curve_parameter() {
+        use craft_anything_testkit::{
+            android::{der, der_oid},
+            crypto,
+        };
+        let original = crypto::p256_spki();
+        let (_, point) = crate::der::spki_parts(&original).unwrap();
+        let message = b"parameters are part of the public key";
+        let signature = crypto::p256_sign_sha256(message);
+        let curve = der_oid("1.2.840.10045.3.1.7");
+        let parameters = [
+            vec![],
+            der(0x05, &[]),
+            der(0x30, &curve),
+            der(0x06, &[0x80, 0x2a]),
+            [curve.clone(), curve.clone()].concat(),
+            [curve.clone(), der(0x05, &[])].concat(),
+            [curve, vec![0x06]].concat(),
+        ];
+        for parameter in parameters {
+            let spki = ec_spki_with_parameters(&parameter, point);
+            let result = verify_signature(&spki, SigScheme::Ecdsa(Digest::Sha256), message, &signature);
+            assert!(!result.is_valid(), "parameter {parameter:?}: {result:?}");
+        }
+    }
+
+    #[test]
+    fn declared_curves_accept_compressed_and_uncompressed_points() {
+        use craft_anything_testkit::{android::der_oid, crypto};
+        use p384::{
+            ecdsa::{Signature, SigningKey, signature::Signer},
+            elliptic_curve::rand_core::OsRng,
+        };
+        let message = b"both supported named curves retain both SEC1 encodings";
+        let original = crypto::p256_spki();
+        let (_, point) = der::spki_parts(&original).unwrap();
+        let p256_key = p256::ecdsa::VerifyingKey::from_sec1_bytes(point).unwrap();
+        let p256_signature = crypto::p256_sign_sha256(message);
+        let p384_key = SigningKey::random(&mut OsRng);
+        let p384_signature: Signature = p384_key.sign(message);
+        for compressed in [false, true] {
+            let spki = ec_spki_with_parameters(&der_oid("1.2.840.10045.3.1.7"), p256_key.to_encoded_point(compressed).as_bytes());
+            assert!(verify_signature(&spki, SigScheme::Ecdsa(Digest::Sha256), message, &p256_signature).is_valid());
+            let spki = ec_spki_with_parameters(&der_oid("1.3.132.0.34"), p384_key.verifying_key().to_encoded_point(compressed).as_bytes());
+            assert!(verify_signature(&spki, SigScheme::Ecdsa(Digest::Sha384), message, p384_signature.to_der().as_bytes()).is_valid());
+            assert_eq!(verify_signature(&spki, SigScheme::Ecdsa(Digest::Sha384), b"changed", p384_signature.to_der().as_bytes()), Verified::Invalid);
+        }
     }
 
     #[test]
