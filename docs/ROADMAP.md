@@ -1876,7 +1876,7 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-source-map-data-url-fragment
 - [x] Apply WebAssembly name and producer inventory limits across repeated custom sections and report truncation.
       — claimed: Afloat16, branch bugfix/r3.12-wasm-custom-inventory-budget-20261109
-- [ ] Bound bytes retained when WebAssembly types and function names are expanded through references, reuse formatted type signatures, and disclose omitted derived metadata.
+- [x] Bound bytes retained when WebAssembly types and function names are expanded through references, reuse formatted type signatures, and disclose omitted derived metadata.
       — claimed: Afloat16, branch bugfix/r3.12-wasm-reference-bytes-20261110
       Source `232100030ace`; [format checks](https://github.com/Afloat16/claude-mem/actions/runs/42642340046/job/129246412808) and [compatibility gates](https://github.com/Afloat16/claude-mem/actions/runs/42642340046/job/129246412808) passed.
 - [x] Accept only valid WebAssembly names when reporting custom-section debug and source map URLs.
