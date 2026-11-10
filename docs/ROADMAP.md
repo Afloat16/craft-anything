@@ -1906,6 +1906,9 @@ Owner: open · Status: in progress
       and [layers, locks, secret scanning, wasm checks and Cargo.lock stability](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).
       The [unchanged-code baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) reproduces the new regression cases.
 
+- [ ] Follow bounded ext triple-indirect block tables with the correct sparse logical spans and existing unavailable-block checks.
+      — claimed: Afloat16, branch feature/r3.12-ext-triple-indirect-20261110
+
 ### R3.13 Web inspection correctness
 Owner: open · Status: in progress
 - [x] Report received HAR response body sizes separately from decoded content sizes and identify entries whose sizes are unknown.
