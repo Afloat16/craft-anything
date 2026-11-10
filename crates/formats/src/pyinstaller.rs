@@ -389,10 +389,11 @@ impl PackedFormat for PyInstaller {
 /// A member's bytes: a PYZ module gets the `.pyc` header its magic number asks for, any other
 /// member is handed back as stored.
 fn read_member(data: &[u8], entry: &PackedEntry, max_bytes: u64) -> Result<Vec<u8>, FormatError> {
-    const PYC_HEADER_BYTES: u64 = 16;
     let magic = entry.kind.as_deref().and_then(|k| k.strip_prefix(PYZ_KIND)).and_then(|m| u16::from_str_radix(m, 16).ok());
     let body_limit = match magic {
-        Some(_) => max_bytes.checked_sub(PYC_HEADER_BYTES).ok_or_else(|| FormatError::TooLarge(format!("{} needs a .pyc header", entry.path)))?,
+        Some(magic) => {
+            max_bytes.checked_sub(pyc::header_size(magic) as u64).ok_or_else(|| FormatError::TooLarge(format!("{} needs a .pyc header", entry.path)))?
+        }
         None => max_bytes,
     };
     let body = read_stored(data, entry, body_limit)?;
