@@ -1932,11 +1932,11 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-dns-record-evidence
 - [x] Resolve keyed archive references consistently in nested objects and object rows.
       — claimed: Afloat16, branch bugfix/r3.12-keyed-archive-references
-- [ ] Bound NIB object copies by their retained data, key and class bytes so shared value ranges cannot amplify a small archive beyond the byte budget.
-      — claimed: Afloat16, branch bugfix/r3.12-nib-retained-bytes-20261110
 - [x] Accept binary plist arrays and sets that name one stored value many times; repeated data and
       text spend a byte budget, and containers past the node cap are refused before reserving space.
       — claimed: Plastic-time, branch bugfix/r3.12-plist-shared-array-values
+- [x] Bound NIB object copies by their retained data, key and class bytes so shared value ranges cannot amplify a small archive beyond the byte budget.
+      — claimed: Afloat16, branch bugfix/r3.12-nib-retained-bytes-20261110
 - [x] SQLite column names read whole when quoted: a doubled quote inside one stands for a quote,
       and single-quoted names (which SQLite accepts) lose their quotes. Keys that name such columns
       find them, so rowid aliases and WITHOUT ROWID order hold.

@@ -8,10 +8,13 @@ use crate::keyed_archive::{self, KeyedArchive};
 use crate::plist::{self, Value as PValue};
 use serde::Serialize;
 use serde_json::{Value as Json, json};
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 /// Most objects, keys, values or classes read from one NIB archive.
 pub const MAX_TABLE: usize = 2_000_000;
+/// Byte budget for object copies, raised to three times the input for larger archives.
+const MAX_RETAINED_BYTES: usize = 64 << 20;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
@@ -86,6 +89,10 @@ fn table(r: &Reader<'_>, at: usize, what: &str) -> Result<(usize, usize), Format
         return Err(FormatError::Truncated(format!("{what} table lies past the end")));
     }
     Ok((n, off))
+}
+
+fn key_name(keys: &[String], index: usize) -> Cow<'_, str> {
+    keys.get(index).map(|s| Cow::Borrowed(s.as_str())).unwrap_or_else(|| Cow::Owned(format!("#key{index}")))
 }
 
 /// Parse a `NIBArchive` file.
@@ -177,28 +184,54 @@ pub fn parse_nib_archive(data: &[u8]) -> Result<IbDocument, FormatError> {
             }
             other => return Err(FormatError::Malformed(format!("value {i} has unknown type {other}"))),
         };
-        let key = keys.get(k).cloned().unwrap_or_else(|| {
-            if warnings.len() < 50 {
-                warnings.push(format!("value {i} names missing key {k}"));
-            }
-            format!("#key{k}")
-        });
-        values.push((key, v));
+        if keys.get(k).is_none() && warnings.len() < 50 {
+            warnings.push(format!("value {i} names missing key {k}"));
+        }
+        // Keep the key index until an object copy has paid for its text. Many values can
+        // name the same long key even when no object ultimately uses those values.
+        values.push((k, v));
     }
     // Objects.
     let mut objects = Vec::with_capacity(n_obj);
     let mut p = o_obj;
     // Objects may share value ranges; cap the copies so overlapping ranges cannot explode.
     let mut budget = values.len().saturating_mul(4).max(1 << 16);
+    let mut byte_budget = MAX_RETAINED_BYTES.max(data.len().saturating_mul(3));
+    let mut byte_budget_reported = false;
     for i in 0..n_obj {
         let c = varint(&r, &mut p).ok_or_else(|| FormatError::Truncated("object table".into()))? as usize;
         let start = varint(&r, &mut p).ok_or_else(|| FormatError::Truncated("object table".into()))? as usize;
         let count = varint(&r, &mut p).ok_or_else(|| FormatError::Truncated("object table".into()))? as usize;
-        let class = classes.get(c).cloned().unwrap_or_else(|| format!("#class{c}"));
+        let class = classes.get(c).map(|s| Cow::Borrowed(s.as_str())).unwrap_or_else(|| Cow::Owned(format!("#class{c}")));
+        if class.len() > byte_budget {
+            if !byte_budget_reported {
+                warnings.push(format!("object {i}: byte budget exhausted while copying class names"));
+            }
+            break;
+        }
+        byte_budget -= class.len();
         let vals = match start.checked_add(count).and_then(|end| values.get(start..end)) {
             Some(v) if v.len() <= budget => {
+                // Charge inspected values even when their byte cost prevents a copy, so
+                // repeated rejected ranges cannot turn the size check into unbounded work.
                 budget -= v.len();
-                v.to_vec()
+                let bytes = v.iter().try_fold(0usize, |total, (key, value)| {
+                    let data_len = if let IbValue::Data(data) = value { data.len() } else { 0 };
+                    total.checked_add(key_name(&keys, *key).len())?.checked_add(data_len)
+                });
+                match bytes {
+                    Some(bytes) if bytes <= byte_budget => {
+                        byte_budget -= bytes;
+                        v.iter().map(|(key, value)| (key_name(&keys, *key).into_owned(), value.clone())).collect()
+                    }
+                    _ => {
+                        if !byte_budget_reported {
+                            warnings.push(format!("object {i}: byte budget exhausted while copying values"));
+                            byte_budget_reported = true;
+                        }
+                        Vec::new()
+                    }
+                }
             }
             Some(_) => {
                 if warnings.len() < 50 {
@@ -213,7 +246,7 @@ pub fn parse_nib_archive(data: &[u8]) -> Result<IbDocument, FormatError> {
                 Vec::new()
             }
         };
-        objects.push(IbObject { index: i as u64, class, values: vals });
+        objects.push(IbObject { index: i as u64, class: class.into_owned(), values: vals });
     }
     Ok(IbDocument { encoding: "nib-archive", format_version: fv, coder_version: cv, objects, warnings })
 }
@@ -444,6 +477,65 @@ pub fn graph(doc: &IbDocument, max_objects: usize, max_connections: usize) -> Gr
 mod tests {
     use super::*;
     use craft_anything_testkit::apple as fx;
+
+    fn shared_nib(class: &str, key: &str, value: fx::NV, copies: usize) -> Vec<u8> {
+        let mut data = fx::nib_write(&[(class, vec![(key, value)])]);
+        let object = Reader::new(&data).u32_le(22).unwrap() as usize;
+        let records = [0x80, 0x80, 0x81].repeat(copies);
+        data.splice(object..object + 3, records);
+        data[18..22].copy_from_slice(&(copies as u32).to_le_bytes());
+        for field in [30, 38, 46] {
+            let offset = Reader::new(&data).u32_le(field).unwrap();
+            data[field..field + 4].copy_from_slice(&(offset + (3 * (copies - 1)) as u32).to_le_bytes());
+        }
+        data
+    }
+
+    fn retained_bytes(doc: &IbDocument) -> usize {
+        doc.objects
+            .iter()
+            .map(|object| {
+                object.class.len()
+                    + object.values.iter().map(|(key, value)| key.len() + if let IbValue::Data(data) = value { data.len() } else { 0 }).sum::<usize>()
+            })
+            .sum()
+    }
+
+    fn assert_shared_bytes_bounded(data: &[u8]) {
+        assert!(data.len() < 48 << 10, "the repeated payload is stored only once");
+        let doc = parse_nib_archive(data).unwrap();
+        let retained = retained_bytes(&doc);
+        assert!(retained <= 64 << 20, "a {}-byte archive retained {retained} bytes", data.len());
+        assert!(!doc.objects.is_empty());
+        assert!(doc.warnings.iter().any(|w| w.contains("byte budget")));
+    }
+
+    #[test]
+    fn shared_data_copies_spend_a_byte_budget() {
+        assert_shared_bytes_bounded(&shared_nib("View", "label", fx::NV::Bytes(vec![7; 32 << 10]), 4096));
+    }
+
+    #[test]
+    fn shared_key_copies_spend_a_byte_budget() {
+        assert_shared_bytes_bounded(&shared_nib("View", &"k".repeat(32 << 10), fx::NV::Bool(true), 2049));
+    }
+
+    #[test]
+    fn shared_class_copies_spend_a_byte_budget() {
+        assert_shared_bytes_bounded(&shared_nib(&"C".repeat(32 << 10), "label", fx::NV::Bool(true), 2049));
+    }
+
+    #[test]
+    fn ordinary_shared_values_remain_complete() {
+        let data = shared_nib("View", "label", fx::NV::Bytes(vec![1, 2, 3]), 3);
+        let doc = parse_nib_archive(&data).unwrap();
+        assert!(doc.warnings.is_empty());
+        assert_eq!(doc.objects.len(), 3);
+        for object in doc.objects {
+            assert_eq!(object.class, "View");
+            assert_eq!(object.values, [("label".into(), IbValue::Data(vec![1, 2, 3]))]);
+        }
+    }
 
     #[test]
     fn decodes_a_nib_archive() {
