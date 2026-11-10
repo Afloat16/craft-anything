@@ -1517,6 +1517,8 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
+- [ ] Report stored byte sizes for the supported GGUF Q4/Q5/Q8 and K-block tensor layouts, and detect their truncated payloads without reading tensor data.
+      — claimed: Afloat16, branch feature/r3.12-gguf-quantized-storage-20261110
 - [x] Refuse oversized GNU tar long names and link targets instead of silently truncating member identities.
       — claimed: Afloat16, branch bugfix/r3.12-tar-long-identities-20261109
       Source [`de2c6390`](https://github.com/Afloat16/craft-anything/commit/de2c63908909cab675887103921ed2601b1bae9b) passed [formats tests, fmt and clippy](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663)
