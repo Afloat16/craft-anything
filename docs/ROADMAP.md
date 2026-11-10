@@ -2026,6 +2026,7 @@ Owner: open · Status: in progress
       The [unchanged-code baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) reproduces the new regression cases.
 - [x] Exercise signed PAX lengths, empty keys and equals signs inside a path value.
       — claimed: Afloat16, branch bugfix/r3.12-pax-record-framing
+- [x] Apply global PAX archive attributes to later members, honor local overrides and global deletions, and bound inherited name copies before extraction.
 - [x] Bound and cancel CRC cpio verification across firmware probes, and reject non-hex checksum
       fields — claimed: Afloat16, branch bugfix/r3.12-bound-cpio-crc-scans-20261103
 - [x] More parsers keep to the bytes they declare and refuse impossible values: signed LEB128 past
@@ -2180,7 +2181,6 @@ Owner: open · Status: in progress
 - [x] Require complete sBPF symbol records and their declared string-table links before reporting symbol identities.
       — claimed: Afloat16, branch bugfix/r3.12-sbpf-symbol-framing-20261110
 - [x] Bound retained PE import/export name and forwarder bytes across repeated references; preserve bounded prefixes and report byte-budget truncation.
-- [ ] Apply global PAX archive attributes to later members, honor local overrides and global deletions, and retain bounded metadata validation. — claimed: Afloat16, branch bugfix/r3.12-tar-global-pax-20261111
 
 
 ### R3.13 Web inspection correctness
