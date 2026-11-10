@@ -2024,7 +2024,7 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-cramfs-hole-blocks-20261110
 - [x] Bound filesystem and archive recovery by the recorded image, node, directory and member limits.
       — claimed: Afloat16, branch bugfix/r3.12-filesystem-archive-bounds
-- [ ] Recover files and symlinks from cramfs blocks marked uncompressed while preserving mixed compressed runs and recovery limits.
+- [x] Recover files and symlinks from cramfs blocks marked uncompressed while preserving mixed compressed runs and recovery limits.
       — claimed: Afloat16, branch bugfix/r3.12-cramfs-uncompressed-blocks-20261110
 - [x] Use ordered visited-node membership in ROMFS, ext, SquashFS and JFFS2 directory walks so wide filesystem trees avoid repeated scans of every previously visited node.
       — claimed: Afloat16, branch bugfix/r3.12-filesystem-page-visits-20261110
