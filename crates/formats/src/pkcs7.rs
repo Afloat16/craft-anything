@@ -4,7 +4,7 @@
 //! the signature. Parsing is bounded and never panics; verification is done in [`crate::verify`].
 
 use crate::der::{self, Tlv};
-use crate::verify::{Digest, SigScheme};
+use crate::verify::{Digest, PssParameters, SigScheme};
 
 const SIGNED_DATA: &str = "1.2.840.113549.1.7.2";
 const OID_MESSAGE_DIGEST: &str = "1.2.840.113549.1.9.4";
@@ -22,6 +22,8 @@ pub struct SignedData {
     pub digest: Option<Digest>,
     /// The signer's `signatureAlgorithm` OID (dotted).
     pub signature_algorithm: String,
+    /// Parsed PSS parameters, or the reason they cannot be checked; other metadata is retained.
+    pub pss_parameters: Option<Result<PssParameters, &'static str>>,
     /// The signature bytes.
     pub signature: Vec<u8>,
     /// The signed (authenticated) attributes re-encoded with a SET tag (`0x31`) — the exact bytes
@@ -200,12 +202,14 @@ pub fn parse_signed_data(cms: &[u8]) -> Option<SignedData> {
     };
     let sig_alg = si.get(idx).filter(|t| t.tag == 0x30)?;
     let signature_algorithm = der::seq_alg_oid(cms, sig_alg).unwrap_or_default();
+    let pss_parameters = if signature_algorithm == RSA_PSS { Some(crate::verify::pss_parameters(sig_alg.whole(cms)?)) } else { None };
     idx += 1;
     let signature = si.get(idx).filter(|t| t.tag == 0x04).and_then(|t| t.bytes(cms)).unwrap_or(&[]).to_vec();
     Some(SignedData {
         certificates,
         digest,
         signature_algorithm,
+        pss_parameters,
         signature,
         signed_attrs_reencoded,
         signed_attrs_error,
@@ -241,11 +245,13 @@ impl SignedData {
     }
 
     /// The signature scheme implied by the signer's signature and digest algorithms.
+    /// PSS is returned only when its parameters fit `SigScheme` without losing information;
+    /// the CMS verification functions also support parameter sets with other salt lengths.
     pub fn scheme(&self) -> Option<SigScheme> {
         let digest = self.digest?;
         match self.signature_algorithm.as_str() {
             RSA_ENCRYPTION => Some(SigScheme::RsaPkcs1v15(digest)),
-            RSA_PSS => Some(SigScheme::RsaPss(digest)),
+            RSA_PSS => self.pss_parameters.as_ref()?.as_ref().ok().and_then(|params| params.fixed_scheme(digest)),
             EC_PUBLIC_KEY => Some(SigScheme::Ecdsa(digest)),
             other => crate::verify::scheme_from_oid(other),
         }
