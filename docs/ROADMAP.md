@@ -1504,12 +1504,12 @@ Owner: open · Status: in progress
 Owner: open · Status: in progress
 - [x] Bound native value-flow decoding and incoming parameter nodes by the requested graph node budget, and mark omitted code as partial.
       — claimed: Afloat16, branch bugfix/r3.11-value-flow-budget-20261110
+- [x] Resolve AArch64 address evidence only from known operands, with the right arithmetic width and retained writeback effects.
+      — claimed: Afloat16, branch bugfix/r3.11-a64-address-proofs-20261110
 - [x] Preserve AArch64 exclusive-memory status results and paired load definitions without presenting them as unconditional stores.
       — claimed: Afloat16, branch bugfix/r3.11-a64-exclusive-value-flow-20261110
 - [x] Keep the first 100000 byte-search matches in file-offset order across hex, UTF-8 and UTF-16LE queries, including capped pages.
       — claimed: Afloat16, branch bugfix/r3.11-byte-search-match-order-20261110
-- [ ] Resolve AArch64 address evidence only from known operands, with the right arithmetic width and retained writeback effects.
-      — claimed: Afloat16, branch bugfix/r3.11-a64-address-proofs-20261110
 - [x] Validate the remaining loopback fixture corrections for complete and fragmented request
       headers, negative probes and stand-in cancellation on the current main
       — claimed: Afloat16, branch test/loopback-fixture-stability-20261103

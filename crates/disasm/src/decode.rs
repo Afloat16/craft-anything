@@ -1122,11 +1122,18 @@ impl ArmConsts {
             }
             Kind::Add | Kind::Mov => {
                 let src = insn.ops.get(1).and_then(|o| if let Op::Reg(r) = o { xnum(r) } else { None });
-                let imm = insn.ops.get(2).and_then(|o| if let Op::Imm(v) = o { Some(*v) } else { None });
-                if let (Some(d), Some(s)) = (dst, src)
+                let offset = match insn.ops.get(2) {
+                    Some(Op::Imm(v)) => Some(*v),
+                    Some(Op::Reg(r)) if matches!(r.as_str(), "xzr" | "wzr") => Some(0),
+                    None if insn.kind == Kind::Mov => Some(0),
+                    _ => None,
+                };
+                if let (Some(d), Some(s), Some(offset)) = (dst, src, offset)
                     && let Some(base) = self.vals.get(s).copied().flatten()
                 {
-                    let v = base.wrapping_add(imm.unwrap_or(0) as u64);
+                    let sum = base.wrapping_add(offset as u64);
+                    let word = matches!(insn.ops.first(), Some(Op::Reg(r)) if r.starts_with('w'));
+                    let v = if word { u64::from(sum as u32) } else { sum };
                     insn.refs.push(v);
                     if let Some(x) = self.vals.get_mut(d) {
                         *x = Some(v);
@@ -1139,6 +1146,7 @@ impl ArmConsts {
             }
             Kind::Load | Kind::Store => {
                 if let Some(Op::Mem(m)) = insn.ops.get(1)
+                    && m.index.is_none()
                     && let Some(b) = m.base.as_deref().and_then(xnum)
                     && let Some(base) = self.vals.get(b).copied().flatten()
                 {
@@ -1147,9 +1155,9 @@ impl ArmConsts {
                     if insn.kind == Kind::Load
                         && let Some(d) = dst
                     {
-                        if let Some(x) = self.vals.get_mut(d) {
-                            *x = None;
-                        }
+                        // A load may also write its base. Retire every old value before
+                        // retaining the destination's newly resolved memory slot.
+                        self.forget_writes(insn);
                         if let Some(x) = self.slots.get_mut(d) {
                             *x = Some(a);
                         }
@@ -1172,8 +1180,8 @@ impl ArmConsts {
             _ => {}
         }
         if matches!(insn.flow, Flow::Call { .. } | Flow::IndirectCall { .. }) {
-            // Calls clobber the argument and temporary registers.
-            for i in 0..19 {
+            // Calls clobber argument/temporary registers and replace the link register.
+            for i in (0..19).chain(std::iter::once(30)) {
                 if let Some(v) = self.vals.get_mut(i) {
                     *v = None;
                 }
@@ -1183,6 +1191,10 @@ impl ArmConsts {
             }
             return;
         }
+        self.forget_writes(insn);
+    }
+
+    fn forget_writes(&mut self, insn: &Insn) {
         for w in &insn.writes {
             if let Some(n) = xnum(w) {
                 if let Some(v) = self.vals.get_mut(n) {
