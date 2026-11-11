@@ -510,6 +510,7 @@ pub fn analyze_application(input: &AppInput, opts: &AppOptions, cancelled: &dyn 
         || g.package.as_ref().is_some_and(|p| !p.get("electron_dependency").unwrap_or(&Value::Null).is_null());
     let pages: Vec<String> = if has_electron { Vec::new() } else { analysed.iter().filter(|a| a.html.is_some()).map(|a| a.path.clone()).collect() };
 
+    let starts_worker = |kind: &str| matches!(kind, "worker" | "service-worker" | "utility-process");
     let assign = |roots: &[String], role: &str, roles: &mut HashMap<String, String>| {
         let mut q: VecDeque<String> = roots.iter().cloned().collect();
         let mut seen = 0usize;
@@ -520,6 +521,10 @@ pub fn analyze_application(input: &AppInput, opts: &AppOptions, cancelled: &dyn 
             }
             roles.insert(p.clone(), role.to_string());
             for imp in resolved_imports.get(&p).into_iter().flatten() {
+                // Spawn edges connect execution contexts; ordinary imports share a role.
+                if starts_worker(&imp.kind) {
+                    continue;
+                }
                 if let Some(r) = &imp.resolved {
                     q.push_back(r.clone());
                 }
@@ -539,7 +544,7 @@ pub fn analyze_application(input: &AppInput, opts: &AppOptions, cancelled: &dyn 
     let mut workers = Vec::new();
     for a in &analysed {
         for imp in resolved_imports.get(&a.path).into_iter().flatten() {
-            if matches!(imp.kind.as_str(), "worker" | "service-worker" | "utility-process")
+            if starts_worker(&imp.kind)
                 && let Some(r) = &imp.resolved
             {
                 workers.push(r.clone());

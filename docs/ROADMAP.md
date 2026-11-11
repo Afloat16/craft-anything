@@ -1584,13 +1584,13 @@ Owner: open · Status: in progress
 Owner: open · Status: in progress
 - [x] Mark Python code inventories as cut short whenever a name or constant is shortened, and count truncation markers in the retained-text budget.
       — claimed: Afloat16, branch bugfix/r3.12-pyc-truncated-text-evidence-20261110
+- [x] Keep worker, service-worker and utility-process entry modules in their own execution role instead of inheriting the parent role through spawn edges.
+      — claimed: Afloat16, branch bugfix/r3.12-worker-role-boundaries
 - [x] Read the explicit module-format byte in current Node SEA blobs while retaining the older layouts;
       report the stored format and recover the main script, assets and execution arguments at their real offsets.
       — claimed: Afloat16, branch bugfix/r3.12-node-sea-module-format-20261110
 - [x] Resolve webpack module-loader calls by the wrapper parameter's binding, so nested parameters and local variables with the same name do not create dependency edges.
       — claimed: Afloat16, branch bugfix/r3.12-webpack-require-bindings
-- [ ] Keep worker, service-worker and utility-process entry modules in their own execution role instead of inheriting the parent role through spawn edges.
-      — claimed: Afloat16, branch bugfix/r3.12-worker-role-boundaries
 - [x] Keep sequence splitting from introducing JavaScript strict-mode directives.
       — claimed: Plastic-time, branch rrfz/bugfix-r3.12-js-sequence-directives
 - [x] Allocate distinct recovered module paths after repeated content-hash collisions.
