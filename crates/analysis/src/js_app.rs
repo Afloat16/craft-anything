@@ -510,23 +510,36 @@ pub fn analyze_application(input: &AppInput, opts: &AppOptions, cancelled: &dyn 
         || g.package.as_ref().is_some_and(|p| !p.get("electron_dependency").unwrap_or(&Value::Null).is_null());
     let pages: Vec<String> = if has_electron { Vec::new() } else { analysed.iter().filter(|a| a.html.is_some()).map(|a| a.path.clone()).collect() };
 
+    let starts_worker = |kind: &str| matches!(kind, "worker" | "service-worker" | "utility-process");
     let assign = |roots: &[String], role: &str, roles: &mut HashMap<String, String>| {
-        let mut q: VecDeque<String> = roots.iter().cloned().collect();
-        let mut seen = 0usize;
-        while let Some(p) = q.pop_front() {
-            seen += 1;
-            if seen > 100_000 || roles.contains_key(&p) {
-                continue;
+        let mut q = VecDeque::new();
+        let mut remaining = 100_000usize;
+        let mut enqueue = |p: &str, q: &mut VecDeque<String>, roles: &mut HashMap<String, String>| {
+            if remaining == 0 || roles.contains_key(p) {
+                return;
             }
-            roles.insert(p.clone(), role.to_string());
+            remaining -= 1;
+            // Mark discovered modules before enqueueing: repeated imports must not
+            // consume the traversal budget or grow the queue with duplicate paths.
+            roles.insert(p.to_string(), role.to_string());
+            q.push_back(p.to_string());
+        };
+        for p in roots {
+            enqueue(p, &mut q, roles);
+        }
+        while let Some(p) = q.pop_front() {
             for imp in resolved_imports.get(&p).into_iter().flatten() {
+                // Spawn edges connect execution contexts; ordinary imports share a role.
+                if starts_worker(&imp.kind) {
+                    continue;
+                }
                 if let Some(r) = &imp.resolved {
-                    q.push_back(r.clone());
+                    enqueue(r, &mut q, roles);
                 }
             }
             // Inline scripts of a page share its role.
             for a in analysed.iter().filter(|a| a.host.as_deref() == Some(p.as_str())) {
-                q.push_back(a.path.clone());
+                enqueue(&a.path, &mut q, roles);
             }
         }
     };
@@ -539,7 +552,7 @@ pub fn analyze_application(input: &AppInput, opts: &AppOptions, cancelled: &dyn 
     let mut workers = Vec::new();
     for a in &analysed {
         for imp in resolved_imports.get(&a.path).into_iter().flatten() {
-            if matches!(imp.kind.as_str(), "worker" | "service-worker" | "utility-process")
+            if starts_worker(&imp.kind)
                 && let Some(r) = &imp.resolved
             {
                 workers.push(r.clone());
