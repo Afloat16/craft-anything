@@ -718,9 +718,8 @@ yet, and the quick start is how every new person begins.
 
 ### R1.5 External engine trait in L3
 Owner: open · Status: in progress
-- [ ] Read Streamable HTTP MCP replies with CR, LF and CRLF event boundaries and one initial
+- [x] Read Streamable HTTP MCP replies with CR, LF and CRLF event boundaries and one initial
       UTF-8 byte order mark, keeping the response limit and returning when the answer arrives.
-      — claimed: Afloat16, branch bugfix/r1.5-mcp-sse-framing-20261111
 - [x] Find Chrome, Brave, Chromium and Edge installed as Flatpaks on Linux (system and per-user
       exports), and keep a Flatpak or Snap browser's private profile in the home folder its
       sandbox shares, since its /tmp is its own (#747). Unit-tested; not run on a real Flatpak
