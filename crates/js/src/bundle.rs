@@ -275,21 +275,35 @@ impl<'s> BundleVisitor<'s> {
 
     /// Later definitions replace earlier values even when the replacement is not a module.
     /// A spread or unknown key may replace any earlier entry; only the known suffix is safe.
-    fn final_properties<'b, 'a>(o: &'b ObjectExpression<'a>) -> Vec<(String, &'b ObjectProperty<'a>)> {
+    /// Bound retained keys before collecting values, including keys whose values are not modules.
+    fn final_properties<'b, 'a>(o: &'b ObjectExpression<'a>) -> (Vec<(String, &'b ObjectProperty<'a>)>, bool) {
         let mut seen = HashSet::new();
         let mut properties = Vec::new();
+        let mut truncated = false;
         for p in o.properties.iter().rev() {
-            let ObjectPropertyKind::ObjectProperty(p) = p else { break };
+            let ObjectPropertyKind::ObjectProperty(p) = p else {
+                truncated = true;
+                break;
+            };
             if Self::is_prototype_setter(p) {
                 continue;
             }
-            let Some(id) = Self::property_id(p) else { break };
-            if seen.insert(id.clone()) {
-                properties.push((id, &**p));
+            let Some(id) = Self::property_id(p) else {
+                truncated = true;
+                break;
+            };
+            if seen.contains(&id) {
+                continue;
             }
+            if seen.len() == MAX_MODULES {
+                truncated = true;
+                break;
+            }
+            seen.insert(id.clone());
+            properties.push((id, &**p));
         }
         properties.reverse();
-        properties
+        (properties, truncated)
     }
 
     /// An object whose values are (almost) all small-arity functions: a webpack module map.
@@ -317,7 +331,9 @@ impl<'s> BundleVisitor<'s> {
     }
 
     fn take_object(&mut self, o: &ObjectExpression<'_>, format: &str, chunk_ids: &[String]) {
-        for (id, p) in Self::final_properties(o) {
+        let (properties, truncated) = Self::final_properties(o);
+        self.info.truncated |= truncated;
+        for (id, p) in properties {
             if p.kind != PropertyKind::Init {
                 continue;
             }
@@ -364,10 +380,14 @@ impl<'s> BundleVisitor<'s> {
         if good < 2 || good * 10 < total * 9 {
             return false;
         }
-        for (id, p) in Self::final_properties(o) {
+        let (properties, truncated) = Self::final_properties(o);
+        self.info.truncated |= truncated;
+        for (id, p) in properties {
             let Some((f, deps)) = Self::browserify_entry(p) else { continue };
             let Some(idx) = self.add(id, "browserify", &[], &f) else { return true };
-            let mapped: Vec<String> = Self::final_properties(deps)
+            let (properties, truncated) = Self::final_properties(deps);
+            self.info.truncated |= truncated;
+            let mapped: Vec<String> = properties
                 .into_iter()
                 .filter_map(|(_, p)| {
                     if p.kind != PropertyKind::Init {

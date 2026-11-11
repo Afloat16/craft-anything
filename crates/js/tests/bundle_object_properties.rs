@@ -23,6 +23,7 @@ fn repeated_module_keys_keep_only_the_final_function() {
         let result = chunk(table);
         assert_eq!(result.bundle.modules.len(), 1, "{result:?}");
         assert_eq!(result.bundle.modules[0].deps, ["3"], "{result:?}");
+        assert!(!result.bundle.truncated, "{result:?}");
     }
 }
 
@@ -33,6 +34,7 @@ fn a_later_nonfunction_or_accessor_replaces_an_earlier_module() {
         let result = chunk(&format!("{{{functions},{last}}}"));
         assert_eq!(result.bundle.modules.len(), 9, "{result:?}");
         assert!(result.bundle.modules.iter().all(|module| module.id != "1"), "{result:?}");
+        assert!(!result.bundle.truncated, "{result:?}");
     }
 }
 
@@ -66,6 +68,7 @@ fn unknown_property_writes_leave_only_later_known_entries() {
     for unknown in ["...more", "[dynamic]:function(e){e.exports=37}"] {
         let result = chunk(&format!("{{{functions},{unknown},10:function(e){{e.exports=10}}}}"));
         assert_eq!(result.bundle.modules.iter().map(|module| module.id.as_str()).collect::<Vec<_>>(), ["10"], "{result:?}");
+        assert!(result.bundle.truncated, "{result:?}");
     }
 }
 
@@ -96,6 +99,7 @@ fn distinct_data_properties_keep_their_modules() {
     assert_eq!(result.bundle.modules[0].id, "1");
     assert_eq!(result.bundle.modules[0].deps, ["2"]);
     assert_eq!(result.bundle.modules[1].id, "2");
+    assert!(!result.bundle.truncated);
 }
 
 #[test]
@@ -105,6 +109,7 @@ fn browserify_nonmodule_replacements_remove_older_functions() {
         let result = parsed(&format!("var modules={{{modules},{last}}};"));
         assert_eq!(result.bundle.modules.len(), 9, "{result:?}");
         assert!(result.bundle.modules.iter().all(|module| module.id != "1"), "{result:?}");
+        assert!(!result.bundle.truncated, "{result:?}");
     }
 }
 
@@ -130,4 +135,56 @@ fn a_shorthand_definition_can_replace_a_previous_module() {
     let result = chunk(&format!("{{{modules},item:function(e){{e.exports=37}},item}}"));
     assert_eq!(result.bundle.modules.len(), 9, "{result:?}");
     assert!(result.bundle.modules.iter().all(|module| module.id != "item"));
+}
+
+#[test]
+fn unknown_browserify_table_writes_report_incomplete_recovery() {
+    let modules = (1..=9).map(|id| format!("{id}:[function(r,m,e){{m.exports={id}}},{{}}]")).collect::<Vec<_>>().join(",");
+    for unknown in ["...more", "[dynamic]:[function(r,m,e){m.exports=37},{}]"] {
+        let result = parsed(&format!("var modules={{{modules},{unknown},10:[function(r,m,e){{m.exports=10}},{{}}]}};"));
+        assert_eq!(result.bundle.modules.iter().map(|module| module.id.as_str()).collect::<Vec<_>>(), ["10"], "{result:?}");
+        assert!(result.bundle.truncated, "{result:?}");
+    }
+}
+
+#[test]
+fn unknown_browserify_dependency_writes_report_incomplete_recovery() {
+    for unknown in ["...more", "[dynamic]:3"] {
+        let result = parsed(&format!(
+            "var modules={{1:[function(r,m,e){{m.exports=r('last')}},{{first:2,{unknown},last:5}}],5:[function(r,m,e){{m.exports=37}},{{}}]}};"
+        ));
+        assert_eq!(result.bundle.modules[0].deps, ["5"], "{result:?}");
+        assert!(result.bundle.truncated, "{result:?}");
+    }
+}
+
+#[test]
+fn object_property_budget_counts_known_nonmodule_values() {
+    let functions = (0..=50_000).map(|id| format!("{id}:function(e){{e.exports={id}}}")).collect::<Vec<_>>().join(",");
+    let replacements = (0..5_000).map(|id| format!("{id}:0")).collect::<Vec<_>>().join(",");
+    let result = chunk(&format!("{{{functions},{replacements}}}"));
+    assert_eq!(result.bundle.modules.len(), 45_000);
+    assert_eq!(result.bundle.modules.first().unwrap().id, "5001");
+    assert_eq!(result.bundle.modules.last().unwrap().id, "50000");
+    assert!(result.bundle.truncated);
+}
+
+#[test]
+fn browserify_dependency_property_budget_is_reported() {
+    let mapping = (0..=50_000).map(|id| format!("d{id}:{id}")).collect::<Vec<_>>().join(",");
+    let result = parsed(&format!("var modules={{1:[function(r,m,e){{m.exports=r('d1')}},{{{mapping}}}],2:[function(r,m,e){{m.exports=37}},{{}}]}};"));
+    assert_eq!(result.bundle.modules.len(), 2);
+    let deps = &result.bundle.modules[0].deps;
+    assert_eq!(deps.len(), 50_000);
+    assert_eq!(deps.first().unwrap(), "1");
+    assert_eq!(deps.last().unwrap(), "50000");
+    assert!(result.bundle.truncated);
+}
+
+#[test]
+fn repeated_definitions_of_one_key_do_not_exhaust_the_property_budget() {
+    let definitions = (0..=50_000).map(|id| format!("1:function(e){{e.exports={id}}}")).collect::<Vec<_>>().join(",");
+    let result = chunk(&format!("{{{definitions}}}"));
+    assert_eq!(result.bundle.modules.len(), 1);
+    assert!(!result.bundle.truncated);
 }
