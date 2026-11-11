@@ -18,7 +18,7 @@ fn unsupported_script_versions_do_not_invent_inline_endpoints() {
 }
 
 #[test]
-fn unsupported_script_versions_do_not_create_renderer_imports() {
+fn unsupported_script_versions_do_not_create_page_imports() {
     let html = r#"<script type="application/javascript1.0" src="./data.js"></script>
 <script type="text/javascript1.5" src="./app.js"></script>"#;
     let result = graph(&[("index.html", html), ("data.js", "fetch('/data-file');"), ("app.js", "fetch('/app');")]);
@@ -27,7 +27,7 @@ fn unsupported_script_versions_do_not_create_renderer_imports() {
     assert_eq!(page.imports[0].kind, "html-script");
     assert_eq!(page.imports[0].specifier, "./app.js");
     assert_eq!(page.imports[0].resolved.as_deref(), Some("app.js"));
-    assert_eq!(result.module("app.js").unwrap().role, "renderer");
+    assert_eq!(result.module("app.js").unwrap().role, "page");
     assert_eq!(result.module("data.js").unwrap().role, "unknown");
     // The input still contains data.js: its standalone facts survive without a false page import.
     assert!(result.endpoints.iter().any(|endpoint| endpoint["url"] == "/data-file"));
