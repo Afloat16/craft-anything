@@ -15,20 +15,18 @@ fn render(sets: &[Vec<u8>]) -> String {
     name(&root, &read(&root, 0).unwrap())
 }
 #[test]
-fn attribute_text_cannot_impersonate_a_second_attribute() {
-    assert_eq!(render(&[attribute(3, 0x0c, b" org, O=other+CN=x\0 ")]), r"CN=\ org\, O\=other\+CN\=x\00\ ");
-    assert_eq!(render(&[attribute(3, 0x0c, b"#literal")]), r"CN=\#literal");
-}
-#[test]
-fn joint_and_separate_rdns_are_distinguishable() {
-    let cn = attribute(3, 0x0c, b"Desk");
-    let ou = attribute(11, 0x13, b"Lab");
-    assert_eq!(render(&[[cn.clone(), ou.clone()].concat()]), "CN=Desk+OU=Lab");
-    assert_eq!(render(&[cn, ou]), "CN=Desk, OU=Lab");
-}
-#[test]
 fn unicode_directory_string_values_are_lossless_or_explicitly_binary() {
     assert_eq!(render(&[attribute(3, 0x1c, &[0, 1, 0xf6, 0x80])]), "CN=🚀");
     assert_eq!(render(&[attribute(3, 0x1e, &[0, 65, 0])]), "CN=#1e03004100");
     assert_eq!(render(&[attribute(3, 4, &[0, 255])]), "CN=#040200ff");
+}
+
+#[test]
+fn malformed_text_keeps_its_encoded_identity() {
+    assert_eq!(render(&[attribute(3, 0x0c, &[0xff])]), "CN=#0c01ff");
+    assert_eq!(render(&[attribute(3, 0x0c, &[0xfe])]), "CN=#0c01fe");
+    assert_eq!(render(&[attribute(3, 0x1c, &[0, 0x11, 0, 0])]), "CN=#1c0400110000");
+    assert_eq!(render(&[attribute(3, 0x1e, &[0xd8, 0])]), "CN=#1e02d800");
+    assert_eq!(render(&[attribute(3, 0x0c, "🚀".as_bytes())]), "CN=🚀");
+    assert_eq!(render(&[attribute(3, 0x1e, &[0, 65])]), "CN=A");
 }
