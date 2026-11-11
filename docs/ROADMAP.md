@@ -1508,8 +1508,6 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.11-a64-exclusive-value-flow-20261110
 - [x] Keep the first 100000 byte-search matches in file-offset order across hex, UTF-8 and UTF-16LE queries, including capped pages.
       — claimed: Afloat16, branch bugfix/r3.11-byte-search-match-order-20261110
-- [ ] Collect native function evidence from every body block and infer parameters from its actual entry block.
-      — claimed: Afloat16, branch bugfix/r3.11-native-function-block-evidence-20261110
 - [x] Validate the remaining loopback fixture corrections for complete and fragmented request
       headers, negative probes and stand-in cancellation on the current main
       — claimed: Afloat16, branch test/loopback-fixture-stability-20261103
@@ -1536,6 +1534,8 @@ Owner: open · Status: in progress
       (`pyinstaller_pyz`), listing the program's modules and handing one back as a `.pyc`; a
       Python zip application named `.pyz` stays with the ZIP reader
       — claimed: muraa-p, branch feature/r3.11-standalone-pyz
+- [x] Collect native function evidence from every body block and infer parameters from its actual entry block.
+      — claimed: Afloat16, branch bugfix/r3.11-native-function-block-evidence-20261110
 - [ ] `native_source_folder_write` uses the built-in decompiler only: use Ghidra in Deep mode when
       it's there
 - [x] Keep stand-in response samples distinct when headers, content types or body-availability metadata differ.

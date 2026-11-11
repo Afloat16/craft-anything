@@ -1088,7 +1088,7 @@ pub fn lift(img: &Image, prog: &Program, f: &Function, names: &dyn Fn(u64) -> Op
     }
     // Parameters: argument registers read before written in the entry block.
     let mut params = Vec::new();
-    if let Some(entry_block) = per_block.first() {
+    if let Some(entry_block) = f.blocks.iter().position(|b| b.start == f.entry).and_then(|i| per_block.get(i)) {
         let mut written: BTreeSet<String> = BTreeSet::new();
         for i in entry_block {
             if matches!(i.flow, Flow::Call { .. } | Flow::IndirectCall { .. }) {
