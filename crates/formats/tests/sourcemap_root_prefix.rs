@@ -21,15 +21,17 @@ fn root_prefix_precedes_absolute_looking_sources() {
 }
 
 #[test]
-fn explicit_empty_root_differs_from_an_absent_or_null_root() {
-    let mut value = json!({"version": 3, "sources": ["src/main.js"], "mappings": "AAAA"});
-    assert_eq!(decode(value.clone()).all_sources(), ["src/main.js"]);
-    value["sourceRoot"] = Value::Null;
-    assert_eq!(decode(value.clone()).all_sources(), ["src/main.js"]);
-    value["sourceRoot"] = json!("");
-    let map = decode(value);
-    assert_eq!(map.all_sources(), ["/src/main.js"]);
-    assert_eq!(map.original_positions(0, 0)[0].source.as_deref(), Some("/src/main.js"));
+fn empty_root_keeps_the_same_identity_as_an_absent_or_null_root() {
+    for source in ["src/main.js", "/src/main.js", "https://example.test/main.js"] {
+        let mut value = json!({"version": 3, "sources": [source], "mappings": "AAAA"});
+        assert_eq!(decode(value.clone()).all_sources(), [source]);
+        value["sourceRoot"] = Value::Null;
+        assert_eq!(decode(value.clone()).all_sources(), [source]);
+        value["sourceRoot"] = json!("");
+        let map = decode(value);
+        assert_eq!(map.all_sources(), [source]);
+        assert_eq!(map.original_positions(0, 0)[0].source.as_deref(), Some(source));
+    }
 }
 
 #[test]
