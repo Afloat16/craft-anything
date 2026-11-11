@@ -2076,6 +2076,8 @@ Owner: open · Status: in progress
       Source [`dde4aa02`](https://github.com/Afloat16/craft-anything/commit/dde4aa0233be968f9b55bd3316204b880b8dbf2e) passed [formats tests, fmt and clippy](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891865)
       and [layers, locks, secret scanning, wasm checks and Cargo.lock stability](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).
       The [unchanged-code baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) reproduces the new regression cases.
+- [ ] Match firmware ZIP end records to the same archive start so stored nested archives do not shorten the outer region.
+      — claimed: Afloat16, branch bugfix/r3.12-firmware-zip-extent-20261110
 - [x] Exercise signed PAX lengths, empty keys and equals signs inside a path value.
       — claimed: Afloat16, branch bugfix/r3.12-pax-record-framing
 - [x] Apply global PAX archive attributes to later members, honor local overrides and global deletions, and bound inherited name copies before extraction.
