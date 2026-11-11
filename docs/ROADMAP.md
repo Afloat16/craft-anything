@@ -1790,6 +1790,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-safetensors-duplicate-keys-20261110
 - [x] Report malformed safetensors metadata, element widths and payload coverage.
       — claimed: Afloat16, branch bugfix/r3.12-safetensors-layout
+- [ ] Disclose incomplete asset catalog tree reads instead of reporting silently empty complete listings.
+      — claimed: Afloat16, branch bugfix/r3.12-car-tree-completeness-20261110
 - [x] Read Apple BOM block indices and named variables only within the directory byte ranges declared by the container.
       — claimed: Afloat16, branch bugfix/r3.12-bom-directory-bounds
 - [x] Count empty tensor shapes consistently across axis orders.
