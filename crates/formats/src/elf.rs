@@ -780,6 +780,7 @@ pub struct SigInfo {
     pub name: &'static str,
     pub code: i32,
     pub errno: i32,
+    /// Present only when the Linux siginfo variant records a fault address.
     #[serde(with = "hex_addr::opt")]
     pub fault_addr: Option<u64>,
     /// Plain-English meaning of the signal and code.
@@ -865,19 +866,49 @@ pub fn signal_name(n: i32) -> &'static str {
     }
 }
 
-fn signal_meaning(signo: i32, code: i32) -> String {
+// Linux chooses the fault union variant only for a signal-specific si_code.
+// Sender, timer, SI_KERNEL and ptrace-event records do not carry si_addr here.
+fn signal_has_fault_address(signo: i32, code: i32) -> bool {
+    matches!((signo, code), (4, 1..=11) | (5, 1..=6) | (7, 1..=5) | (8, 1..=15) | (11, 1..=10))
+}
+
+fn signal_meaning(signo: i32, code: Option<i32>) -> String {
+    let Some(code) = code else {
+        return format!("Stopped by {}; the signal origin was not recorded.", signal_name(signo));
+    };
+    let origin = match code {
+        0 => Some("Sent by a process using kill or sigsend."),
+        -1 => Some("Queued by a process using sigqueue."),
+        -2 => Some("Sent by an expired POSIX timer."),
+        -3 => Some("Sent for a message queue notification."),
+        -4 => Some("Sent after asynchronous I/O completed."),
+        -5 => Some("Sent for a queued I/O notification."),
+        -6 => Some("Sent to a thread using tkill or tgkill (including raise or abort)."),
+        -7 => Some("Sent while another thread called execve."),
+        -60 => Some("Sent after asynchronous name lookup completed."),
+        128 => Some("Sent by the kernel without a signal-specific fault code."),
+        _ => None,
+    };
+    if let Some(origin) = origin {
+        return origin.into();
+    }
+    if signal_has_fault_address(signo, code) {
+        return match (signo, code) {
+            (11, 1) => "Read or wrote memory that isn't mapped (often a null or dangling pointer).".into(),
+            (11, 2) => "Touched memory it isn't allowed to (wrong permissions, e.g. writing read-only data).".into(),
+            (11, _) => "Invalid memory access (segmentation fault).".into(),
+            (4, _) => "Ran an invalid instruction (corrupted code, a trap like ud2, or the wrong CPU).".into(),
+            (8, 1) | (8, 2) => "Integer division by zero or overflow.".into(),
+            (8, _) => "Arithmetic error.".into(),
+            (7, _) => "Bus error: misaligned access or a mapped file that shrank.".into(),
+            (5, _) => "Hit a breakpoint or trap.".into(),
+            _ => format!("Stopped by {}.", signal_name(signo)),
+        };
+    }
     match (signo, code) {
-        (11, 1) => "Read or wrote memory that isn't mapped (often a null or dangling pointer).".into(),
-        (11, 2) => "Touched memory it isn't allowed to (wrong permissions, e.g. writing read-only data).".into(),
-        (11, _) => "Invalid memory access (segmentation fault).".into(),
-        (6, _) => "The program aborted itself (a failed assertion, a detected corruption, or abort()).".into(),
-        (4, _) => "Ran an invalid instruction (corrupted code, a trap like ud2, or the wrong CPU).".into(),
-        (8, 1) | (8, 2) => "Integer division by zero or overflow.".into(),
-        (8, _) => "Arithmetic error.".into(),
-        (7, _) => "Bus error: misaligned access or a mapped file that shrank.".into(),
-        (5, _) => "Hit a breakpoint or trap.".into(),
-        (31, _) => "Made a forbidden system call (sandbox or seccomp).".into(),
-        _ => format!("Stopped by {}.", signal_name(signo)),
+        (31, 1) => "Made a forbidden system call (sandbox or seccomp).".into(),
+        (31, 2) => "Stopped by a system call user-dispatch rule.".into(),
+        _ => format!("Stopped by {} (si_code {code}).", signal_name(signo)),
     }
 }
 
@@ -984,11 +1015,13 @@ pub fn parse_core(data: &[u8]) -> Result<CoreDump, FormatError> {
                         });
                     }
                     0x5349_4749 => {
-                        let signo = d.u32(0).unwrap_or(0) as i32;
-                        let errno = d.u32(4).unwrap_or(0) as i32;
-                        let code = d.u32(8).unwrap_or(0) as i32;
-                        let fault = if matches!(signo, 4 | 7 | 8 | 11) { d.word(if e.is64 { 16 } else { 12 }) } else { None };
-                        core.signal = Some(SigInfo { signo, name: signal_name(signo), code, errno, fault_addr: fault, meaning: signal_meaning(signo, code) });
+                        if let (Some(signo), Some(errno), Some(code)) = (d.u32(0), d.u32(4), d.u32(8)) {
+                            let (signo, errno, code) = (signo as i32, errno as i32, code as i32);
+                            let fault = if signal_has_fault_address(signo, code) { d.word(if e.is64 { 16 } else { 12 }) } else { None };
+                            core.signal = Some(SigInfo { signo, name: signal_name(signo), code, errno, fault_addr: fault, meaning: signal_meaning(signo, Some(code)) });
+                        } else {
+                            core.warnings.push("NT_SIGINFO header is truncated; its signal origin is unavailable".into());
+                        }
                     }
                     0x4649_4c45 => {
                         let declared = d.word(0).unwrap_or(0);
@@ -1041,7 +1074,7 @@ pub fn parse_core(data: &[u8]) -> Result<CoreDump, FormatError> {
         && t.signal != 0
     {
         let signo = i32::from(t.signal);
-        core.signal = Some(SigInfo { signo, name: signal_name(signo), code: 0, errno: 0, fault_addr: None, meaning: signal_meaning(signo, 0) });
+        core.signal = Some(SigInfo { signo, name: signal_name(signo), code: 0, errno: 0, fault_addr: None, meaning: signal_meaning(signo, None) });
     }
     Ok(core)
 }
