@@ -270,7 +270,9 @@ pub fn enrich(data: &[u8], file: &object::File<'_>, b: &mut Binary) {
         b.info.insert("interpreter".into(), i.clone());
     }
     // Mitigations.
-    b.mitigations.nx = Some(phdrs.iter().find(|p| p.p_type == 0x6474_e551).is_some_and(|p| p.p_flags & 1 == 0));
+    // A missing GNU_STACK declaration has platform-dependent defaults, so it is not evidence
+    // for either an executable or a non-executable stack.
+    b.mitigations.nx = phdrs.iter().find(|p| p.p_type == 0x6474_e551).map(|p| p.p_flags & 1 == 0);
     let relro = phdrs.iter().any(|p| p.p_type == 0x6474_e552);
     b.mitigations.relro = Some(
         match (relro, bind_now) {
