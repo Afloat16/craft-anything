@@ -245,7 +245,15 @@ pub fn safe_module_path(id: &str, fallback_ext: &str) -> String {
         if p.is_empty() || p == "." || p == ".." || p.ends_with(':') {
             continue;
         }
-        let clean: String = p.chars().map(|c| if c.is_alphanumeric() || matches!(c, '.' | '-' | '_' | '@' | '+') { c } else { '_' }).take(120).collect();
+        let mut clean = String::new();
+        for c in p.chars() {
+            let c = if c.is_alphanumeric() || matches!(c, '.' | '-' | '_' | '@' | '+') { c } else { '_' };
+            // Count encoded bytes, leaving room for extensions and collision suffixes.
+            if clean.len() + c.len_utf8() > 120 {
+                break;
+            }
+            clean.push(c);
+        }
         let clean = clean.trim_start_matches('.').to_string();
         if !clean.is_empty() {
             parts.push(clean);
