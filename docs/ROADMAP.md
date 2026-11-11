@@ -2154,7 +2154,7 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-filesystem-archive-bounds
 - [x] Use the version-two cramfs size to bound root, directory and data reads in either byte order while preserving version-one compatibility.
       — claimed: Afloat16, branch bugfix/r3.12-cramfs-v2-image-size-20261110
-- [ ] Mark cramfs recovery incomplete when a file block-pointer table is unavailable.
+- [x] Mark cramfs recovery incomplete when a file block-pointer table is unavailable.
       — claimed: Afloat16, branch bugfix/r3.12-cramfs-pointer-completeness-20261111
 - [x] Recover cramfs direct block pointers, including shared uncompressed pages and length-prefixed compressed blocks.
       — claimed: Afloat16, branch feature/r3.12-cramfs-direct-block-pointers-20261111

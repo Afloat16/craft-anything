@@ -137,7 +137,12 @@ fn file_data(data: &[u8], ino: &Inode, limits: &Limits, img: &mut FsImage, big_e
     let mut block_start = ino.offset.checked_add(nblocks.checked_mul(4)?)?;
     for i in 0..nblocks {
         let pointer_offset = ino.offset.checked_add(i.checked_mul(4)?)?;
-        let pointer = if big_endian { r.u32_be(pointer_offset) } else { r.u32_le(pointer_offset) }?;
+        let pointer = if big_endian { r.u32_be(pointer_offset) } else { r.u32_le(pointer_offset) };
+        let Some(pointer) = pointer else {
+            img.warn("cramfs block pointer table is unavailable");
+            img.complete = false;
+            return None;
+        };
         let expected = ino.size.saturating_sub(i.saturating_mul(BLK)).min(BLK);
         let address = pointer & !(UNCOMPRESSED | DIRECT_PTR);
         let end = if pointer & DIRECT_PTR != 0 {

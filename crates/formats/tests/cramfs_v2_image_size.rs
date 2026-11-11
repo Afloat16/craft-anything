@@ -66,3 +66,29 @@ fn big_endian_v2_size_is_checked_in_its_own_byte_order() {
     assert!(!image.complete);
     assert!(image.entries.is_empty());
 }
+
+#[test]
+fn unavailable_block_pointer_tables_make_declared_extents_incomplete() {
+    for size in 136..140 {
+        let image = cramfs::read(&version_two(size), &Limits::default());
+        assert!(!image.complete, "declared extent {size}: {:?}", image.warnings);
+        assert!(image.warnings.iter().any(|warning| warning.contains("block pointer")));
+        let files: Vec<_> = image.entries.iter().filter(|entry| entry.kind == craft_anything_formats::fsread::FsKind::File).collect();
+        assert_eq!(files.len(), 2);
+        assert!(files.iter().all(|entry| entry.data.is_none() && entry.size > 0));
+        assert_eq!(image.bytes, 0);
+    }
+}
+
+#[test]
+fn physically_truncated_legacy_block_pointer_tables_are_incomplete() {
+    for size in 136..140 {
+        let mut data = cramfs_image();
+        data.truncate(size);
+        let image = cramfs::read(&data, &Limits::default());
+        assert!(!image.complete, "physical extent {size}: {:?}", image.warnings);
+        assert!(image.warnings.iter().any(|warning| warning.contains("block pointer")));
+        assert_eq!(image.entries.iter().filter(|entry| entry.kind == craft_anything_formats::fsread::FsKind::File).count(), 2);
+        assert_eq!(image.bytes, 0);
+    }
+}
