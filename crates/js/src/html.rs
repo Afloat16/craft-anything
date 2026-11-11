@@ -227,6 +227,12 @@ fn javascript_type(t: Option<&str>) -> bool {
         || matches!(essence.as_str(), "text/babel" | "text/jsx" | "text/jscript" | "text/livescript")
         || [
             "text/javascript",
+            "text/javascript1.0",
+            "text/javascript1.1",
+            "text/javascript1.2",
+            "text/javascript1.3",
+            "text/javascript1.4",
+            "text/javascript1.5",
             "application/javascript",
             "application/ecmascript",
             "text/ecmascript",
@@ -235,8 +241,7 @@ fn javascript_type(t: Option<&str>) -> bool {
             "text/x-javascript",
             "text/x-ecmascript",
         ]
-        .iter()
-        .any(|m| essence == *m || essence.strip_prefix(m).is_some_and(|v| v.starts_with('1')))
+        .contains(&essence.as_str())
 }
 
 #[cfg(test)]
