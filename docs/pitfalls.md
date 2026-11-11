@@ -242,6 +242,22 @@ the program it opened stayed open (and held the shell's pipe, so the command nev
 the caller may exit next, use `kill_and_wait`, and check after a live run that nothing was left
 running.
 
+**A turn's own process outlived its answer.** `run_cli` only sent `AgentEvent::TurnDone` once the
+whole coding-agent subprocess exited, never once its JSON stream said the turn was done (the
+`result` line). Claude Code can print that line and then linger (its own shutdown hook, logging)
+for as long as the idle timeout allows — hours, for a builder turn — so a finished build stayed on
+"Building"/"Pausing" long after the real work and even a final report were done, with no crash and
+no error to find. Once the stream's own terminal event is parsed, stop waiting on the process
+itself: fold a `result_seen` flag into `cancel_when` with a short grace period (`RESULT_GRACE`),
+and don't report that as "Stopped." A terminal stream event, not the OS exit, is what ends a turn.
+
+**A deadline that ended in a wait with none.** Every `Process` run has a time limit and a cancel,
+but when either fired the supervisor called the library's `kill()`, which stops the program and
+then waits for it with no limit (on Windows also for a job message the system doesn't promise).
+A program that outlives its stop held the run, and Pause, for good (#1438, #981). A deadline covers
+its own cleanup too: after a stop, poll for a moment and move on (`process::end`), and when a
+library call says "kill", read whether it also waits. Not reproduced on the reporters' machines.
+
 **A console held open by a program started next door.** On Windows Server 2022 opening a
 pseudoconsole briefly makes inheritable handles (a Unix terminal too, until it's made close-on-exec),
 so a program another thread started at that moment kept the console open until it ended, and closing
@@ -330,6 +346,20 @@ code that never compiled (#399). A failed build command is an `Ok` tool result (
 so counting tool errors misses it. Cap a loop on what it is stuck on (build commands failing in a
 row, read from the typed `succeeded` field), not only on its total steps.
 
+**A context overflow that looked like a broken request.** Ollama fits a prompt that is too long
+for its context by dropping the oldest messages, keeping the system prompt; the person's request
+went first, and a Qwen 3.8 model refused the rest with 500 "no user query found in messages"
+(#1245). It read as a fault in our request, and as a server error it was retried three times. The
+error came from Ollama's source (`server/prompt.go`, `model/renderers/qwen35.go`), not from the
+words: when a local server's error makes no sense for the request sent, read what the server does
+to it first, and mark a refusal that can't change on retry with a typed field (`context_overflow`).
+
+**A limit left unset is the largest one.** We sent OpenRouter no `max_tokens`, so it held the
+model's whole output limit (131,072 tokens for Kimi K3.1 Pro) against the key's credit, and a key
+with $35 left of its daily limit was refused with 402 before the model ran (#1213). When a service
+bills or reserves by a request's limits, find out what it assumes when one is missing; when it says
+what it can afford, ask again within that.
+
 **A router that picks the provider for you.** OpenRouter sends each request to one of several
 upstream providers, and a provider without tool calling answered 400 "Provider returned error"
 (#369), which said nothing the person could act on. For a service that routes, say in the request
@@ -356,6 +386,10 @@ window was redrawn at the display's rate the whole time (a core busy, or every c
 software), and a person reported "my CPU is fully used" (#579). Animations ask for their next frame
 at their own pace (`widgets::animate`, `widgets::Spinner`); check a library widget for
 `request_repaint` before using it for something long. Not measured on Windows here.
+It happened again with egui's `ProgressBar::animate(true)` in the jobs list, which the spinner fix
+didn't look at: replacing one widget isn't checking the others. Search the library's widgets for
+`request_repaint` (`grep -rn request_repaint ~/.cargo/registry/src/*/egui-*/src/widgets`), and the
+test that refuses egui's spinner on screens refuses its progress bar too.
 
 **Every tool offered to a model that can only use a few.** The builder on an API backend was sent
 all 33-41 Core and Build tools, about 23,000-30,000 characters of descriptions. A local 14B model
@@ -459,7 +493,34 @@ systems with `cargo check --target`, with zig as the C compiler for `ring` (a wr
 so #53 merged with a long line rustfmt rewraps. Run `cargo fmt --all --check` last, after every
 edit, right before committing.
 
+**Clippy passed on an older Rust.** #1480 ran clippy on Rust 1.97 (the workspace's
+`rust-version`), clean; CI's 1.99 has `clippy::chunks_exact_to_as_chunks` and stopped the PR on
+it. A clippy that predates a lint can't report it. Run fmt and clippy with CI's toolchain
+(`RUSTUP_TOOLCHAIN=1.99.0`), and if a tool says it isn't installed for a toolchain, install that
+toolchain's component rather than running another copy.
+
+**A process list read nothing on FreeBSD.** `ps -A -o pid=,ppid=` lists both columns on Linux,
+but POSIX makes everything after `=` the header, so FreeBSD's `ps` printed one `pid` column headed
+",ppid=" and every parent lookup came back empty. Give each column its own `-o` (`-o pid= -o ppid=`)
+when a header is renamed or blanked.
+
 ## Design
+
+**An unknown header bit hid readable code.** Rejecting undefined `.pyc` flag bits made the whole
+file unreadable, dropping its code, names and constants from reports. A reader collecting evidence
+must preserve fields and payload it can still understand: report the unknown bits as a warning,
+derive known modes from their defined bits, and test that the warning and recovered data coexist.
+
+**A round of checks that nothing could stop.** The builder's own checks ran one after another on
+the build's thread with no time limit, Pause was looked at only between tool calls, and the feed
+said only "checking its work against the original" for the whole round, so a check that stalled
+named no check and could hold the build for hours. Give a builder's checks a round time limit,
+look at Pause before each check, and say each check as its own step. The limit must reach the
+checks' own program runs too: a build step (a game engine's import, a cold compile) makes no tool
+call, so a limit that only applies "at the next tool call" leaves exactly the step that hangs.
+A check that's cut off is a failed check with its reason, never a silent wait. And every way a
+run can end — including a caught bug — records the project's status: leaving the last status on
+disk ("Checking" while nothing runs) reads as a stuck build that can't be retried.
 
 **An early error without a terminal event.** Model validation returned after reporting an error,
 but headless chat waits for `TurnDone`, not just an idle worker. Preflight failures and cancellation
@@ -604,6 +665,9 @@ test a tool through `Engine::call` with a time limit on a thread.
 **A forked session's cost is the session's.** Claude Code's `total_cost_usd` for a
 `--fork-session` run is the whole session's running total ($22.67 for a question that cost cents).
 Don't show a cost you can't attribute to the thing it's shown beside.
+The same holds for `--resume`: a build turn's total is the session's running total, so summing
+each turn's total counted the session again every turn (#1187). Keep each session's last total and
+add only the increase; a per-turn `usage` block is per turn, the cost fields are not.
 
 **An option that offered nothing new.** Asked for "a shallow live copy", the pin dialog got a
 Live choice that copied nothing and opened the project's app, which is exactly Play, under a
@@ -773,6 +837,12 @@ list: scan the folders people keep such things in (`KnownRoot`, by folder name, 
 levels down), and make an install use a copy already found outside our store. Test each layout
 (unzipped, cask, capitalised name) with temp folders, not the machine the test runs on.
 
+**A per-run id that a provider expects to be stable.** OpenCode Go refuses a request without
+`x-opencode-session` (#1225). The header was sent, but only for backends saved with an id, so
+backends from older versions or found from a key got a new id on every run. A fallback id for one
+run is a workaround, not a fix: give each saved provider backend its id once, at startup, before
+any session lock is held (`AiHub::ensure_session_id`), and test a restart keeps the same id.
+
 ## Agent tooling
 
 **Shared CLI efforts reached Claude unchanged.** Keep CLI-only levels available for agents, but
@@ -836,6 +906,11 @@ And again as the first step of a `sed` edit (`python -I - 2>/dev/null; sed …`)
 for two minutes and the edit after it never ran. Make an edit with the editor tool, not a shell
 line. The same session typed it once more, with `</dev/null` added, and that hung too: the habit
 is the problem, not the input. Every Python step names a script file.
+
+**A shell script tried in bash, run by dash.** A watcher script written for `/bin/sh` used
+`kill -0 -- -<group>` and passed in Git Bash; on Ubuntu `/bin/sh` is dash, whose `kill` takes `--`
+as a process id, so the script quit at once and both of its tests failed in CI. Try a `/bin/sh`
+script with `dash` (or `checkbashisms`) as well as bash, and keep to what both accept.
 
 **A search that ran no search.** `timeout 40 find … 2>/dev/null` on a Mac: there's no `timeout` there,
 the error went to `/dev/null`, and the empty result read as "no such files on this computer". Don't
@@ -931,3 +1006,9 @@ different branches reused the same package output path and one saw the other bra
 Give every worktree its own `CARGO_TARGET_DIR`, even when one agent manages both. Cleaning
 the shared engine cache then removed 11.6 GiB of compiled artifacts: avoid shared-cache
 cleanup as a recovery shortcut; use an isolated target directory for further verification.
+
+**A partial archive listing counted as a complete install.** A GNU-name limit correctly stopped
+an archive parser, but the installer wrote earlier listed files and returned success. Preserve the
+partial inventory for inspection, expose the stop as typed data, and make extraction check it before
+writing any member. Missing end markers need their own compatibility control; `complete: false`
+alone does not identify a refused metadata record.
