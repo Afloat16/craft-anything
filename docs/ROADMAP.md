@@ -1603,6 +1603,8 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
+- [ ] Recognize UTF-16 XML keyed-archive NIBs after either byte-order mark so their objects, classes and references reach the existing plist decoder.
+      — claimed: Afloat16, branch bugfix/r3.12-nib-utf16-detection-20261111
 - [x] Mark Python code inventories as cut short whenever a name or constant is shortened, and count truncation markers in the retained-text budget.
       — claimed: Afloat16, branch bugfix/r3.12-pyc-truncated-text-evidence-20261110
 - [x] Keep worker, service-worker and utility-process entry modules in their own execution role instead of inheriting the parent role through spawn edges.
