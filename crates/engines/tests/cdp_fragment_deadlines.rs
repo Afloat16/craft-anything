@@ -85,10 +85,8 @@ fn resume(initial: Vec<u8>, tail: Vec<u8>, cap: usize, cancel: bool, windows: us
         hash.update(key.unwrap().as_bytes());
         hash.update(b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
         let accept = base64::engine::general_purpose::STANDARD.encode(hash.finalize());
-        let mut response = format!(
-            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
-        )
-        .into_bytes();
+        let mut response =
+            format!("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n").into_bytes();
         response.extend_from_slice(&initial);
         stream.write_all(&response).unwrap();
         let mut pongs = 0;
