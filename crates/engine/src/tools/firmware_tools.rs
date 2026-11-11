@@ -446,8 +446,8 @@ fn firmware_image_extract(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput
                             for wmsg in &fsimg.warnings {
                                 w.skip(&format!("{label}.extracted"), format!("{kind}: {wmsg}"));
                             }
-                            let mut wrote_any = false;
-                            for e in &fsimg.entries {
+                            let mut has_files = false;
+                            for e in fsimg.entries {
                                 ctx.cancel.check()?;
                                 if e.kind != FsKind::File {
                                     if e.kind == FsKind::Symlink {
@@ -455,7 +455,8 @@ fn firmware_image_extract(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput
                                     }
                                     continue;
                                 }
-                                let Some(d) = &e.data else {
+                                has_files = true;
+                                let Some(d) = e.data else {
                                     w.skip(&format!("{label}.extracted/{}", e.path), "file data not recovered");
                                     continue;
                                 };
@@ -463,13 +464,12 @@ fn firmware_image_extract(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput
                                     Ok(c) => {
                                         let mut rel = sub.clone();
                                         rel.extend(c.iter().cloned());
-                                        produced.push((rel, d.clone(), "filesystem-file", member_dir(&sub, &c)));
-                                        wrote_any = true;
+                                        produced.push((rel, d, "filesystem-file", member_dir(&sub, &c)));
                                     }
                                     Err(why) => w.skip(&format!("{label}.extracted/{}", e.path), format!("refused: {why}")),
                                 }
                             }
-                            if !wrote_any && fsimg.entries.iter().all(|e| e.kind != FsKind::File) {
+                            if !has_files {
                                 *not_unpacked.entry(r.kind).or_default() += 1;
                             }
                         }
