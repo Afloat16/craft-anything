@@ -12,6 +12,19 @@ content, kept private), so the remote run gets the same tools. The host needs
 `craft-anything-cli` on its PATH — install Craft Anything there (the app keeps the helper
 next to it). If the check fails, the turn stops before any work with the fix.
 
+**Which OpenCode.** Runs need OpenCode 2.x, whose `run` has `--standalone`. OpenCode's install
+script and npm's `opencode-ai` package still give the 1.x line (1.19.5 on 2026-11-08), which
+doesn't have it. 2.x comes from npm's `@opencode/cli` package (`npm install -g @opencode/cli`),
+with the OpenCode desktop app, whose CLI is `opencode-cli` in the app's resources folder
+(`/opt/OpenCode/resources/opencode-cli` from the Linux package), and from OpenCode's GitHub
+releases. When the `opencode` on your PATH is 1.x, install `@opencode/cli`, or point the backend
+at a 2.x CLI: step 2 below, or `craft-anything-cli ai program OpenCode <path>`.
+
+**Don't start OpenCode during a build.** OpenCode's shared service resumes every session it finds
+running, including the one a build's private server is driving: started mid-build (opening the
+desktop app does it), it ran the builder's commands alongside the build, and the turn ended with
+an error that had no details. Open the desktop app before or after a build, not during one.
+
 ## Desktop
 
 1. Open **Settings → AI → Detect**, then add **OpenCode**, or **OpenCode on `<host>`**.
@@ -111,8 +124,8 @@ So a local turn that doesn't finish (stopped, failed or timed out) deletes its s
 `opencode session delete --standalone <id>`, which removes it without resuming it (over SSH, on
 the host). A turn that finishes keeps its session. While a turn runs, its session is recorded in
 `logs/unfinished-sessions/` in the config folder, under a lock the system drops when Craft
-Anything ends; if Craft Anything is killed mid-turn, the next agent turn, or
-`craft-anything-cli uninstall`, deletes the session of any record nobody holds. A delete that
+Anything ends; if Craft Anything is killed mid-turn, the desktop app sweeps the records when it
+starts, and the next agent turn or `craft-anything-cli uninstall` does too. A delete that
 keeps failing is given up after three tries, with the command to run by hand.
 
 Model discovery uses `opencode api model.list --param location[directory]=...` (the V2
