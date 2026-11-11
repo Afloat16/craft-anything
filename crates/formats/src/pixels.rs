@@ -5,6 +5,8 @@
 use crate::bptc;
 use crate::common::FormatError;
 
+mod packed;
+
 /// Default RGBA output budget: 256 MiB, matching the texture exporters' 8192×8192 pixel limit.
 pub const DEFAULT_MAX_RGBA_BYTES: u64 = 256 << 20;
 
@@ -33,6 +35,10 @@ pub enum Layout {
     RgbaFloat,
     /// Nine-bit RGB mantissas with a shared five-bit exponent, displayed as opaque sRGB.
     Rgb9e5,
+    /// Packed unsigned 10-bit RGB with two-bit alpha, low bits first.
+    Rgba1010102,
+    /// Packed unsigned 11/11/10-bit floating-point RGB, displayed as opaque sRGB.
+    Rgb111110Float,
     Rgb24,
     Rgba32,
     Argb32,
@@ -68,7 +74,9 @@ pub fn size(layout: Layout, width: u32, height: u32) -> Option<usize> {
         Layout::Rg16 => w.checked_mul(h)?.checked_mul(4),
         Layout::Rgb16 => w.checked_mul(h)?.checked_mul(6),
         Layout::Rgba16 => w.checked_mul(h)?.checked_mul(8),
-        Layout::Rgba32 | Layout::Argb32 | Layout::Bgra32 | Layout::RgHalf | Layout::RFloat | Layout::Rgb9e5 => w.checked_mul(h)?.checked_mul(4),
+        Layout::Rgba32 | Layout::Argb32 | Layout::Bgra32 | Layout::RgHalf | Layout::RFloat | Layout::Rgb9e5 | Layout::Rgba1010102 | Layout::Rgb111110Float => {
+            w.checked_mul(h)?.checked_mul(4)
+        }
         Layout::RgbaHalf | Layout::RgFloat => w.checked_mul(h)?.checked_mul(8),
         Layout::RgbaFloat => w.checked_mul(h)?.checked_mul(16),
         Layout::Dxt1 | Layout::Bc4 | Layout::Etc1 => blocks.checked_mul(8),
@@ -308,6 +316,8 @@ pub fn decode_with_limit(layout: Layout, width: u32, height: u32, data: &[u8], m
         Layout::RFloat => put(&mut float_pixels(floats, 1)),
         Layout::RgFloat => put(&mut float_pixels(floats, 2)),
         Layout::RgbaFloat => put(&mut float_pixels(floats, 4)),
+        Layout::Rgba1010102 => put(&mut data.as_chunks::<4>().0.iter().map(packed::rgba1010102)),
+        Layout::Rgb111110Float => put(&mut data.as_chunks::<4>().0.iter().map(packed::rgb111110)),
         Layout::Rgb9e5 => put(&mut data.as_chunks::<4>().0.iter().map(|bytes| {
             let packed = u32::from_le_bytes(*bytes);
             let scale = 2.0f32.powi((packed >> 27) as i32 - 24);

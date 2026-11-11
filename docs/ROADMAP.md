@@ -1477,8 +1477,6 @@ Owner: open · Status: todo
 
 ### R3.9 Game assets out
 Owner: open · Status: in progress
-- [ ] Decode Unreal packed 10-bit normalized and 11-bit floating-point textures through the bounded picture exporter.
-      — claimed: Afloat16, branch feature/r3.9-unreal-packed-textures-20261111
 - [ ] Unity: sounds out (the stored stream, usually FSB5; PCM ones as WAV)
 - [ ] Unity: crunched textures (DXT1Crunched, DXT5Crunched; two of the games checked use them)
 - [x] Unity: decode R16 and RG16 texture pixels through the shared bounded PNG export path.
@@ -1490,6 +1488,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch feature/r3.9-rgb9e5-textures-20261110
 - [ ] Unreal 5 and Oodle: IoStore packages, unversioned properties and Oodle-compressed paks
 - [ ] Game files: save pictures from IoStore containers (needs the Unreal 5 support above)
+- [x] Decode Unreal packed 10-bit normalized and 11-bit floating-point textures through the bounded picture exporter.
+      — claimed: Afloat16, branch feature/r3.9-unreal-packed-textures-20261111
 - [x] Unreal: decode cooked half- and full-precision floating-point textures with the shared bounded pixel reader.
       — claimed: Afloat16, branch feature/r3.9-unreal-float-textures-20261109
       Source `75b507c0b96f`; [format checks](https://github.com/Afloat16/claude-mem/actions/runs/42634877637/job/129220281335) and [compatibility gates](https://github.com/Afloat16/claude-mem/actions/runs/42642583301/job/129247271153) passed.
@@ -1569,6 +1569,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.11-standin-redacted-budget-20261103b
       Revision `d601bc4e` passed [full Linux CI](https://github.com/storytold/craft-anything/actions/runs/41788735130):
       all four retained-budget regressions and six deduplication regressions passed.
+- [x] Preserve every observation when comparing evidence bundles, including repeated operation/subject records and identical-record multiplicity.
+      — claimed: Afloat16, branch bugfix/r3.11-bundle-record-multiplicity-20261110
 - [x] Read only regular files for binary, text and evidence-bundle inputs, enforce whole-file byte caps while reading, and hash prefixes only after EOF instead of trusting a prior size report.
       — claimed: Afloat16, branch bugfix/r3.11-bounded-file-inputs-20261110
 - [x] A text source (a script, Markdown) had no tool that reads it as text outside a build (#539):
