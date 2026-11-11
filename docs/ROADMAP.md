@@ -1637,6 +1637,7 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
+- [ ] Enforce the HAR entry budget before allocating discarded request and response bodies, while keeping the complete entry count and validating trailing JSON. — claimed: Afloat16, branch `bugfix/r3.12-har-entry-allocation-budget-20261111`
 - [x] Bound expanded source-map inventories by retained path bytes and entries before allocation, preserving bounded prefixes and reporting truncation.
       — claimed: Afloat16, branch bugfix/r3.12-source-inventory-budget-20261111
 - [x] Preserve readable ZIP64 end-record fields with framing warnings and classic fallback for unusable locators; reject undersized, overflowing or truncated fixed records.
