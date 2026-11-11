@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "updated_at": "2026-11-11",
+  "items": [
+    {
+      "key": "craft-zip-crc32",
+      "repository": "storytold/craft-anything",
+      "branch": "bugfix/r3.12-zip-crc32-byte-lookup-20261111",
+      "base": "22c44d01d271c49187104802459085f273f855f0",
+      "head": "70fbdd1a5f9008fc4df7dc0050406a17d1b31b4a",
+      "public_claim": "c787ecc119e4646f14bbe50f0dcd5e13e85c2294",
+      "state": "ready_pending_pr_creation",
+      "actual_pr": false,
+      "merged": false,
+      "title": "Reduce checksum time when reading ZIP members (R3.12)",
+      "body": "## Problem\nEvery CRC-checked ZIP member ran eight polynomial iterations for each output byte. Large stored members spent substantial time verifying their checksum.\n\n## Change\nUse a fixed 256-entry IEEE CRC-32 lookup generated at compile time from the existing polynomial. The table occupies 1 KiB; there is no runtime initialization, new dependency, unsafe code or public API change. Initial/final XOR, checksum mismatch errors, output limits and ZIP method support stay unchanged.\n\nPublic claim: c787ecc119e4646f14bbe50f0dcd5e13e85c2294. Rebased onto main 22c44d01d271c49187104802459085f273f855f0; final head 70fbdd1a5f9008fc4df7dc0050406a17d1b31b4a. ROADMAP and STATUS are updated.\n\n## Verification\n- Four compatibility tests pass on both original and fixed implementations. This is a performance improvement, not a pre-existing correctness failure.\n- 732 cases agree with independent Python zlib, including public vectors, 29 fixed length checksums and varied starting offsets. Real stored ZIP reads check every output byte, CRC errors and byte limits.\n- Actual release-mode zip::read_entry: five fresh processes per version and member size, 128 MiB of work per process, two warmups, alternating order on the same pinned CPU. All 30 processes produced identical bytes and hashes.\n- Median throughput in MiB/s: 64 KiB members 204.708 -> 432.789 (2.114x); 1 MiB 204.351 -> 431.628 (2.112x); 32 MiB 187.751 -> 363.403 (1.936x).\n- Rust 1.99.0, identical release settings and dependencies, Ubuntu 24.04 x86_64 on AMD EPYC 9V74. The measurements include allocation, copying and CRC checks, but exclude file I/O, decompression, equality checks and deallocation. They do not establish performance on other operating systems or compressed members.\n- Original fixed-source full gate: 1,701 passed, 0 failed, 10 existing ignored tests; fmt, strict all-target Clippy, layers, locks, secrets and five-crate Wasm checks passed.\n- Exact final-head integration on latest main: 1,707 passed, 0 failed, 10 existing ignored tests; all the same gates passed. ZIP source, new tests, manifests and lockfile have identical Git blob IDs to the measured implementation.\n\n[Compatibility, zlib oracle, benchmark and original full gates](https://github.com/Afloat16/billion-context/actions/runs/43038685244)\n[Exact final-head integration gates](https://github.com/Afloat16/billion-context/actions/runs/43040385017)\n\nNo other tool's code, scripts or wording was copied.",
+      "prefill_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-zip-crc32-byte-lookup-20261111?expand=1&title=Reduce%20checksum%20time%20when%20reading%20ZIP%20members%20(R3.12)&body=%23%23%20Problem%0AEvery%20CRC-checked%20ZIP%20member%20ran%20eight%20polynomial%20iterations%20for%20each%20output%20byte.%20Large%20stored%20members%20spent%20substantial%20time%20verifying%20their%20checksum.%0A%0A%23%23%20Change%0AUse%20a%20fixed%20256-entry%20IEEE%20CRC-32%20lookup%20generated%20at%20compile%20time%20from%20the%20existing%20polynomial.%20The%20table%20occupies%201%20KiB%3B%20there%20is%20no%20runtime%20initialization%2C%20new%20dependency%2C%20unsafe%20code%20or%20public%20API%20change.%20Initial%2Ffinal%20XOR%2C%20checksum%20mismatch%20errors%2C%20output%20limits%20and%20ZIP%20method%20support%20stay%20unchanged.%0A%0APublic%20claim%3A%20c787ecc119e4646f14bbe50f0dcd5e13e85c2294.%20Rebased%20onto%20main%2022c44d01d271c49187104802459085f273f855f0%3B%20final%20head%2070fbdd1a5f9008fc4df7dc0050406a17d1b31b4a.%20ROADMAP%20and%20STATUS%20are%20updated.%0A%0A%23%23%20Verification%0A-%20Four%20compatibility%20tests%20pass%20on%20both%20original%20and%20fixed%20implementations.%20This%20is%20a%20performance%20improvement%2C%20not%20a%20pre-existing%20correctness%20failure.%0A-%20732%20cases%20agree%20with%20independent%20Python%20zlib%2C%20including%20public%20vectors%2C%2029%20fixed%20length%20checksums%20and%20varied%20starting%20offsets.%20Real%20stored%20ZIP%20reads%20check%20every%20output%20byte%2C%20CRC%20errors%20and%20byte%20limits.%0A-%20Actual%20release-mode%20zip%3A%3Aread_entry%3A%20five%20fresh%20processes%20per%20version%20and%20member%20size%2C%20128%20MiB%20of%20work%20per%20process%2C%20two%20warmups%2C%20alternating%20order%20on%20the%20same%20pinned%20CPU.%20All%2030%20processes%20produced%20identical%20bytes%20and%20hashes.%0A-%20Median%20throughput%20in%20MiB%2Fs%3A%2064%20KiB%20members%20204.708%20-%3E%20432.789%20(2.114x)%3B%201%20MiB%20204.351%20-%3E%20431.628%20(2.112x)%3B%2032%20MiB%20187.751%20-%3E%20363.403%20(1.936x).%0A-%20Rust%201.99.0%2C%20identical%20release%20settings%20and%20dependencies%2C%20Ubuntu%2024.04%20x86_64%20on%20AMD%20EPYC%209V74.%20The%20measurements%20include%20allocation%2C%20copying%20and%20CRC%20checks%2C%20but%20exclude%20file%20I%2FO%2C%20decompression%2C%20equality%20checks%20and%20deallocation.%20They%20do%20not%20establish%20performance%20on%20other%20operating%20systems%20or%20compressed%20members.%0A-%20Original%20fixed-source%20full%20gate%3A%201%2C701%20passed%2C%200%20failed%2C%2010%20existing%20ignored%20tests%3B%20fmt%2C%20strict%20all-target%20Clippy%2C%20layers%2C%20locks%2C%20secrets%20and%20five-crate%20Wasm%20checks%20passed.%0A-%20Exact%20final-head%20integration%20on%20latest%20main%3A%201%2C707%20passed%2C%200%20failed%2C%2010%20existing%20ignored%20tests%3B%20all%20the%20same%20gates%20passed.%20ZIP%20source%2C%20new%20tests%2C%20manifests%20and%20lockfile%20have%20identical%20Git%20blob%20IDs%20to%20the%20measured%20implementation.%0A%0A%5BCompatibility%2C%20zlib%20oracle%2C%20benchmark%20and%20original%20full%20gates%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fbillion-context%2Factions%2Fruns%2F43038685244)%0A%5BExact%20final-head%20integration%20gates%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fbillion-context%2Factions%2Fruns%2F43040385017)%0A%0ANo%20other%20tool's%20code%2C%20scripts%20or%20wording%20was%20copied.",
+      "validation": {
+        "measured_head": "29eae51d4391e18f315c9f9fc3b86e4988f9b9a6",
+        "baseline": "7116cc6cb486ada87497de2568c6b6db5a2ea783",
+        "performance_run": 43038685244,
+        "performance_job": 130584315761,
+        "original_gate_job": 130584316220,
+        "original_test_counts": {
+          "passed": 1701,
+          "failed": 0,
+          "ignored": 10
+        },
+        "final_run": 43040385017,
+        "final_job": 130590271744,
+        "final_test_counts": {
+          "passed": 1707,
+          "failed": 0,
+          "ignored": 10
+        },
+        "all_conclusions": "success",
+        "oracle_cases": 732,
+        "fresh_processes": 30,
+        "median_mib_per_s": [
+          {
+            "member_bytes": 65536,
+            "before": 204.70845077794337,
+            "after": 432.789185236625
+          },
+          {
+            "member_bytes": 1048576,
+            "before": 204.3514515066039,
+            "after": 431.6283380028101
+          },
+          {
+            "member_bytes": 33554432,
+            "before": 187.75113199044512,
+            "after": 363.40276689245326
+          }
+        ],
+        "scope": "Warmed synthetic ZIP_STORED members on Ubuntu 24.04 x86_64, Rust 1.99.0 release, same CPU and profiles. Includes allocation, copying and CRC; excludes I/O, decompression, equality/hash checks and deallocation."
+      }
+    },
+    {
+      "key": "craft-sqlite-schema-completeness",
+      "repository": "storytold/craft-anything",
+      "branch": "bugfix/r3.12-sqlite-schema-completeness-20261111",
+      "base": "35f11365026263f43884eadc9ec3296b99893ba1",
+      "head": "a03b9f5e7cdd42012a7ada9115f9408becd2953d",
+      "public_claim": "a03b9f5e7cdd42012a7ada9115f9408becd2953d",
+      "original_claim": "86ebafd0628529696a30da316679b28fab7c6ed8",
+      "state": "implementation_in_progress",
+      "actual_pr": false,
+      "merged": false,
+      "validation": null,
+      "dedupe": "Whole-history searches for SQLite schema, schema_truncated, SQLite incomplete and schema coverage. Merged #1608 only propagated incomplete walks into row reads/counts; whole_schema and database tool evidence remain omitted. Current code and public ROADMAP checked at latest main.",
+      "scope": "Carry RowWalk.incomplete into schema()/Overview and db_sqlite_show evidence, preserve readable objects and existing row paging, qualify uncertain missing-table errors. No traversal or SQL-language expansion.",
+      "notes": "Claim replayed to latest main before publishing implementation. New formats/engine/testkit work is being prepared; no new test pass is claimed yet."
+    }
+  ]
+}
