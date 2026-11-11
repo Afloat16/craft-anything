@@ -1508,8 +1508,6 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.11-a64-exclusive-value-flow-20261110
 - [x] Keep the first 100000 byte-search matches in file-offset order across hex, UTF-8 and UTF-16LE queries, including capped pages.
       — claimed: Afloat16, branch bugfix/r3.11-byte-search-match-order-20261110
-- [ ] Keep evidence-based call paths within one input binary, rejecting mixed or missing source content identities.
-      — claimed: Afloat16, branch bugfix/r3.11-call-path-input-identity-20261110
 - [x] Validate the remaining loopback fixture corrections for complete and fragmented request
       headers, negative probes and stand-in cancellation on the current main
       — claimed: Afloat16, branch test/loopback-fixture-stability-20261103
@@ -1548,6 +1546,8 @@ Owner: open · Status: in progress
       All 24 combined replay regressions pass locally on the refresh onto `cf414ff4`.
       See this PR's checks for the refreshed revision's complete gate.
       — claimed: Afloat16, branch bugfix/r3.11-standin-sample-metadata-20261103b
+- [x] Keep evidence-based call paths within one input binary, rejecting mixed or missing source content identities.
+      — claimed: Afloat16, branch bugfix/r3.11-call-path-input-identity-20261110
 - [x] `native_publisher_show` hashes the file minus the signature fields, not section by section;
       a file with unusual gaps between sections can read as different — the hash now follows
       Windows' order (headers, each section by its data's file offset, then the bytes after them,

@@ -66,7 +66,7 @@ pub fn specs() -> Vec<ToolSpec> {
         ToolSpec {
             id: "app_call_path_find",
             title: "Find a call path",
-            summary: "Find a path of calls from a start address to a goal address over a call graph assembled from native_function_study evidence records.",
+            summary: "Find a path of calls from a start address to a goal address over a call graph assembled from native_function_study evidence records for the same input binary.",
             beginner: "Find how one function reaches another through the calls between them.",
             toolset: Application,
             effects: Effects::EVIDENCE,
@@ -500,7 +500,7 @@ fn comparison_is_changed(result: &Value) -> bool {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CallPathParams {
-    /// native_function_study evidence records that describe the functions and their callees.
+    /// native_function_study evidence records from the same input binary, describing its functions and callees.
     pub functions: Vec<Value>,
     /// Start address (0x-hex or decimal).
     pub start: String,
@@ -527,8 +527,22 @@ fn app_call_path_find(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, To
     let mut adj: BTreeMap<u64, BTreeSet<u64>> = BTreeMap::new();
     let mut names: BTreeMap<u64, String> = BTreeMap::new();
     let mut links = Vec::new();
+    let mut input_sha: Option<String> = None;
     for f in &p.functions {
         let ev = resolve_evidence_input(ctx, f, &["native_function_study"])?;
+        // Addresses belong to an input binary; equal addresses in other files are unrelated nodes.
+        let sha = ev.subject.sha256.as_deref().filter(|sha| !sha.is_empty()).ok_or_else(|| {
+            ToolError::invalid("a function study has no input content hash")
+                .with_remediation("Collect function studies with native_function_study before finding a call path.")
+        })?;
+        match input_sha.as_deref() {
+            Some(expected) if expected != sha => {
+                return Err(ToolError::invalid("function studies refer to different input binaries")
+                    .with_remediation("Pass function studies from a single program version."));
+            }
+            None => input_sha = Some(sha.to_string()),
+            _ => {}
+        }
         links.push(ev.id.clone());
         let proc = ev.result.get("function");
         let entry = proc.and_then(|p| p.get("entry")).and_then(Value::as_str).and_then(|h| super::parse_address(h).ok());
