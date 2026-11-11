@@ -34,7 +34,21 @@ fn attribute(out: &mut Vec<u8>, name: u16, body: &[u8]) -> usize {
 fn fixture() -> Fixture {
     let mut bytes = vec![0xca, 0xfe, 0xba, 0xbe, 0, 0, 0, 52];
     word(&mut bytes, 18);
-    for text in ["FramedAttributes", "java/lang/Object", "value", "I", "run", "()V", "Code", "Opaque", "SourceFile", "FramedAttributes.java", "ConstantValue", "LineNumberTable", "later"] {
+    for text in [
+        "FramedAttributes",
+        "java/lang/Object",
+        "value",
+        "I",
+        "run",
+        "()V",
+        "Code",
+        "Opaque",
+        "SourceFile",
+        "FramedAttributes.java",
+        "ConstantValue",
+        "LineNumberTable",
+        "later",
+    ] {
         bytes.push(1);
         word(&mut bytes, text.len() as u16);
         bytes.extend(text.as_bytes());

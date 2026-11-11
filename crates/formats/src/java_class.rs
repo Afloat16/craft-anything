@@ -385,8 +385,7 @@ pub fn parse(data: &[u8]) -> Result<ClassFile, FormatError> {
     let (fields, fields_complete) = parse_members(&mut c, &pool, &mut warnings, "field")?;
     // A broken outer attribute length leaves no trustworthy next member/table
     // boundary. Keep the facts already read, without reinterpreting its payload.
-    let (methods, methods_complete) =
-        if fields_complete { parse_members(&mut c, &pool, &mut warnings, "method")? } else { (Vec::new(), false) };
+    let (methods, methods_complete) = if fields_complete { parse_members(&mut c, &pool, &mut warnings, "method")? } else { (Vec::new(), false) };
     // Class attributes
     let attrs = if methods_complete { read_attrs(&mut c, &pool, &mut warnings, "class").0 } else { Vec::new() };
     let mut source_file = None;

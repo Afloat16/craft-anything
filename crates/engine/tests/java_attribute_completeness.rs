@@ -78,6 +78,14 @@ fn a_filtered_empty_page_is_not_proof_of_absence_after_attribute_damage() {
         assert_partial(&references);
         assert_eq!(references["result"]["references_total"], 0);
         assert!(!references["summary"].as_str().unwrap().contains("not defined in this archive"));
+        for params in [json!({"method_name": "missing"}), json!({"method_name": "run", "descriptor": "()I"})] {
+            let mut params = params;
+            params["path"] = json!(path);
+            let error = engine.call("java_method_show", params, CallOptions::new(Caller::Cli)).unwrap_err();
+            let error = serde_json::to_value(error).unwrap();
+            assert_eq!(error["details"]["parse_incomplete"], true);
+            assert!(error["message"].as_str().unwrap().contains("readable"));
+        }
     });
 }
 
