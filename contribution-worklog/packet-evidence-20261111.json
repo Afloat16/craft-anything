@@ -1,109 +1,271 @@
 {
   "schema_version": 1,
-  "repo": "storytold/craft-anything",
-  "branch": "bugfix/r3.12-packet-evidence-completeness-20261111",
-  "base": "adeddc9149b97c21e595e743c9875d84e805eece",
-  "claim": "2f77a0504a945dee13583e1b893356710189f741",
-  "head": "b171ee291d98b86c137e2e02093fc181bd96db52",
-  "state": "implementation_published_validation_pending",
-  "actual_pr": false,
-  "merged": false,
-  "scope": "Propagate capture, flow and inventory incompleteness through all three packet evidence tools; do not count incomplete tshark TSV records after the existing stdout cap.",
-  "source_files": [
-    "crates/engine/src/tools/packet_tools.rs",
-    "crates/engine/tests/packet_evidence_completeness.rs"
-  ],
-  "dedupe": {
-    "rejected_candidate": "pcapng if_tsoffset already merged in #397; timestamp/record budget corrections already merged in #1091",
-    "checked_related_prs": [
-      397,
-      421,
-      433,
-      514,
-      714,
-      722,
-      884,
-      986,
-      1091,
-      1247
-    ],
-    "searches": [
-      "is:pr \"pcap\" \"coverage\":29 reviewed source-compatible hits",
-      "is:pr \"caps_hit\":0",
-      "is:pr \"tshark_output_capped\":0",
-      "is:issue \"packet\" \"coverage\":0",
-      "is:pr \"inventory\" \"partial\":9 unrelated hits"
-    ]
-  },
-  "planned_validation": {
-    "focused_tests": 13,
-    "native_tests": 5,
-    "actual_limits": {
-      "packets": 5000000,
-      "flows": 100000,
-      "inventory_values": 10000,
-      "tshark_output_bytes": 67108864
-    },
-    "baseline_expected": "10 focused failures / 3 complete-boundary controls; 3 native failures / 2 controls",
-    "gates": [
-      "full engine/formats/testkit",
-      "fmt",
-      "strict all-target Clippy",
-      "layers",
-      "locks",
-      "secrets",
-      "Wasm"
-    ],
-    "native_scope": "Official libpcap file API writes classic pcap, reads it and independently verifies generated pcapng; the real tshark binary was not installed or run."
-  },
-  "publication": "Do not retry the previously rejected craft PR permission action; prepare a complete prefilled compare URL after required validation.",
-  "validation_runs": [
+  "updated_at": "2026-11-11T16:44:25Z",
+  "items": [
     {
-      "id": 43054523894,
-      "url": "https://github.com/Afloat16/billion-context/actions/runs/43054523894",
-      "head": "b171ee291d98b86c137e2e02093fc181bd96db52",
-      "conclusion": "failure",
-      "passed": [
-        "Rust1.99 setup",
-        "cargo fmt --all -- --check"
+      "key": "craft-packet-evidence-completeness",
+      "repository": "storytold/craft-anything",
+      "fork": "Afloat16/craft-anything",
+      "branch": "bugfix/r3.12-packet-evidence-completeness-20261111",
+      "base": "86d047cbc5368ca595c83e045893fb39c7f3f7f8",
+      "head": "8ede68574392af1cf9123a4aec179b5557689964",
+      "public_claim": "ae853665d386f2a3def39f49f9c00eeba13d8d28",
+      "original_claim": "2f77a0504a945dee13583e1b893356710189f741",
+      "public_claim_history": [
+        {
+          "base": "adeddc9149b97c21e595e743c9875d84e805eece",
+          "claim": "2f77a0504a945dee13583e1b893356710189f741",
+          "tested_head": "b171ee291d98b86c137e2e02093fc181bd96db52"
+        },
+        {
+          "base": "041a9bed1f3041647036ea36ef3e67a6e0cd12a5",
+          "claim": "8e8b1353f535d3158fbc00588e46bc5b0d7bcbc3",
+          "tested_head": "4afe199f0bb39abafe3bb2e46a8ac91dc6332207"
+        },
+        {
+          "base": "06342656204c5ef25d145ec632468914d2a2982e",
+          "claim": "0b91e68e594cb87ad5cfb852d815d42725c9e061",
+          "tested_head": "46c531c9d21c2dab35f2ae62d22c72786b931ea2"
+        },
+        {
+          "base": "86d047cbc5368ca595c83e045893fb39c7f3f7f8",
+          "claim": "ae853665d386f2a3def39f49f9c00eeba13d8d28",
+          "tested_head": "8ede68574392af1cf9123a4aec179b5557689964"
+        }
       ],
-      "blocker": "Official signed Ubuntu package setup could not resolve archive.ubuntu.com; native fixtures, regressions and remaining gates did not run."
-    },
-    {
-      "id": 43055226582,
-      "url": "https://github.com/Afloat16/billion-context/actions/runs/43055226582",
-      "carrier": "17489fac8cc4ee1ec98070f5174efab4e847c88b",
-      "head": "b171ee291d98b86c137e2e02093fc181bd96db52",
-      "conclusion": "in_progress",
-      "passed_steps": [
-        "fmt",
-        "baseline/fixed focused comparison",
-        "full engine/formats/testkit suites"
+      "state": "ready_pending_pr_creation",
+      "actual_pr": false,
+      "merged": false,
+      "pr_number": null,
+      "pr_url": null,
+      "title": "Report incomplete packet evidence after capture and inventory limits (R3.12)",
+      "body": "## Why\n\nPacket tools could report complete evidence after a capture reader warning or a real scan/inventory limit. Their coverage described only the retained page, so a caller could mistake an omitted packet, flow or address for a confirmed absence.\n\nFor example, a capture containing 5,001 packets and 10,002 distinct IP addresses retains the first 10,000 addresses. Requesting all 10,000 retained inventory rows previously returned complete coverage.\n\n## Changes\n\n- Carry capture warnings and scan/flow limits into `packets_capture_show` and `packets_fields_show` coverage. Preserve readable packets, retained flow pages and continuation offsets.\n- Keep exact packet totals when only inventory rows or distinct values are limited. Omit an exact coverage total when the capture scan is incomplete, and qualify flow-filter results when flow identifiers were omitted.\n- Expose `truncated`, `capped_inventories`, `rows_limited` and capture warnings in inventory evidence, with an explicit limitation for the built-in packet scan budget.\n- Track distinct-value limits in the tshark field aggregator while continuing to count already retained values. When the existing 64 MiB stdout cap cuts a TSV record, retain only complete records; a partial field does not become an address or request.\n\nWarnings are handled conservatively without matching their English wording. The observed packet counts remain available even when coverage cannot assert an exact complete total.\n\n## Validation\n\n- [Original/fixed regression run](https://github.com/Afloat16/billion-context/actions/runs/43055226582): original `adeddc9` fails 10 cases and passes the 3 complete-input/exact-boundary controls; the fixed code passes all 13. These include the real 5,000,000-record scan, 100,000-flow and 10,000-value budgets, plus an actual 64 MiB process-output cap.\n- [Native file comparison](https://github.com/Afloat16/billion-context/actions/runs/43056191802): official libpcap 1.10.5 at `bbcbc9174df3298a854daee2b3e666a4b6e5383a` writes classic captures and independently reads classic and generated pcapng fixtures. Eight files check every packet's bytes, lengths, timestamp and link type, including 10,002-endpoint captures, damaged readable prefixes and empty controls. The actual engine tests fail 3 cases and pass 2 controls on the original code; all 5 pass with the fix.\n- [Latest parser integration](https://github.com/Afloat16/billion-context/actions/runs/43058913342) at `46c531c`, based on `0634265`: full engine/formats/testkit suites pass **2,399 tests, 0 failures, 17 existing ignored tests**. Formatting, strict all-target Clippy, layers, locks, secrets and the complete five-crate WebAssembly gate pass.\n- [Final source/dependency verification](https://github.com/Afloat16/billion-context/actions/runs/43059889897) checks final `8ede685` on `86d047c`. The packet implementation, regressions and entire lower-layer tree match the fully tested integration. The five newly merged upstream AI files are inherited exactly; dependency manifests and the lockfile are identical. Formatting and repository contracts are checked again.\n\nThe process tests emit actual TSV streams through the normal external-process path, including an exact 64 MiB control and a stream that ends inside a record at the cap. They use a controlled local producer. The independent native file checks use fixed official libpcap source; they do not claim that a real tshark binary ran.\n\nThe original [native package setup attempt](https://github.com/Afloat16/billion-context/actions/runs/43054523894) passed formatting, then failed to resolve Ubuntu's archive host before any product tests ran. That red run is retained. Native validation was moved to a file-only libpcap build without APT dependencies.\n",
+      "prefill_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-packet-evidence-completeness-20261111?expand=1&title=Report%20incomplete%20packet%20evidence%20after%20capture%20and%20inventory%20limits%20%28R3.12%29&body=%23%23%20Why%0A%0APacket%20tools%20could%20report%20complete%20evidence%20after%20a%20capture%20reader%20warning%20or%20a%20real%20scan%2Finventory%20limit.%20Their%20coverage%20described%20only%20the%20retained%20page%2C%20so%20a%20caller%20could%20mistake%20an%20omitted%20packet%2C%20flow%20or%20address%20for%20a%20confirmed%20absence.%0A%0AFor%20example%2C%20a%20capture%20containing%205%2C001%20packets%20and%2010%2C002%20distinct%20IP%20addresses%20retains%20the%20first%2010%2C000%20addresses.%20Requesting%20all%2010%2C000%20retained%20inventory%20rows%20previously%20returned%20complete%20coverage.%0A%0A%23%23%20Changes%0A%0A-%20Carry%20capture%20warnings%20and%20scan%2Fflow%20limits%20into%20%60packets_capture_show%60%20and%20%60packets_fields_show%60%20coverage.%20Preserve%20readable%20packets%2C%20retained%20flow%20pages%20and%20continuation%20offsets.%0A-%20Keep%20exact%20packet%20totals%20when%20only%20inventory%20rows%20or%20distinct%20values%20are%20limited.%20Omit%20an%20exact%20coverage%20total%20when%20the%20capture%20scan%20is%20incomplete%2C%20and%20qualify%20flow-filter%20results%20when%20flow%20identifiers%20were%20omitted.%0A-%20Expose%20%60truncated%60%2C%20%60capped_inventories%60%2C%20%60rows_limited%60%20and%20capture%20warnings%20in%20inventory%20evidence%2C%20with%20an%20explicit%20limitation%20for%20the%20built-in%20packet%20scan%20budget.%0A-%20Track%20distinct-value%20limits%20in%20the%20tshark%20field%20aggregator%20while%20continuing%20to%20count%20already%20retained%20values.%20When%20the%20existing%2064%20MiB%20stdout%20cap%20cuts%20a%20TSV%20record%2C%20retain%20only%20complete%20records%3B%20a%20partial%20field%20does%20not%20become%20an%20address%20or%20request.%0A%0AWarnings%20are%20handled%20conservatively%20without%20matching%20their%20English%20wording.%20The%20observed%20packet%20counts%20remain%20available%20even%20when%20coverage%20cannot%20assert%20an%20exact%20complete%20total.%0A%0A%23%23%20Validation%0A%0A-%20%5BOriginal%2Ffixed%20regression%20run%5D%28https%3A%2F%2Fgithub.com%2FAfloat16%2Fbillion-context%2Factions%2Fruns%2F43055226582%29%3A%20original%20%60adeddc9%60%20fails%2010%20cases%20and%20passes%20the%203%20complete-input%2Fexact-boundary%20controls%3B%20the%20fixed%20code%20passes%20all%2013.%20These%20include%20the%20real%205%2C000%2C000-record%20scan%2C%20100%2C000-flow%20and%2010%2C000-value%20budgets%2C%20plus%20an%20actual%2064%20MiB%20process-output%20cap.%0A-%20%5BNative%20file%20comparison%5D%28https%3A%2F%2Fgithub.com%2FAfloat16%2Fbillion-context%2Factions%2Fruns%2F43056191802%29%3A%20official%20libpcap%201.10.5%20at%20%60bbcbc9174df3298a854daee2b3e666a4b6e5383a%60%20writes%20classic%20captures%20and%20independently%20reads%20classic%20and%20generated%20pcapng%20fixtures.%20Eight%20files%20check%20every%20packet%27s%20bytes%2C%20lengths%2C%20timestamp%20and%20link%20type%2C%20including%2010%2C002-endpoint%20captures%2C%20damaged%20readable%20prefixes%20and%20empty%20controls.%20The%20actual%20engine%20tests%20fail%203%20cases%20and%20pass%202%20controls%20on%20the%20original%20code%3B%20all%205%20pass%20with%20the%20fix.%0A-%20%5BLatest%20parser%20integration%5D%28https%3A%2F%2Fgithub.com%2FAfloat16%2Fbillion-context%2Factions%2Fruns%2F43058913342%29%20at%20%6046c531c%60%2C%20based%20on%20%600634265%60%3A%20full%20engine%2Fformats%2Ftestkit%20suites%20pass%20%2A%2A2%2C399%20tests%2C%200%20failures%2C%2017%20existing%20ignored%20tests%2A%2A.%20Formatting%2C%20strict%20all-target%20Clippy%2C%20layers%2C%20locks%2C%20secrets%20and%20the%20complete%20five-crate%20WebAssembly%20gate%20pass.%0A-%20%5BFinal%20source%2Fdependency%20verification%5D%28https%3A%2F%2Fgithub.com%2FAfloat16%2Fbillion-context%2Factions%2Fruns%2F43059889897%29%20checks%20final%20%608ede685%60%20on%20%6086d047c%60.%20The%20packet%20implementation%2C%20regressions%20and%20entire%20lower-layer%20tree%20match%20the%20fully%20tested%20integration.%20The%20five%20newly%20merged%20upstream%20AI%20files%20are%20inherited%20exactly%3B%20dependency%20manifests%20and%20the%20lockfile%20are%20identical.%20Formatting%20and%20repository%20contracts%20are%20checked%20again.%0A%0AThe%20process%20tests%20emit%20actual%20TSV%20streams%20through%20the%20normal%20external-process%20path%2C%20including%20an%20exact%2064%20MiB%20control%20and%20a%20stream%20that%20ends%20inside%20a%20record%20at%20the%20cap.%20They%20use%20a%20controlled%20local%20producer.%20The%20independent%20native%20file%20checks%20use%20fixed%20official%20libpcap%20source%3B%20they%20do%20not%20claim%20that%20a%20real%20tshark%20binary%20ran.%0A%0AThe%20original%20%5Bnative%20package%20setup%20attempt%5D%28https%3A%2F%2Fgithub.com%2FAfloat16%2Fbillion-context%2Factions%2Fruns%2F43054523894%29%20passed%20formatting%2C%20then%20failed%20to%20resolve%20Ubuntu%27s%20archive%20host%20before%20any%20product%20tests%20ran.%20That%20red%20run%20is%20retained.%20Native%20validation%20was%20moved%20to%20a%20file-only%20libpcap%20build%20without%20APT%20dependencies.%0A",
+      "scope": "Propagate capture, flow and inventory incompleteness through all three packet evidence tools; do not count incomplete tshark TSV records after the existing stdout cap.",
+      "dedupe": {
+        "rejected_candidate": "pcapng if_tsoffset already merged in #397; timestamp/record budget corrections already merged in #1091",
+        "checked_related_prs": [
+          397,
+          421,
+          433,
+          514,
+          714,
+          722,
+          884,
+          986,
+          1091,
+          1247
+        ],
+        "searches": [
+          "is:pr \"pcap\" \"coverage\":29 reviewed source-compatible hits",
+          "is:pr \"caps_hit\":0",
+          "is:pr \"tshark_output_capped\":0",
+          "is:issue \"packet\" \"coverage\":0",
+          "is:pr \"inventory\" \"partial\":9 unrelated hits"
+        ]
+      },
+      "diff": {
+        "commits": 2,
+        "files": 4,
+        "additions": 418,
+        "deletions": 17,
+        "paths": [
+          "crates/engine/src/tools/packet_tools.rs",
+          "crates/engine/tests/packet_evidence_completeness.rs",
+          "docs/ROADMAP.md",
+          "docs/STATUS.md"
+        ]
+      },
+      "validation": {
+        "limits": {
+          "packets": 5000000,
+          "flows": 100000,
+          "inventory_values": 10000,
+          "external_stdout_bytes": 67108864
+        },
+        "initial_core": {
+          "run": 43055226582,
+          "url": "https://github.com/Afloat16/billion-context/actions/runs/43055226582",
+          "job": 130642771123,
+          "conclusion": "success",
+          "carrier": "17489fac8cc4ee1ec98070f5174efab4e847c88b",
+          "base": "adeddc9149b97c21e595e743c9875d84e805eece",
+          "head": "b171ee291d98b86c137e2e02093fc181bd96db52",
+          "baseline": {
+            "passed": 3,
+            "failed": 10
+          },
+          "fixed": {
+            "passed": 13,
+            "failed": 0
+          },
+          "full_suites": {
+            "passed": 2397,
+            "failed": 0,
+            "ignored": 17,
+            "targets": 229
+          },
+          "gates": [
+            "fmt",
+            "strict all-target Clippy for engine/formats/testkit",
+            "layers",
+            "locks:387",
+            "secrets",
+            "five-crate WebAssembly",
+            "patch whitespace",
+            "clean checkout"
+          ]
+        },
+        "native": {
+          "run": 43056191802,
+          "url": "https://github.com/Afloat16/billion-context/actions/runs/43056191802",
+          "job": 130646177535,
+          "conclusion": "success",
+          "carrier": "ee84609503f1dd5f286664bd359c04acb71f7a3e",
+          "libpcap_tag": "libpcap-1.10.5",
+          "libpcap_sha": "bbcbc9174df3298a854daee2b3e666a4b6e5383a",
+          "native_build": "Official fixed libpcap source; file-only PCAP_TYPE=null; runner-preinstalled build dependencies; no APT installation",
+          "files_verified": 8,
+          "comparison": "Every packet's bytes, captured/original length, timestamp and link type; empty, complete, 10,002-endpoint inventory and damaged readable-prefix controls in classic pcap and pcapng.",
+          "baseline": {
+            "passed": 2,
+            "failed": 3
+          },
+          "fixed": {
+            "passed": 5,
+            "failed": 0
+          },
+          "real_tshark_run": false,
+          "external_process_scope": "Controlled native child emits actual TSV streams through the production process runner, including exact and truncated 64 MiB cases."
+        },
+        "previous_final_identity": {
+          "run": 43057974492,
+          "url": "https://github.com/Afloat16/billion-context/actions/runs/43057974492",
+          "job": 130652461161,
+          "conclusion": "success",
+          "head": "4afe199f0bb39abafe3bb2e46a8ac91dc6332207",
+          "base": "041a9bed1f3041647036ea36ef3e67a6e0cd12a5",
+          "scope": "Exact unchanged product/tests; only shared documentation changed; raw commit parent headers establish public-claim chain; fmt/layers/locks/secrets/clean checkout."
+        },
+        "full_parser_integration": {
+          "run": 43058913342,
+          "url": "https://github.com/Afloat16/billion-context/actions/runs/43058913342",
+          "job": 130655822358,
+          "conclusion": "success",
+          "carrier": "5ba59623d0a6b04c2f16ec9165a6f64e3e635742",
+          "head": "46c531c9d21c2dab35f2ae62d22c72786b931ea2",
+          "base": "06342656204c5ef25d145ec632468914d2a2982e",
+          "counts": {
+            "passed": 2399,
+            "failed": 0,
+            "ignored": 17,
+            "targets": 229
+          },
+          "by_crate": {
+            "engine": {
+              "passed": 693,
+              "failed": 0,
+              "ignored": 7,
+              "targets": 20
+            },
+            "formats": {
+              "passed": 1705,
+              "failed": 0,
+              "ignored": 10,
+              "targets": 207
+            },
+            "testkit": {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0,
+              "targets": 2
+            }
+          },
+          "upstream_integration": "Includes merged codesign parser update #1698, with own packet source/tests identical to original fixed/native validation.",
+          "gates": [
+            "fmt",
+            "full engine/formats/testkit",
+            "strict all-target Clippy",
+            "layers",
+            "locks:387",
+            "secrets",
+            "five-crate WebAssembly",
+            "patch whitespace",
+            "clean checkout"
+          ]
+        },
+        "final_identity": {
+          "run": 43059889897,
+          "url": "https://github.com/Afloat16/billion-context/actions/runs/43059889897",
+          "job": 130659243778,
+          "conclusion": "success",
+          "carrier": "40e9135e8576829c3285d0acd63c2982a270b543",
+          "completed_at": "2026-11-11T16:43:18Z",
+          "proof": {
+            "base": "86d047cbc5368ca595c83e045893fb39c7f3f7f8",
+            "claim_parent": "ae853665d386f2a3def39f49f9c00eeba13d8d28",
+            "entire_lower_layer_tree_unchanged": true,
+            "head": "8ede68574392af1cf9123a4aec179b5557689964",
+            "sha256": {
+              "Cargo.lock": "9634f17a91a00ca9bffd49b493637c7b48fd663c1d950fab15730efbb0ac7b24",
+              "Cargo.toml": "70f10d98f2b3340322e616f7922d158c6575fce24c4735154bc791ba554a9286",
+              "crates/engine/Cargo.toml": "280a2ef40b1caa957855dffa21fe28771f4688fbbb6aa48041b711f96c0c3999",
+              "crates/engine/src/tools/packet_tools.rs": "fa79271aad0cc0cb4460849073c3532f2216a63daa56004474afd231e430fae5",
+              "crates/engine/tests/packet_evidence_completeness.rs": "ea3b5c6640c5481f0c74c6893e60dc362258e047d7708b1cabdfb52a76aacf83",
+              "crates/formats/Cargo.toml": "668ccbf2500bcccb83bbc0c56cb6799ad14c3d8708f60e15eb665e36758ca7a8",
+              "crates/testkit/Cargo.toml": "a54e5be4e24b56f7659afeecf597326c17c1441ee3e3cea99ceebfbc803ab3fc"
+            },
+            "tested": "46c531c9d21c2dab35f2ae62d22c72786b931ea2",
+            "upstream_files_inherited_exactly": [
+              "crates/ai/src/cli_agents/adapters.rs",
+              "crates/ai/src/cli_agents/adapters/opencode.rs",
+              "crates/ai/src/cli_agents/mod.rs",
+              "crates/ai/src/rebuild/tests.rs",
+              "crates/ai/src/tests.rs",
+              "docs/ROADMAP.md"
+            ]
+          },
+          "gates": [
+            "Rust 1.99 fmt",
+            "layers",
+            "locks:387",
+            "secrets",
+            "patch whitespace",
+            "clean checkout"
+          ],
+          "scope": "The five upstream AI source/test files are inherited exactly. Entire lower-layer tree, packet implementation/tests, workspace/touched-crate manifests and Cargo.lock are byte-identical to the fully tested 46c531 integration. Full tests were not redundantly rerun for unrelated upper-layer AI changes."
+        },
+        "retained_failures": [
+          {
+            "run": 43054523894,
+            "url": "https://github.com/Afloat16/billion-context/actions/runs/43054523894",
+            "job": 130640298447,
+            "conclusion": "failure",
+            "passed": [
+              "Rust 1.99 setup",
+              "fmt"
+            ],
+            "reason": "Official signed Ubuntu package setup could not resolve archive.ubuntu.com. Native fixtures, regressions and remaining gates did not run."
+          },
+          {
+            "run": 43057673340,
+            "url": "https://github.com/Afloat16/billion-context/actions/runs/43057673340",
+            "job": 130651395145,
+            "conclusion": "failure",
+            "reason": "Validation-only identity harness used git rev-parse at a shallow parent boundary. No product failure; later gates were skipped. Replaced ancestry traversal with parsing raw commit parent headers; corrected run 43057974492 passed."
+          }
+        ]
+      },
+      "limitations": [
+        "Capture warnings conservatively prevent complete coverage without matching English warning text.",
+        "Observed packet counts remain in results even when exact complete coverage totals are unavailable.",
+        "No live packet capture or real tshark binary was run.",
+        "Original parser behavior, packet/inventory budgets and API parameters are unchanged."
       ],
-      "remaining": [
-        "strict Clippy",
-        "contracts",
-        "Wasm",
-        "source identity"
-      ]
+      "publication": {
+        "state": "pending_user_confirmation",
+        "reason": "Prior craft PR API creation returned 403 and the permissions checkbox action was automatically rejected. No retry of the rejected permission operation; final commit and complete title/body compare URL are ready."
+      }
     }
-  ],
-  "native_validation": {
-    "run": 43056191802,
-    "url": "https://github.com/Afloat16/billion-context/actions/runs/43056191802",
-    "carrier": "ee84609503f1dd5f286664bd359c04acb71f7a3e",
-    "head": "b171ee291d98b86c137e2e02093fc181bd96db52",
-    "conclusion": "in_progress",
-    "libpcap_sha": "bbcbc9174df3298a854daee2b3e666a4b6e5383a",
-    "libpcap_tag": "libpcap-1.10.5",
-    "passed_steps": [
-      "fixed libpcap file-only build",
-      "native write/read bytes, lengths, timestamps, link type, endpoints and damaged prefix checks"
-    ],
-    "remaining": [
-      "baseline/fixed native consumer comparison",
-      "source identity"
-    ],
-    "real_tshark_run": false
-  }
+  ]
 }
