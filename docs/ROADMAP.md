@@ -1589,6 +1589,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-node-sea-module-format-20261110
 - [x] Resolve webpack module-loader calls by the wrapper parameter's binding, so nested parameters and local variables with the same name do not create dependency edges.
       — claimed: Afloat16, branch bugfix/r3.12-webpack-require-bindings
+- [ ] End JavaScript line comments at every language line terminator, preserving following tokens for the nesting admission guard and lexer fallback.
+      — claimed: Afloat16, branch bugfix/r3.12-js-line-comment-boundaries
 - [x] Keep sequence splitting from introducing JavaScript strict-mode directives.
       — claimed: Plastic-time, branch rrfz/bugfix-r3.12-js-sequence-directives
 - [x] Allocate distinct recovered module paths after repeated content-hash collisions.
