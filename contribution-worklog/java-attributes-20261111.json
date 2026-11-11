@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-11-11T17:00:33Z",
+  "updated_at": "2026-11-11T17:11:58Z",
   "items": [
     {
       "key": "craft-java-attribute-framing",
@@ -9,8 +9,8 @@
       "branch": "bugfix/r3.12-java-attribute-framing-20261111",
       "base": "3ce1ce9f52077a53811be8a0309fdbe85b16b417",
       "public_claim": "7d6576d35d9220de9e0fbd28be939ed1f05b1ef3",
-      "head": "44bf041627784d278917b1ef0e9aa3cd1332331b",
-      "state": "implementation_published_validation_running",
+      "head": "4fcec5dd79c07e2d3fd76557e05cad4da85f9bc9",
+      "state": "ready_pending_pr_creation",
       "actual_pr": false,
       "merged": false,
       "pr_number": null,
@@ -69,28 +69,346 @@
         "main_run": {
           "run": 43063806596,
           "url": "https://github.com/Afloat16/billion-context/actions/runs/43063806596",
+          "job": 130673238365,
           "carrier": "9ea8ed6cee3edb0857f0aca36ae3555260849623",
           "source_head": "44bf041627784d278917b1ef0e9aa3cd1332331b",
-          "conclusion": "in_progress",
-          "planned": [
-            "13 native javac/JVM class-file fixtures",
-            "9 formats + 7 engine regression tests",
-            "9 native parser/engine regressions",
-            "identical tests over original production source and fixed source",
-            "full engine/formats/testkit",
-            "fmt",
-            "strict all-target Clippy",
+          "base": "3ce1ce9f52077a53811be8a0309fdbe85b16b417",
+          "conclusion": "success",
+          "completed_at": "2026-11-11T17:07:18Z",
+          "native_environment": {
+            "os": "Ubuntu 24.04",
+            "jdk": "OpenJDK Temurin 17.0.21+9",
+            "compiler": "javac 17.0.21 --release 8 -g",
+            "verification": "java -Xverify:all; custom ClassLoader defines each original/generated class and reflects declared fields/methods without executing class methods",
+            "files": 13,
+            "accepted_controls": 2,
+            "class_format_errors": 11,
+            "results": [
+              {
+                "accepted": true,
+                "bytes": 616,
+                "file": "complete.class",
+                "kind": "complete",
+                "returncode": 0,
+                "sha256": "cd41ccf6101807e5f8b59e9c111d79721b5d55eac7d9bbb7c6491a5f791a25e6",
+                "stderr": "",
+                "stdout": "accepted NativeAttrs methods=2 fields=1"
+              },
+              {
+                "accepted": true,
+                "bytes": 626,
+                "file": "opaque.class",
+                "kind": "opaque",
+                "returncode": 0,
+                "sha256": "8077a5ed01c7d9d32f556396b9abbfe2df976f1832c4e77f5425ed1dafa8ff0f",
+                "stderr": "",
+                "stdout": "accepted NativeAttrs methods=2 fields=1"
+              },
+              {
+                "accepted": false,
+                "bytes": 606,
+                "file": "class-count.class",
+                "kind": "class_count",
+                "returncode": 2,
+                "sha256": "32a0905ff000cd39fd592052e56ac9304df1679c3293443d3d81bbc75e8e64da",
+                "stderr": "",
+                "stdout": "ClassFormatError: Truncated class file"
+              },
+              {
+                "accepted": false,
+                "bytes": 609,
+                "file": "class-header.class",
+                "kind": "class_header",
+                "returncode": 2,
+                "sha256": "76e01a2e6214fbfced7239e9d129bef15ea5cf33e6935dce55badac976e9e3e8",
+                "stderr": "",
+                "stdout": "ClassFormatError: Truncated class file"
+              },
+              {
+                "accepted": false,
+                "bytes": 615,
+                "file": "class-payload.class",
+                "kind": "class_payload",
+                "returncode": 2,
+                "sha256": "72d1725b09a18822d1530542a8f7ebcb727d03cd58204ffbdc3d2cbfb1464490",
+                "stderr": "",
+                "stdout": "ClassFormatError: Truncated class file"
+              },
+              {
+                "accepted": false,
+                "bytes": 626,
+                "file": "class-oversized.class",
+                "kind": "class_oversized",
+                "returncode": 2,
+                "sha256": "cd0c3fbac28709b3bbf07ffc4e62a052ed1fb39f6cfd5c5bbdb421e34d2c5572",
+                "stderr": "",
+                "stdout": "ClassFormatError: Truncated class file"
+              },
+              {
+                "accepted": false,
+                "bytes": 371,
+                "file": "field-count.class",
+                "kind": "field_count",
+                "returncode": 2,
+                "sha256": "adae52db7cfff81a817bbe62bd4a5753db15bcbf391180737fa1535f1c1541cf",
+                "stderr": "",
+                "stdout": "ClassFormatError: Truncated class file"
+              },
+              {
+                "accepted": false,
+                "bytes": 450,
+                "file": "method-count.class",
+                "kind": "method_count",
+                "returncode": 2,
+                "sha256": "ba597b894e2d9b08371dd47cf6924154890482aa3c4d9355dea36a1b602ebb1f",
+                "stderr": "",
+                "stdout": "ClassFormatError: Truncated class file"
+              },
+              {
+                "accepted": false,
+                "bytes": 554,
+                "file": "code-count.class",
+                "kind": "code_count",
+                "returncode": 2,
+                "sha256": "80c38b1eb468c8ba9f7c7bee75e21ba0864be09fa97eeeb0ce2994bab442bc41",
+                "stderr": "",
+                "stdout": "ClassFormatError: Truncated class file"
+              },
+              {
+                "accepted": false,
+                "bytes": 557,
+                "file": "code-header.class",
+                "kind": "code_header",
+                "returncode": 2,
+                "sha256": "704ec747a055f04fc99705ebdf0f7ee66f35a6118bbd7d4bd17f3cb4c64bcb75",
+                "stderr": "",
+                "stdout": "ClassFormatError: Invalid code attribute name index 0 in class file NativeAttrs"
+              },
+              {
+                "accepted": false,
+                "bytes": 575,
+                "file": "code-payload.class",
+                "kind": "code_payload",
+                "returncode": 2,
+                "sha256": "9a003b3d5a27d01e7edefa07c024a08fd7430aafbaa75f98089425456587f58f",
+                "stderr": "",
+                "stdout": "ClassFormatError: Invalid code attribute name index 2304 in class file NativeAttrs"
+              },
+              {
+                "accepted": false,
+                "bytes": 616,
+                "file": "code-oversized.class",
+                "kind": "code_oversized",
+                "returncode": 2,
+                "sha256": "24a0ba087a27f94dd0e8a00ce3ef562050c7366fc9070018d5aec179e4d9bf2f",
+                "stderr": "",
+                "stdout": "ClassFormatError: LineNumberTable attribute has wrong length in class file NativeAttrs"
+              },
+              {
+                "accepted": false,
+                "bytes": 616,
+                "file": "outer-code-oversized.class",
+                "kind": "outer_code_oversized",
+                "returncode": 2,
+                "sha256": "f6ec55206dc7a30c91c6078516d2873acf774ffcae82b46bf5574667d90cf83f",
+                "stderr": "",
+                "stdout": "ClassFormatError: Code segment has wrong length in class file NativeAttrs"
+              }
+            ]
+          },
+          "comparisons": [
+            {
+              "failed": 8,
+              "ignored": 0,
+              "passed": 1,
+              "phase": "original",
+              "returncode": 101,
+              "target": "java_attribute_framing"
+            },
+            {
+              "failed": 6,
+              "ignored": 0,
+              "passed": 1,
+              "phase": "original",
+              "returncode": 101,
+              "target": "java_attribute_completeness"
+            },
+            {
+              "failed": 7,
+              "ignored": 0,
+              "passed": 2,
+              "phase": "original",
+              "returncode": 101,
+              "target": "java_attribute_native_validation"
+            },
+            {
+              "failed": 0,
+              "ignored": 0,
+              "passed": 9,
+              "phase": "fixed",
+              "returncode": 0,
+              "target": "java_attribute_framing"
+            },
+            {
+              "failed": 0,
+              "ignored": 0,
+              "passed": 7,
+              "phase": "fixed",
+              "returncode": 0,
+              "target": "java_attribute_completeness"
+            },
+            {
+              "failed": 0,
+              "ignored": 0,
+              "passed": 9,
+              "phase": "fixed",
+              "returncode": 0,
+              "target": "java_attribute_native_validation"
+            }
+          ],
+          "comparison_total": {
+            "original": {
+              "passed": 4,
+              "failed": 21,
+              "ignored": 0
+            },
+            "fixed": {
+              "passed": 25,
+              "failed": 0,
+              "ignored": 0
+            }
+          },
+          "full_suites": {
+            "passed": 2403,
+            "failed": 0,
+            "ignored": 17,
+            "targets": 230
+          },
+          "by_crate": {
+            "engine": {
+              "passed": 688,
+              "failed": 0,
+              "ignored": 7,
+              "targets": 20
+            },
+            "formats": {
+              "passed": 1714,
+              "failed": 0,
+              "ignored": 10,
+              "targets": 208
+            },
+            "testkit": {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0,
+              "targets": 2
+            }
+          },
+          "gates": [
+            "Rust 1.99 formatting",
+            "full engine/formats/testkit tests",
+            "strict all-target Clippy for engine/formats/testkit",
             "layers",
-            "locks",
+            "locks:387",
             "secrets",
-            "complete five-crate Wasm"
-          ]
-        }
+            "complete five-crate WebAssembly",
+            "patch whitespace",
+            "clean checkout"
+          ],
+          "reproducibility": {
+            "workflow": ".github/workflows/validation-craft-java-attributes.yml",
+            "native_generator": ".github/validation/java_attributes_native.py",
+            "native_tests": ".github/validation/java_attribute_native_validation.rs",
+            "comparison_driver": ".github/validation/java_attributes_compare.py",
+            "carrier_tree_sha": "94f87f2cf55be2aee0c67d957463fe3bdfad95e3"
+          }
+        },
+        "final_identity": {
+          "run": 43065320628,
+          "url": "https://github.com/Afloat16/billion-context/actions/runs/43065320628",
+          "job": 130678607196,
+          "carrier": "d1ed082de1068feb6a00ad00847e73fce1d41c81",
+          "head": "4fcec5dd79c07e2d3fd76557e05cad4da85f9bc9",
+          "conclusion": "success",
+          "completed_at": "2026-11-11T17:10:59Z",
+          "proof": {
+            "base": "3ce1ce9f52077a53811be8a0309fdbe85b16b417",
+            "documentation_only": true,
+            "entire_compiled_source_unchanged": true,
+            "head": "4fcec5dd79c07e2d3fd76557e05cad4da85f9bc9",
+            "public_claim": "7d6576d35d9220de9e0fbd28be939ed1f05b1ef3",
+            "sha256": {
+              "Cargo.lock": "9634f17a91a00ca9bffd49b493637c7b48fd663c1d950fab15730efbb0ac7b24",
+              "Cargo.toml": "70f10d98f2b3340322e616f7922d158c6575fce24c4735154bc791ba554a9286",
+              "crates/engine/Cargo.toml": "280a2ef40b1caa957855dffa21fe28771f4688fbbb6aa48041b711f96c0c3999",
+              "crates/engine/src/tools/java_tools.rs": "39faba2e13c87adb05ab9da7d218beea1b88ee4477ef08fdfad0aa97f9c4bd1a",
+              "crates/engine/tests/java_attribute_completeness.rs": "da3ced64add517e260f74aaf5fcaaa7e05eaa76e0da0bc9d6b5f39c91ff6ba86",
+              "crates/formats/Cargo.toml": "668ccbf2500bcccb83bbc0c56cb6799ad14c3d8708f60e15eb665e36758ca7a8",
+              "crates/formats/src/java_class.rs": "dfb0d8f8af88fc05c4835b0f675c5cc945a1a0b5e0dfdbed457886e2e9ecf27b",
+              "crates/formats/tests/java_attribute_framing.rs": "4192b2bb426f0120f9483df71f16e287bd3e906206e2f26bdf134b8417a1eb91",
+              "crates/testkit/Cargo.toml": "a54e5be4e24b56f7659afeecf597326c17c1441ee3e3cea99ceebfbc803ab3fc"
+            },
+            "tested": "44bf041627784d278917b1ef0e9aa3cd1332331b"
+          },
+          "gates": [
+            "fixed Rust 1.99 formatting",
+            "public claim parent chain",
+            "entire tested source/dependency identity",
+            "layers",
+            "locks:387",
+            "secrets",
+            "patch whitespace",
+            "clean checkout"
+          ],
+          "scope": "Only ROADMAP and STATUS differ from fully tested 44bf041. No redundant full-suite execution is claimed."
+        },
+        "retained_failed_runs": []
       },
       "publication": {
-        "state": "pending_validation_then_prefill",
-        "reason": "Do not retry prior craft PR 403 or the automatically rejected permissions action."
-      }
+        "state": "pending_user_confirmation",
+        "reason": "Prior craft PR API creation returned 403 and the permissions-checkbox operation was automatically rejected. No retry of that rejected operation; the final branch and complete title/body compare URL are ready."
+      },
+      "tested_head": "44bf041627784d278917b1ef0e9aa3cd1332331b",
+      "title": "Preserve readable Java attributes and report truncated tables (R3.12)",
+      "body": "## Why\n\nThe shared Java attribute reader treated a missing `attributes_count` as zero and silently stopped on incomplete attribute headers or bodies. A damaged field or method attribute could also leave the cursor inside its payload, where following bytes were interpreted as another member or table. Java tools could then describe these results as complete.\n\nThis change preserves the readable class, field, method and Code facts, while distinguishing a truncated attribute table from a complete one.\n\n## Changes\n\n- Keep every complete attribute before the damaged record and report whether the count, header or declared body was truncated.\n- Stop reading later outer members/tables when their boundary cannot be established. Already read member identities, constant values and Code attributes remain available.\n- Keep complete bytecode, exception rows and readable line numbers when only the nested Code attribute table is damaged. The enclosing Code slice still establishes the next outer method boundary.\n- Report partial coverage and parse limitations from class, method, class-search and reference tools, including empty filtered results. Negative method/overload lookups carry `parse_incomplete` and describe the readable data instead of claiming an omitted member does not exist.\n- Continue accepting complete opaque attributes. Public parser structures, supported attribute types and bytecode decoding are unchanged.\n\nThe framing follows [JVMS §4.1](https://docs.oracle.com/javase/specs/jvms/se25/html/jvms-4.html#jvms-4.1), [§4.7](https://docs.oracle.com/javase/specs/jvms/se25/html/jvms-4.html#jvms-4.7) and [§4.7.3](https://docs.oracle.com/javase/specs/jvms/se25/html/jvms-4.html#jvms-4.7.3). JVM rejection is an independent format check; the evidence reader deliberately keeps facts it can still inspect.\n\n## Validation\n\n[Fixed-source validation](https://github.com/Afloat16/billion-context/actions/runs/43063806596) uses original production source `3ce1ce9` and fixed `44bf041` with identical tests.\n\n- Nine format regressions cover every prefix of class/field/method/nested-Code attribute tables, oversized lengths, payload bytes resembling a following member, retained known attributes, later bounded methods and complete opaque controls.\n- Seven engine regressions exercise actual tools on damaged bare classes and mixed archives, retained instructions and positive calls, empty filtered results, incomplete negative lookups and complete controls.\n- OpenJDK 17.0.21 compiles an original Java class with a real exception table and a direct method call. A separate `java -Xverify:all` class loader accepts both complete/opaque controls and reports `ClassFormatError` for eleven targeted mutations. Nine additional parser/engine tests inspect those thirteen native files, retaining the known bytecode, exception table and later method where their framing remains intact.\n- The original source fails 21 tests and passes all four controls; the fixed source passes all 25.\n\nThe full engine/formats/testkit suites pass **2,403 tests, 0 failures, 17 existing ignored tests**. Formatting, strict all-target Clippy, layers, locks, secrets and the complete five-crate WebAssembly gate pass.\n\n[Final source verification](https://github.com/Afloat16/billion-context/actions/runs/43065320628) checks `4fcec5d`: only ROADMAP/STATUS differ from the fully tested source; all production code, regressions, dependency manifests and the lockfile are identical. It also rechecks the public claim chain, formatting, repository contracts and patch cleanliness.\n\nThe native comparison uses original generated fixtures, not an external application corpus. No bytecode execution or decompiler equivalence is claimed. The public roadmap claim preceded implementation.\n",
+      "prefill_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-java-attribute-framing-20261111?expand=1&title=Preserve%20readable%20Java%20attributes%20and%20report%20truncated%20tables%20%28R3.12%29&body=%23%23%20Why%0A%0AThe%20shared%20Java%20attribute%20reader%20treated%20a%20missing%20%60attributes_count%60%20as%20zero%20and%20silently%20stopped%20on%20incomplete%20attribute%20headers%20or%20bodies.%20A%20damaged%20field%20or%20method%20attribute%20could%20also%20leave%20the%20cursor%20inside%20its%20payload%2C%20where%20following%20bytes%20were%20interpreted%20as%20another%20member%20or%20table.%20Java%20tools%20could%20then%20describe%20these%20results%20as%20complete.%0A%0AThis%20change%20preserves%20the%20readable%20class%2C%20field%2C%20method%20and%20Code%20facts%2C%20while%20distinguishing%20a%20truncated%20attribute%20table%20from%20a%20complete%20one.%0A%0A%23%23%20Changes%0A%0A-%20Keep%20every%20complete%20attribute%20before%20the%20damaged%20record%20and%20report%20whether%20the%20count%2C%20header%20or%20declared%20body%20was%20truncated.%0A-%20Stop%20reading%20later%20outer%20members%2Ftables%20when%20their%20boundary%20cannot%20be%20established.%20Already%20read%20member%20identities%2C%20constant%20values%20and%20Code%20attributes%20remain%20available.%0A-%20Keep%20complete%20bytecode%2C%20exception%20rows%20and%20readable%20line%20numbers%20when%20only%20the%20nested%20Code%20attribute%20table%20is%20damaged.%20The%20enclosing%20Code%20slice%20still%20establishes%20the%20next%20outer%20method%20boundary.%0A-%20Report%20partial%20coverage%20and%20parse%20limitations%20from%20class%2C%20method%2C%20class-search%20and%20reference%20tools%2C%20including%20empty%20filtered%20results.%20Negative%20method%2Foverload%20lookups%20carry%20%60parse_incomplete%60%20and%20describe%20the%20readable%20data%20instead%20of%20claiming%20an%20omitted%20member%20does%20not%20exist.%0A-%20Continue%20accepting%20complete%20opaque%20attributes.%20Public%20parser%20structures%2C%20supported%20attribute%20types%20and%20bytecode%20decoding%20are%20unchanged.%0A%0AThe%20framing%20follows%20%5BJVMS%20%C2%A74.1%5D%28https%3A%2F%2Fdocs.oracle.com%2Fjavase%2Fspecs%2Fjvms%2Fse25%2Fhtml%2Fjvms-4.html%23jvms-4.1%29%2C%20%5B%C2%A74.7%5D%28https%3A%2F%2Fdocs.oracle.com%2Fjavase%2Fspecs%2Fjvms%2Fse25%2Fhtml%2Fjvms-4.html%23jvms-4.7%29%20and%20%5B%C2%A74.7.3%5D%28https%3A%2F%2Fdocs.oracle.com%2Fjavase%2Fspecs%2Fjvms%2Fse25%2Fhtml%2Fjvms-4.html%23jvms-4.7.3%29.%20JVM%20rejection%20is%20an%20independent%20format%20check%3B%20the%20evidence%20reader%20deliberately%20keeps%20facts%20it%20can%20still%20inspect.%0A%0A%23%23%20Validation%0A%0A%5BFixed-source%20validation%5D%28https%3A%2F%2Fgithub.com%2FAfloat16%2Fbillion-context%2Factions%2Fruns%2F43063806596%29%20uses%20original%20production%20source%20%603ce1ce9%60%20and%20fixed%20%6044bf041%60%20with%20identical%20tests.%0A%0A-%20Nine%20format%20regressions%20cover%20every%20prefix%20of%20class%2Ffield%2Fmethod%2Fnested-Code%20attribute%20tables%2C%20oversized%20lengths%2C%20payload%20bytes%20resembling%20a%20following%20member%2C%20retained%20known%20attributes%2C%20later%20bounded%20methods%20and%20complete%20opaque%20controls.%0A-%20Seven%20engine%20regressions%20exercise%20actual%20tools%20on%20damaged%20bare%20classes%20and%20mixed%20archives%2C%20retained%20instructions%20and%20positive%20calls%2C%20empty%20filtered%20results%2C%20incomplete%20negative%20lookups%20and%20complete%20controls.%0A-%20OpenJDK%2017.0.21%20compiles%20an%20original%20Java%20class%20with%20a%20real%20exception%20table%20and%20a%20direct%20method%20call.%20A%20separate%20%60java%20-Xverify%3Aall%60%20class%20loader%20accepts%20both%20complete%2Fopaque%20controls%20and%20reports%20%60ClassFormatError%60%20for%20eleven%20targeted%20mutations.%20Nine%20additional%20parser%2Fengine%20tests%20inspect%20those%20thirteen%20native%20files%2C%20retaining%20the%20known%20bytecode%2C%20exception%20table%20and%20later%20method%20where%20their%20framing%20remains%20intact.%0A-%20The%20original%20source%20fails%2021%20tests%20and%20passes%20all%20four%20controls%3B%20the%20fixed%20source%20passes%20all%2025.%0A%0AThe%20full%20engine%2Fformats%2Ftestkit%20suites%20pass%20%2A%2A2%2C403%20tests%2C%200%20failures%2C%2017%20existing%20ignored%20tests%2A%2A.%20Formatting%2C%20strict%20all-target%20Clippy%2C%20layers%2C%20locks%2C%20secrets%20and%20the%20complete%20five-crate%20WebAssembly%20gate%20pass.%0A%0A%5BFinal%20source%20verification%5D%28https%3A%2F%2Fgithub.com%2FAfloat16%2Fbillion-context%2Factions%2Fruns%2F43065320628%29%20checks%20%604fcec5d%60%3A%20only%20ROADMAP%2FSTATUS%20differ%20from%20the%20fully%20tested%20source%3B%20all%20production%20code%2C%20regressions%2C%20dependency%20manifests%20and%20the%20lockfile%20are%20identical.%20It%20also%20rechecks%20the%20public%20claim%20chain%2C%20formatting%2C%20repository%20contracts%20and%20patch%20cleanliness.%0A%0AThe%20native%20comparison%20uses%20original%20generated%20fixtures%2C%20not%20an%20external%20application%20corpus.%20No%20bytecode%20execution%20or%20decompiler%20equivalence%20is%20claimed.%20The%20public%20roadmap%20claim%20preceded%20implementation.%0A",
+      "diff": {
+        "commits": 4,
+        "files": 6,
+        "additions": 484,
+        "deletions": 32,
+        "paths": [
+          "crates/engine/src/tools/java_tools.rs",
+          "crates/engine/tests/java_attribute_completeness.rs",
+          "crates/formats/src/java_class.rs",
+          "crates/formats/tests/java_attribute_framing.rs",
+          "docs/ROADMAP.md",
+          "docs/STATUS.md"
+        ]
+      },
+      "commit_history": [
+        {
+          "sha": "7d6576d35d9220de9e0fbd28be939ed1f05b1ef3",
+          "role": "Public roadmap claim before implementation"
+        },
+        {
+          "sha": "825c87b994a93491ec1a0ac8590828d8775ca14a",
+          "role": "Original product and regression implementation"
+        },
+        {
+          "sha": "44bf041627784d278917b1ef0e9aa3cd1332331b",
+          "role": "CI formatting and incomplete-lookup regression; fully tested source"
+        },
+        {
+          "sha": "4fcec5dd79c07e2d3fd76557e05cad4da85f9bc9",
+          "role": "Verified documentation-only final commit"
+        }
+      ],
+      "limitations": [
+        "Native verification uses original generated class files on OpenJDK 17.0.21; no external application corpus or bytecode execution is claimed.",
+        "Attribute framing is separated from full JVM semantic verification; complete unknown attributes remain readable.",
+        "Original bytecode decoding and attribute semantic readers are unchanged; readable prefixes are retained with parse warnings and partial evidence."
+      ]
     }
   ]
 }
