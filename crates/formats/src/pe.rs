@@ -478,8 +478,9 @@ fn bound_modules(data: &[u8], h: &PeHeaders, out: &mut ImportTable, budget: &mut
         }
         let name_of = |offset: u16| {
             let offset = usize::from(offset);
-            directory.slice(offset, 1)?;
-            directory.cstr(offset, 256)
+            let bytes = directory.slice(offset, directory.len().checked_sub(offset)?.min(256))?;
+            let end = bytes.iter().position(|&byte| byte == 0)?;
+            Some(String::from_utf8_lossy(bytes.get(..end)?).into_owned())
         };
         let name = name_of(name_off);
         if name.is_none() {
