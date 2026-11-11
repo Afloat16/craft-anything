@@ -1508,6 +1508,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.11-a64-exclusive-value-flow-20261110
 - [x] Keep the first 100000 byte-search matches in file-offset order across hex, UTF-8 and UTF-16LE queries, including capped pages.
       — claimed: Afloat16, branch bugfix/r3.11-byte-search-match-order-20261110
+- [ ] Read only regular files for binary and text inputs, enforce whole-file byte caps while reading, and hash prefixes only after EOF instead of trusting a prior size report.
+      — claimed: Afloat16, branch bugfix/r3.11-bounded-file-inputs-20261110
 - [x] Validate the remaining loopback fixture corrections for complete and fragmented request
       headers, negative probes and stand-in cancellation on the current main
       — claimed: Afloat16, branch test/loopback-fixture-stability-20261103
