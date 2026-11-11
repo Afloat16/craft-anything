@@ -795,10 +795,7 @@ pub fn analyze_application(input: &AppInput, opts: &AppOptions, cancelled: &dyn 
         }
         // Bundles.
         if a.bundle.truncated {
-            g.limitations.push((
-                "truncated".into(),
-                format!("{m}: some bundled modules or dependency mappings could not be recovered completely."),
-            ));
+            g.limitations.push(("truncated".into(), format!("{m}: some bundled modules or dependency mappings could not be recovered completely.")));
         }
         for bn in &a.bundle.bundlers {
             bundlers.insert(bn.clone());

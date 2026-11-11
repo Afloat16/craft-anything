@@ -23,10 +23,8 @@ fn array_spread_unknowns_reach_the_application_graph() {
 
 #[test]
 fn one_partial_bundle_does_not_discard_other_files_modules() {
-    let result = graph(&[
-        ("partial.js", spread_source()),
-        ("ordinary.js", "var __webpack_modules__=[function(e){e.exports=31},function(e){e.exports=32}];".into()),
-    ]);
+    let result =
+        graph(&[("partial.js", spread_source()), ("ordinary.js", "var __webpack_modules__=[function(e){e.exports=31},function(e){e.exports=32}];".into())]);
     assert_eq!(result.module("ordinary.js").unwrap().bundle_modules.len(), 2);
     assert!(result.limitations.iter().any(|(code, message)| code == "truncated" && message.contains("partial.js")));
     assert!(!result.limitations.iter().any(|(code, message)| code == "truncated" && message.contains("ordinary.js")));
