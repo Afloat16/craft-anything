@@ -2014,7 +2014,7 @@ Owner: open · Status: in progress
       following the terminator when their declared size is short or zero; delay-load and bound metadata
       also respect their directory sizes. Preserve the shared retained-text budget.
       — claimed: Afloat16, branch bugfix/r3.12-pe-import-directory-bounds-20261109
-- [ ] Require bound PE module and forwarder names to include their NUL terminator inside the declared directory.
+- [x] Require bound PE module and forwarder names to include their NUL terminator inside the declared directory.
       — claimed: Afloat16, branch bugfix/r3.12-bound-import-terminators-20261111
 - [x] Use the PE image's declared header extent when an RVA is not mapped by a section.
       — claimed: Afloat16, branch bugfix/r3.12-pe-header-rva-span
