@@ -293,6 +293,11 @@ impl<'s> BundleVisitor<'s> {
 
     fn take_array(&mut self, a: &ArrayExpression<'_>, format: &str, chunk_ids: &[String]) {
         for (i, e) in a.elements.iter().enumerate() {
+            if matches!(e, ArrayExpressionElement::SpreadElement(_)) {
+                // The iterable can contribute any number of slots, so later syntax positions are not module ids.
+                self.info.truncated = true;
+                break;
+            }
             let Some(f) = e.as_expression().and_then(as_func) else { continue };
             if self.add(i.to_string(), format, chunk_ids, &f).is_none() {
                 return;

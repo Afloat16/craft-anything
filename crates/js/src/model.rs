@@ -317,5 +317,6 @@ pub struct BundleInfo {
     /// Ids of chunks this file registers (webpack `push`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub chunk_ids: Vec<String>,
+    /// Recovery stopped at a module limit or an array spread with unknown output indices.
     pub truncated: bool,
 }

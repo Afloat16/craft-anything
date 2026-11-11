@@ -794,6 +794,12 @@ pub fn analyze_application(input: &AppInput, opts: &AppOptions, cancelled: &dyn 
             g.vendors.push(json!({"name": v.name, "version": v.version, "source": v.source, "module": m}));
         }
         // Bundles.
+        if a.bundle.truncated {
+            g.limitations.push((
+                "truncated".into(),
+                format!("{m}: some bundled modules were not recovered because an analysis limit or array spread left entries unknown."),
+            ));
+        }
         for bn in &a.bundle.bundlers {
             bundlers.insert(bn.clone());
         }
