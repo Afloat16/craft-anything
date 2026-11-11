@@ -506,6 +506,11 @@ when a header is renamed or blanked.
 
 ## Design
 
+**An unknown header bit hid readable code.** Rejecting undefined `.pyc` flag bits made the whole
+file unreadable, dropping its code, names and constants from reports. A reader collecting evidence
+must preserve fields and payload it can still understand: report the unknown bits as a warning,
+derive known modes from their defined bits, and test that the warning and recovered data coexist.
+
 **A round of checks that nothing could stop.** The builder's own checks ran one after another on
 the build's thread with no time limit, Pause was looked at only between tool calls, and the feed
 said only "checking its work against the original" for the whole round, so a check that stalled

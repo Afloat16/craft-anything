@@ -121,6 +121,8 @@ pub struct PycHeader {
     pub source_size: Option<u32>,
     /// The source hash in hex (hash-based files).
     pub source_hash: Option<String>,
+    /// Header features we do not understand; known fields and readable code are retained.
+    pub warnings: Vec<String>,
 }
 
 /// Read a `.pyc` header. Fails when the file isn't one.
@@ -152,6 +154,7 @@ pub fn parse_header(data: &[u8]) -> Result<PycHeader, FormatError> {
         source_mtime: None,
         source_size: None,
         source_hash: None,
+        warnings: Vec::new(),
     };
     match size {
         8 => h.source_mtime = Some(word(4)?),
@@ -161,6 +164,10 @@ pub fn parse_header(data: &[u8]) -> Result<PycHeader, FormatError> {
         }
         _ => {
             let flags = word(4)?;
+            let unknown_flags = flags & !3;
+            if unknown_flags != 0 {
+                h.warnings.push(format!("undefined Python bytecode header flags: {unknown_flags:#x}"));
+            }
             h.flags = Some(flags);
             if flags & 1 == 0 {
                 h.source_mtime = Some(word(8)?);
@@ -744,6 +751,70 @@ mod tests {
         assert!(release_for_magic(9999).is_none());
     }
 
+    #[test]
+    fn undefined_modern_header_flags_warn_without_losing_code() {
+        for (magic, body) in [(3413, sample_38()), (3531, sample_311())] {
+            for unknown in (2..32).map(|bit| 1u32 << bit).chain([!3u32]) {
+                for defined in 0..4 {
+                    let flags = unknown | defined;
+                    let data = pyc(magic, flags, [0; 8], &body);
+                    let header = parse_header(&data).unwrap();
+                    let file = read_pyc(&data).unwrap();
+                    let known = read_pyc(&pyc(magic, defined, [0; 8], &body)).unwrap();
+                    assert_eq!(header.flags, Some(flags));
+                    assert_eq!(header.invalidation, known.header.invalidation);
+                    assert_eq!(header.source_mtime, known.header.source_mtime);
+                    assert_eq!(header.source_size, known.header.source_size);
+                    assert_eq!(header.source_hash, known.header.source_hash);
+                    assert_eq!(file.code, known.code);
+                    assert_eq!(file.code_missing, None);
+                    let json = serde_json::to_value(&header).unwrap();
+                    assert_eq!(json["warnings"], serde_json::json!([format!("undefined Python bytecode header flags: {unknown:#x}")]));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_header_flags_preserve_header_only_reports() {
+        for magic in [3394, 4000] {
+            let file = read_pyc(&pyc(magic, 0x8000_0003, [0xab; 8], b"")).unwrap();
+            assert_eq!(file.header.flags, Some(0x8000_0003));
+            assert_eq!(file.header.invalidation, Invalidation::CheckedHash);
+            assert_eq!(file.header.source_hash.as_deref(), Some("abababababababab"));
+            assert!(file.code.is_none());
+            assert!(file.code_missing.is_some());
+            let json = serde_json::to_value(file.header).unwrap();
+            assert_eq!(json["warnings"], serde_json::json!(["undefined Python bytecode header flags: 0x80000000"]));
+        }
+    }
+
+    #[test]
+    fn defined_header_flags_keep_their_invalidation_mode() {
+        for (flags, invalidation) in
+            [(0, Invalidation::Timestamp), (1, Invalidation::UncheckedHash), (2, Invalidation::Timestamp), (3, Invalidation::CheckedHash)]
+        {
+            let data = pyc(3531, flags, [0; 8], &sample_311());
+            let file = read_pyc(&data).unwrap();
+            assert_eq!(file.header.invalidation, invalidation);
+            assert!(file.header.warnings.is_empty());
+            assert!(file.code.is_some());
+        }
+    }
+
+    #[test]
+    fn legacy_header_timestamps_are_not_flag_words() {
+        for magic in [62211u16, 3379] {
+            let mut data = magic.to_le_bytes().to_vec();
+            data.extend([0x0d, 0x0a]);
+            data.extend(u32::MAX.to_le_bytes());
+            data.extend([0; 4]);
+            let header = parse_header(&data).unwrap();
+            assert_eq!(header.flags, None);
+            assert_eq!(header.source_mtime, Some(u32::MAX));
+            assert!(header.warnings.is_empty());
+        }
+    }
     #[test]
     fn every_header_form_reads() {
         let new = pyc(3531, 0, [1, 0, 0, 0, 2, 0, 0, 0], b"");
