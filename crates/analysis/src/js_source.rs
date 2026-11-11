@@ -135,21 +135,36 @@ pub struct Ignore {
     rules: Vec<Rule>,
 }
 
+/// Remove a line-ending CR and unescaped ASCII padding, preserving literal trailing whitespace.
+fn rule_line(line: &str) -> &str {
+    let line = line.strip_suffix('\r').unwrap_or(line);
+    let bytes = line.as_bytes();
+    let mut end = bytes.len();
+    while end > 0 && bytes[end - 1] == b' ' {
+        let backslashes = bytes[..end - 1].iter().rev().take_while(|&&c| c == b'\\').count();
+        if !backslashes.is_multiple_of(2) {
+            break;
+        }
+        end -= 1;
+    }
+    &line[..end]
+}
+
 impl Ignore {
     /// Add the rules of a `.gitignore` found in `base_dir` (relative, "" for the root).
     pub fn add_file(&mut self, base_dir: &str, text: &str) {
-        for line in text.lines().take(10_000) {
-            let line = line.trim_end();
+        for line in text.split('\n').take(10_000) {
+            let line = rule_line(line);
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
             let (negate, pat) = match line.strip_prefix('!') {
                 Some(p) => (true, p),
-                None => (false, line.strip_prefix("\\").unwrap_or(line)),
+                None => (false, line),
             };
             let dir_only = pat.ends_with('/');
             let pat = pat.trim_end_matches('/');
-            if pat.is_empty() || pat.len() > 512 {
+            if pat.is_empty() || pat.len() > 512 || !pat.bytes().rev().take_while(|c| *c == b'\\').count().is_multiple_of(2) {
                 continue;
             }
             let anchored = pat.contains('/');
