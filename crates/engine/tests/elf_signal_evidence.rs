@@ -21,7 +21,8 @@ fn signal_note(data: &[u8]) -> (usize, usize) {
 }
 
 fn core(code: i32) -> Vec<u8> {
-    let mut data = craft_anything_testkit::elf64_core(0x401234, 0x401234);
+    let mut data = craft_anything_testkit::elf64_core(0x400234, 0x400234);
+    assert!(elf::parse_core(&data).unwrap().locate(0x400234).is_some(), "the address must be inside an NT_FILE mapping");
     let (_, desc) = signal_note(&data);
     data[desc + 8..desc + 12].copy_from_slice(&code.to_le_bytes());
     data
@@ -52,7 +53,7 @@ fn explicit_signal_sources_do_not_produce_a_false_fault_file_or_hardware_diagnos
         assert!(value["result"]["fault_location"].is_null());
         assert!(value["result"]["signal"]["meaning"].as_str().unwrap().contains(origin));
         assert!(value["summary"].as_str().unwrap().contains(origin));
-        assert_eq!(value["result"]["program_counter"], "0x401234");
+        assert_eq!(value["result"]["program_counter"], "0x400234");
         assert!(!value["result"]["crash_location"].is_null());
     }
 }
@@ -61,10 +62,10 @@ fn explicit_signal_sources_do_not_produce_a_false_fault_file_or_hardware_diagnos
 fn hardware_faults_keep_the_existing_address_location_and_specific_explanation() {
     for (code, explanation) in [(1, "isn't mapped"), (2, "wrong permissions")] {
         let value = evidence(&core(code));
-        assert_eq!(value["result"]["signal"]["fault_addr"], "0x401234");
+        assert_eq!(value["result"]["signal"]["fault_addr"], "0x400234");
         assert!(!value["result"]["fault_location"].is_null());
         assert!(value["summary"].as_str().unwrap().contains(explanation));
-        assert_eq!(value["result"]["program_counter"], "0x401234");
+        assert_eq!(value["result"]["program_counter"], "0x400234");
     }
 }
 
