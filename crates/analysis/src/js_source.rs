@@ -29,18 +29,24 @@ fn tokenize_glob(p: &str) -> Vec<Tok> {
     let mut i = 0;
     while let Some(&c) = chars.get(i) {
         match c {
-            '*' if chars.get(i + 1) == Some(&'*') => {
-                if chars.get(i + 2) == Some(&'/') {
-                    out.push(Tok::GlobstarSlash);
-                    i += 3;
-                } else {
-                    out.push(Tok::Globstar);
-                    i += 2;
-                }
-            }
             '*' => {
-                out.push(Tok::Star);
-                i += 1;
+                let start = i;
+                while chars.get(i) == Some(&'*') {
+                    i += 1;
+                }
+                // Repeated stars cross directories only as a complete path component.
+                let recursive = i - start >= 2
+                    && (start == 0 || chars.get(start - 1) == Some(&'/'))
+                    && (matches!(chars.get(i), None | Some('/')) || chars.get(i) == Some(&'\\') && chars.get(i + 1) == Some(&'/'));
+                if recursive && chars.get(i) == Some(&'/') {
+                    out.push(Tok::GlobstarSlash);
+                    i += 1;
+                } else if recursive {
+                    // An escaped slash remains a required separator.
+                    out.push(Tok::Globstar);
+                } else {
+                    out.push(Tok::Star);
+                }
             }
             '?' => {
                 out.push(Tok::Any);
