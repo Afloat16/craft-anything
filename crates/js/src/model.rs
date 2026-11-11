@@ -3,6 +3,9 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Version of the syntax-tree input encoding used by structural fingerprints.
+pub const FINGERPRINT_VERSION: u32 = 1;
+
 /// How the facts were obtained.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
@@ -278,6 +281,7 @@ pub struct ModuleFacts {
     /// Distinct short string literals (bounded), for matching and search.
     pub strings: Vec<String>,
     /// Name-insensitive structural fingerprint of the whole source (sha256 hex).
+    /// Compare only values produced with the same [`FINGERPRINT_VERSION`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fingerprint: Option<String>,
     /// Lists cut short by a limit.
