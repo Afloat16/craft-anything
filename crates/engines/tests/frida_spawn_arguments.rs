@@ -84,9 +84,8 @@ fn spawning_without_target_arguments_keeps_its_cli_arguments() {
 
 #[test]
 fn an_invalid_selector_is_still_refused_before_launch() {
-    let error = Frida::new("/nonexistent/definitely/not/frida")
-        .run_script(&Selector::default(), &spawn(&["--help"]), Path::new("/fixture/script.js"))
-        .unwrap_err();
+    let error =
+        Frida::new("/nonexistent/definitely/not/frida").run_script(&Selector::default(), &spawn(&["--help"]), Path::new("/fixture/script.js")).unwrap_err();
     assert_eq!(error.code, ErrorCode::BadInput);
     assert!(error.message.contains("device"));
 }
