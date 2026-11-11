@@ -1603,8 +1603,6 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Recognize UTF-16 XML keyed-archive NIBs after either byte-order mark so their objects, classes and references reach the existing plist decoder.
-      — claimed: Afloat16, branch bugfix/r3.12-nib-utf16-detection-20261111
 - [x] Mark Python code inventories as cut short whenever a name or constant is shortened, and count truncation markers in the retained-text budget.
       — claimed: Afloat16, branch bugfix/r3.12-pyc-truncated-text-evidence-20261110
 - [x] Keep worker, service-worker and utility-process entry modules in their own execution role instead of inheriting the parent role through spawn edges.
@@ -2208,6 +2206,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-dns-record-evidence
 - [x] Resolve keyed archive references consistently in nested objects and object rows.
       — claimed: Afloat16, branch bugfix/r3.12-keyed-archive-references
+- [x] Recognize UTF-16 XML keyed-archive NIBs after either byte-order mark so their objects, classes and references reach the existing plist decoder.
+      — claimed: Afloat16, branch bugfix/r3.12-nib-utf16-detection-20261111
 - [x] Reject NIB variable-length integers whose tenth byte exceeds the unsigned 64-bit range, instead of letting truncated high bits become an unrelated length or index.
       — claimed: Afloat16, branch bugfix/r3.12-nib-integer-overflow-20261110
 - [x] Accept binary plist arrays and sets that name one stored value many times; repeated data and

@@ -164,7 +164,19 @@ pub fn apple_date_iso(secs: f64) -> String {
 
 /// True when the bytes look like a property list of either kind.
 pub fn looks_like_plist(data: &[u8]) -> bool {
-    (data.len() >= 8 && data.starts_with(b"bplist0")) || data.iter().take(1024).copied().collect::<Vec<u8>>().windows(6).any(|w| w == b"<plist")
+    if data.len() >= 8 && data.starts_with(b"bplist0") {
+        return true;
+    }
+    let prefix = &data[..data.len().min(1024)];
+    let (body, marker): (&[u8], &[u8]) = if let Some(body) = prefix.strip_prefix(&[0xff, 0xfe]) {
+        (body, b"<\0p\0l\0i\0s\0t\0")
+    } else if let Some(body) = prefix.strip_prefix(&[0xfe, 0xff]) {
+        (body, b"\0<\0p\0l\0i\0s\0t")
+    } else {
+        return prefix.windows(6).any(|w| w == b"<plist");
+    };
+    // XML detection must agree with parse_xml's BOM decoding, including code-unit alignment.
+    body.windows(marker.len()).step_by(2).any(|w| w == marker)
 }
 
 /// Parse a binary or XML property list.
