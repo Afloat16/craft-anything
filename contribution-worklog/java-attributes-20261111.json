@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-11-11T17:00:33Z",
+  "items": [
+    {
+      "key": "craft-java-attribute-framing",
+      "repository": "storytold/craft-anything",
+      "fork": "Afloat16/craft-anything",
+      "branch": "bugfix/r3.12-java-attribute-framing-20261111",
+      "base": "3ce1ce9f52077a53811be8a0309fdbe85b16b417",
+      "public_claim": "7d6576d35d9220de9e0fbd28be939ed1f05b1ef3",
+      "head": "44bf041627784d278917b1ef0e9aa3cd1332331b",
+      "state": "implementation_published_validation_running",
+      "actual_pr": false,
+      "merged": false,
+      "pr_number": null,
+      "pr_url": null,
+      "scope": "Retain readable Java class/member/Code facts after truncated attribute tables, stop at unknown outer boundaries, and propagate incomplete parsing into the four Java evidence tools and negative lookup wording.",
+      "design": "No strict whole-class rejection or public parser API change. Full unknown attributes remain inspectable. Nested Code tables stay bounded by their enclosing attribute while later outer methods remain readable.",
+      "source_files": [
+        "crates/formats/src/java_class.rs",
+        "crates/engine/src/tools/java_tools.rs"
+      ],
+      "regression_files": [
+        "crates/formats/tests/java_attribute_framing.rs",
+        "crates/engine/tests/java_attribute_completeness.rs"
+      ],
+      "dedupe": {
+        "excluded": [
+          {
+            "number": 1549,
+            "reason": "Merged borrowed-name allocation improvement only; deliberately preserves previous attribute framing behavior."
+          },
+          {
+            "number": 722,
+            "reason": "Modified UTF-8 and instruction operands, not attribute tables."
+          },
+          {
+            "number": 766,
+            "reason": "Decoder-rejection reference coverage, not structural attribute parsing."
+          },
+          {
+            "number": 986,
+            "reason": "No duplicate attribute-table implementation."
+          }
+        ],
+        "searches": [
+          "Java attributes_count: 0 PRs",
+          "class truncated attribute: only unrelated Swift #1553",
+          "Java attribute: 5 results; related #1549 inspected completely",
+          "attribute table: 4 results; Android XML/catalog entries or #1549"
+        ],
+        "native_spec": [
+          "https://docs.oracle.com/javase/specs/jvms/se25/html/jvms-4.html#jvms-4.1",
+          "https://docs.oracle.com/javase/specs/jvms/se25/html/jvms-4.html#jvms-4.7",
+          "https://docs.oracle.com/javase/specs/jvms/se25/html/jvms-4.html#jvms-4.7.3"
+        ],
+        "compatibility_review": "Read maintainer review of #1646; preserve independently readable facts and attach limitations instead of using JVM rejection as a blanket evidence rejection."
+      },
+      "validation": {
+        "formatting_preparation": {
+          "run": 43063130570,
+          "url": "https://github.com/Afloat16/billion-context/actions/runs/43063130570",
+          "job": 130670774434,
+          "conclusion": "success",
+          "source_head": "825c87b994a93491ec1a0ac8590828d8775ca14a",
+          "scope": "Formatting preparation only, not product gate. Two Rustfmt deltas were applied at 44bf041. Confirmed OpenJDK/javac 17.0.21 available."
+        },
+        "main_run": {
+          "run": 43063806596,
+          "url": "https://github.com/Afloat16/billion-context/actions/runs/43063806596",
+          "carrier": "9ea8ed6cee3edb0857f0aca36ae3555260849623",
+          "source_head": "44bf041627784d278917b1ef0e9aa3cd1332331b",
+          "conclusion": "in_progress",
+          "planned": [
+            "13 native javac/JVM class-file fixtures",
+            "9 formats + 7 engine regression tests",
+            "9 native parser/engine regressions",
+            "identical tests over original production source and fixed source",
+            "full engine/formats/testkit",
+            "fmt",
+            "strict all-target Clippy",
+            "layers",
+            "locks",
+            "secrets",
+            "complete five-crate Wasm"
+          ]
+        }
+      },
+      "publication": {
+        "state": "pending_validation_then_prefill",
+        "reason": "Do not retry prior craft PR 403 or the automatically rejected permissions action."
+      }
+    }
+  ]
+}
