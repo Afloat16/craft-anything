@@ -39,7 +39,11 @@ pub(crate) fn facts_from_tokens(tokens: &[Token<'_>], lines: &LineIndex) -> Modu
             }
             (TokKind::Ident, "fetch") if at(i + 1) == Some((TokKind::Punct, "(")) => {
                 if let Some((TokKind::Str, s)) = at(i + 2) {
-                    f.endpoints.push(Endpoint { api: "fetch".into(), method: None, url: string_value(s), literal: true, line, offset: off, function: None });
+                    if f.endpoints.len() < crate::facts::MAX_LIST {
+                        f.endpoints.push(Endpoint { api: "fetch".into(), method: None, url: string_value(s), literal: true, line, offset: off, function: None });
+                    } else {
+                        mark_truncated(&mut f, "endpoints");
+                    }
                 }
             }
             (TokKind::Ident, method @ ("handle" | "handleOnce" | "invoke" | "on" | "once" | "send" | "sendSync" | "exposeInMainWorld"))
@@ -47,11 +51,15 @@ pub(crate) fn facts_from_tokens(tokens: &[Token<'_>], lines: &LineIndex) -> Modu
             {
                 let recv = sig.get(i - 2).map_or("", |t| t.text);
                 let Some((TokKind::Str, s)) = at(i + 2) else { continue };
-                let channel = string_value(s);
                 if method == "exposeInMainWorld" {
-                    f.exposed.push(Exposed { method: method.into(), key: Some(channel), members: Vec::new(), line, offset: off });
+                    if f.exposed.len() < crate::facts::MAX_LIST {
+                        f.exposed.push(Exposed { method: method.into(), key: Some(string_value(s)), members: Vec::new(), line, offset: off });
+                    } else {
+                        mark_truncated(&mut f, "exposed");
+                    }
                     continue;
                 }
+                let channel = string_value(s);
                 let side = match (recv, method) {
                     ("ipcMain", _) | (_, "handle" | "handleOnce") => "main",
                     ("ipcRenderer", _) | (_, "invoke" | "sendSync") => "renderer",
@@ -66,7 +74,11 @@ pub(crate) fn facts_from_tokens(tokens: &[Token<'_>], lines: &LineIndex) -> Modu
                 if v.len() <= crate::facts::MAX_STRING_LEN && !v.is_empty() && f.strings.len() < crate::facts::MAX_STRINGS && seen.insert(v.clone()) {
                     let lower = v.get(..8).unwrap_or(&v).to_ascii_lowercase();
                     if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("ws://") || lower.starts_with("wss://") {
-                        f.endpoints.push(Endpoint { api: "literal".into(), method: None, url: v.clone(), literal: true, line, offset: off, function: None });
+                        if f.endpoints.len() < crate::facts::MAX_LIST {
+                            f.endpoints.push(Endpoint { api: "literal".into(), method: None, url: v.clone(), literal: true, line, offset: off, function: None });
+                        } else {
+                            mark_truncated(&mut f, "endpoints");
+                        }
                     }
                     f.strings.push(v);
                 }
@@ -95,6 +107,12 @@ pub(crate) fn facts_from_tokens(tokens: &[Token<'_>], lines: &LineIndex) -> Modu
         }
     }
     f
+}
+
+fn mark_truncated(f: &mut ModuleFacts, list: &str) {
+    if !f.truncated.iter().any(|name| name == list) {
+        f.truncated.push(list.into());
+    }
 }
 
 /// GraphQL and tRPC from tokens: documents and URLs in strings, `gql` templates and client hooks.
