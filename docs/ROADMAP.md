@@ -1628,6 +1628,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-webpack-require-bindings
 - [x] Keep sequence splitting from introducing JavaScript strict-mode directives.
       — claimed: Plastic-time, branch rrfz/bugfix-r3.12-js-sequence-directives
+- [ ] Keep recovered JavaScript bindings and void expressions unchanged when with or direct eval makes name lookup dynamic.
+      — claimed: Afloat16, branch bugfix/r3.12-js-dynamic-scope-recovery-20261111
 - [x] Match numeric bundle module and chunk identities by their JavaScript value, so hexadecimal, separated and exponent literals connect to equivalent dependency references.
       — claimed: Afloat16, branch bugfix/r3.12-bundle-numeric-identities
 - [x] Allocate distinct recovered module paths after repeated content-hash collisions.
