@@ -1517,6 +1517,9 @@ Owner: open · Status: todo
 - [x] `adb` `parse_ps` reads its header line before the 64 KiB cap, so a hostile header can
       materialize a full token list; cap it like the body lines
       — claimed: Afloat16, branch bugfix/r3.3-cap-adb-process-header
+- [ ] Keep spawned programs' arguments separate from Frida's own CLI options,
+      preserving literal flags and reporting arguments the CLI cannot forward unchanged.
+      — claimed: Afloat16, branch bugfix/r3.3-frida-spawn-arguments-20261111
 
 ### R3.9 Game assets out
 Owner: open · Status: in progress
