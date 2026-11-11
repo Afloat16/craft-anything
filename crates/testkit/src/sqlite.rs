@@ -185,6 +185,37 @@ pub fn simple_db() -> Vec<u8> {
     file
 }
 
+/// A database whose schema has an interior root on page 1 and two leaves: table `items` on
+/// page 3 and view `item_names` on page 4. The original three table rows remain on page 2.
+pub fn schema_tree_db() -> Vec<u8> {
+    let mut file = simple_db();
+    file.resize(4 * PAGE_SIZE, 0);
+    write_db_header(&mut file[..PAGE_SIZE], 4);
+    file[100..PAGE_SIZE].fill(0);
+
+    let left = build_record(&[Val::Text("table".into()), Val::Text("items".into()), Val::Text("items".into()), Val::Int(2), Val::Text(ITEMS_SQL.into())]);
+    let right = build_record(&[
+        Val::Text("view".into()),
+        Val::Text("item_names".into()),
+        Val::Text("item_names".into()),
+        Val::Int(0),
+        Val::Text("CREATE VIEW item_names AS SELECT name FROM items".into()),
+    ]);
+    write_table_leaf(&mut file[2 * PAGE_SIZE..3 * PAGE_SIZE], 0, &[(1, left)]);
+    write_table_leaf(&mut file[3 * PAGE_SIZE..4 * PAGE_SIZE], 0, &[(2, right)]);
+
+    // One interior cell separates schema rowids 1 and 2.
+    let cell = PAGE_SIZE - 5;
+    file[100] = 0x05;
+    file[103..105].copy_from_slice(&1u16.to_be_bytes());
+    file[105..107].copy_from_slice(&(cell as u16).to_be_bytes());
+    file[108..112].copy_from_slice(&4u32.to_be_bytes());
+    file[112..114].copy_from_slice(&(cell as u16).to_be_bytes());
+    file[cell..cell + 4].copy_from_slice(&3u32.to_be_bytes());
+    file[cell + 4] = 1;
+    file
+}
+
 /// Write the database header and a one-row `sqlite_schema` leaf on page 1 for table `t` rooted
 /// at `root`. A record too long for the page spills over overflow pages appended to the file, as
 /// SQLite stores a long CREATE statement.

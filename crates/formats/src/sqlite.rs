@@ -116,7 +116,7 @@ pub struct Overview {
     /// Non-fatal observations about consistency.
     pub integrity_notes: Vec<String>,
     pub schema: Vec<SchemaObject>,
-    /// True when the schema listing hit the object cap.
+    /// True when the schema listing hit a limit or skipped unreadable parts of its b-tree.
     pub schema_truncated: bool,
 }
 
@@ -448,6 +448,7 @@ impl<'a> SqliteDb<'a> {
 
     /// Walk the `sqlite_schema` b-tree (rooted at page 1) and return its objects. Columns are
     /// parsed from the whole CREATE statement; the text shown is cut at [`MAX_TEXT`] bytes.
+    /// The boolean is true when the object cap or an incomplete walk may hide schema objects.
     pub fn schema(&self) -> (Vec<SchemaObject>, bool) {
         let (mut objects, truncated) = self.whole_schema();
         for object in &mut objects {
@@ -466,7 +467,7 @@ impl<'a> SqliteDb<'a> {
         w.text_cap = MAX_SCHEMA_TEXT;
         w.text_budget = MAX_SCHEMA_TEXT_TOTAL;
         self.collect_table_rows(&mut w, 1, 0);
-        let truncated = w.out.len() >= MAX_SCHEMA_OBJECTS;
+        let truncated = w.out.len() >= MAX_SCHEMA_OBJECTS || w.incomplete;
         for row in w.out {
             // sqlite_schema columns: type, name, tbl_name, rootpage, sql.
             let get_text = |i: usize| match row.values.get(i) {

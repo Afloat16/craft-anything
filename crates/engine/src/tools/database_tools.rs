@@ -128,6 +128,11 @@ fn db_sqlite_show(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolEr
             Some(obj) => {
                 return Err(ToolError::invalid(format!("\"{}\" is a {}, not a table; rows can only be read from tables", obj.name, obj.obj_type)));
             }
+            None if overview.schema_truncated => {
+                return Err(ToolError::invalid(format!("no table named {name:?} was found in the incomplete schema")).with_remediation(
+                    "Call the tool without `table` to inspect the readable schema. Unreadable pages or read limits may hide additional tables.",
+                ));
+            }
             None => {
                 return Err(ToolError::invalid(format!("no table named {name:?} in this database"))
                     .with_remediation("Call the tool without `table` to list the schema, then pass an exact name."));
@@ -137,13 +142,14 @@ fn db_sqlite_show(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolEr
 
     let h = &overview.header;
     let summary = format!(
-        "SQLite {} database: page size {}, {} pages, {} encoding, {} table(s), {} other object(s){}.",
+        "SQLite {} database: page size {}, {} pages, {} encoding, {} table(s), {} other object(s){}{}.",
         h.sqlite_version,
         h.page_size,
         overview.page_count_from_size,
         h.text_encoding,
         tables.len(),
         other_objects.len(),
+        if overview.schema_truncated { ", incomplete schema" } else { "" },
         if h.wal_mode || wal_sibling { ", WAL mode" } else { "" },
     );
 
@@ -152,6 +158,12 @@ fn db_sqlite_show(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolEr
         "row_counts_derived",
         "Row counts are computed by walking each table's b-tree, not read from a stored value; they count only rows present in this file.",
     )];
+    if overview.schema_truncated {
+        lims.push(Limitation::new(
+            "schema_incomplete",
+            "The schema listing is incomplete: a limit was reached or part of its b-tree could not be read. Other tables, indexes, views or triggers may be missing.",
+        ));
+    }
     if h.wal_mode || wal_sibling {
         lims.push(Limitation::new(
             "wal_not_read",
@@ -190,7 +202,17 @@ fn db_sqlite_show(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolEr
         lims.push(Limitation::new("read_notes", "Some rows or values were skipped or truncated while reading; see rows.notes."));
     }
 
-    let coverage = row_coverage.unwrap_or_else(|| Coverage::complete(tables.len() as u64));
+    let mut coverage = row_coverage.unwrap_or_else(|| {
+        if overview.schema_truncated {
+            Coverage { status: CoverageStatus::Partial, examined: Some(tables.len() as u64), total: None, next_offset: None }
+        } else {
+            Coverage::complete(tables.len() as u64)
+        }
+    });
+    if overview.schema_truncated {
+        // A complete page from one readable table does not complete the accompanying schema.
+        coverage.status = CoverageStatus::Partial;
+    }
 
     let ev = builder(ctx, "db_sqlite_show", input.subject.clone(), json!({"path": input.path, "table": p.table, "offset": p.offset, "limit": limit}))
         .result(json!({
