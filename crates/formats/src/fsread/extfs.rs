@@ -8,7 +8,7 @@
 //! encryption, and 64-bit block numbers beyond the low 32 bits. These make a file appear as
 //! unrecovered rather than producing wrong bytes.
 
-use super::{FsEntry, FsImage, Limits, is_dot, join};
+use super::{FsEntry, FsImage, FsKind, Limits, is_dot, join};
 use crate::bytes::Reader;
 use std::collections::BTreeSet;
 
@@ -255,7 +255,6 @@ fn walk(data: &[u8], sb: &Sb, ino: u32, parent: &str, limits: &Limits, img: &mut
         let child = dr.u32_le(pos).unwrap_or(0);
         let rec_len = dr.u16_le(pos + 4).unwrap_or(0) as usize;
         let name_len = dr.u8(pos + 6).unwrap_or(0) as usize;
-        let ftype = dr.u8(pos + 7).unwrap_or(0);
         if rec_len < 8 || pos + rec_len > dir_bytes.len() {
             break;
         }
@@ -263,7 +262,7 @@ fn walk(data: &[u8], sb: &Sb, ino: u32, parent: &str, limits: &Limits, img: &mut
             let name = String::from_utf8_lossy(dir_bytes.get(pos + 8..pos + 8 + name_len).unwrap_or(&[])).into_owned();
             if !is_dot(&name) {
                 let path = join(parent, &name);
-                child_entry(data, sb, child, ftype, path, limits, img, depth, seen);
+                child_entry(data, sb, child, path, limits, img, depth, seen);
             }
         }
         pos += rec_len;
@@ -271,20 +270,19 @@ fn walk(data: &[u8], sb: &Sb, ino: u32, parent: &str, limits: &Limits, img: &mut
 }
 
 #[allow(clippy::too_many_arguments)]
-fn child_entry(data: &[u8], sb: &Sb, ino: u32, ftype: u8, path: String, limits: &Limits, img: &mut FsImage, depth: usize, seen: &mut BTreeSet<u32>) {
-    // ftype: 1=file, 2=dir, 7=symlink (when the filetype feature is on); fall back to i_mode.
+fn child_entry(data: &[u8], sb: &Sb, ino: u32, path: String, limits: &Limits, img: &mut FsImage, depth: usize, seen: &mut BTreeSet<u32>) {
     let Some(io) = inode_offset(data, sb, ino).and_then(|o| usize::try_from(o).ok()).filter(|&o| o.checked_add(128).is_some_and(|end| end <= data.len()))
     else {
         return;
     };
     let r = Reader::new(data);
     let mode = r.u16_le(io).unwrap_or(0) & 0xf000;
-    let is_dir = ftype == 2 || mode == 0x4000;
-    let is_link = ftype == 7 || mode == 0xa000;
-    if is_dir {
+    // The inode owns its kind. Directory-entry type hints may be absent or inconsistent;
+    // in particular, a device's i_block fields are device numbers, not file block pointers.
+    if mode == 0x4000 {
         img.entries.push(FsEntry::dir(path.clone()));
         walk(data, sb, ino, &path, limits, img, depth + 1, seen);
-    } else if is_link {
+    } else if mode == 0xa000 {
         let size = u64::from(r.u32_le(io + 4).unwrap_or(0));
         // Fast symlink: target stored inline in i_block when size < 60.
         let target = if size < 60 {
@@ -294,11 +292,13 @@ fn child_entry(data: &[u8], sb: &Sb, ino: u32, ftype: u8, path: String, limits: 
             file_data(data, sb, io as u64, flags, size, limits, img).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default()
         };
         img.entries.push(FsEntry::symlink(path, target));
-    } else {
+    } else if mode == 0x8000 {
         let size = u64::from(r.u32_le(io + 4).unwrap_or(0)) | (u64::from(r.u32_le(io + 108).unwrap_or(0)) << 32);
         let flags = r.u32_le(io + 32).unwrap_or(0);
         let bytes = file_data(data, sb, io as u64, flags, size, limits, img);
         img.entries.push(FsEntry::file(path, size, bytes));
+    } else {
+        img.entries.push(FsEntry { path, kind: FsKind::Other, size: u64::from(r.u32_le(io + 4).unwrap_or(0)), symlink_target: None, data: None });
     }
 }
 
