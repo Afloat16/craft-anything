@@ -258,7 +258,8 @@ impl<'m, 'a> Names<'m, 'a> {
             }
             t::TYPE_SPEC => {
                 let blob = self.md.blob_cell(t::TYPE_SPEC, row, 0);
-                self.ty(&mut Cur::new(blob), g, depth + 1).unwrap_or_else(|| "?".into())
+                let mut c = Cur::new(blob);
+                self.ty(&mut c, g, depth + 1).filter(|_| c.rest().is_empty()).unwrap_or_else(|| "?".into())
             }
             _ => "?".into(),
         }
@@ -422,7 +423,9 @@ impl<'m, 'a> Names<'m, 'a> {
 
     /// A MethodDefSig, MethodRefSig or PropertySig.
     pub fn method_sig(&self, blob: &[u8], g: &GenCtx<'_>) -> Option<MethodSig> {
-        self.method_sig_inner(&mut Cur::new(blob), g, 0)
+        let mut c = Cur::new(blob);
+        let signature = self.method_sig_inner(&mut c, g, 0)?;
+        c.rest().is_empty().then_some(signature)
     }
 
     /// A FieldSig (`0x06 type`).
@@ -431,7 +434,8 @@ impl<'m, 'a> Names<'m, 'a> {
         if c.u8()? != 0x06 {
             return None;
         }
-        self.ty(&mut c, g, 0)
+        let field_type = self.ty(&mut c, g, 0)?;
+        c.rest().is_empty().then_some(field_type)
     }
 
     /// A LocalVarSig (`0x07 count types`).
@@ -453,7 +457,7 @@ impl<'m, 'a> Names<'m, 'a> {
             }
             v.push(self.ty(&mut c, g, 0)?);
         }
-        Some(v)
+        c.rest().is_empty().then_some(v)
     }
 
     /// A MethodSpec instantiation (`0x0a count types`).
@@ -470,7 +474,7 @@ impl<'m, 'a> Names<'m, 'a> {
         for _ in 0..n {
             v.push(self.ty(&mut c, g, 0)?);
         }
-        Some(v)
+        c.rest().is_empty().then_some(v)
     }
 }
 
