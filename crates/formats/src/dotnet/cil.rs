@@ -323,7 +323,7 @@ pub struct Instr {
     pub opcode: &'static str,
     pub kind: OperandKind,
     pub operand: Operand,
-    /// Original `ldc.r4` bits, before widening can change a NaN's sign or payload.
+    /// Original `ldc.r4` NaN bits, before widening can change their sign or payload.
     #[serde(skip)]
     pub float32_bits: Option<u32>,
 }
@@ -398,8 +398,9 @@ pub fn decode(code: &[u8], max: usize) -> (Vec<Instr>, Option<DecodeIssue>) {
             },
             K::ShortR => match r.u32_le(pc) {
                 Some(v) => {
-                    float32_bits = Some(v);
-                    Operand::Float(f64::from(f32::from_bits(v)))
+                    let value = f32::from_bits(v);
+                    float32_bits = value.is_nan().then_some(v);
+                    Operand::Float(f64::from(value))
                 }
                 None => return (out, trunc()),
             },

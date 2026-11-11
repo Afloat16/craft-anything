@@ -92,3 +92,16 @@ fn short_float_operands_keep_their_numeric_value_and_serialized_shape() {
         assert_eq!(serialized["operand"], serde_json::to_value(f64::from(value)).unwrap());
     }
 }
+
+#[test]
+fn finite_instruction_equality_keeps_its_numeric_semantics() {
+    let mut positive = vec![0x22];
+    positive.extend_from_slice(&0.0f32.to_le_bytes());
+    let mut negative = vec![0x22];
+    negative.extend_from_slice(&(-0.0f32).to_le_bytes());
+    let (positive, positive_issue) = decode(&positive, 1);
+    let (negative, negative_issue) = decode(&negative, 1);
+    assert!(positive_issue.is_none() && negative_issue.is_none());
+    assert_eq!(positive, negative);
+    assert_ne!(normalized_hash(&positive), normalized_hash(&negative));
+}
