@@ -2163,6 +2163,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-source-map-url-root
 - [x] Apply a nonempty source-map root prefix before interpreting a source path, including leading slashes and URL-shaped sources, while preserving empty-root compatibility.
       — claimed: Afloat16, branch bugfix/r3.12-source-root-prefix-20261111
+- [ ] Preserve embedded source-map contents when safe recovery paths collide, keeping each source identity and index in the manifest.
+      — claimed: Afloat16, branch bugfix/r3.12-source-recovery-collisions-20261111
 - [x] Keep source map annotation URL suffixes intact.
       — claimed: Plastic-time, branch rrfz/bugfix-r3.12-annotation-20261110
 - [x] Keep DOS relocations inside the declared executable header.
