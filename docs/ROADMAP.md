@@ -1661,6 +1661,9 @@ Owner: open · Status: in progress
 - [x] Read the explicit module-format byte in current Node SEA blobs while retaining the older layouts;
       report the stored format and recover the main script, assets and execution arguments at their real offsets.
       — claimed: Afloat16, branch bugfix/r3.12-node-sea-module-format-20261110
+- [ ] Keep reassigned bindings from retaining stale imported aliases, literal strings or exposed members,
+      while preserving initialization facts for stable scoped bindings.
+      — claimed: Afloat16, branch bugfix/r3.12-js-binding-stability-20261111
 - [x] Deduplicate modules before queueing role propagation, so repeated imports do not exhaust the application graph's traversal limit before reachable modules receive their roles.
       — claimed: Afloat16, branch bugfix/r3.12-module-role-queue
 - [x] Resolve webpack module-loader calls by the wrapper parameter's binding, so nested parameters and local variables with the same name do not create dependency edges.
