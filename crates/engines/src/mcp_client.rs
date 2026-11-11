@@ -342,13 +342,22 @@ impl Transport for Http {
             return found.ok_or_else(|| unreadable(&"it didn't answer the request"));
         }
         // Server-sent events: `data:` lines make up each event; the one answering us ends it.
-        let reader = std::io::BufReader::new(body.with_config().limit(MAX_LINE as u64).reader());
+        let mut reader = std::io::BufReader::new(body.with_config().limit(MAX_LINE as u64).reader());
         let mut data = String::new();
-        for line in reader.lines() {
+        let mut bytes = Vec::new();
+        let mut skip_lf = false;
+        let mut first_line = true;
+        while read_event_line(&mut reader, &mut bytes, &mut skip_lf).map_err(|e| unreadable(&e))? {
             if cancelled() {
                 return Err(ToolError::cancelled());
             }
-            let line = line.map_err(|e| unreadable(&e))?;
+            let line = std::str::from_utf8(&bytes).map_err(|e| unreadable(&e))?;
+            let line = if first_line {
+                first_line = false;
+                line.strip_prefix('\u{feff}').unwrap_or(line)
+            } else {
+                line
+            };
             if let Some(d) = line.strip_prefix("data:") {
                 data.push_str(d.strip_prefix(' ').unwrap_or(d));
                 data.push('\n');
@@ -365,6 +374,34 @@ impl Transport for Http {
             Ok(m) if answers(&m, id) => Ok(m),
             _ => Err(unreadable(&"the event stream ended without an answer")),
         }
+    }
+}
+
+/// SSE permits CR, LF and CRLF. Delay consuming CR's optional LF until the next line,
+/// so a complete event ending in CR can be dispatched without waiting for another byte.
+fn read_event_line(reader: &mut impl BufRead, line: &mut Vec<u8>, skip_lf: &mut bool) -> std::io::Result<bool> {
+    line.clear();
+    loop {
+        let bytes = reader.fill_buf()?;
+        if bytes.is_empty() {
+            return Ok(!line.is_empty());
+        }
+        if *skip_lf {
+            *skip_lf = false;
+            if bytes[0] == b'\n' {
+                reader.consume(1);
+                continue;
+            }
+        }
+        if let Some(end) = bytes.iter().position(|b| *b == b'\r' || *b == b'\n') {
+            line.extend_from_slice(&bytes[..end]);
+            *skip_lf = bytes[end] == b'\r';
+            reader.consume(end + 1);
+            return Ok(true);
+        }
+        let count = bytes.len();
+        line.extend_from_slice(bytes);
+        reader.consume(count);
     }
 }
 
@@ -493,4 +530,17 @@ mod tests {
                 .unwrap();
         assert!(err.message.contains("https://"));
     }
+    #[test]
+    fn event_lines_keep_split_utf8_and_crlf_boundaries() {
+        let input = "\u{feff}data: 你好\r\n\rdata: last\n\nend";
+        let mut reader = std::io::BufReader::with_capacity(1, input.as_bytes());
+        let mut line = Vec::new();
+        let mut skip_lf = false;
+        let mut lines = Vec::new();
+        while read_event_line(&mut reader, &mut line, &mut skip_lf).unwrap() {
+            lines.push(String::from_utf8(line.clone()).unwrap());
+        }
+        assert_eq!(lines, ["\u{feff}data: 你好", "", "data: last", "", "end"]);
+    }
+
 }
