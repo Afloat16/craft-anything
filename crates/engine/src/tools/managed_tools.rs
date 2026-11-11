@@ -243,6 +243,14 @@ fn metadata_limitations(warnings: &[String]) -> impl Iterator<Item = Limitation>
     warnings.iter().take(20).map(|w| Limitation::new("metadata", w.clone()))
 }
 
+/// Keep each graph view's leading diagnostic visible, then combine the remaining warnings.
+fn graph_metadata_limitations(sources: [&[String]; 3]) -> Vec<Limitation> {
+    let first = sources.iter().filter_map(|warnings| warnings.first());
+    let rest = sources.iter().flat_map(|warnings| warnings.iter().skip(1));
+    let mut seen = BTreeSet::new();
+    first.chain(rest).filter(|warning| seen.insert(warning.as_str())).take(20).map(|warning| Limitation::new("metadata", warning.clone())).collect()
+}
+
 fn managed_limitations(a: &Assembly<'_>, warnings: &[String]) -> Vec<Limitation> {
     let mut l = Vec::new();
     if a.pe.ready_to_run {
@@ -1018,7 +1026,7 @@ fn managed_app_graph_build(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutpu
         .result(json!({"platform": "dotnet", "recognised": true, "graph": {"nodes": g.nodes, "edges": g.edges}, "counts": kinds, "truncated": g.truncated}))
         .summary(summary)
         .confidence(Confidence::Derived)
-        .limitations(metadata_limitations(&members.warnings))
+        .limitations(graph_metadata_limitations([&inv.warnings, &members.warnings, &nb.warnings]))
         .limitation(Limitation::new("static_calls", "Call edges come from IL call tokens; virtual dispatch, delegates and reflection are not resolved."))
         .coverage(if g.truncated { super::static_input::partial(node_count as u64) } else { Coverage::complete(node_count as u64) });
     if g.truncated {

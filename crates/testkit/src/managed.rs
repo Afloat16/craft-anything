@@ -137,27 +137,44 @@ fn tiny(code: &[u8]) -> Vec<u8> {
 
 /// Build the sample assembly. `version` 1 or 2 (2 changes `Add`, adds `Multiply`, drops `MissingFn`).
 pub fn managed_assembly(version: u8) -> Vec<u8> {
-    build(version, false, false, false)
+    build(version, false, false, SignaturePadding::None, 0)
 }
 
 /// The sample with trailing bytes after each complete signature, as protected assemblies may use.
 pub fn managed_assembly_with_padded_signatures(version: u8) -> Vec<u8> {
-    build(version, false, false, true)
+    build(version, false, false, SignaturePadding::All, 0)
+}
+
+/// The sample with trailing bytes only in the TargetFrameworkAttribute constructor signature.
+pub fn managed_assembly_with_padded_target_framework_signature(version: u8) -> Vec<u8> {
+    build(version, false, false, SignaturePadding::TargetFramework, 0)
+}
+
+/// The padded sample with 25 invalid native mappings, each producing a separate warning.
+pub fn managed_assembly_with_native_mapping_warnings(version: u8) -> Vec<u8> {
+    build(version, false, false, SignaturePadding::All, 25)
 }
 
 /// The sample with an uncompressed `#-` tables stream whose method lists go through a MethodPtr
 /// table (identity order).
 pub fn managed_assembly_with_ptr_tables(version: u8) -> Vec<u8> {
-    build(version, false, true, false)
+    build(version, false, true, SignaturePadding::None, 0)
 }
 
 /// The same sample with 4-byte heap indexes and the extra-data flag (HeapSizes `0x47`).
 pub fn managed_assembly_wide_heaps(version: u8) -> Vec<u8> {
-    build(version, true, false, false)
+    build(version, true, false, SignaturePadding::None, 0)
 }
 
-fn build(version: u8, wide: bool, ptr: bool, padded: bool) -> Vec<u8> {
+enum SignaturePadding {
+    None,
+    All,
+    TargetFramework,
+}
+
+fn build(version: u8, wide: bool, ptr: bool, padding: SignaturePadding, invalid_impl_maps: u32) -> Vec<u8> {
     let v2 = version >= 2;
+    let padded = matches!(padding, SignaturePadding::All);
     let mut h = Heaps::new();
     let mut tables: BTreeMap<u8, Vec<Vec<u32>>> = BTreeMap::new();
     let mut add = |t: u8, row: Vec<u32>| tables.entry(t).or_default().push(row);
@@ -286,7 +303,7 @@ fn build(version: u8, wide: bool, ptr: bool, padded: bool) -> Vec<u8> {
     let ctor = h.s(".ctor");
     let ctor_sig = h.signature(&[0x20, 0, 0x01], padded);
     add(0x0a, vec![(1 << 3) | 1, ctor, ctor_sig]);
-    let tfa_sig = h.signature(&[0x20, 1, 0x01, 0x0e], padded);
+    let tfa_sig = h.signature(&[0x20, 1, 0x01, 0x0e], padded || matches!(padding, SignaturePadding::TargetFramework));
     add(0x0a, vec![(3 << 3) | 1, ctor, tfa_sig]);
 
     // [assembly: TargetFramework(".NETCoreApp,Version=v8.0", FrameworkDisplayName = ".NET 8.0")]
@@ -307,6 +324,9 @@ fn build(version: u8, wide: bool, ptr: bool, padded: bool) -> Vec<u8> {
     if !v2 {
         let missing = h.s("missing_fn");
         add(0x1c, vec![0x0102, ((native_first + 1) << 1) | 1, missing, 1]);
+    }
+    for _ in 0..invalid_impl_maps {
+        add(0x1c, vec![0, 0, 0, 0]);
     }
     let asm = h.s(ASSEMBLY_NAME);
     add(0x20, vec![0x8004, 1, 2, 3, 4, 0, 0, asm, 0]);
