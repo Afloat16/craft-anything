@@ -926,14 +926,7 @@ mod tests {
         let legacy = graph_with_fingerprint_version(&current, None);
         let future = graph_with_fingerprint_version(&current, Some(craft_anything_js::FINGERPRINT_VERSION + 1));
         for tool in ["app_graphs_compare", "js_exports_compare"] {
-            for (left, right) in [
-                (&legacy, &current),
-                (&current, &legacy),
-                (&legacy, &legacy),
-                (&future, &current),
-                (&current, &future),
-                (&future, &future),
-            ] {
+            for (left, right) in [(&legacy, &current), (&current, &legacy), (&legacy, &legacy), (&future, &current), (&current, &future), (&future, &future)] {
                 let error = call(&engine, tool, json!({"left": left, "right": right})).unwrap_err();
                 assert_eq!(error.code, craft_anything_evidence::ErrorCode::BadInput, "{tool}: {error}");
                 assert!(error.message.contains("fingerprint encoding"), "{tool}: {error}");
@@ -962,14 +955,9 @@ mod tests {
         let engine = Engine::new(crate::testing::session());
         let current = call(&engine, "js_app_map", json!({"input_path": root})).unwrap();
         let legacy = graph_with_fingerprint_version(&current, None);
-        let explained = call(
-            &engine,
-            "js_function_explain",
-            json!({"application": legacy, "seed": {"kind": "function", "value": "toCsv", "match": "exact"}}),
-        )
-        .unwrap();
+        let explained =
+            call(&engine, "js_function_explain", json!({"application": legacy, "seed": {"kind": "function", "value": "toCsv", "match": "exact"}})).unwrap();
         assert!(!explained["result"]["functions"].as_array().unwrap().is_empty());
         assert!(explained["summary"].as_str().unwrap().starts_with("toCsv (main.js:"), "{explained}");
     }
-
 }
