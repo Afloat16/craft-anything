@@ -1637,7 +1637,7 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Bound expanded source-map inventories by retained path bytes and entries before allocation, preserving bounded prefixes and reporting truncation.
+- [x] Bound expanded source-map inventories by retained path bytes and entries before allocation, preserving bounded prefixes and reporting truncation.
       — claimed: Afloat16, branch bugfix/r3.12-source-inventory-budget-20261111
 - [x] Preserve readable ZIP64 end-record fields with framing warnings and classic fallback for unusable locators; reject undersized, overflowing or truncated fixed records.
       — claimed: Afloat16, branch bugfix/r3.12-zip64-record-extent

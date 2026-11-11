@@ -164,6 +164,8 @@ pub struct SourceMapRef {
     #[serde(default)]
     pub sources: Vec<String>,
     #[serde(default)]
+    pub sources_truncated: bool,
+    #[serde(default)]
     pub sources_with_content: usize,
 }
 
@@ -936,6 +938,7 @@ pub fn analyze_application(input: &AppInput, opts: &AppOptions, cancelled: &dyn 
     }
 
     // Source maps.
+    let mut source_budget = craft_anything_formats::sourcemap::InventoryLimits::default();
     for a in &analysed {
         let Some(url) = &a.facts.source_map_url else { continue };
         let mut r = SourceMapRef { script: a.path.clone(), url: url.chars().take(256).collect(), ..Default::default() };
@@ -950,7 +953,20 @@ pub fn analyze_application(input: &AppInput, opts: &AppOptions, cancelled: &dyn 
         if let Some(bytes) = map_bytes {
             r.present = true;
             if let Ok(map) = craft_anything_formats::sourcemap::parse(&bytes, craft_anything_formats::sourcemap::Limits::default()) {
-                r.sources = map.all_sources().into_iter().take(5000).collect();
+                let inventory = map.source_inventory(craft_anything_formats::sourcemap::InventoryLimits {
+                    max_sources: source_budget.max_sources.min(5000),
+                    max_bytes: source_budget.max_bytes,
+                });
+                source_budget.max_sources = source_budget.max_sources.saturating_sub(inventory.sources.len());
+                source_budget.max_bytes = inventory.sources.iter().fold(source_budget.max_bytes, |left, source| left.saturating_sub(source.len()));
+                r.sources = inventory.sources;
+                r.sources_truncated = inventory.truncated;
+                if r.sources_truncated {
+                    g.limitations.push((
+                        "source_map_inventory_truncated".into(),
+                        format!("Some source paths for {} could not be retained within the source-map inventory limits.", a.path),
+                    ));
+                }
                 r.sources_with_content = map.sources_content.iter().filter(|c| c.is_some()).count();
             }
             if let Some(res) = &r.resolved {

@@ -506,6 +506,12 @@ when a header is renamed or blanked.
 
 ## Design
 
+**A source inventory limit came after expansion.** Taking five thousand names after collecting
+every source path copied a large `sourceRoot` into every entry first. Count retained entries and
+expanded UTF-8 bytes before allocating each path, share the budget across indexed sections and
+application maps, and report when only a prefix could be kept. A source identity stays complete;
+shortening one to fit the budget would describe a different source.
+
 **A floating-point conversion changed a fingerprint.** Widening a single-precision NaN to a double
 can change its sign, payload or signaling bit. Keep the original encoded bits for identities, and
 test signaling/quiet pairs as well as different payloads; retain numeric conversion for display.
