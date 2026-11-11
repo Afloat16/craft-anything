@@ -372,7 +372,9 @@ impl<'s> FactVisitor<'s> {
     fn arg_str(&self, args: &[Argument<'_>], i: usize) -> Option<String> {
         args.get(i).and_then(|a| a.as_expression()).and_then(|e| match e.get_inner_expression() {
             Expression::StringLiteral(s) => Some(s.value.to_string()),
-            Expression::TemplateLiteral(t) if t.expressions.is_empty() => t.quasis.first().map(|q| q.value.raw.to_string()),
+            Expression::TemplateLiteral(t) if t.expressions.is_empty() => {
+                t.quasis.first().map(|q| q.value.cooked.as_ref().map_or_else(|| q.value.raw.to_string(), |c| c.to_string()))
+            }
             other => self.render_value(other, 0).filter(|(_, lit)| *lit).map(|(v, _)| v),
         })
     }
@@ -1067,7 +1069,9 @@ pub(crate) fn require_spec(call: &CallExpression<'_>) -> Option<String> {
     }
     match call.arguments.first()?.as_expression()?.get_inner_expression() {
         Expression::StringLiteral(s) => Some(s.value.to_string()),
-        Expression::TemplateLiteral(t) if t.expressions.is_empty() => t.quasis.first().map(|q| q.value.raw.to_string()),
+        Expression::TemplateLiteral(t) if t.expressions.is_empty() => {
+            t.quasis.first().map(|q| q.value.cooked.as_ref().map_or_else(|| q.value.raw.to_string(), |c| c.to_string()))
+        }
         _ => None,
     }
 }
