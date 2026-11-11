@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "repository": "storytold/craft-anything",
+  "fork": "Afloat16/craft-anything",
+  "improvement": "Bound retained diagnostics for unreadable Go build information version pointers",
+  "state": "validation_in_progress",
+  "actual_pr": false,
+  "merged": false,
+  "branch": "bugfix/r3.12-go-buildinfo-diagnostics-20261111",
+  "base": "3ce1ce9f52077a53811be8a0309fdbe85b16b417",
+  "public_claim": "ace2048a1d6e9424bf5aa31e399119cabdb63659",
+  "head": "da3e2b157a5e0d9dfb98dafe2fe9646159719a4f",
+  "updated_at": "2026-11-11 17:35:14 UTC",
+  "files": [
+    "crates/formats/src/go.rs",
+    "crates/formats/tests/go_buildinfo_diagnostics.rs",
+    "docs/ROADMAP.md"
+  ],
+  "scope": "Aggregate identical unreadable-version-pointer diagnostics once per candidate scan, with the number of failed probes; preserve the exact text for a single failure, complete scanning, later readable metadata, all module diagnostics and pclntab/function results. Counts represent probes in each scan, not unique file offsets.",
+  "deduplication": {
+    "queries": [
+      "repo:storytold/craft-anything is:pr \"Go\" \"buildinfo\"",
+      "repo:storytold/craft-anything is:pr \"build information\" \"memory\"",
+      "repo:storytold/craft-anything is:pr \"version pointer\""
+    ],
+    "relevant_distinct_work": [
+      {
+        "pr": 1399,
+        "scope": "Go version hint in triage, not diagnostic retention"
+      },
+      {
+        "pr": 1554,
+        "scope": "pclntab function-name storage, not build information diagnostic retention"
+      }
+    ],
+    "roadmap_competing_claim": false
+  },
+  "review": {
+    "reviewer": "independent root agent",
+    "head": "da3e2b157a5e0d9dfb98dafe2fe9646159719a4f",
+    "blocking_findings": []
+  },
+  "verification": {
+    "formatting": {
+      "run_url": "https://github.com/Afloat16/billion-context/actions/runs/43068115440",
+      "result": "success",
+      "rust": "1.99.0",
+      "source_modified_by_rustfmt": false
+    },
+    "retained_failed_runs": [
+      {
+        "run_url": "https://github.com/Afloat16/billion-context/actions/runs/43068899521",
+        "result": "failure",
+        "stage": "native fixture generation, before product tests",
+        "reason": "The relocated zero-damage ELF control placed its added PT_LOAD after the zero-sized GNU_STACK record. Go 1.24.13 DataReader selected the empty preceding record instead of the appended load. The fixture now inserts the load among the load records, preserving their ascending virtual address order; product code is unchanged."
+      }
+    ],
+    "active": {
+      "carrier_repository": "Afloat16/billion-context",
+      "carrier_branch": "validation/craft-go-buildinfo-diagnostics-20261111",
+      "carrier_head": "57b64c78106d733c3b7b7907c5cbc92ecf46a5c0",
+      "status": "triggered; outcome not yet checked"
+    },
+    "planned": [
+      "Six permanent original/fixed regression comparisons",
+      "Native Go debug/buildinfo and go tool nm comparison on original and relocated complete controls",
+      "Three fresh optimized processes per version on a fixed 8 MiB region of 262144 failed candidate probes, plus ordinary controls; exact complete metadata and function result equality",
+      "Full formats tests, fmt, strict all-target Clippy, layers, locks, secrets and complete five-crate WebAssembly gate"
+    ]
+  },
+  "publication": {
+    "status": "not yet ready",
+    "reason": "Awaiting actual correctness, memory measurement and full repository gates. Craft PR publication remains blocked by previously reported API 403 and auto-review rejection; no rejected action has been retried."
+  }
+}
