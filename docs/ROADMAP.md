@@ -2055,6 +2055,9 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-codesign-superblob-length-boundary-20261105
 - [x] Require complete, single-valued CMS message-digest and content-type signed attributes with the specified tags, and bind the content type to the encapsulated content before reporting authentication.
       — claimed: Afloat16, branch bugfix/r3.12-cms-signed-attributes-20261110
+- [ ] Keep ELF NX status unknown when no PT_GNU_STACK declaration is present,
+      instead of reporting an executable stack from missing evidence.
+      — claimed: Afloat16, branch bugfix/r3.12-elf-stack-nx-unknown-20261111
 - [x] Reject out-of-range or unterminated library names in the ELF dynamic string table.
       — claimed: Afloat16, branch bugfix/r3.12-elf-dynamic-names
 - [x] Recover dynamic symbols through PT_DYNAMIC when an ELF retains other section headers but has no usable dynamic-symbol section.
