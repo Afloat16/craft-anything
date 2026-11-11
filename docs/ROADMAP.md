@@ -1504,7 +1504,7 @@ Owner: open · Status: in progress
 Owner: open · Status: in progress
 - [x] Preserve AArch64 exclusive-memory status results and paired load definitions without presenting them as unconditional stores.
       — claimed: Afloat16, branch bugfix/r3.11-a64-exclusive-value-flow-20261110
-- [ ] Keep the first 100000 byte-search matches in file-offset order across hex, UTF-8 and UTF-16LE queries, including capped pages.
+- [x] Keep the first 100000 byte-search matches in file-offset order across hex, UTF-8 and UTF-16LE queries, including capped pages.
       — claimed: Afloat16, branch bugfix/r3.11-byte-search-match-order-20261110
 - [x] Validate the remaining loopback fixture corrections for complete and fragmented request
       headers, negative probes and stand-in cancellation on the current main
