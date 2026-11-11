@@ -1680,6 +1680,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-zstandard-multiple-frames
 - [x] Read concatenated XZ streams and four-byte stream padding while sharing one output budget.
       — claimed: Afloat16, branch feature/r3.12-xz-concatenation-20261109
+- [ ] Recover only the first XZ stream in a SquashFS block, ignoring trailing bytes without losing valid data.
+      — claimed: Afloat16, branch bugfix/r3.12-squashfs-xz-first-stream-20261111
 - [x] SQLite TEXT values cut at the 4 KiB cap can end in a spurious U+FFFD when the cut lands
       inside a character; cut at a UTF-8/UTF-16 boundary and keep the `truncated` flag
       — tests cover a UTF-8 character, a UTF-16 surrogate pair and a UTF-16 continuation-like
