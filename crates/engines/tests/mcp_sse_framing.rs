@@ -48,12 +48,8 @@ fn request(body: Vec<u8>, hold_open: bool) -> Result<Vec<RemoteTool>, ToolError>
                 stream.write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
             } else if expected == "initialize" {
                 let result = json!({"jsonrpc": "2.0", "id": value["id"], "result": {"protocolVersion": "2025-06-18", "capabilities": {}}}).to_string();
-                write!(
-                    stream,
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{result}",
-                    result.len()
-                )
-                .unwrap();
+                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{result}", result.len())
+                    .unwrap();
             } else {
                 stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n").unwrap();
                 // Rejected oversized input may close the connection before every byte is sent.
