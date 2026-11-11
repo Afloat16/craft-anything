@@ -223,6 +223,24 @@ fn section_name(id: u8) -> &'static str {
     }
 }
 
+fn component_section_name(id: u8) -> &'static str {
+    match id {
+        0 => "custom",
+        1 => "core-module",
+        2 => "core-instance",
+        3 => "core-type",
+        4 => "component",
+        5 => "instance",
+        6 => "alias",
+        7 => "type",
+        8 => "canonical",
+        9 => "start",
+        10 => "import",
+        11 => "export",
+        _ => "unknown",
+    }
+}
+
 fn kind_name(k: ExternalKind) -> &'static str {
     match k {
         ExternalKind::Func | ExternalKind::FuncExact => "func",
@@ -309,6 +327,7 @@ pub fn inspect(data: &[u8]) -> Result<WasmReport, FormatError> {
     let mut imported_tags = 0u32;
     let mut declared_functions = 0;
     let mut code_index = 0u32;
+    let mut component_depth = 0u32;
     // Type and name references can expand a small module into much larger display strings.
     // Charge both the signature cache and every retained copy before allocating that copy.
     let reference_budget = (64 << 20).max(data.len().saturating_mul(3));
@@ -325,14 +344,37 @@ pub fn inspect(data: &[u8]) -> Result<WasmReport, FormatError> {
     let result: Result<(), wasmparser::BinaryReaderError> = (|| {
         for payload in Parser::new(0).parse_all(data) {
             let payload = payload?;
+            if component_depth > 0 {
+                match &payload {
+                    Payload::ModuleSection { .. } | Payload::ComponentSection { .. } => component_depth = component_depth.saturating_add(1),
+                    Payload::End(_) => component_depth -= 1,
+                    _ => {}
+                }
+                continue;
+            }
             if let Some((id, range)) = payload.as_section()
+                // Nested section ranges are declared before their bytes have been read.
+                && (rep.encoding != "component" || range.end <= data.len() as u64)
                 && cap(rep.sections.len(), &mut rep.truncated)
             {
                 let name = match &payload {
                     Payload::CustomSection(c) => format!("custom:{}", c.name()),
+                    _ if rep.encoding == "component" => component_section_name(id).to_string(),
                     _ => section_name(id).to_string(),
                 };
                 rep.sections.push(WasmSection { id, name, offset: range.start, size: range.end.saturating_sub(range.start) });
+            }
+            if let Payload::CustomSection(c) = &payload
+                && cap(rep.custom_sections.len(), &mut rep.truncated)
+            {
+                let range = c.range();
+                rep.custom_sections.push(WasmCustom { name: c.name().to_string(), offset: range.start, size: range.end.saturating_sub(range.start) });
+            }
+            if rep.encoding == "component" {
+                if matches!(&payload, Payload::ModuleSection { .. } | Payload::ComponentSection { .. }) {
+                    component_depth = 1;
+                }
+                continue;
             }
             match payload {
                 Payload::Version { num, encoding, .. } => {
@@ -340,7 +382,6 @@ pub fn inspect(data: &[u8]) -> Result<WasmReport, FormatError> {
                     if encoding == Encoding::Component {
                         rep.encoding = "component";
                         rep.warnings.push("this is a component, not a core module; only validation and the top-level layout are reported".into());
-                        break;
                     }
                 }
                 Payload::TypeSection(r) => {
@@ -545,10 +586,6 @@ pub fn inspect(data: &[u8]) -> Result<WasmReport, FormatError> {
                     code_index = code_index.saturating_add(1);
                 }
                 Payload::CustomSection(c) => {
-                    if cap(rep.custom_sections.len(), &mut rep.truncated) {
-                        let range = c.range();
-                        rep.custom_sections.push(WasmCustom { name: c.name().to_string(), offset: range.start, size: range.end.saturating_sub(range.start) });
-                    }
                     match c.name() {
                         "sourceMappingURL" => rep.source_mapping_url = leading_string(c.data()),
                         "external_debug_info" => rep.external_debug_info = leading_string(c.data()),
