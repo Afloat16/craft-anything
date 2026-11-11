@@ -1660,6 +1660,8 @@ Owner: open · Status: in progress
       — claimed: Plastic-time, branch rrfz/bugfix-r3.12-js-sequence-directives
 - [x] Match numeric bundle module and chunk identities by their JavaScript value, so hexadecimal, separated and exponent literals connect to equivalent dependency references.
       — claimed: Afloat16, branch bugfix/r3.12-bundle-numeric-identities
+- [ ] Preserve BigInt values, regular-expression patterns and flags, and template text in JavaScript structural fingerprints so literal changes remain visible in module comparisons.
+      — claimed: Afloat16, branch bugfix/r3.12-js-literal-fingerprints-20261111
 - [x] Allocate distinct recovered module paths after repeated content-hash collisions.
       — claimed: Plastic-time, branch rrfz/bugfix-r3.12-js-module-collisions
 - [x] Refuse oversized GNU tar long names and link targets instead of silently truncating member identities.
