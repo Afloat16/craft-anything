@@ -314,24 +314,71 @@ pub struct FridaProcess {
     pub identifier: Option<String>,
 }
 
-/// Parse `frida-ps` output. Columns are `PID  Name` or `PID  Name  Identifier`; the header and a
-/// separator row are skipped.
+/// The character offset of a whitespace-separated table column.
+fn process_column_start(line: &str, wanted: usize) -> Option<usize> {
+    let mut column = 0usize;
+    let mut after_space = true;
+    for (at, ch) in line.chars().enumerate() {
+        if ch.is_whitespace() {
+            after_space = true;
+        } else if after_space {
+            if column == wanted {
+                return Some(at);
+            }
+            column = column.saturating_add(1);
+            after_space = false;
+        }
+    }
+    None
+}
+
+/// Parse frida-ps output. The header identifies an optional application-identifier column.
+/// Names retain their internal whitespace; without a header, rows are treated as processes.
 pub fn parse_processes(text: &str) -> Vec<FridaProcess> {
     let mut out = Vec::new();
+    let mut identifier_column = None;
+    let mut expect_separator = false;
     for line in text.lines().take(MAX_LINES) {
         let line = crate::capped_line(line, MAX_LINE);
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with("----") {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() {
             continue;
         }
-        let mut it = trimmed.split_whitespace();
-        let Some(first) = it.next() else { continue };
-        let Ok(pid) = first.parse::<u32>() else { continue }; // skips the "PID Name" header too
-        let rest: Vec<&str> = it.collect();
-        // When an identifier column exists it's the last whitespace-free token containing a dot.
-        let (name, identifier) = match rest.split_last() {
-            Some((last, head)) if !head.is_empty() && last.contains('.') && !last.contains(' ') => (head.join(" "), Some(last.to_string())),
-            _ => (rest.join(" "), None),
+        let mut columns = trimmed.split_whitespace();
+        let Some(first) = columns.next() else { continue };
+        if first.eq_ignore_ascii_case("pid") {
+            identifier_column = if columns.next().is_some_and(|s| s.eq_ignore_ascii_case("name"))
+                && columns.next().is_some_and(|s| s.eq_ignore_ascii_case("identifier"))
+            {
+                process_column_start(line, 2)
+            } else {
+                None
+            };
+            expect_separator = identifier_column.is_some();
+            continue;
+        }
+        if expect_separator {
+            expect_separator = false;
+            let dashes = |s: &str| !s.is_empty() && s.bytes().all(|b| b == b'-');
+            if dashes(first) && columns.next().is_some_and(dashes) && columns.next().is_some_and(dashes) && columns.next().is_none() {
+                // Header labels can exceed the actual column width; the rule beneath
+                // them uses the same widths as the data rows.
+                identifier_column = process_column_start(line, 2);
+                continue;
+            }
+        }
+        let Ok(pid) = first.parse::<u32>() else { continue };
+        let name_start = line.len().saturating_sub(trimmed.len()).saturating_add(first.len());
+        let rest = line.get(name_start..).unwrap_or("").trim();
+        // The CLI pads columns by character count, so a Unicode name need not have the
+        // same byte offset as the ASCII header. Short rows can omit an identifier.
+        let split = identifier_column.and_then(|column| line.char_indices().nth(column).map(|(byte, _)| byte)).filter(|&byte| byte >= name_start);
+        let (name, identifier) = if let Some(byte) = split {
+            let name = line.get(name_start..byte).unwrap_or(rest).trim().to_string();
+            let identifier = line.get(byte..).unwrap_or("").trim();
+            (name, (!identifier.is_empty()).then(|| identifier.to_string()))
+        } else {
+            (rest.to_string(), None)
         };
         out.push(FridaProcess { pid, name, identifier });
     }
