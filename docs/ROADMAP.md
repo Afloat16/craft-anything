@@ -2437,6 +2437,8 @@ Owner: open · Status: in progress
       — claimed: NicolasBohn, branch bugfix/r3.12-codesign-oid-subidentifiers
 
 
+- [ ] Read Linux ELF core fault addresses only from signal-specific fault records, and describe explicit signal origins without mistaking sender/timer data for an address. — claimed: Afloat16, branch `bugfix/r3.12-elf-signal-origins-20261111`
+
 ### R3.13 Web inspection correctness
 Owner: open · Status: in progress
 - [x] Decode character references in HTML page titles before returning their displayed text.
