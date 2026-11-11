@@ -341,6 +341,8 @@ pub struct WsConn {
     stream: TcpStream,
     buf: Vec<u8>,
     max_message: usize,
+    // Kept across read deadlines; bounded by max_message, just like a complete message.
+    fragmented: Option<Vec<u8>>,
     closed: bool,
 }
 
@@ -370,7 +372,7 @@ impl WsConn {
         if accept != expected_accept(&key) {
             return Err(ToolError::new(ErrorCode::GarbledOutput, "the WebSocket handshake accept token did not match"));
         }
-        Ok(WsConn { stream, buf: leftover, max_message, closed: false })
+        Ok(WsConn { stream, buf: leftover, max_message, fragmented: None, closed: false })
     }
 
     fn read_handshake(stream: &mut TcpStream, dl: &Deadline) -> Result<Handshake, ToolError> {
@@ -439,44 +441,59 @@ impl WsConn {
     }
 
     /// Read the next complete application message (text or binary), auto-answering pings and
-    /// handling fragmentation. Returns `None` on a clean close.
+    /// handling fragmentation. A timeout or cancellation keeps the partial message for the next
+    /// read; a clean close or terminal error discards it. Returns `None` on a clean close.
     pub fn read_message(&mut self, dl: &Deadline) -> Result<Option<Vec<u8>>, ToolError> {
-        let mut assembled: Vec<u8> = Vec::new();
-        let mut assembling = false;
         loop {
-            let frame = match self.read_frame(dl)? {
-                Some(f) => f,
-                None => return Ok(None),
-            };
-            match frame.opcode {
-                OP_PING => {
-                    self.write_frame(OP_PONG, &frame.payload, dl)?;
+            let frame = match self.read_frame(dl) {
+                Ok(Some(frame)) => frame,
+                Ok(None) => {
+                    self.fragmented = None;
+                    return Ok(None);
                 }
-                OP_PONG => {}
-                OP_CLOSE => {
+                Err(error) => {
+                    if !matches!(error.code, ErrorCode::TimedOut | ErrorCode::Cancelled) {
+                        self.fragmented = None;
+                    }
+                    return Err(error);
+                }
+            };
+            match (frame.opcode, self.fragmented.as_mut()) {
+                (OP_PING, _) => {
+                    if let Err(error) = self.write_frame(OP_PONG, &frame.payload, dl) {
+                        if !matches!(error.code, ErrorCode::TimedOut | ErrorCode::Cancelled) {
+                            self.fragmented = None;
+                        }
+                        return Err(error);
+                    }
+                }
+                (OP_PONG, _) => {}
+                (OP_CLOSE, _) => {
                     self.closed = true;
+                    self.fragmented = None;
                     let _ = self.write_frame(OP_CLOSE, &[], dl);
                     return Ok(None);
                 }
-                OP_TEXT | OP_BINARY if !assembling => {
+                (OP_TEXT | OP_BINARY, None) => {
                     if frame.fin {
                         return Ok(Some(frame.payload));
                     }
-                    assembled = frame.payload;
-                    assembling = true;
+                    self.fragmented = Some(frame.payload);
                 }
-                OP_CONTINUATION if assembling => {
+                (OP_CONTINUATION, Some(assembled)) => {
                     if assembled.len().saturating_add(frame.payload.len()) > self.max_message {
                         self.closed = true;
+                        self.fragmented = None;
                         return Err(message_too_big(self.max_message));
                     }
                     assembled.extend_from_slice(&frame.payload);
                     if frame.fin {
-                        return Ok(Some(assembled));
+                        return Ok(self.fragmented.take());
                     }
                 }
                 _ => {
                     self.closed = true;
+                    self.fragmented = None;
                     return Err(ToolError::new(ErrorCode::GarbledOutput, "the browser sent an out-of-order WebSocket frame"));
                 }
             }
@@ -566,6 +583,7 @@ impl WsConn {
             let _ = self.write_frame(OP_CLOSE, &[], dl);
             self.closed = true;
         }
+        self.fragmented = None;
     }
 }
 
