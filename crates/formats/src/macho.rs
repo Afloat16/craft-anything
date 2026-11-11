@@ -7,6 +7,7 @@ use crate::bytes::Reader;
 use crate::{FormatError, hex_addr};
 use serde::Serialize;
 use serde_json::json;
+use std::collections::BTreeSet;
 
 const MAX_CMDS: usize = 4096;
 const MAX_INDIRECT: usize = 500_000;
@@ -526,13 +527,13 @@ fn method_list(data: &[u8], b: &Binary, list: u64, kind: &'static str, out: &mut
     let (Some(ent_flags), Some(count)) = (r.u32_le(0), r.u32_le(4)) else { return };
     let relative = ent_flags & 0x8000_0000 != 0;
     let entsize = u64::from(ent_flags & 0xfffc);
-    if entsize == 0 {
+    if entsize < if relative { 12 } else { 24 } {
         return;
     }
     for i in 0..u64::from(count).min(MAX_METHODS as u64) {
         let Some(e) = i.checked_mul(entsize).and_then(|offset| list.checked_add(8)?.checked_add(offset)) else { break };
+        let Some(raw) = b.read(data, e, entsize as usize).filter(|bytes| bytes.len() as u64 == entsize) else { break };
         if relative {
-            let Some(raw) = b.read(data, e, 12) else { break };
             let rr = Reader::new(raw);
             let rel = |o: usize| rr.u32_le(o).and_then(|v| e.checked_add(o as u64).map(|a| a.wrapping_add(i64::from(v as i32) as u64)));
             let name_field = rel(0);
@@ -571,7 +572,11 @@ pub fn objc_metadata(data: &[u8], b: &Binary) -> ObjcMetadata {
         m.warnings.push("Objective-C metadata is decoded for 64-bit images only".into());
         return m;
     }
+    let mut seen_classes = BTreeSet::new();
     for class in section_words(data, b, &["__objc_classlist", "__objc_nlclslist"]) {
+        if seen_classes.contains(&class) {
+            continue;
+        }
         if m.classes.len() >= MAX_OBJC {
             break;
         }
@@ -579,6 +584,7 @@ pub fn objc_metadata(data: &[u8], b: &Binary) -> ObjcMetadata {
             m.warnings.push(format!("class at {class:#x}: unreadable name"));
             continue;
         };
+        seen_classes.insert(class);
         let mut methods = Vec::new();
         if let Some(ro) = class_ro(data, b, class)
             && let Some(list) = ptr_at(data, b, ro + 0x20)
@@ -595,11 +601,16 @@ pub fn objc_metadata(data: &[u8], b: &Binary) -> ObjcMetadata {
         let swift = b.read_ptr(data, class + 32).is_some_and(|raw| raw & 3 != 0) || name.starts_with("_Tt");
         m.classes.push(ObjcClass { name, addr: class, superclass, category: None, methods, swift });
     }
+    let mut seen_categories = BTreeSet::new();
     for cat in section_words(data, b, &["__objc_catlist", "__objc_nlcatlist"]) {
+        if seen_categories.contains(&cat) {
+            continue;
+        }
         if m.classes.len() >= MAX_OBJC {
             break;
         }
         let Some(cat_name) = ptr_at(data, b, cat).and_then(|a| cstr_at(data, b, a)) else { continue };
+        seen_categories.insert(cat);
         let cls = ptr_at(data, b, cat + 8).and_then(|c| class_name(data, b, c)).unwrap_or_else(|| "(external class)".into());
         let mut methods = Vec::new();
         if let Some(list) = ptr_at(data, b, cat + 16) {

@@ -242,6 +242,22 @@ the program it opened stayed open (and held the shell's pipe, so the command nev
 the caller may exit next, use `kill_and_wait`, and check after a live run that nothing was left
 running.
 
+**A turn's own process outlived its answer.** `run_cli` only sent `AgentEvent::TurnDone` once the
+whole coding-agent subprocess exited, never once its JSON stream said the turn was done (the
+`result` line). Claude Code can print that line and then linger (its own shutdown hook, logging)
+for as long as the idle timeout allows — hours, for a builder turn — so a finished build stayed on
+"Building"/"Pausing" long after the real work and even a final report were done, with no crash and
+no error to find. Once the stream's own terminal event is parsed, stop waiting on the process
+itself: fold a `result_seen` flag into `cancel_when` with a short grace period (`RESULT_GRACE`),
+and don't report that as "Stopped." A terminal stream event, not the OS exit, is what ends a turn.
+
+**A deadline that ended in a wait with none.** Every `Process` run has a time limit and a cancel,
+but when either fired the supervisor called the library's `kill()`, which stops the program and
+then waits for it with no limit (on Windows also for a job message the system doesn't promise).
+A program that outlives its stop held the run, and Pause, for good (#1438, #981). A deadline covers
+its own cleanup too: after a stop, poll for a moment and move on (`process::end`), and when a
+library call says "kill", read whether it also waits. Not reproduced on the reporters' machines.
+
 **A console held open by a program started next door.** On Windows Server 2022 opening a
 pseudoconsole briefly makes inheritable handles (a Unix terminal too, until it's made close-on-exec),
 so a program another thread started at that moment kept the console open until it ended, and closing
@@ -370,6 +386,10 @@ window was redrawn at the display's rate the whole time (a core busy, or every c
 software), and a person reported "my CPU is fully used" (#579). Animations ask for their next frame
 at their own pace (`widgets::animate`, `widgets::Spinner`); check a library widget for
 `request_repaint` before using it for something long. Not measured on Windows here.
+It happened again with egui's `ProgressBar::animate(true)` in the jobs list, which the spinner fix
+didn't look at: replacing one widget isn't checking the others. Search the library's widgets for
+`request_repaint` (`grep -rn request_repaint ~/.cargo/registry/src/*/egui-*/src/widgets`), and the
+test that refuses egui's spinner on screens refuses its progress bar too.
 
 **Every tool offered to a model that can only use a few.** The builder on an API backend was sent
 all 33-41 Core and Build tools, about 23,000-30,000 characters of descriptions. A local 14B model
@@ -473,7 +493,23 @@ systems with `cargo check --target`, with zig as the C compiler for `ring` (a wr
 so #53 merged with a long line rustfmt rewraps. Run `cargo fmt --all --check` last, after every
 edit, right before committing.
 
+**Clippy passed on an older Rust.** #1480 ran clippy on Rust 1.97 (the workspace's
+`rust-version`), clean; CI's 1.99 has `clippy::chunks_exact_to_as_chunks` and stopped the PR on
+it. A clippy that predates a lint can't report it. Run fmt and clippy with CI's toolchain
+(`RUSTUP_TOOLCHAIN=1.99.0`), and if a tool says it isn't installed for a toolchain, install that
+toolchain's component rather than running another copy.
+
+**A process list read nothing on FreeBSD.** `ps -A -o pid=,ppid=` lists both columns on Linux,
+but POSIX makes everything after `=` the header, so FreeBSD's `ps` printed one `pid` column headed
+",ppid=" and every parent lookup came back empty. Give each column its own `-o` (`-o pid= -o ppid=`)
+when a header is renamed or blanked.
+
 ## Design
+
+**An unknown header bit hid readable code.** Rejecting undefined `.pyc` flag bits made the whole
+file unreadable, dropping its code, names and constants from reports. A reader collecting evidence
+must preserve fields and payload it can still understand: report the unknown bits as a warning,
+derive known modes from their defined bits, and test that the warning and recovered data coexist.
 
 **A round of checks that nothing could stop.** The builder's own checks ran one after another on
 the build's thread with no time limit, Pause was looked at only between tool calls, and the feed
@@ -871,6 +907,11 @@ for two minutes and the edit after it never ran. Make an edit with the editor to
 line. The same session typed it once more, with `</dev/null` added, and that hung too: the habit
 is the problem, not the input. Every Python step names a script file.
 
+**A shell script tried in bash, run by dash.** A watcher script written for `/bin/sh` used
+`kill -0 -- -<group>` and passed in Git Bash; on Ubuntu `/bin/sh` is dash, whose `kill` takes `--`
+as a process id, so the script quit at once and both of its tests failed in CI. Try a `/bin/sh`
+script with `dash` (or `checkbashisms`) as well as bash, and keep to what both accept.
+
 **A search that ran no search.** `timeout 40 find … 2>/dev/null` on a Mac: there's no `timeout` there,
 the error went to `/dev/null`, and the empty result read as "no such files on this computer". Don't
 hide a command's errors when an empty result means something; set the time limit on the tool call.
@@ -965,3 +1006,9 @@ different branches reused the same package output path and one saw the other bra
 Give every worktree its own `CARGO_TARGET_DIR`, even when one agent manages both. Cleaning
 the shared engine cache then removed 11.6 GiB of compiled artifacts: avoid shared-cache
 cleanup as a recovery shortcut; use an isolated target directory for further verification.
+
+**A partial archive listing counted as a complete install.** A GNU-name limit correctly stopped
+an archive parser, but the installer wrote earlier listed files and returned success. Preserve the
+partial inventory for inspection, expose the stop as typed data, and make extraction check it before
+writing any member. Missing end markers need their own compatibility control; `complete: false`
+alone does not identify a refused metadata record.

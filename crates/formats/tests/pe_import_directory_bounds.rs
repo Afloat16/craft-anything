@@ -35,17 +35,15 @@ fn bound(size: u32, refs: u16) -> (Vec<u8>, pe::PeHeaders) {
 }
 
 #[test]
-fn normal_imports_need_complete_descriptors_inside_the_directory() {
-    for size in [19, 20, 39] {
+fn short_declared_sizes_warn_without_hiding_normal_imports() {
+    for size in [0, 19, 20, 39] {
         let (data, headers) = normal(size);
         let table = pe::import_table(&data, &headers);
-        assert_eq!(table.rows.len(), usize::from(size >= 20));
-        assert!(table.truncated);
-        assert!(!table.warnings.is_empty());
-        if size >= 20 {
-            assert_eq!(table.rows[0].name.as_deref(), Some("puts"));
-            assert_eq!(table.rows[0].library, "msvcrt.dll");
-        }
+        assert_eq!(table.rows.len(), 1, "declared Size = {size}");
+        assert!(!table.truncated, "{:?}", table.warnings);
+        assert_eq!(table.warnings, ["the import descriptor table extends beyond its declared size"]);
+        assert_eq!(table.rows[0].name.as_deref(), Some("puts"));
+        assert_eq!(table.rows[0].library, "msvcrt.dll");
     }
 }
 
