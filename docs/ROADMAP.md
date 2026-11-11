@@ -1666,7 +1666,7 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-module-role-queue
 - [x] Resolve webpack module-loader calls by the wrapper parameter's binding, so nested parameters and local variables with the same name do not create dependency edges.
       — claimed: Afloat16, branch bugfix/r3.12-webpack-require-bindings
-- [ ] Match `**/` ignore patterns with one suffix pass per token, preserving path-component
+- [x] Match `**/` ignore patterns with one suffix pass per token, preserving path-component
       boundaries and ordered negation while avoiding repeated scans of long source paths.
       — claimed: Afloat16, branch bugfix/r3.12-ignore-globstar-work-20261111
 - [x] Keep sequence splitting from introducing JavaScript strict-mode directives.
