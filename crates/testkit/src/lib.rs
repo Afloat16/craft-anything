@@ -15,6 +15,7 @@ pub mod android;
 pub mod apple;
 pub mod crypto;
 pub mod electron;
+pub mod elf_core;
 pub mod firmware;
 pub mod flutter;
 pub mod formats;

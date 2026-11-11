@@ -836,6 +836,8 @@ const X64_REGS: [&str; 27] = [
     "fs_base", "gs_base", "ds", "es", "fs", "gs",
 ];
 const I386_REGS: [&str; 17] = ["ebx", "ecx", "edx", "esi", "edi", "ebp", "eax", "ds", "es", "fs", "gs", "orig_eax", "eip", "cs", "eflags", "esp", "ss"];
+// Linux ARM NT_PRSTATUS stores r0-r15, CPSR, then the original r0.
+const ARM_REGS: [&str; 18] = ["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12", "sp", "lr", "pc", "cpsr", "orig_r0"];
 const A64_REGS: [&str; 34] = [
     "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "x18", "x19", "x20", "x21", "x22",
     "x23", "x24", "x25", "x26", "x27", "x28", "x29", "x30", "sp", "pc", "pstate",
@@ -967,6 +969,7 @@ pub fn parse_core(data: &[u8]) -> Result<CoreDump, FormatError> {
                             (Arch::X86_64, true) => (32, 112, &X64_REGS),
                             (Arch::Aarch64, true) => (32, 112, &A64_REGS),
                             (Arch::X86, false) => (24, 72, &I386_REGS),
+                            (Arch::Arm, false) => (24, 72, &ARM_REGS),
                             (_, true) => (32, 112, &[]),
                             (_, false) => (24, 72, &[]),
                         };
