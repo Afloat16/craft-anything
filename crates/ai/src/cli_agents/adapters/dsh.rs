@@ -21,6 +21,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// own profile by hand, so the two never replace each other.
 const OVERLAY_ID: &str = "mcp-craft-anything-run";
 
+/// The run's server name: not `craft-anything`, which the person's own registration uses, as the
+/// harness refuses to start two clients with one name.
+const OVERLAY_SERVER: &str = "craft-anything-run";
+
 /// DeepSeek Harness run as a coding agent: one task in, its last message out.
 pub struct DeepSeekHarness;
 
@@ -147,7 +151,7 @@ fn overlay_yaml(mcp: &McpCommand) -> String {
            - id: {OVERLAY_ID}\n      \
              name: '@deepseek-ai/dsh-mcp-client'\n      \
              config:\n        \
-               serverName: craft-anything\n        \
+               serverName: {OVERLAY_SERVER}\n        \
                transport: stdio\n        \
                command: {}\n        \
                args:{args}\n        \
@@ -198,7 +202,7 @@ mod tests {
         let written = std::fs::read_to_string(&path).expect("read the overlay");
         assert!(written.contains("- insert:"), "{written}");
         assert!(written.contains(OVERLAY_ID), "{written}");
-        assert!(written.contains("serverName: craft-anything"), "{written}");
+        assert!(written.contains("serverName: craft-anything-run\n"), "the person's own registration keeps its name: {written}");
         // The server's own arguments, including the run's project, quoted for YAML.
         assert!(written.contains("- 'mcp'"), "{written}");
         assert!(written.contains(&format!("- '{}'", mcp.args[2])), "{written}");

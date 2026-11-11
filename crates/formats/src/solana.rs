@@ -270,16 +270,6 @@ struct RawSection {
     sh_entsize: u64,
 }
 
-impl RawSection {
-    /// Complete, file-backed records within this section, at its declared stride.
-    fn entries<'a>(&self, data: &'a [u8], min_size: usize) -> Option<std::slice::ChunksExact<'a, u8>> {
-        let stride = usize::try_from(self.sh_entsize).ok().filter(|&n| n >= min_size)?;
-        let tail = data.get(usize::try_from(self.sh_offset).ok()?..)?;
-        let size = usize::try_from(self.sh_size).unwrap_or(usize::MAX).min(tail.len());
-        Some(tail.get(..size)?.chunks_exact(stride))
-    }
-}
-
 /// Parse a Solana / classic-eBPF ELF. Returns the structure even when the machine type is not
 /// `EM_BPF` (with `is_sbpf == false`) so callers can give a clean "not an sBPF program" message.
 pub fn inspect(data: &[u8]) -> Result<SolanaProgram, FormatError> {
@@ -307,9 +297,12 @@ pub fn inspect(data: &[u8]) -> Result<SolanaProgram, FormatError> {
     let e_entry = r.u64_le(24).ok_or_else(|| FormatError::Truncated("e_entry".into()))?;
     let e_shoff = r.u64_le(40).ok_or_else(|| FormatError::Truncated("e_shoff".into()))?;
     let e_flags = r.u32_le(48).ok_or_else(|| FormatError::Truncated("e_flags".into()))?;
-    let e_shentsize = r.u16_le(58).unwrap_or(64);
+    let e_shstrndx = usize::from(r.u16_le(62).ok_or_else(|| FormatError::Truncated("ELF64 header".into()))?);
+    let shentsize = usize::from(r.u16_le(58).unwrap_or(0));
     let e_shnum = usize::from(r.u16_le(60).unwrap_or(0)).min(MAX_SECTIONS);
-    let e_shstrndx = usize::from(r.u16_le(62).unwrap_or(0));
+    if e_shnum > 0 && shentsize < 64 {
+        return Err(FormatError::Malformed("ELF64 section headers need at least 64 bytes".into()));
+    }
 
     let mut warnings = Vec::new();
     if e_machine != EM_BPF {
@@ -318,27 +311,32 @@ pub fn inspect(data: &[u8]) -> Result<SolanaProgram, FormatError> {
     let (sbpf_version, version_note) = sbpf_version_from_flags(e_flags);
 
     // Section headers.
-    let shentsize = usize::from(e_shentsize);
-    let table = usize::try_from(e_shoff).ok().and_then(|o| data.get(o..)).unwrap_or_default();
+    let shoff = usize::try_from(e_shoff).unwrap_or(usize::MAX);
     let mut raw_sections: Vec<RawSection> = Vec::new();
     // First pass: read the header fields; names come from the string table afterwards.
-    if e_shnum != 0 && shentsize < 64 {
-        return Err(FormatError::Malformed("short ELF64 section header stride".into()));
-    }
-    for header in table.chunks_exact(shentsize.max(1)).take(e_shnum) {
-        let r = Reader::new(header);
-        let (Some(name_idx), Some(sh_type), Some(sh_flags), Some(sh_addr), Some(sh_offset), Some(sh_size), Some(sh_link), Some(sh_entsize)) =
-            (r.u32_le(0), r.u32_le(4), r.u64_le(8), r.u64_le(16), r.u64_le(24), r.u64_le(32), r.u32_le(40), r.u64_le(56))
-        else {
+    for i in 0..e_shnum {
+        let Some(o) = i.checked_mul(shentsize).and_then(|x| x.checked_add(shoff)) else { break };
+        let Some(record) = r.slice(o, shentsize) else {
+            warnings.push("the ELF section header table is truncated".into());
+            break;
+        };
+        let header = Reader::new(record);
+        let (Some(name_idx), Some(sh_type), Some(sh_flags), Some(sh_addr), Some(sh_offset), Some(sh_size), Some(sh_link), Some(sh_entsize)) = (
+            header.u32_le(0),
+            header.u32_le(4),
+            header.u64_le(8),
+            header.u64_le(16),
+            header.u64_le(24),
+            header.u64_le(32),
+            header.u32_le(40),
+            header.u64_le(56),
+        ) else {
             break;
         };
         raw_sections.push(RawSection { name: String::new(), name_idx, sh_type, sh_flags, sh_addr, sh_offset, sh_size, sh_link, sh_entsize });
     }
-    if raw_sections.len() < e_shnum {
-        warnings.push("section header table extends past the file".into());
-    }
     // The section-name string table, then fill in each section's name.
-    let shstr = raw_sections.get(e_shstrndx).and_then(|s| str_table(data, s.sh_offset, s.sh_size));
+    let shstr = raw_sections.get(e_shstrndx).filter(|s| s.sh_type == 3).and_then(|s| str_table(data, s.sh_offset, s.sh_size));
     for s in &mut raw_sections {
         s.name = shstr.as_ref().and_then(|tab| read_str(tab, s.name_idx)).unwrap_or_default();
     }
@@ -371,14 +369,29 @@ pub fn inspect(data: &[u8]) -> Result<SolanaProgram, FormatError> {
             continue;
         }
         let dynamic = s.sh_type == 11;
-        let strtab = raw_sections.get(s.sh_link as usize).and_then(|st| str_table(data, st.sh_offset, st.sh_size));
-        let Some(entries) = s.entries(data, 24) else { continue };
-        for entry in entries.take(MAX_SYMBOLS) {
-            if symbols.len() == MAX_SYMBOLS {
+        let strtab = raw_sections.get(s.sh_link as usize).filter(|st| st.sh_type == 3).and_then(|st| str_table(data, st.sh_offset, st.sh_size));
+        let Ok(entsize) = usize::try_from(s.sh_entsize) else {
+            warnings.push("an ELF symbol entry size cannot be represented".into());
+            continue;
+        };
+        if entsize < 24 {
+            warnings.push("an ELF symbol entry size is too short".into());
+            continue;
+        }
+        if !s.sh_size.is_multiple_of(s.sh_entsize) {
+            warnings.push("the ELF symbol table ends with a partial record".into());
+        }
+        let count = usize::try_from(s.sh_size / s.sh_entsize).unwrap_or(usize::MAX);
+        let base = usize::try_from(s.sh_offset).unwrap_or(usize::MAX);
+        for i in 0..count.min(MAX_SYMBOLS) {
+            let Some(o) = i.checked_mul(entsize).and_then(|x| x.checked_add(base)) else { break };
+            let Some(record) = r.slice(o, entsize) else {
+                warnings.push("the ELF symbol table is truncated".into());
                 break;
-            }
-            let r = Reader::new(entry);
-            let (Some(st_name), Some(st_info), Some(st_shndx), Some(st_value), Some(st_size)) = (r.u32_le(0), r.u8(4), r.u16_le(6), r.u64_le(8), r.u64_le(16))
+            };
+            let record = Reader::new(record);
+            let (Some(st_name), Some(st_info), Some(st_shndx), Some(st_value), Some(st_size)) =
+                (record.u32_le(0), record.u8(4), record.u16_le(6), record.u64_le(8), record.u64_le(16))
             else {
                 break;
             };
@@ -394,6 +407,9 @@ pub fn inspect(data: &[u8]) -> Result<SolanaProgram, FormatError> {
                 _ => "notype",
             };
             symbols.push(SbpfSymbol { name, value: st_value, size: st_size, kind, global: (st_info >> 4) != 0, defined: st_shndx != 0, dynamic });
+            if symbols.len() >= MAX_SYMBOLS {
+                break;
+            }
         }
     }
 
@@ -406,28 +422,45 @@ pub fn inspect(data: &[u8]) -> Result<SolanaProgram, FormatError> {
             continue;
         }
         let symtab = raw_sections.get(s.sh_link as usize).filter(|st| matches!(st.sh_type, 2 | 11));
-        let strtab = symtab.and_then(|st| raw_sections.get(st.sh_link as usize)).and_then(|st| str_table(data, st.sh_offset, st.sh_size));
-        let sym_entries = symtab.and_then(|st| st.entries(data, 24));
-        let Some(entries) = s.entries(data, if is_rela { 24 } else { 16 }) else { continue };
-        for entry in entries.take(MAX_RELOCS.saturating_sub(relocations.len())) {
-            let r = Reader::new(entry);
-            let (Some(r_offset), Some(r_info)) = (r.u64_le(0), r.u64_le(8)) else { break };
-            let addend = if is_rela {
-                let Some(v) = r.u64_le(16) else { break };
-                v as i64
-            } else {
-                0
+        let strtab =
+            symtab.and_then(|st| raw_sections.get(st.sh_link as usize)).filter(|st| st.sh_type == 3).and_then(|st| str_table(data, st.sh_offset, st.sh_size));
+        let minimum = if is_rela { 24 } else { 16 };
+        let Ok(entsize) = usize::try_from(s.sh_entsize) else { continue };
+        if entsize < minimum {
+            warnings.push("an ELF relocation entry size is too short".into());
+            continue;
+        }
+        let count = usize::try_from(s.sh_size / s.sh_entsize).unwrap_or(usize::MAX);
+        let base = usize::try_from(s.sh_offset).unwrap_or(usize::MAX);
+        for i in 0..count.min(MAX_RELOCS) {
+            let Some(o) = i.checked_mul(entsize).and_then(|x| x.checked_add(base)) else { break };
+            let Some(record) = r.slice(o, minimum) else {
+                warnings.push("the ELF relocation table is truncated".into());
+                break;
             };
-            let sym_idx = (r_info >> 32) as usize;
+            let record = Reader::new(record);
+            let (Some(r_offset), Some(r_info)) = (record.u64_le(0), record.u64_le(8)) else { break };
+            let addend = if is_rela { record.u64_le(16).unwrap_or(0) as i64 } else { 0 };
+            let sym_idx = r_info >> 32;
             let type_id = (r_info & 0xffff_ffff) as u32;
-            let sym_name = sym_entries
-                .clone()
-                .and_then(|mut entries| entries.nth(sym_idx))
-                .and_then(|entry| Reader::new(entry).u32_le(0))
-                .and_then(|n| strtab.as_ref().and_then(|t| read_str(t, n)))
-                .unwrap_or_default();
+            // Resolve the referenced symbol name from the relocation's symbol table.
+            let sym_name = {
+                let so = symtab.and_then(|st| {
+                    if st.sh_entsize < 24 || sym_idx >= st.sh_size / st.sh_entsize {
+                        return None;
+                    }
+                    let offset = st.sh_offset.checked_add(sym_idx.checked_mul(st.sh_entsize)?)?;
+                    let offset = usize::try_from(offset).ok()?;
+                    r.slice(offset, 24)?;
+                    Some(offset)
+                });
+                so.and_then(|so| r.u32_le(so)).and_then(|n| strtab.as_ref().and_then(|t| read_str(t, n))).unwrap_or_default()
+            };
             let symbol_hash = (!sym_name.is_empty()).then(|| murmur3_32(sym_name.as_bytes(), 0));
             relocations.push(SbpfReloc { offset: r_offset, type_id, type_name: reloc_type_name(type_id), symbol: sym_name, addend, symbol_hash });
+            if relocations.len() >= MAX_RELOCS {
+                break;
+            }
         }
     }
 
@@ -547,6 +580,86 @@ fn read_str(table: &[u8], idx: u32) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// Preserve the relocation itself when either its symbol extent or its linked string table is invalid.
+    #[test]
+    fn relocations_do_not_borrow_symbol_names() {
+        let original = craft_anything_testkit::sbpf::program();
+        let table = u64::from_le_bytes(original[40..48].try_into().unwrap()) as usize;
+        let dynsym = table + 3 * 64;
+        let dynstr = table + 2 * 64;
+        for bad_link in [false, true] {
+            let mut elf = original.clone();
+            if bad_link {
+                elf[dynstr + 4..dynstr + 8].copy_from_slice(&1u32.to_le_bytes());
+            } else {
+                // Only the null symbol belongs to this table. Physical bytes for the
+                // next symbol are still present, as in an adjacent ELF section.
+                elf[dynsym + 32..dynsym + 40].copy_from_slice(&24u64.to_le_bytes());
+            }
+            let report = inspect(&elf).unwrap();
+            assert_eq!(report.relocations.len(), 1);
+            assert!(report.relocations[0].symbol.is_empty());
+            assert!(report.relocations[0].symbol_hash.is_none());
+        }
+    }
+
+    #[test]
+    fn sbpf_section_tables_need_complete_headers() {
+        let mut elf = craft_anything_testkit::sbpf::program();
+        assert!(inspect(&elf[..63]).is_err());
+        elf[58..60].copy_from_slice(&32u16.to_le_bytes());
+        assert!(inspect(&elf).is_err());
+        elf[58..60].copy_from_slice(&64u16.to_le_bytes());
+        elf[40..48].copy_from_slice(&u64::MAX.to_le_bytes());
+        let report = inspect(&elf).unwrap();
+        assert!(report.sections.is_empty());
+        assert!(report.warnings.iter().any(|s| s.contains("truncated")));
+    }
+
+    #[test]
+    fn sbpf_extended_section_header_requires_its_padding() {
+        let mut elf = craft_anything_testkit::sbpf::program();
+        elf.truncate(64);
+        elf[40..48].copy_from_slice(&64u64.to_le_bytes());
+        elf[58..60].copy_from_slice(&72u16.to_le_bytes());
+        elf[60..62].copy_from_slice(&1u16.to_le_bytes());
+        elf[62..64].copy_from_slice(&0u16.to_le_bytes());
+        elf.resize(136, 0);
+        assert_eq!(inspect(&elf).unwrap().sections.len(), 1);
+
+        let report = inspect(&elf[..128]).unwrap();
+        assert!(report.sections.is_empty());
+        assert!(report.warnings.iter().any(|warning| warning.contains("truncated")));
+    }
+
+    #[test]
+    fn relocations_require_complete_records_and_respect_the_stride() {
+        let mut elf = craft_anything_testkit::sbpf::program();
+        let table = u64::from_le_bytes(elf[40..48].try_into().unwrap()) as usize;
+        let sh = table + 4 * 64;
+        let original = u64::from_le_bytes(elf[sh + 24..sh + 32].try_into().unwrap()) as usize;
+        let record = elf[original..original + 24].to_vec();
+        let end = elf.len();
+        elf[sh + 24..sh + 32].copy_from_slice(&(end as u64).to_le_bytes());
+        elf.extend_from_slice(&record[..16]);
+        assert!(inspect(&elf).unwrap().relocations.is_empty());
+        elf.extend_from_slice(&record[16..]);
+        elf.extend([0xcc; 8]);
+        elf.extend_from_slice(&record);
+        elf.extend([0xcc; 8]);
+        elf[sh + 32..sh + 40].copy_from_slice(&64u64.to_le_bytes());
+        elf[sh + 56..sh + 64].copy_from_slice(&32u64.to_le_bytes());
+        let relocs = inspect(&elf).unwrap().relocations;
+        assert_eq!(relocs.len(), 2);
+        assert_eq!(relocs[0], relocs[1]);
+        assert_eq!(relocs[0].symbol, craft_anything_testkit::sbpf::SYSCALL);
+        let dynsym = table + 3 * 64;
+        elf[dynsym + 32..dynsym + 40].copy_from_slice(&24u64.to_le_bytes());
+        let relocs = inspect(&elf).unwrap().relocations;
+        assert_eq!(relocs.len(), 2);
+        assert!(relocs.iter().all(|reloc| reloc.symbol.is_empty() && reloc.symbol_hash.is_none()));
+    }
+
     #[test]
     fn murmur_matches_known_vectors() {
         // Standard MurmurHash3 x86_32 test vectors (seed 0).
@@ -610,101 +723,6 @@ mod tests {
         assert!(sc.known);
         assert_eq!(sc.hash, murmur3_32(b"sol_log_", 0));
         assert_eq!(sc.call_sites, vec![craft_anything_testkit::sbpf::TEXT_VADDR + 8]);
-    }
-
-    // The shared program fixture stores six ELF64 section headers after the section bodies.
-    fn fixture_header(elf: &[u8], section: usize) -> usize {
-        Reader::new(elf).u64_le(40).unwrap() as usize + section * 64
-    }
-
-    #[test]
-    fn section_headers_never_wrap_file_offsets() {
-        let mut elf = craft_anything_testkit::sbpf::program();
-        elf[40..48].copy_from_slice(&u64::MAX.to_le_bytes());
-        let p = inspect(&elf).unwrap();
-        assert!(p.sections.is_empty());
-        assert!(!p.warnings.is_empty());
-
-        let mut elf = craft_anything_testkit::sbpf::program();
-        elf[58..60].copy_from_slice(&32u16.to_le_bytes());
-        assert!(inspect(&elf).is_err());
-    }
-
-    #[test]
-    fn short_symbol_strides_do_not_invent_symbols() {
-        let mut elf = craft_anything_testkit::sbpf::program();
-        let sh = fixture_header(&elf, 3); // .dynsym
-        for stride in [0u64, 1, 8, 23, u64::MAX] {
-            elf[sh + 56..sh + 64].copy_from_slice(&stride.to_le_bytes());
-            let p = inspect(&elf).unwrap();
-            assert!(p.symbols.is_empty());
-            assert_eq!(p.relocations.len(), 1);
-            assert!(p.relocations[0].symbol.is_empty());
-            assert!(p.syscalls.is_empty());
-        }
-    }
-
-    #[test]
-    fn relocations_cannot_resolve_names_past_the_symbol_table() {
-        let mut elf = craft_anything_testkit::sbpf::program();
-        let sh = fixture_header(&elf, 3); // keep only the null symbol
-        elf[sh + 32..sh + 40].copy_from_slice(&24u64.to_le_bytes());
-        let p = inspect(&elf).unwrap();
-        assert_eq!(p.relocations.len(), 1);
-        assert_eq!(p.relocations[0].symbol_hash, None);
-        assert!(p.relocations[0].symbol.is_empty());
-        assert!(p.syscalls.is_empty());
-    }
-
-    #[test]
-    fn rela_needs_the_complete_addend_but_rel_does_not() {
-        let mut elf = craft_anything_testkit::sbpf::program();
-        let sh = fixture_header(&elf, 4);
-        let off = elf.len();
-        elf[sh + 24..sh + 32].copy_from_slice(&(off as u64).to_le_bytes());
-        elf.extend_from_slice(&8u64.to_le_bytes());
-        elf.extend_from_slice(&((1u64 << 32) | 10).to_le_bytes());
-        assert!(inspect(&elf).unwrap().relocations.is_empty());
-
-        elf.extend_from_slice(&(-7i64).to_le_bytes());
-        assert_eq!(inspect(&elf).unwrap().relocations[0].addend, -7);
-        elf.truncate(off + 16);
-        elf[sh + 4..sh + 8].copy_from_slice(&9u32.to_le_bytes()); // SHT_REL
-        elf[sh + 32..sh + 40].copy_from_slice(&16u64.to_le_bytes());
-        elf[sh + 56..sh + 64].copy_from_slice(&16u64.to_le_bytes());
-        let p = inspect(&elf).unwrap();
-        assert_eq!(p.relocations[0].symbol, "sol_log_");
-        assert_eq!(p.relocations[0].addend, 0);
-    }
-
-    #[test]
-    fn padded_relocation_rows_advance_to_the_next_declared_record() {
-        let mut elf = craft_anything_testkit::sbpf::program();
-        let sh = fixture_header(&elf, 4);
-        let off = elf.len();
-        elf[sh + 24..sh + 32].copy_from_slice(&(off as u64).to_le_bytes());
-        elf[sh + 32..sh + 40].copy_from_slice(&64u64.to_le_bytes());
-        elf[sh + 56..sh + 64].copy_from_slice(&32u64.to_le_bytes());
-        for address in [24u64, 88] {
-            elf.extend_from_slice(&address.to_le_bytes());
-            elf.extend_from_slice(&((1u64 << 32) | 10).to_le_bytes());
-            elf.extend_from_slice(&(-3i64).to_le_bytes());
-            elf.extend_from_slice(&[0xff; 8]);
-        }
-        let p = inspect(&elf).unwrap();
-        let rows: Vec<_> = p.relocations.iter().map(|r| (r.offset, r.symbol.as_str(), r.addend)).collect();
-        assert_eq!(rows, [(24, "sol_log_", -3), (88, "sol_log_", -3)]);
-    }
-
-    #[test]
-    fn names_must_terminate_inside_the_string_table() {
-        let mut elf = craft_anything_testkit::sbpf::program();
-        let sh = fixture_header(&elf, 2); // .dynstr ends just before sol_log_'s terminator
-        elf[sh + 32..sh + 40].copy_from_slice(&9u64.to_le_bytes());
-        let p = inspect(&elf).unwrap();
-        assert!(p.syscalls.is_empty());
-        assert!(p.relocations[0].symbol.is_empty());
-        assert!(p.symbols.iter().all(|s| s.name.is_empty()));
     }
 
     #[test]
