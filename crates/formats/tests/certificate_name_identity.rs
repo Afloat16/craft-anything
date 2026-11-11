@@ -30,3 +30,14 @@ fn malformed_text_keeps_its_encoded_identity() {
     assert_eq!(render(&[attribute(3, 0x0c, "🚀".as_bytes())]), "CN=🚀");
     assert_eq!(render(&[attribute(3, 0x1e, &[0, 65])]), "CN=A");
 }
+
+#[test]
+fn legacy_name_strings_keep_readable_text_without_lossy_substitution() {
+    assert_eq!(render(&[attribute(3, 0x14, b"Ren\xe9")]), "CN=René");
+    assert_eq!(render(&[attribute(3, 0x14, b"A,B+\xf8")]), r"CN=A\,B\+ø");
+    assert_eq!(render(&[attribute(3, 0x1a, b"Visible Name")]), "CN=Visible Name");
+    assert_eq!(render(&[attribute(5, 0x12, b"123 456")]), "serialNumber=123 456");
+    assert_eq!(render(&[attribute(3, 0x1a, &[0xff])]), "CN=#1a01ff");
+    assert_eq!(render(&[attribute(5, 0x12, &[0xff])]), "serialNumber=#1201ff");
+    assert_eq!(render(&[attribute(3, 0x15, b"A")]), "CN=#150141");
+}

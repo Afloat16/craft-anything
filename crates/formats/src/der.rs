@@ -191,7 +191,8 @@ fn decoded_name_value(data: &[u8], value: &Tlv) -> String {
     let bytes = value.bytes(data).unwrap_or_default();
     let decoded: Option<String> = match value.tag {
         0x0c => std::str::from_utf8(bytes).ok().map(str::to_owned),
-        0x13 | 0x16 if bytes.is_ascii() => std::str::from_utf8(bytes).ok().map(str::to_owned),
+        0x12 | 0x13 | 0x16 | 0x1a if bytes.is_ascii() => std::str::from_utf8(bytes).ok().map(str::to_owned),
+        0x14 => Some(bytes.iter().copied().map(char::from).collect()),
         0x1e if bytes.len().is_multiple_of(2) => bytes.as_chunks::<2>().0.iter().map(|unit| char::from_u32(u32::from(u16::from_be_bytes(*unit)))).collect(),
         0x1c if bytes.len().is_multiple_of(4) => bytes.as_chunks::<4>().0.iter().map(|unit| char::from_u32(u32::from_be_bytes(*unit))).collect(),
         _ => None,

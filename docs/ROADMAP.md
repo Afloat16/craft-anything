@@ -1750,7 +1750,7 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-der-verification-fields
 - [x] Reject certificates whose signed signature-algorithm OID conflicts with the outer algorithm before reporting a verified signature.
       — claimed: Afloat16, branch bugfix/r3.12-certificate-signature-oids-20261110
-- [x] Decode complete BMPString and UniversalString name values and retain malformed or unsupported attribute values as hexadecimal DER instead of lossy text.
+- [x] Decode complete BMPString and UniversalString values, legacy TeletexString as Latin-1 and the supported ASCII name strings; retain malformed or unknown values as hexadecimal DER instead of lossy text.
       — claimed: Afloat16, branch bugfix/r3.12-certificate-name-identity
 - [x] Distinguish literal punctuation and multi-valued attributes in the displayed X.509 issuer and subject.
       — claimed: Afloat16, branch bugfix/r3.12-certificate-name-rendering
