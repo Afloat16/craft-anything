@@ -9,10 +9,7 @@ fn graph(sources: &[(&str, &str)]) -> AppGraph {
 
 #[test]
 fn escaped_template_requires_resolve_to_the_actual_source_module() {
-    let graph = graph(&[
-        ("main.js", r#"const helper = require(`./mod\u0075le.js`); helper();"#),
-        ("module.js", "module.exports = () => 1;"),
-    ]);
+    let graph = graph(&[("main.js", r#"const helper = require(`./mod\u0075le.js`); helper();"#), ("module.js", "module.exports = () => 1;")]);
     let imports = &graph.module("main.js").unwrap().imports;
     assert_eq!(imports.len(), 1);
     assert_eq!(imports[0].specifier, "./module.js");
@@ -24,7 +21,10 @@ fn escaped_template_requires_resolve_to_the_actual_source_module() {
 fn escaped_channels_pair_with_strings_and_keep_the_exposed_bridge_name() {
     let graph = graph(&[
         ("main.js", r#"const {ipcMain} = require("electron"); ipcMain.handle(`a\u0070p:load`, () => {});"#),
-        ("preload.js", r#"const {contextBridge, ipcRenderer} = require("electron"); contextBridge.exposeInMainWorld(`a\x70i`, {load: () => ipcRenderer.invoke("app:load")});"#),
+        (
+            "preload.js",
+            r#"const {contextBridge, ipcRenderer} = require("electron"); contextBridge.exposeInMainWorld(`a\x70i`, {load: () => ipcRenderer.invoke("app:load")});"#,
+        ),
     ]);
     assert_eq!(graph.ipc.len(), 1);
     let channel = &graph.ipc[0];
@@ -38,10 +38,7 @@ fn escaped_channels_pair_with_strings_and_keep_the_exposed_bridge_name() {
 
 #[test]
 fn ordinary_channel_pairs_and_imports_are_unchanged() {
-    let graph = graph(&[
-        ("main.js", r#"require("./module.js"); ipcMain.handle("app:load", () => {});"#),
-        ("module.js", r#"ipcRenderer.invoke("app:load");"#),
-    ]);
+    let graph = graph(&[("main.js", r#"require("./module.js"); ipcMain.handle("app:load", () => {});"#), ("module.js", r#"ipcRenderer.invoke("app:load");"#)]);
     assert_eq!(graph.module("main.js").unwrap().imports[0].resolved.as_deref(), Some("module.js"));
     assert_eq!(graph.ipc.len(), 1);
     assert!(graph.ipc[0].paired);

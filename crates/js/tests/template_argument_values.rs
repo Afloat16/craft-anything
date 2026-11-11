@@ -41,9 +41,7 @@ fn literal_ipc_templates_share_the_same_channel_as_strings() {
 
 #[test]
 fn exposed_template_keys_are_runtime_global_names() {
-    let facts = facts(
-        r#"contextBridge.exposeInMainWorld(`a\x70i`, {}); contextBridge.exposeInIsolatedWorld(7, `iso\u006cated`, {});"#,
-    );
+    let facts = facts(r#"contextBridge.exposeInMainWorld(`a\x70i`, {}); contextBridge.exposeInIsolatedWorld(7, `iso\u006cated`, {});"#);
     let keys: Vec<_> = facts.exposed.iter().map(|item| item.key.as_deref()).collect();
     assert_eq!(keys, [Some("api"), Some("isolated")]);
 }
