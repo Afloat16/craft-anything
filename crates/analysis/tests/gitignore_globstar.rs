@@ -16,10 +16,7 @@ fn globstar_slash_matches_zero_or_more_complete_directories() {
 
 #[test]
 fn suffix_reuse_does_not_start_a_match_inside_a_path_component() {
-    check(
-        "**/file.js",
-        &[("prefixfile.js", false), ("src/prefixfile.js", false), ("file.jsx", false), ("src/file.js/extra", false), ("file.js", true)],
-    );
+    check("**/file.js", &[("prefixfile.js", false), ("src/prefixfile.js", false), ("file.jsx", false), ("src/file.js/extra", false), ("file.js", true)]);
     check("**/src/file.js", &[("prefixsrc/file.js", false), ("other/src/file.js", true), ("src/file.js", true)]);
 }
 
