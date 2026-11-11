@@ -62,12 +62,12 @@ fn authenticated_calls_write_only_the_link_register() {
 }
 
 #[test]
-fn authenticated_returns_read_the_link_and_stack_registers() {
+fn authenticated_returns_read_the_link_stack_and_possible_second_modifier() {
     for word in [0xd65f_0bff, 0xd65f_0fff] {
         let i = instruction(word);
         assert_eq!(i.flow, Flow::Return);
         assert_eq!(i.kind, Kind::Ret);
-        reads_and_writes(&i, &["x30", "sp"], &[]);
+        reads_and_writes(&i, &["x30", "sp", "x16"], &[]);
     }
 }
 
@@ -91,6 +91,28 @@ fn return_targets_retain_their_reaching_definition() {
     let ret = flow.nodes.iter().find(|node| node.addr == Some(0x1004)).unwrap();
     assert!(!ret.defines.iter().any(|r| r == "x19"));
     assert!(flow.edges.iter().any(|edge| edge.from == value.id && edge.to == ret.id && edge.register == "x19"));
+}
+
+#[test]
+fn authenticated_returns_retain_the_possible_second_modifier_definition() {
+    for word in [0xd65f_0bff, 0xd65f_0fff] {
+        let flow = graph(&[0xaa00_03f0, word]); // mov x16, x0; retaa/retab
+        let value = flow.nodes.iter().find(|node| node.addr == Some(0x1000)).unwrap();
+        let ret = flow.nodes.iter().find(|node| node.addr == Some(0x1004)).unwrap();
+        assert!(!ret.defines.iter().any(|r| r == "x16"));
+        assert!(flow.edges.iter().any(|edge| edge.from == value.id && edge.to == ret.id && edge.register == "x16"));
+    }
+}
+
+#[test]
+fn ordinary_returns_only_read_x16_when_it_is_the_selected_target() {
+    for (word, reads_x16) in [(0xd65f_03c0, false), (0xd65f_0260, false), (0xd65f_0000, false), (0xd65f_0200, true)] {
+        let flow = graph(&[0xaa00_03f0, word]); // mov x16, x0; ret x30/x19/x0/x16
+        let value = flow.nodes.iter().find(|node| node.addr == Some(0x1000)).unwrap();
+        let ret = flow.nodes.iter().find(|node| node.addr == Some(0x1004)).unwrap();
+        assert!(!ret.defines.iter().any(|r| r == "x16"));
+        assert_eq!(flow.edges.iter().any(|edge| edge.from == value.id && edge.to == ret.id && edge.register == "x16"), reads_x16);
+    }
 }
 
 #[test]

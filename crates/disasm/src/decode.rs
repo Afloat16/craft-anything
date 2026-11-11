@@ -843,6 +843,9 @@ fn decode_a64(bytes: &[u8], addr: u64, fmt: bool) -> Option<Insn> {
     if matches!(inst.opcode, Opcode::RETAA | Opcode::RETAB) {
         push_unique(&mut reads, "x30".into());
         push_unique(&mut reads, "sp".into());
+        // FEAT_PAuth_LR with PSTATE.PACM=1 uses x16 as an additional modifier.
+        // Features and PSTATE are unknown here, so retain a conservative may-read.
+        push_unique(&mut reads, "x16".into());
     }
     if matches!(flow, Flow::Call { .. } | Flow::IndirectCall { .. }) {
         push_unique(&mut writes, "x30".into());
