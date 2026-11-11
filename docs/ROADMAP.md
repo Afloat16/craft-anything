@@ -1589,6 +1589,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-node-sea-module-format-20261110
 - [x] Resolve webpack module-loader calls by the wrapper parameter's binding, so nested parameters and local variables with the same name do not create dependency edges.
       — claimed: Afloat16, branch bugfix/r3.12-webpack-require-bindings
+- [ ] Keep worker, service-worker and utility-process entry modules in their own execution role instead of inheriting the parent role through spawn edges.
+      — claimed: Afloat16, branch bugfix/r3.12-worker-role-boundaries
 - [x] Keep sequence splitting from introducing JavaScript strict-mode directives.
       — claimed: Plastic-time, branch rrfz/bugfix-r3.12-js-sequence-directives
 - [x] Allocate distinct recovered module paths after repeated content-hash collisions.
