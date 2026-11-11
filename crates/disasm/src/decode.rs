@@ -759,9 +759,19 @@ fn decode_a64(bytes: &[u8], addr: u64, fmt: bool) -> Option<Insn> {
         Opcode::LDAXR | Opcode::LDAXRB | Opcode::LDAXRH => Kind::Load,
         Opcode::LDP | Opcode::LDPSW | Opcode::LDXP | Opcode::LDAXP => Kind::LoadPair,
         Opcode::STP => Kind::StorePair,
-        Opcode::B | Opcode::Bcc(_) | Opcode::CBZ | Opcode::CBNZ | Opcode::TBZ | Opcode::TBNZ | Opcode::BR => Kind::Branch,
-        Opcode::BL | Opcode::BLR => Kind::Call,
-        Opcode::RET => Kind::Ret,
+        Opcode::B
+        | Opcode::Bcc(_)
+        | Opcode::CBZ
+        | Opcode::CBNZ
+        | Opcode::TBZ
+        | Opcode::TBNZ
+        | Opcode::BR
+        | Opcode::BRAA
+        | Opcode::BRAAZ
+        | Opcode::BRAB
+        | Opcode::BRABZ => Kind::Branch,
+        Opcode::BL | Opcode::BLR | Opcode::BLRAA | Opcode::BLRAAZ | Opcode::BLRAB | Opcode::BLRABZ => Kind::Call,
+        Opcode::RET | Opcode::RETAA | Opcode::RETAB => Kind::Ret,
         Opcode::HINT => Kind::Nop,
         _ => {
             if op_name.starts_with("LDR") || op_name.starts_with("LDUR") || op_name.starts_with("LDAR") || op_name.starts_with("LDX") {
@@ -779,7 +789,7 @@ fn decode_a64(bytes: &[u8], addr: u64, fmt: bool) -> Option<Insn> {
     {
         refs.push(t);
     }
-    // Ordinary stores and branches read their register operands. Exclusive stores return a
+    // Ordinary stores and control transfers read their register operands. Exclusive stores return a
     // status, pair loads write both results, and other instructions write their first register.
     match kind {
         Kind::Store
@@ -799,7 +809,7 @@ fn decode_a64(bytes: &[u8], addr: u64, fmt: bool) -> Option<Insn> {
                 push_unique(&mut reads, value);
             }
         }
-        Kind::Store | Kind::StorePair | Kind::Branch | Kind::Call => {
+        Kind::Store | Kind::StorePair | Kind::Branch | Kind::Call | Kind::Ret => {
             for r in regs_in_order {
                 push_unique(&mut reads, r);
             }
@@ -828,8 +838,11 @@ fn decode_a64(bytes: &[u8], addr: u64, fmt: bool) -> Option<Insn> {
             }
         }
     }
-    if matches!(flow, Flow::Return) {
+    // Authenticated returns have implicit link and stack inputs. Ordinary RET
+    // already names its selected register, which need not be x30.
+    if matches!(inst.opcode, Opcode::RETAA | Opcode::RETAB) {
         push_unique(&mut reads, "x30".into());
+        push_unique(&mut reads, "sp".into());
     }
     if matches!(flow, Flow::Call { .. } | Flow::IndirectCall { .. }) {
         push_unique(&mut writes, "x30".into());
