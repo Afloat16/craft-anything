@@ -2058,6 +2058,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-xml-plist-document
 - [x] End JavaScript line comments at every language line terminator, preserving following tokens for the nesting admission guard and lexer fallback.
       — claimed: Afloat16, branch bugfix/r3.12-js-line-comment-boundaries
+- [ ] Bound lexer-fallback endpoint and exposed-bridge facts by the existing list budget, reporting omitted rows without stopping other facts.
+      — claimed: Afloat16, branch bugfix/r3.12-js-fallback-fact-budgets-20261111
 - [x] Read and edit JSONC registrations whose line comments end at a bare carriage return.
       — claimed: Afloat16, branch bugfix/r3.12-jsonc-carriage-return-comments
 - [x] Name code-directory flags with the bits Apple uses: hard 0x100, kill 0x200, expires 0x400,
