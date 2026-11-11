@@ -6,6 +6,7 @@
 use super::artifact_tools::{WalkOptions, abs_path, env, inventory_path, is_path_input, recorded_inventory, resolve_evidence_input, walk_dir};
 use super::js_tools::load_graph;
 use crate::tool::{Ctx, Effects, Requires, ToolOutput, ToolSpec, Toolset, parse_params, schema_of};
+use craft_anything_analysis::js_app::AppGraph;
 use craft_anything_analysis::js_inventory::{InvLimits, Inventory};
 use craft_anything_analysis::js_ledger::{Binding, Review, build_ledger, evaluate_coverage};
 use craft_anything_analysis::js_source::{SourceGraph, build_source_graph, diff_source_and_bundle};
@@ -319,11 +320,21 @@ pub struct PairParams {
     pub right: Value,
 }
 
+fn check_fingerprint_versions(left: &AppGraph, right: &AppGraph) -> Result<(), ToolError> {
+    let current = craft_anything_js::FINGERPRINT_VERSION;
+    if left.fingerprint_version != current || right.fingerprint_version != current {
+        return Err(ToolError::invalid("These application maps use an unsupported fingerprint encoding.")
+            .with_remediation("Run js_app_map again on both original inputs, then compare the new evidence records or pass both input paths."));
+    }
+    Ok(())
+}
+
 fn app_graphs_compare(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolError> {
     let p: PairParams = parse_params(params)?;
     let (l, lid) = load_graph(ctx, &p.left)?;
     ctx.cancel.check()?;
     let (r, rid) = load_graph(ctx, &p.right)?;
+    check_fingerprint_versions(&l, &r)?;
     let d = js_compare::compare_versions(&l, &r);
     let summary = format!(
         "{} {} → {}: {} module(s) changed, {} added, {} removed; IPC channels +{} −{}; endpoints +{} −{}.",
@@ -358,6 +369,7 @@ fn js_exports_compare(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, To
     let p: PairParams = parse_params(params)?;
     let (l, lid) = load_graph(ctx, &p.left)?;
     let (r, rid) = load_graph(ctx, &p.right)?;
+    check_fingerprint_versions(&l, &r)?;
     let d = js_compare::compare_export_outlines(&l, &r);
     let summary = format!("{} module(s) compared; {} changed their exports.", d["modules"].as_array().map_or(0, Vec::len), d["changed"]);
     let b = EvidenceBuilder::new(
@@ -888,4 +900,76 @@ mod tests {
         let h = call(&e, "harmony_app_graph_build", json!({"path": apk})).unwrap();
         assert_eq!(h["confidence"], "inferred");
     }
+    fn graph_with_fingerprint_version(value: &Value, version: Option<u32>) -> Value {
+        let mut evidence: craft_anything_evidence::Evidence = serde_json::from_value(value.clone()).unwrap();
+        let result = evidence.result.as_object_mut().unwrap();
+        match version {
+            Some(version) => {
+                result.insert("fingerprint_version".into(), json!(version));
+            }
+            None => {
+                result.remove("fingerprint_version");
+            }
+        }
+        evidence.id = evidence.compute_id().unwrap();
+        assert!(evidence.verify(), "the compatibility fixture must be valid evidence");
+        serde_json::to_value(evidence).unwrap()
+    }
+
+    #[test]
+    fn comparison_tools_refuse_legacy_and_future_fingerprints() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fx::write_notes_app(dir.path()).unwrap();
+        let engine = Engine::new(crate::testing::session());
+        let current = call(&engine, "js_app_map", json!({"input_path": root})).unwrap();
+        assert_eq!(current["result"]["fingerprint_version"], craft_anything_js::FINGERPRINT_VERSION);
+        let legacy = graph_with_fingerprint_version(&current, None);
+        let future = graph_with_fingerprint_version(&current, Some(craft_anything_js::FINGERPRINT_VERSION + 1));
+        for tool in ["app_graphs_compare", "js_exports_compare"] {
+            for (left, right) in [
+                (&legacy, &current),
+                (&current, &legacy),
+                (&legacy, &legacy),
+                (&future, &current),
+                (&current, &future),
+                (&future, &future),
+            ] {
+                let error = call(&engine, tool, json!({"left": left, "right": right})).unwrap_err();
+                assert_eq!(error.code, craft_anything_evidence::ErrorCode::BadInput, "{tool}: {error}");
+                assert!(error.message.contains("fingerprint encoding"), "{tool}: {error}");
+                assert!(error.remediation.as_deref().unwrap().contains("both original inputs"), "{tool}: {error}");
+            }
+        }
+    }
+
+    #[test]
+    fn current_fingerprints_compare_from_retained_evidence_and_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fx::write_notes_app(dir.path()).unwrap();
+        let engine = Engine::new(crate::testing::session());
+        let current = call(&engine, "js_app_map", json!({"input_path": root})).unwrap();
+        let compared = call(&engine, "app_graphs_compare", json!({"left": retained(&current), "right": root})).unwrap();
+        assert!(compared["result"]["modules"]["unchanged"].as_u64().unwrap() > 0);
+        assert!(compared["result"]["modules"]["changed"].as_array().unwrap().is_empty());
+        let exports = call(&engine, "js_exports_compare", json!({"left": retained(&current), "right": root})).unwrap();
+        assert_eq!(exports["result"]["changed"], 0);
+    }
+
+    #[test]
+    fn legacy_fingerprints_do_not_block_unrelated_graph_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fx::write_notes_app(dir.path()).unwrap();
+        let engine = Engine::new(crate::testing::session());
+        let current = call(&engine, "js_app_map", json!({"input_path": root})).unwrap();
+        let legacy = graph_with_fingerprint_version(&current, None);
+        let explained = call(
+            &engine,
+            "js_function_explain",
+            json!({"application": legacy, "seed": {"kind": "function", "value": "toCsv", "match": "exact"}}),
+        )
+        .unwrap();
+        assert!(!explained["result"]["functions"].as_array().unwrap().is_empty());
+        assert!(explained["summary"].as_str().unwrap().starts_with("toCsv (main.js:"), "{explained}");
+    }
+
 }

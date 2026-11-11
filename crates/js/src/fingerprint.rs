@@ -1,5 +1,5 @@
-//! Name-insensitive structural fingerprints: the sequence of syntax node kinds plus literal
-//! values, ignoring identifier names. Two builds that only renamed variables fingerprint the same.
+//! Name-insensitive structural fingerprints: delimited syntax nodes and literal values,
+//! ignoring identifier names. Two builds that only renamed variables fingerprint the same.
 
 use oxc_ast::AstKind;
 use oxc_ast_visit::Visit;
@@ -30,10 +30,7 @@ impl<'a> Visit<'a> for Fingerprint {
         self.nodes += 1;
         self.hasher.update(format!("{:?};", kind.ty()).as_bytes());
         match kind {
-            AstKind::StringLiteral(s) => {
-                self.hasher.update(s.value.as_bytes());
-                self.hasher.update([0]);
-            }
+            AstKind::StringLiteral(s) => self.literal_bytes(s.value.as_bytes()),
             AstKind::BigIntLiteral(n) => self.literal_bytes(n.value.as_bytes()),
             AstKind::RegExpLiteral(r) => {
                 self.literal_bytes(r.regex.pattern.text.as_bytes());
@@ -52,5 +49,10 @@ impl<'a> Visit<'a> for Fingerprint {
             }
             _ => {}
         }
+    }
+
+    fn leave_node(&mut self, _kind: AstKind<'a>) {
+        // Close each node so sibling lists cannot hash like nested children.
+        self.hasher.update([0xff]);
     }
 }

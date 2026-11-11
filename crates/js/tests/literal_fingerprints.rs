@@ -62,3 +62,14 @@ fn existing_literal_and_operator_behavior_is_preserved() {
     different("globalThis.result = 'left';", "globalThis.result = 'right';");
     different("globalThis.result = 1 + 2;", "globalThis.result = 1 - 2;");
 }
+
+#[test]
+fn string_payloads_cannot_consume_later_node_boundaries() {
+    different(r#"globalThis.result = ["a", "b"];"#, r#"globalThis.result = ["a\0StringLiteral;b"];"#);
+    assert_eq!(fingerprint(r#"globalThis.result = ["a\0b"];"#), fingerprint(r#"globalThis.result = ["a\u0000b"];"#));
+}
+
+#[test]
+fn syntax_tree_boundaries_distinguish_siblings_from_nested_children() {
+    different("globalThis.result = [[], []];", "globalThis.result = [[[]]];");
+}

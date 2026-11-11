@@ -12,10 +12,12 @@ fn bundle(source: &str) -> String {
     format!("(self.webpackChunkdemo=self.webpackChunkdemo||[]).push([[1],{{7:function(module,exports,require){{{source}}}}}]);")
 }
 
-const CHANGED: [(&str, &str); 3] = [
+const CHANGED: [(&str, &str); 5] = [
     ("globalThis.result = 1n;", "globalThis.result = 2n;"),
     ("globalThis.result = /a/;", "globalThis.result = /b/;"),
     ("globalThis.result = `left`;", "globalThis.result = `right`;"),
+    (r#"globalThis.result = ["a", "b"];"#, r#"globalThis.result = ["a\0StringLiteral;b"];"#),
+    ("globalThis.result = [[], []];", "globalThis.result = [[[]]];"),
 ];
 
 #[test]
@@ -58,4 +60,26 @@ fn equivalent_literals_still_match_by_structure_across_files_and_bundles() {
         assert_eq!(result["bundle_modules"]["matched_by"]["structure"], 1, "{result}");
         assert!(result["bundle_modules"]["changed"].as_array().unwrap().is_empty());
     }
+}
+
+#[test]
+fn fresh_graphs_record_the_current_fingerprint_encoding() {
+    let current = graph("module.js", "globalThis.result = [[], []];");
+    assert_eq!(current.fingerprint_version, craft_anything_js::FINGERPRINT_VERSION);
+    let serialized = serde_json::to_value(&current).unwrap();
+    assert_eq!(serialized["fingerprint_version"], craft_anything_js::FINGERPRINT_VERSION);
+    let restored: AppGraph = serde_json::from_value(serialized).unwrap();
+    assert_eq!(restored, current);
+}
+
+#[test]
+fn missing_fingerprint_versions_are_legacy_without_losing_graph_data() {
+    let current = graph("module.js", "globalThis.result = [[], []];");
+    let mut serialized = serde_json::to_value(&current).unwrap();
+    serialized.as_object_mut().unwrap().remove("fingerprint_version");
+    let legacy: AppGraph = serde_json::from_value(serialized).unwrap();
+    assert_eq!(legacy.fingerprint_version, 0);
+    assert_eq!(legacy.modules, current.modules);
+    assert_eq!(legacy.nodes, current.nodes);
+    assert_eq!(legacy.edges, current.edges);
 }

@@ -183,6 +183,8 @@ pub struct EntryPoints {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppGraph {
+    /// Structural-fingerprint encoding; zero identifies legacy graphs without a recorded version.
+    pub fingerprint_version: u32,
     /// `ag_` + sha256 of the canonical nodes and edges.
     pub graph_id: String,
     pub label: String,
@@ -363,7 +365,7 @@ struct Analysed {
 pub fn analyze_application(input: &AppInput, opts: &AppOptions, cancelled: &dyn Fn() -> bool) -> Result<AppGraph, Cancelled> {
     let file_set: BTreeSet<String> = input.files.iter().map(|f| f.path.clone()).chain(input.listing.iter().map(|(p, _)| p.clone())).collect();
     let resolver = Resolver { files: &file_set };
-    let mut g = AppGraph { label: input.label.clone(), input_format: input.format.clone(), ..Default::default() };
+    let mut g = AppGraph { fingerprint_version: js::FINGERPRINT_VERSION, label: input.label.clone(), input_format: input.format.clone(), ..Default::default() };
     for n in &input.notes {
         g.limitations.push(("input".into(), n.clone()));
     }

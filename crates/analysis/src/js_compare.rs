@@ -176,6 +176,7 @@ fn str_field<'a>(v: &'a [Value], key: &'a str) -> impl Iterator<Item = &'a str> 
 }
 
 /// The full version comparison.
+/// Callers loading retained graphs must require the current fingerprint version on both sides.
 pub fn compare_versions(l: &AppGraph, r: &AppGraph) -> Value {
     let pkg = |g: &AppGraph, k: &str| g.package.as_ref().and_then(|p| p.get(k)).cloned().unwrap_or(Value::Null);
     let channels = |g: &AppGraph| set(g.ipc.iter().map(|c| c.channel.as_str()));
@@ -289,6 +290,7 @@ pub fn compare_versions(l: &AppGraph, r: &AppGraph) -> Value {
 }
 
 /// Export outlines module by module (matched by path, then by structure).
+/// Callers loading retained graphs must require the current fingerprint version on both sides.
 pub fn compare_export_outlines(l: &AppGraph, r: &AppGraph) -> Value {
     let mut rows = Vec::new();
     let mut used = BTreeSet::new();
