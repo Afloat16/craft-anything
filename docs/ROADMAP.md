@@ -1845,7 +1845,7 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-contract-dispatch-evidence
 - [x] Require evidence of a rejecting payment branch before labelling EVM functions nonpayable; reading CALLVALUE alone accepts payments.
       — claimed: Afloat16, branch bugfix/r3.12-evm-payment-guards
-- [ ] Recognize EVM zero-selector dispatches using PUSH0 equality or ISZERO on the
+- [x] Recognize EVM zero-selector dispatches using PUSH0 equality or ISZERO on the
       extracted selector, so the public `0x00000000` function stays in the interface inventory.
       — claimed: Afloat16, branch bugfix/r3.12-evm-zero-selector-20261111
 - [x] Avoid rescanning every retained EVM selector for repeated dispatcher comparisons.

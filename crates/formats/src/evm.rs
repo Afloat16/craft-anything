@@ -174,7 +174,7 @@ pub struct EvmFunction {
     /// Offset of the comparison in the dispatcher.
     pub compare_offset: usize,
     pub dispatch: &'static str,
-    /// `eq-jumpi` (jump on match) or `eq-iszero-fallthrough` (body follows the check).
+    /// `eq-jumpi` or `iszero-jumpi` (jump on match), or `eq-iszero-fallthrough` (body follows the check).
     pub pattern: &'static str,
     /// `nonpayable`, `payable` or `unknown` (view/pure cannot be told from the dispatcher).
     pub mutability: &'static str,
@@ -250,6 +250,30 @@ fn imm_u64(code: &[u8], ins: &Ins) -> Option<u64> {
 
 fn is_push(op: u8) -> bool {
     (0x60..=0x7f).contains(&op)
+}
+
+/// A zero comparison is a selector test only when its operand is the extracted selector.
+/// Solc keeps it on top, duplicates it, or moves it below a return pointer and uses DUP2.
+fn zero_selector_test(code: &[u8], ins: &[Ins], load: usize) -> Option<usize> {
+    let offset = ins.get(load.checked_sub(1)?)?;
+    if !(offset.op == 0x5f || is_push(offset.op)) || imm_u64(code, offset) != Some(0) {
+        return None;
+    }
+    let shift = ins.get(load + 1)?;
+    if shift.op != 0x60 || imm(code, shift) != [0xe0] || ins.get(load + 2)?.op != 0x1c {
+        return None;
+    }
+    let mut k = load + 3;
+    match (ins.get(k)?.op, ins.get(k + 1).map(|i| i.op)) {
+        (0x80, _) => k += 1,
+        (0x90, Some(0x81)) => k += 2,
+        _ => {}
+    }
+    match ins.get(k)?.op {
+        0x15 => Some(k),
+        0x5f if ins.get(k + 1)?.op == 0x14 => Some(k),
+        _ => None,
+    }
 }
 
 /// Strip and decode a trailing CBOR metadata block.
@@ -473,13 +497,15 @@ pub fn analyze(code: &[u8]) -> Result<EvmInterface, FormatError> {
     let mut last_jumpi: Option<usize> = None;
     let mut solc_like = 0usize;
     let mut vyper_like = 0usize;
+    let zero_test = extraction.and_then(|(_, load)| zero_selector_test(body, &ins, load));
     for k in disp_start..ins.len() {
         let Some(i) = at(k) else { break };
         let n = push_len(i.op);
-        if !(1..=4).contains(&n) {
+        let zero = zero_test == Some(k);
+        if !(1..=4).contains(&n) && !zero {
             continue;
         }
-        let Some(sel) = imm_u64(body, i) else { continue };
+        let Some(sel) = (if zero { Some(0) } else { imm_u64(body, i) }) else { continue };
         let found = |dk: usize| -> Option<usize> {
             let p = at(dk)?;
             (is_push(p.op) && p.imm.1 <= 3 && op_at(dk + 1) == Some(0x57)).then_some(dk)
@@ -493,7 +519,13 @@ pub fn analyze(code: &[u8]) -> Result<EvmInterface, FormatError> {
             None
         };
         let mut hit: Option<(usize, usize, &'static str)> = None;
-        if let Some(e) = eq_k {
+        if zero && i.op == 0x15 {
+            if let Some(pk) = found(k + 1)
+                && let Some(dest) = at(pk).and_then(|p| imm_u64(body, p))
+            {
+                hit = Some((usize::try_from(dest).unwrap_or(usize::MAX), pk + 1, "iszero-jumpi"));
+            }
+        } else if let Some(e) = eq_k {
             if let Some(pk) = found(e + 1)
                 && let Some(dest) = at(pk).and_then(|p| imm_u64(body, p))
             {
@@ -530,14 +562,15 @@ pub fn analyze(code: &[u8]) -> Result<EvmInterface, FormatError> {
             continue;
         }
         let selector = format!("0x{sel:08x}");
-        if pattern == "eq-jumpi" {
+        let jumps_on_match = matches!(pattern, "eq-jumpi" | "iszero-jumpi");
+        if jumps_on_match {
             solc_like += 1;
         } else {
             vyper_like += 1;
         }
         last_jumpi = Some(jumpi_k);
         let di = index_of(dest);
-        let jumpdest_valid = pattern != "eq-jumpi" || di.and_then(at).is_some_and(|x| x.op == 0x5b);
+        let jumpdest_valid = !jumps_on_match || di.and_then(at).is_some_and(|x| x.op == 0x5b);
         let (mutability, reason) = if !jumpdest_valid {
             ("unknown", "the destination is not a JUMPDEST".to_owned())
         } else if callvalue_before {
