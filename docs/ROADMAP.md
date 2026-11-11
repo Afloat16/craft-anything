@@ -1589,10 +1589,10 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-node-sea-module-format-20261110
 - [x] Resolve webpack module-loader calls by the wrapper parameter's binding, so nested parameters and local variables with the same name do not create dependency edges.
       — claimed: Afloat16, branch bugfix/r3.12-webpack-require-bindings
-- [ ] Match numeric bundle module and chunk identities by their JavaScript value, so hexadecimal, separated and exponent literals connect to equivalent dependency references.
-      — claimed: Afloat16, branch bugfix/r3.12-bundle-numeric-identities
 - [x] Keep sequence splitting from introducing JavaScript strict-mode directives.
       — claimed: Plastic-time, branch rrfz/bugfix-r3.12-js-sequence-directives
+- [x] Match numeric bundle module and chunk identities by their JavaScript value, so hexadecimal, separated and exponent literals connect to equivalent dependency references.
+      — claimed: Afloat16, branch bugfix/r3.12-bundle-numeric-identities
 - [x] Allocate distinct recovered module paths after repeated content-hash collisions.
       — claimed: Plastic-time, branch rrfz/bugfix-r3.12-js-module-collisions
 - [x] Refuse oversized GNU tar long names and link targets instead of silently truncating member identities.

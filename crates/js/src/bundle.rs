@@ -10,6 +10,7 @@ use crate::util::{LineIndex, sha256_hex, slice};
 use oxc_ast::ast::*;
 use oxc_ast_visit::{Visit, walk};
 use oxc_semantic::Scoping;
+use oxc_syntax::number::ToJsString;
 use oxc_syntax::scope::ScopeFlags;
 use std::collections::{HashMap, HashSet};
 
@@ -107,7 +108,7 @@ impl<'a> Visit<'a> for DepVisitor<'_> {
             });
             if is_loader && it.arguments.len() == 1 {
                 let dep = match it.arguments.first().and_then(|a| a.as_expression()) {
-                    Some(Expression::NumericLiteral(x)) => Some(x.raw.as_ref().map_or_else(|| x.value.to_string(), |r| r.to_string())),
+                    Some(Expression::NumericLiteral(x)) => Some(x.value.to_js_string()),
                     Some(Expression::StringLiteral(s)) => Some(s.value.to_string()),
                     _ => None,
                 };
@@ -253,7 +254,7 @@ impl<'s> BundleVisitor<'s> {
 
     fn key_id(&self, key: &PropertyKey<'_>) -> Option<String> {
         match key {
-            PropertyKey::NumericLiteral(n) => Some(n.raw.as_ref().map_or_else(|| n.value.to_string(), |r| r.to_string())),
+            PropertyKey::NumericLiteral(n) => Some(n.value.to_js_string()),
             PropertyKey::StringLiteral(s) => Some(s.value.to_string()),
             PropertyKey::StaticIdentifier(i) => Some(i.name.to_string()),
             _ => None,
@@ -330,7 +331,7 @@ impl<'s> BundleVisitor<'s> {
                 .iter()
                 .filter_map(|p| match p {
                     ObjectPropertyKind::ObjectProperty(p) => match p.value.get_inner_expression() {
-                        Expression::NumericLiteral(n) => Some(n.value.to_string()),
+                        Expression::NumericLiteral(n) => Some(n.value.to_js_string()),
                         Expression::StringLiteral(s) => Some(s.value.to_string()),
                         _ => None,
                     },
@@ -409,7 +410,7 @@ impl<'a> Visit<'a> for BundleVisitor<'_> {
                 .elements
                 .iter()
                 .filter_map(|e| match e.as_expression()?.get_inner_expression() {
-                    Expression::NumericLiteral(n) => Some(n.value.to_string()),
+                    Expression::NumericLiteral(n) => Some(n.value.to_js_string()),
                     Expression::StringLiteral(s) => Some(s.value.to_string()),
                     _ => None,
                 })
