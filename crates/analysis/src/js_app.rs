@@ -797,7 +797,7 @@ pub fn analyze_application(input: &AppInput, opts: &AppOptions, cancelled: &dyn 
         if a.bundle.truncated {
             g.limitations.push((
                 "truncated".into(),
-                format!("{m}: some bundled modules were not recovered because an analysis limit or array spread left entries unknown."),
+                format!("{m}: some bundled modules or dependency mappings could not be recovered completely."),
             ));
         }
         for bn in &a.bundle.bundlers {
