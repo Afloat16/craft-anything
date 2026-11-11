@@ -2091,6 +2091,8 @@ Owner: open · Status: in progress
       TCP, pcapng and TLS lengths (#688–#715, by Afloat16)
 - [x] Check ClientHello vector lengths and extension values before reporting the handshake as complete.
       — claimed: Afloat16, branch bugfix/r3.12-tls-client-hello-values
+- [ ] Report SQLite row counts and reads as incomplete when b-tree children are null, cyclic or reused.
+      — claimed: Afloat16, branch bugfix/r3.12-sqlite-tree-completeness-20261110
 - [x] SQLite tables whose quoted name holds a parenthesis (`"export (1)"`) keep their columns,
       rowid alias and WITHOUT ROWID order: the column list opens at the first parenthesis outside
       quotes.
