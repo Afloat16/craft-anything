@@ -111,6 +111,18 @@ pub fn read_document(text: &str, allow_shorthand: bool) -> Option<Document> {
                 break;
             }
             match c {
+                '#' => {
+                    for (_, comment) in chars.by_ref() {
+                        if comment == '\n' || comment == '\r' {
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                ',' | '\u{feff}' => {
+                    chars.next();
+                    continue;
+                }
                 '(' => parens += 1,
                 ')' => parens = parens.checked_sub(1)?,
                 HOLE if !saw_anything => name_is_hole = true,
