@@ -1027,3 +1027,11 @@ an archive parser, but the installer wrote earlier listed files and returned suc
 partial inventory for inspection, expose the stop as typed data, and make extraction check it before
 writing any member. Missing end markers need their own compatibility control; `complete: false`
 alone does not identify a refused metadata record.
+
+**A JSON feature changed ordinary capture values.** Enabling `serde_json/raw_value` for
+bounded HAR parsing made `Value` treat an object key named
+`$serde_json::private::RawValue` as an internal marker. Captures can legitimately
+contain that key, so the optimization reinterpreted user data. Retain the existing
+feature set, validate the entire JSON input, and borrow field spans through public
+stream offsets instead. Test the reserved-looking key with JSON-shaped strings,
+ordinary strings, numbers and null, alongside malformed values beyond the entry cap.
