@@ -40,6 +40,22 @@ pub fn read(data: &[u8], limits: &Limits) -> FsImage {
         img.complete = false;
         return img;
     };
+    let word = |off| if big_endian { r.u32_be(off) } else { r.u32_le(off) };
+    let data = if word(8).is_some_and(|flags| flags & 1 != 0) {
+        let Some(size) = word(4).and_then(|n| usize::try_from(n).ok()).filter(|&n| n >= 76) else {
+            img.warn("cramfs: invalid version-two filesystem size");
+            img.complete = false;
+            return img;
+        };
+        if size > data.len() {
+            img.warn("cramfs: image ends before its declared filesystem size");
+            img.complete = false;
+        }
+        data.get(..size).unwrap_or(data)
+    } else {
+        data
+    };
+    let r = Reader::new(data);
     let Some(root) = inode_at(&r, 64, big_endian) else {
         img.warn("root inode unreadable");
         img.complete = false;

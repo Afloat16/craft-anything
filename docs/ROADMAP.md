@@ -2097,6 +2097,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-wasm-function-count
 - [x] Retain decoded CLI signatures with trailing data and report the unused bytes as a limitation, while keeping nested function-pointer signatures incremental.
       — claimed: Afloat16, branch bugfix/r3.12-cli-signature-consumption-20261111
+- [x] Preserve warnings from every view used by the managed application graph, deduplicating diagnostics before the display limit.
+      — claimed: Afloat16, branch bugfix/r3.12-managed-graph-warnings-20261111
 - [x] Reject TypeSpec handles where CLI class/value-type and generic signatures require TypeDef or TypeRef, while retaining standalone TypeSpec and custom-modifier decoding.
       — claimed: Afloat16, branch bugfix/r3.12-dotnet-signature-type-handles-20261110
 - [x] Keep CLI multidimensional array ranks and bounds distinct from vector signatures.
@@ -2142,16 +2144,24 @@ Owner: open · Status: in progress
       PAX sizes across other metadata records; CRC cpio checks member data; source maps decode
       percent-escaped data URLs and report indexed-map columns in the generated file
       (#606–#615, by Afloat16)
+- [x] Use the existing bounded raw LZ4 decoder for SquashFS metadata, regular data blocks and tail fragments while retaining Unity's exact decoded-size contract.
+      — claimed: Afloat16, branch feature/r3.12-squashfs-lz4-20261110
 - [x] Report truncated SquashFS metadata blocks and retain previously recovered blocks.
       — claimed: Afloat16, branch bugfix/r3.12-squashfs-metadata-warning
+- [x] Require each raw or decoded file block to cover exactly its logical range, including the partial final block, so short blocks cannot shift later contents and long blocks cannot be hidden by truncation.
+      — claimed: Afloat16, branch bugfix/r3.12-squashfs-block-output-size-20261110
 - [x] Recover zero-filled cramfs hole blocks at full and partial page boundaries while retaining the existing recovery budgets.
       — claimed: Afloat16, branch bugfix/r3.12-cramfs-hole-blocks-20261110
 - [x] Charge firmware ZIP outputs before decoding the next member, so byte and file limits bound retained member data.
       — claimed: Afloat16, branch bugfix/r3.12-firmware-zip-output-budget-20261110
 - [x] Skip inconsistent JFFS2 data nodes and recover files when later valid nodes cover their damaged extents within the final file size.
       — claimed: Afloat16, branch bugfix/r3.12-jffs2-decoded-node-lengths-20261111
+- [x] Require complete, structurally consistent extent nodes and child depths before returning a file mapping; missing or invalid metadata leaves the file unrecovered instead of replacing unknown ranges with zeros.
+      — claimed: Afloat16, branch bugfix/r3.12-ext4-unavailable-extent-map-20261110
 - [x] Bound filesystem and archive recovery by the recorded image, node, directory and member limits.
       — claimed: Afloat16, branch bugfix/r3.12-filesystem-archive-bounds
+- [x] Use the version-two cramfs size to bound root, directory and data reads in either byte order while preserving version-one compatibility.
+      — claimed: Afloat16, branch bugfix/r3.12-cramfs-v2-image-size-20261110
 - [x] Recover cramfs direct block pointers, including shared uncompressed pages and length-prefixed compressed blocks.
       — claimed: Afloat16, branch feature/r3.12-cramfs-direct-block-pointers-20261111
 - [x] Recover files and symlinks from cramfs blocks marked uncompressed while preserving mixed compressed runs and recovery limits.
@@ -2164,6 +2174,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-filesystem-page-visits-20261110
 - [x] Read ROMFS names at the configured name-length limit.
       — claimed: Plastic-time, branch rrfz/bugfix-r3.12-romfs-name-20261110
+- [x] Read regular ext4 inline files up to the 60-byte inode payload while preserving byte budgets; unsupported inline continuations and directory layouts remain explicitly unrecovered.
+      — claimed: Afloat16, branch feature/r3.12-ext4-small-inline-files-20261110
 - [x] Read big-endian cramfs inode fields and block pointers so files and links recover like little-endian images.
       — claimed: Afloat16, branch bugfix/r3.12-cramfs-big-endian-20261110
 - [x] Verify gzip FHCRC and accept informational XFL and OS bytes without inventing reserved-value restrictions.
