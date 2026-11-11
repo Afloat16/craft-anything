@@ -1731,6 +1731,8 @@ Owner: open · Status: in progress
       Count rejected lengths against the packet scan limit and summarize them once at the end of the walk.
 - [x] Bound rejected packet records, validate timestamp fractions and check pcapng section-local interfaces.
       — claimed: Afloat16, branch bugfix/r3.12-capture-timing-framing
+- [ ] Report capped ZIP, tar and cpio member walks as incomplete firmware extraction, even when skipped directory entries hide later files.
+      — claimed: Afloat16, branch bugfix/r3.12-firmware-member-scan-completeness-20261110
 - [x] Keep ZIP directory entries within the declared directory.
       — claimed: Afloat16, branch bugfix/r3.12-zip-directory-bounds-20261105
 - [x] Refuse split ZIP archives without their other volumes.
