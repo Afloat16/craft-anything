@@ -69,7 +69,7 @@ impl ZipEntry {
             9 => "deflate64",
             12 => "bzip2",
             14 => "lzma",
-            93 => "zstd",
+            20 | 93 => "zstd",
             95 => "xz",
             99 => "aes",
             _ => "other",
@@ -438,7 +438,8 @@ pub fn read_entry_unverified(data: &[u8], e: &ZipEntry, max_bytes: u64) -> Resul
                 _ => ZipError::Corrupt(format!("LZMA stream for {} is damaged: {error}", e.name)),
             })?
         }
-        93 => crate::decompress::zstd(raw, max_bytes).map_err(|err| ZipError::Corrupt(format!("zstd stream for {} is damaged: {err}", e.name)))?,
+        // The earlier ZIP assignment used 20 for the same Zstandard stream.
+        20 | 93 => crate::decompress::zstd(raw, max_bytes).map_err(|err| ZipError::Corrupt(format!("zstd stream for {} is damaged: {err}", e.name)))?,
         m => return Err(ZipError::Unsupported(format!("compression method {m} ({}) for {}", e.method_name(), e.name))),
     };
     if out.len() as u64 != e.uncompressed_size {
