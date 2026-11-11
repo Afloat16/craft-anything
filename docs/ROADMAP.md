@@ -1566,6 +1566,8 @@ Owner: open · Status: in progress
       during replay, and report `cached_body_unavailable` when the best matching group has no
       usable answer. Build results count them; cached bodies still answer as 200 (#543)
       — claimed: Afloat16, branch bugfix/r3.11-standin-empty-304-20261103
+- [ ] Read GraphQL operation names through comments, commas and byte-order marks in headers, without treating comment punctuation as structure.
+      — claimed: Afloat16, branch bugfix/r3.11-graphql-header-trivia-20261111
 - [ ] Godot format 4 and IL2CPP metadata 38 and 39 are header-only; read their tables once a real
       file can be checked
 - [x] Bun: take each module's stored source map and bytecode out as files.
