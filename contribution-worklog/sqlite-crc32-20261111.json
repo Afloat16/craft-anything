@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-11-11T15:14:00Z",
+  "updated_at": "2026-11-11 15:23:47 UTC",
   "items": [
     {
       "key": "craft-zip-crc32",
@@ -60,19 +60,19 @@
       "key": "craft-sqlite-schema-completeness",
       "repository": "storytold/craft-anything",
       "branch": "bugfix/r3.12-sqlite-schema-completeness-20261111",
-      "base": "35f11365026263f43884eadc9ec3296b99893ba1",
-      "head": "6bafba62e745cd3e5fbebb2baf085fffee62ed7b",
-      "public_claim": "a03b9f5e7cdd42012a7ada9115f9408becd2953d",
+      "base": "3a9ad9c6c5de05701d423b8c7e9cc37b550a7170",
+      "head": "fca8b0c7f9f4fd54a172bf9fe834393f54844a23",
+      "public_claim": "85548704664929fe4a785af39cc47afa43024f28",
       "original_claim": "86ebafd0628529696a30da316679b28fab7c6ed8",
-      "state": "validation_in_progress",
+      "state": "integration_validation_in_progress",
       "actual_pr": false,
       "merged": false,
       "validation": {
         "carrier_repository": "Afloat16/billion-context",
         "carrier_branch": "validation/craft-sqlite-schema-completeness-20261111",
-        "carrier_commit": "7a28005d4d86faf95a5895f59ecb241a4224975d",
+        "carrier_commit": "253172b45cd29be5d33abf43f1273c6b632f7c9f",
         "workflow": ".github/workflows/validation-craft-sqlite-schema.yml",
-        "run": 43046176741,
+        "run": 43047782783,
         "conclusion": null,
         "expected_differential": {
           "synthetic_formats": {
@@ -109,18 +109,186 @@
             "head": "98561b89f9792c0c7a42d5e27a5d16aa70936b69",
             "conclusion": "failure",
             "reason": "rustfmt required collapsing one testkit array expression; all compilation/test/gate steps skipped"
+          },
+          {
+            "id": 43046176741,
+            "job": 130610582656,
+            "head": "6bafba62e745cd3e5fbebb2baf085fffee62ed7b",
+            "conclusion": "failure",
+            "reason": "All synthetic/native differentials and all touched-crate tests passed. Strict Clippy rejected only a new test err().expect() assertion; contracts/Wasm were skipped. Overall red is retained."
+          }
+        ],
+        "measured_head": "6bafba62e745cd3e5fbebb2baf085fffee62ed7b",
+        "measured_base": "35f11365026263f43884eadc9ec3296b99893ba1",
+        "differential_run": 43046176741,
+        "differential_job": 130610582656,
+        "differential_results": [
+          {
+            "label": "baseline-formats",
+            "returncode": 101,
+            "passed": 2,
+            "failed": 6
+          },
+          {
+            "label": "baseline-engine",
+            "returncode": 101,
+            "passed": 1,
+            "failed": 4
+          },
+          {
+            "label": "baseline-native-sqlite",
+            "returncode": 101,
+            "passed": 3,
+            "failed": 7
+          },
+          {
+            "label": "fixed-formats",
+            "returncode": 0,
+            "passed": 8,
+            "failed": 0
+          },
+          {
+            "label": "fixed-engine",
+            "returncode": 0,
+            "passed": 5,
+            "failed": 0
+          },
+          {
+            "label": "fixed-native-sqlite",
+            "returncode": 0,
+            "passed": 10,
+            "failed": 0
+          }
+        ],
+        "touched_crate_tests": {
+          "passed": 2396,
+          "failed": 0,
+          "ignored": 17,
+          "targets": 230
+        },
+        "touched_crate_counts": {
+          "engine": {
+            "passed": 684,
+            "failed": 0,
+            "ignored": 7,
+            "targets": 20
+          },
+          "formats": {
+            "passed": 1711,
+            "failed": 0,
+            "ignored": 10,
+            "targets": 208
+          },
+          "testkit": {
+            "passed": 1,
+            "failed": 0,
+            "ignored": 0,
+            "targets": 2
+          }
+        },
+        "native_sqlite": [
+          {
+            "case": "complete",
+            "bytes": 16384,
+            "sha256": "e4c17d1a9a3243962d8ffdc0eca8439923f35d6c56ad3e3f6f1cea03d83e9fb6",
+            "retained_schema_objects": 163,
+            "schema_incomplete": false,
+            "sqlite_integrity": "ok"
+          },
+          {
+            "case": "null_child",
+            "bytes": 16384,
+            "sha256": "d88f4d68fde5d4cc6c52a5c5902f740819ec20290eff9a8409f638358267b29c",
+            "retained_schema_objects": 158,
+            "schema_incomplete": true,
+            "sqlite_integrity": "database disk image is malformed"
+          },
+          {
+            "case": "cyclic_child",
+            "bytes": 16384,
+            "sha256": "1959228422f41003a76ddf4273a8aa4bf76eac06c43ec5e6f9b336cedd469914",
+            "retained_schema_objects": 158,
+            "schema_incomplete": true,
+            "sqlite_integrity": "database disk image is malformed"
+          },
+          {
+            "case": "reused_child",
+            "bytes": 16384,
+            "sha256": "12ec1bc4e9c82a8b07f24261e45c360360c12964ce07fbd5e6a8e1834203383e",
+            "retained_schema_objects": 158,
+            "schema_incomplete": true,
+            "sqlite_integrity": "malformed database schema (items) - table items already exists"
+          },
+          {
+            "case": "truncated_leaf",
+            "bytes": 15872,
+            "sha256": "c442c07ff9c09c641db2d7f27357dd3685fab2c6eb09f45f44d54735cc1d7c9b",
+            "retained_schema_objects": 158,
+            "schema_incomplete": true,
+            "sqlite_integrity": "database disk image is malformed"
+          },
+          {
+            "case": "bad_cell",
+            "bytes": 16384,
+            "sha256": "fe37ed9938bd0dd64bbb301ac9a0d0f56b8dd5f5e1a0446e6ba37f4428ee82bc",
+            "retained_schema_objects": 162,
+            "schema_incomplete": true,
+            "sqlite_integrity": "database disk image is malformed"
+          },
+          {
+            "case": "wrong_root",
+            "bytes": 16384,
+            "sha256": "06ceb3437afa6151aacc9a306362433a6b515b2755fca247919e9d469ca4bd56",
+            "retained_schema_objects": 0,
+            "schema_incomplete": true,
+            "sqlite_integrity": "database disk image is malformed"
+          },
+          {
+            "case": "header_only",
+            "bytes": 100,
+            "sha256": "cff3a6326f092d8fd6d1542124b0929761fcc6d2789bb2bfd847617babc7369a",
+            "retained_schema_objects": 0,
+            "schema_incomplete": true,
+            "sqlite_integrity": "database disk image is malformed"
+          },
+          {
+            "case": "empty",
+            "bytes": 512,
+            "sha256": "cadf49c951f4874f50db701e73198ba9ebbb932e40c13b227af894e091e6894d",
+            "retained_schema_objects": 0,
+            "schema_incomplete": false,
+            "sqlite_integrity": "ok"
+          },
+          {
+            "case": "row_data_corrupt",
+            "bytes": 16384,
+            "sha256": "c07145738c24a57bc62eb7e76097456327eb2bef48e2502dfe6eff2a298eee28",
+            "retained_schema_objects": 163,
+            "schema_incomplete": false,
+            "sqlite_integrity": "database disk image is malformed"
+          },
+          {
+            "sqlite_version": "3.45.1",
+            "cases": 10,
+            "schema_leaves": 29,
+            "complete_objects": 163
           }
         ]
       },
       "dedupe": "Whole-history searches for SQLite schema, schema_truncated, SQLite incomplete and schema coverage. Merged #1608 only propagated incomplete walks into row reads/counts; whole_schema and database tool evidence remain omitted. Current code and public ROADMAP checked at latest main.",
       "scope": "Carry RowWalk.incomplete into schema()/Overview and db_sqlite_show evidence, preserve readable objects and existing row paging, qualify uncertain missing-table errors. No traversal or SQL-language expansion.",
-      "notes": "Only formatting was changed after the first implementation. Initial run failed at rustfmt and did not compile or run tests; the rerun is in progress. No passing regression/gate count is claimed yet.",
+      "notes": "Rebased claim first onto current main3a9ad9. Unchanged production, shared fixture, parser tests, manifests and lockfile are checked against measured6baf; sole test change uses expect_err. The new integration run executes all three touched-crate test suites and all remaining gates; no repeated original/native comparison is needed for identical product blobs.",
       "changed_paths": [
         "crates/formats/src/sqlite.rs",
         "crates/engine/src/tools/database_tools.rs",
         "crates/testkit/src/sqlite.rs",
         "crates/formats/tests/sqlite_schema_completeness.rs",
         "crates/engine/tests/sqlite_schema_completeness.rs"
+      ],
+      "public_claim_history": [
+        "86ebafd0628529696a30da316679b28fab7c6ed8",
+        "a03b9f5e7cdd42012a7ada9115f9408becd2953d",
+        "85548704664929fe4a785af39cc47afa43024f28"
       ]
     }
   ]
