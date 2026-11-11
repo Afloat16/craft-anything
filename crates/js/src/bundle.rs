@@ -252,25 +252,60 @@ impl<'s> BundleVisitor<'s> {
         Some(self.info.modules.len() - 1)
     }
 
-    fn key_id(&self, key: &PropertyKey<'_>) -> Option<String> {
-        match key {
+    fn property_id(p: &ObjectProperty<'_>) -> Option<String> {
+        match &p.key {
             PropertyKey::NumericLiteral(n) => Some(n.value.to_js_string()),
             PropertyKey::StringLiteral(s) => Some(s.value.to_string()),
-            PropertyKey::StaticIdentifier(i) => Some(i.name.to_string()),
+            PropertyKey::StaticIdentifier(i) if !p.computed => Some(i.name.to_string()),
             _ => None,
         }
     }
 
+    fn is_prototype_setter(p: &ObjectProperty<'_>) -> bool {
+        p.kind == PropertyKind::Init
+            && !p.computed
+            && !p.method
+            && !p.shorthand
+            && match &p.key {
+                PropertyKey::StaticIdentifier(i) => i.name == "__proto__",
+                PropertyKey::StringLiteral(s) => s.value == "__proto__",
+                _ => false,
+            }
+    }
+
+    /// Later definitions replace earlier values even when the replacement is not a module.
+    /// A spread or unknown key may replace any earlier entry; only the known suffix is safe.
+    fn final_properties<'b, 'a>(o: &'b ObjectExpression<'a>) -> Vec<(String, &'b ObjectProperty<'a>)> {
+        let mut seen = HashSet::new();
+        let mut properties = Vec::new();
+        for p in o.properties.iter().rev() {
+            let ObjectPropertyKind::ObjectProperty(p) = p else { break };
+            if Self::is_prototype_setter(p) {
+                continue;
+            }
+            let Some(id) = Self::property_id(p) else { break };
+            if seen.insert(id.clone()) {
+                properties.push((id, &**p));
+            }
+        }
+        properties.reverse();
+        properties
+    }
+
     /// An object whose values are (almost) all small-arity functions: a webpack module map.
-    fn object_is_table(o: &ObjectExpression<'_>) -> bool {
-        let total = o.properties.len();
+    fn object_is_table(o: &ObjectExpression<'_>, allow_single: bool) -> bool {
+        let total = o.properties.iter().filter(|p| !matches!(p, ObjectPropertyKind::ObjectProperty(p) if Self::is_prototype_setter(p))).count();
         if total < 2 {
-            return false;
+            return allow_single && total == 1;
         }
         let good = o
             .properties
             .iter()
-            .filter(|p| matches!(p, ObjectPropertyKind::ObjectProperty(p) if !p.computed && as_func(&p.value).is_some_and(|f| f.param_count() <= 3)))
+            .filter(|p| {
+                matches!(p, ObjectPropertyKind::ObjectProperty(p)
+                    if p.kind == PropertyKind::Init && !Self::is_prototype_setter(p)
+                        && Self::property_id(p).is_some() && as_func(&p.value).is_some_and(|f| f.param_count() <= 3))
+            })
             .count();
         good * 10 >= total * 9
     }
@@ -282,9 +317,11 @@ impl<'s> BundleVisitor<'s> {
     }
 
     fn take_object(&mut self, o: &ObjectExpression<'_>, format: &str, chunk_ids: &[String]) {
-        for p in &o.properties {
-            let ObjectPropertyKind::ObjectProperty(p) = p else { continue };
-            let (Some(id), Some(f)) = (self.key_id(&p.key), as_func(&p.value)) else { continue };
+        for (id, p) in Self::final_properties(o) {
+            if p.kind != PropertyKind::Init {
+                continue;
+            }
+            let Some(f) = as_func(&p.value) else { continue };
             if self.add(id, format, chunk_ids, &f).is_none() {
                 return;
             }
@@ -300,42 +337,47 @@ impl<'s> BundleVisitor<'s> {
         }
     }
 
+    fn browserify_entry<'b, 'a>(p: &'b ObjectProperty<'a>) -> Option<(Func<'b, 'a>, &'b ObjectExpression<'a>)> {
+        if p.kind != PropertyKind::Init || Self::is_prototype_setter(p) {
+            return None;
+        }
+        let Expression::ArrayExpression(a) = p.value.get_inner_expression() else { return None };
+        if a.elements.len() != 2 {
+            return None;
+        }
+        let f = a.elements.first()?.as_expression().and_then(as_func)?;
+        let Expression::ObjectExpression(deps) = a.elements.get(1)?.as_expression()?.get_inner_expression() else { return None };
+        Some((f, deps))
+    }
+
     /// browserify: `{1:[function(require,module,exports){…},{"./dep":2}], …}`
     fn take_browserify(&mut self, o: &ObjectExpression<'_>) -> bool {
-        let entries: Vec<_> = o
+        let good = o
             .properties
             .iter()
-            .filter_map(|p| match p {
-                ObjectPropertyKind::ObjectProperty(p) => match p.value.get_inner_expression() {
-                    Expression::ArrayExpression(a) if a.elements.len() == 2 => {
-                        let f = a.elements.first()?.as_expression().and_then(as_func)?;
-                        let deps = match a.elements.get(1)?.as_expression()?.get_inner_expression() {
-                            Expression::ObjectExpression(d) => d,
-                            _ => return None,
-                        };
-                        Some((&p.key, f, deps))
-                    }
-                    _ => None,
-                },
-                _ => None,
+            .filter(|p| {
+                matches!(p, ObjectPropertyKind::ObjectProperty(p)
+                    if Self::property_id(p).is_some() && Self::browserify_entry(p).is_some())
             })
-            .collect();
-        if entries.len() < 2 || entries.len() * 10 < o.properties.len() * 9 {
+            .count();
+        let total = o.properties.iter().filter(|p| !matches!(p, ObjectPropertyKind::ObjectProperty(p) if Self::is_prototype_setter(p))).count();
+        if good < 2 || good * 10 < total * 9 {
             return false;
         }
-        for (key, f, deps) in entries {
-            let Some(id) = self.key_id(key) else { continue };
+        for (id, p) in Self::final_properties(o) {
+            let Some((f, deps)) = Self::browserify_entry(p) else { continue };
             let Some(idx) = self.add(id, "browserify", &[], &f) else { return true };
-            let mapped: Vec<String> = deps
-                .properties
-                .iter()
-                .filter_map(|p| match p {
-                    ObjectPropertyKind::ObjectProperty(p) => match p.value.get_inner_expression() {
+            let mapped: Vec<String> = Self::final_properties(deps)
+                .into_iter()
+                .filter_map(|(_, p)| {
+                    if p.kind != PropertyKind::Init {
+                        return None;
+                    }
+                    match p.value.get_inner_expression() {
                         Expression::NumericLiteral(n) => Some(n.value.to_js_string()),
                         Expression::StringLiteral(s) => Some(s.value.to_string()),
                         _ => None,
-                    },
-                    _ => None,
+                    }
                 })
                 .collect();
             if let Some(m) = self.info.modules.get_mut(idx) {
@@ -355,6 +397,9 @@ impl<'s> BundleVisitor<'s> {
             return None;
         }
         let ObjectPropertyKind::ObjectProperty(p) = o.properties.first()? else { return None };
+        if p.kind != PropertyKind::Init {
+            return None;
+        }
         let key = match &p.key {
             PropertyKey::StringLiteral(s) => s.value.to_string(),
             _ => return None,
@@ -416,7 +461,7 @@ impl<'a> Visit<'a> for BundleVisitor<'_> {
                 })
                 .collect();
             match payload.elements.get(1).and_then(|e| e.as_expression()).map(|e| e.get_inner_expression()) {
-                Some(Expression::ObjectExpression(o)) if Self::object_is_table(o) || o.properties.len() == 1 => {
+                Some(Expression::ObjectExpression(o)) if Self::object_is_table(o, true) => {
                     self.info.chunk_ids.extend(chunk_ids.iter().cloned());
                     self.take_object(o, "webpack-chunk", &chunk_ids);
                     return;
@@ -437,7 +482,7 @@ impl<'a> Visit<'a> for BundleVisitor<'_> {
     }
 
     fn visit_object_expression(&mut self, it: &ObjectExpression<'a>) {
-        if self.webpack_hint && Self::object_is_table(it) {
+        if self.webpack_hint && Self::object_is_table(it, false) {
             self.take_object(it, "webpack", &[]);
             return;
         }
