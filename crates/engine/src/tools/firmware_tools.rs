@@ -300,14 +300,21 @@ impl Writer<'_> {
         }
     }
 
-    /// Write one output; false when it was skipped (limits, name clash, unsafe path).
-    fn write(&mut self, rel: &[String], data: &[u8], meta: Value, level: u32) -> bool {
-        let shown = rel.join("/");
-        if self.files >= self.max_files || data.len() as u64 > self.remaining() {
+    fn permits(&mut self, rel: &[String], bytes: u64) -> bool {
+        if self.files >= self.max_files || bytes > self.remaining() {
             self.truncated = true;
-            self.skip(&shown, "output file or byte limit reached");
+            self.skip(&rel.join("/"), "output file or byte limit reached");
             return false;
         }
+        true
+    }
+
+    /// Write one output; false when it was skipped (limits, name clash, unsafe path).
+    fn write(&mut self, rel: &[String], data: &[u8], meta: Value, level: u32) -> bool {
+        if !self.permits(rel, data.len() as u64) {
+            return false;
+        }
+        let shown = rel.join("/");
         match write_new_file(self.root, rel, data) {
             Ok(_) => {
                 self.files += 1;
@@ -333,6 +340,20 @@ impl Writer<'_> {
 
 /// Unpacked output: (relative path, bytes, action, folder for what is carved out of it).
 type Produced = (Vec<String>, Vec<u8>, &'static str, Vec<String>);
+
+fn write_produced(w: &mut Writer<'_>, jobs: &mut Vec<Job>, output: Produced, mut meta: Value, parent: &str, level: u32) {
+    let (rel, data, action, scan_dir) = output;
+    if let Value::Object(object) = &mut meta {
+        object.insert("parent".into(), json!(parent));
+        if action != "carved" {
+            object.insert("offset".into(), Value::Null);
+        }
+    }
+    let shown = rel.join("/");
+    if w.write(&rel, &data, meta, level) && !data.is_empty() {
+        jobs.push(Job { data, dir: scan_dir, level, parent: shown, base: 0 });
+    }
+}
 
 fn child(dir: &[String], name: String) -> Vec<String> {
     let mut v = dir.to_vec();
@@ -480,15 +501,30 @@ fn firmware_image_extract(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput
                     Ok(z) => {
                         for e in z.entries.iter().filter(|e| !e.is_dir) {
                             ctx.cancel.check()?;
-                            match (safe_components(&e.name), zip::read_entry(slice, e, w.remaining())) {
-                                (Ok(c), Ok(d)) => {
-                                    let mut rel = sub.clone();
-                                    rel.extend(c.iter().cloned());
-                                    let scan_dir = member_dir(&sub, &c);
-                                    produced.push((rel, d, "member", scan_dir));
+                            let shown = format!("{label}.extracted/{}", e.name);
+                            let c = match safe_components(&e.name) {
+                                Ok(c) => c,
+                                Err(why) => {
+                                    w.skip(&shown, format!("refused: {why}"));
+                                    continue;
                                 }
-                                (Err(why), _) => w.skip(&format!("{label}.extracted/{}", e.name), format!("refused: {why}")),
-                                (_, Err(err)) => w.skip(&format!("{label}.extracted/{}", e.name), err.to_string()),
+                            };
+                            let mut rel = sub.clone();
+                            rel.extend(c.iter().cloned());
+                            if !w.permits(&rel, e.uncompressed_size) {
+                                continue;
+                            }
+                            match zip::read_entry(slice, e, w.remaining()) {
+                                Ok(d) => {
+                                    let scan_dir = member_dir(&sub, &c);
+                                    // Charge this member before decoding the next one. Failed writes
+                                    // leave the budget available to later members.
+                                    write_produced(&mut w, &mut jobs, (rel, d, "member", scan_dir), meta("member"), &parent_rel, level);
+                                }
+                                Err(err) => {
+                                    w.truncated |= matches!(&err, zip::ZipError::TooLarge(_));
+                                    w.skip(&shown, err.to_string());
+                                }
                             }
                         }
                     }
@@ -549,18 +585,9 @@ fn firmware_image_extract(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput
                 }
                 _ => {}
             }
-            for (rel, d, action, scan_dir) in produced {
-                let mut m = meta(action);
-                if let Value::Object(o) = &mut m {
-                    o.insert("parent".into(), json!(parent_rel));
-                    if action != "carved" {
-                        o.insert("offset".into(), Value::Null);
-                    }
-                }
-                let shown = rel.join("/");
-                if w.write(&rel, &d, m, level) && !d.is_empty() {
-                    jobs.push(Job { data: d, dir: scan_dir, level, parent: shown, base: 0 });
-                }
+            for output in produced {
+                let m = meta(output.2);
+                write_produced(&mut w, &mut jobs, output, m, &parent_rel, level);
             }
         }
     }
