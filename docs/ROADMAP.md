@@ -2098,7 +2098,7 @@ Owner: open · Status: in progress
       — claimed: AlexJoaquimPereira, branch bugfix/r3.12-pe-binary-version-strings
 - [x] Decode inline source-map data URLs without treating their URL fragments as payload; recognize case-insensitive scheme and base64 markers.
       — claimed: Afloat16, branch bugfix/r3.12-source-map-data-url-fragment
-- [ ] Report top-level WebAssembly component sections with their own section kinds, without mixing nested module contents into the component inventory.
+- [x] Report top-level WebAssembly component sections with their own section kinds, without mixing nested module contents into the component inventory.
       — claimed: Afloat16, branch bugfix/r3.12-wasm-component-layout-20261111
 - [x] Apply WebAssembly name and producer inventory limits across repeated custom sections and report truncation.
       — claimed: Afloat16, branch bugfix/r3.12-wasm-custom-inventory-budget-20261109
