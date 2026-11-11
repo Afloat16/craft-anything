@@ -2061,6 +2061,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-squashfs-metadata-warning
 - [x] Recover zero-filled cramfs hole blocks at full and partial page boundaries while retaining the existing recovery budgets.
       — claimed: Afloat16, branch bugfix/r3.12-cramfs-hole-blocks-20261110
+- [ ] Charge firmware ZIP outputs before decoding the next member, so byte and file limits bound retained member data.
+      — claimed: Afloat16, branch bugfix/r3.12-firmware-zip-output-budget-20261110
 - [x] Bound filesystem and archive recovery by the recorded image, node, directory and member limits.
       — claimed: Afloat16, branch bugfix/r3.12-filesystem-archive-bounds
 - [x] Recover files and symlinks from cramfs blocks marked uncompressed while preserving mixed compressed runs and recovery limits.
