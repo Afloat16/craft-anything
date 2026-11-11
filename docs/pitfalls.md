@@ -87,6 +87,13 @@ names (`git merge-base --is-ancestor <fix> <release tag>`), and check the messag
 
 ## Tests
 
+**Zero bytes after an ELF program-header table were not free space.** A native Go fixture
+placed an extra program header over the zero-filled null section header, so the undamaged
+control stopped being a valid object file. Relocate the complete program-header table into
+the appended mapping, update its recorded location and size, and preserve load-record order.
+Check that unrelated section descriptors stay unchanged, then validate the complete control
+with native build-information and symbol readers before measuring the damaged variants.
+
 **A heartbeat sampled before shutdown raced a successful stop.** A child could write between
 the baseline read and `stop()`, failing the descendant cleanup test even when cleanup worked.
 Probe for exit instead of timing writes: the child holds a file lock the system releases only
