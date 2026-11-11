@@ -1637,7 +1637,7 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Carry incomplete SQLite schema walks through the schema flag and database tool evidence, preserving readable objects without claiming a complete inventory.
+- [x] Carry incomplete SQLite schema walks through the schema flag and database tool evidence, preserving readable objects without claiming a complete inventory.
       — claimed: Afloat16, branch bugfix/r3.12-sqlite-schema-completeness-20261111
 - [x] Keep source-to-bundle comparisons uncertain when source-map inventories are truncated, preserving positive matches and reporting partial tool evidence.
       — claimed: Afloat16, branch bugfix/r3.12-source-map-comparison-uncertainty-20261111
