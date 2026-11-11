@@ -1567,6 +1567,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.11-standin-redacted-budget-20261103b
       Revision `d601bc4e` passed [full Linux CI](https://github.com/storytold/craft-anything/actions/runs/41788735130):
       all four retained-budget regressions and six deduplication regressions passed.
+- [x] Preserve every observation when comparing evidence bundles, including repeated operation/subject records and identical-record multiplicity.
+      — claimed: Afloat16, branch bugfix/r3.11-bundle-record-multiplicity-20261110
 - [x] Read only regular files for binary, text and evidence-bundle inputs, enforce whole-file byte caps while reading, and hash prefixes only after EOF instead of trusting a prior size report.
       — claimed: Afloat16, branch bugfix/r3.11-bounded-file-inputs-20261110
 - [x] A text source (a script, Markdown) had no tool that reads it as text outside a build (#539):
@@ -1592,8 +1594,6 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Distinguish short block-backed ext symlinks from inline symlinks using inode allocation metadata.
-      — claimed: Afloat16, branch bugfix/r3.12-ext-block-backed-short-symlinks-20261111
 - [x] Mark Python code inventories as cut short whenever a name or constant is shortened, and count truncation markers in the retained-text budget.
       — claimed: Afloat16, branch bugfix/r3.12-pyc-truncated-text-evidence-20261110
 - [x] Keep worker, service-worker and utility-process entry modules in their own execution role instead of inheriting the parent role through spawn edges.
@@ -2125,6 +2125,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch refactor/r3.12-firmware-owned-payloads-20261110
 - [x] Bound and cancel CRC cpio verification across firmware probes, and reject non-hex checksum
       fields — claimed: Afloat16, branch bugfix/r3.12-bound-cpio-crc-scans-20261103
+- [x] Distinguish short block-backed ext symlinks from inline symlinks using inode allocation metadata.
+      — claimed: Afloat16, branch bugfix/r3.12-ext-block-backed-short-symlinks-20261111
 - [x] More parsers keep to the bytes they declare and refuse impossible values: signed LEB128 past
       64 bits, damaged modified UTF-8 (valid text around it survives), widened Java instructions
       and invocation operands, DEX register lists and array widths, SQLite text in the database's
