@@ -1907,7 +1907,7 @@ Owner: open · Status: in progress
 - [x] Preserve a unique versioned ELF import slot when relocation records omit the library name (follow-up to #1365).
       — claimed: Afloat16, branch bugfix/r3.12-elf-versioned-import-slot-fallback-20261109
       — completed: 1179870c55203d946bb8a7412b9b8f1088352fe3
-- [ ] Preserve platform, minimum OS and SDK facts from all four legacy Mach-O version commands in the binary view.
+- [x] Preserve platform, minimum OS and SDK facts from all four legacy Mach-O version commands in the binary view.
       — claimed: Afloat16, branch bugfix/r3.12-macho-legacy-build-versions-20261111
 - [x] Keep Mach-O load-command facts within their command.
       — claimed: Afloat16, branch bugfix/r3.12-macho-load-command-framing-20261105
