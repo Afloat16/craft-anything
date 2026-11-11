@@ -89,7 +89,7 @@ pub fn xz(input: &[u8], max_out: u64) -> Result<Vec<u8>, DecompressError> {
     Ok(out.buf)
 }
 
-/// Decode one XZ container block, retaining the decoder's rejection of trailing streams.
+/// Decode only the first stream in a SquashFS block; bytes after its footer are not another block.
 pub(crate) fn xz_single(input: &[u8], max_out: u64) -> Result<Vec<u8>, DecompressError> {
     let mut out = CapWrite::new(cap_of(max_out));
     let mut cursor = io::Cursor::new(input);
@@ -97,7 +97,17 @@ pub(crate) fn xz_single(input: &[u8], max_out: u64) -> Result<Vec<u8>, Decompres
         Ok(()) => Ok(out.buf),
         Err(_) if out.exceeded => Err(DecompressError::TooLarge),
         Err(lzma_rs::error::Error::HeaderTooShort(_)) => Err(DecompressError::Truncated),
-        Err(_) => Err(DecompressError::Corrupt),
+        Err(_) => {
+            // The decoder requires EOF after the first footer. Recheck its consumed prefix as
+            // a complete stream, rather than accepting partial output from a failed decode.
+            let end = usize::try_from(cursor.position()).map_err(|_| DecompressError::Corrupt)?;
+            if end == 0 || end >= input.len() {
+                return Err(DecompressError::Corrupt);
+            }
+            let prefix = input.get(..end).ok_or(DecompressError::Truncated)?;
+            drop(out);
+            xz(prefix, max_out)
+        }
     }
 }
 
@@ -424,6 +434,34 @@ mod tests {
         let with_empty = [&empty[..], fx::XZ_FIXTURE, &empty[..]].concat();
         assert_eq!(xz(&with_empty, fx::XZ_PLAIN.len() as u64).unwrap(), fx::XZ_PLAIN);
         assert!(xz(&empty, 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn xz_first_stream_ignores_the_tail_and_keeps_its_own_budget() {
+        let cap = fx::XZ_PLAIN.len() as u64;
+        assert_eq!(xz_single(fx::XZ_FIXTURE, cap).unwrap(), fx::XZ_PLAIN);
+        for tail in [fx::XZ_FIXTURE, &fx::XZ_FIXTURE[..13], b"junk", &[0; 4]] {
+            let input = [fx::XZ_FIXTURE, tail].concat();
+            assert_eq!(xz_single(&input, cap).unwrap(), fx::XZ_PLAIN);
+            assert_eq!(xz_single(&input, cap - 1), Err(DecompressError::TooLarge));
+        }
+        let mut empty = Vec::new();
+        lzma_rs::xz_compress(&mut io::Cursor::new(b""), &mut empty).unwrap();
+        let input = [&empty[..], fx::XZ_FIXTURE].concat();
+        assert!(xz_single(&input, 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn xz_first_stream_never_returns_failed_decode_output() {
+        for len in 0..fx::XZ_FIXTURE.len() {
+            assert!(xz_single(&fx::XZ_FIXTURE[..len], 1024).is_err(), "truncated at {len}");
+        }
+        for at in [0, 8, fx::XZ_FIXTURE.len() - 13, fx::XZ_FIXTURE.len() - 12, fx::XZ_FIXTURE.len() - 1] {
+            let mut input = fx::XZ_FIXTURE.to_vec();
+            input[at] ^= 1;
+            input.extend_from_slice(fx::XZ_FIXTURE);
+            assert!(xz_single(&input, 1024).is_err(), "damaged at {at}");
+        }
     }
 
     #[test]

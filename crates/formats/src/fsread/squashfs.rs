@@ -405,7 +405,7 @@ mod tests {
         let concatenated = [fx::XZ_FIXTURE, fx::XZ_FIXTURE].concat();
         assert_eq!(decompress(4, fx::XZ_FIXTURE, fx::XZ_PLAIN.len() as u64).as_deref(), Some(fx::XZ_PLAIN));
         assert!(decompress(4, fx::XZ_FIXTURE, fx::XZ_PLAIN.len() as u64 - 1).is_none());
-        assert!(decompress(4, &concatenated, 2 * fx::XZ_PLAIN.len() as u64).is_none());
+        assert_eq!(decompress(4, &concatenated, fx::XZ_PLAIN.len() as u64).as_deref(), Some(fx::XZ_PLAIN));
         assert_eq!(crate::decompress::xz(&concatenated, 2 * fx::XZ_PLAIN.len() as u64).unwrap(), [fx::XZ_PLAIN, fx::XZ_PLAIN].concat());
     }
 
