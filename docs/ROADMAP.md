@@ -1641,7 +1641,7 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Verify each present Zstandard frame checksum before returning recovered data, including concatenated frames, while preserving checksum-free streams and output limits. — claimed: Afloat16, branch `bugfix/r3.12-zstd-frame-checksums-20261111`
+- [x] Verify each present Zstandard frame checksum before returning recovered data, including concatenated frames, while preserving checksum-free streams and output limits. — claimed: Afloat16, branch `bugfix/r3.12-zstd-frame-checksums-20261111`
 - [x] Keep source-to-bundle comparisons uncertain when source-map inventories are truncated, preserving positive matches and reporting partial tool evidence.
       — claimed: Afloat16, branch bugfix/r3.12-source-map-comparison-uncertainty-20261111
 - [x] Bound expanded source-map inventories by retained path bytes and entries before allocation, preserving bounded prefixes and reporting truncation.

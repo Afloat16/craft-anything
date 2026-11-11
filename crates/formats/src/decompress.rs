@@ -301,6 +301,12 @@ pub fn zstd(mut input: &[u8], max_out: u64) -> Result<Vec<u8>, DecompressError> 
         if io::copy(&mut decoder, &mut out).is_err() {
             return Err(if out.exceeded { DecompressError::TooLarge } else { DecompressError::Corrupt });
         }
+        // StreamingDecoder reads the trailer but leaves checksum verification to its caller.
+        if let Some(expected) = decoder.decoder.get_checksum_from_data()
+            && decoder.decoder.get_calculated_checksum() != Some(expected)
+        {
+            return Err(DecompressError::Corrupt);
+        }
     }
     Ok(out.buf)
 }
