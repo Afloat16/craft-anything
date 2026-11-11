@@ -3,18 +3,35 @@
   "repository": "storytold/craft-anything",
   "fork": "Afloat16/craft-anything",
   "improvement": "Bound retained diagnostics for unreadable Go build information version pointers",
-  "state": "validation_in_progress",
+  "state": "ready_pending_pr_creation",
   "actual_pr": false,
   "merged": false,
   "branch": "bugfix/r3.12-go-buildinfo-diagnostics-20261111",
   "base": "3ce1ce9f52077a53811be8a0309fdbe85b16b417",
   "public_claim": "ace2048a1d6e9424bf5aa31e399119cabdb63659",
-  "head": "da3e2b157a5e0d9dfb98dafe2fe9646159719a4f",
-  "updated_at": "2026-11-11 17:38:50 UTC",
+  "head": "8779ef0f251418d1007e475590bb9cb7326d5ce6",
+  "updated_at": "2026-11-11 17:48:47 UTC",
   "files": [
-    "crates/formats/src/go.rs",
-    "crates/formats/tests/go_buildinfo_diagnostics.rs",
-    "docs/ROADMAP.md"
+    {
+      "path": "crates/formats/src/go.rs",
+      "additions": 18,
+      "deletions": 5
+    },
+    {
+      "path": "crates/formats/tests/go_buildinfo_diagnostics.rs",
+      "additions": 176,
+      "deletions": 0
+    },
+    {
+      "path": "docs/ROADMAP.md",
+      "additions": 2,
+      "deletions": 0
+    },
+    {
+      "path": "docs/STATUS.md",
+      "additions": 1,
+      "deletions": 0
+    }
   ],
   "scope": "Aggregate identical unreadable-version-pointer diagnostics once per candidate scan, with the number of failed probes; preserve the exact text for a single failure, complete scanning, later readable metadata, all module diagnostics and pclntab/function results. Counts represent probes in each scan, not unique file offsets.",
   "deduplication": {
@@ -60,29 +77,383 @@
         "reason": "Reordering the additional program header did not make the assumed zero-byte slot safe; go tool nm rejected the relocated control. The final fixture now relocates the complete table and asserts every non-buildinfo section descriptor is unchanged."
       }
     ],
-    "active": {
-      "carrier_repository": "Afloat16/billion-context",
-      "carrier_branch": "validation/craft-go-buildinfo-diagnostics-20261111",
-      "carrier_head": "f27218d5ed98709bc4de0ffa6510da253ff1cfb2",
+    "complete_validation": {
       "run_url": "https://github.com/Afloat16/billion-context/actions/runs/43069839827",
-      "job_id": 130694422683,
-      "status": "in_progress",
-      "completed_steps": [
-        "Native Go control and symbol comparisons",
-        "Rust 1.99.0 installation",
-        "Committed formatting"
+      "job_url": "https://github.com/Afloat16/billion-context/actions/runs/43069839827/job/130694422683",
+      "result": "success",
+      "carrier_head": "f27218d5ed98709bc4de0ffa6510da253ff1cfb2",
+      "product_head": "da3e2b157a5e0d9dfb98dafe2fe9646159719a4f",
+      "native": {
+        "buildinfo": {
+          "Deps": null,
+          "GoVersion": "go1.24.13",
+          "Main": {
+            "Path": "example.com/diagnostics",
+            "Replace": null,
+            "Sum": "",
+            "Version": "(devel)"
+          },
+          "Path": "example.com/diagnostics/control",
+          "Settings": [
+            {
+              "Key": "-buildmode",
+              "Value": "exe"
+            },
+            {
+              "Key": "-compiler",
+              "Value": "gc"
+            },
+            {
+              "Key": "-trimpath",
+              "Value": "true"
+            },
+            {
+              "Key": "DefaultGODEBUG",
+              "Value": "asynctimerchan=1,gotestjsonbuildtext=1,gotypesalias=0,httpcookiemaxnum=0,httpservecontentkeepheaders=1,multipathtcp=0,randseednop=0,rsa1024min=0,tls3des=1,tlsmlkem=0,urlmaxqueryparams=0,winreadlinkvolume=0,winsymlink=0,x509keypairleaf=0,x509negativeserial=1,x509rsacrt=0,x509usepolicies=0"
+            },
+            {
+              "Key": "CGO_ENABLED",
+              "Value": "0"
+            },
+            {
+              "Key": "GOARCH",
+              "Value": "amd64"
+            },
+            {
+              "Key": "GOOS",
+              "Value": "linux"
+            },
+            {
+              "Key": "GOAMD64",
+              "Value": "v1"
+            }
+          ]
+        },
+        "control_sha256": "2c69b7b9e14868e1b5e93de5b95a64154a00512a0ea6b62d1789810642976765",
+        "files": [
+          {
+            "candidate_probes": 0,
+            "file": "relocated-control",
+            "metadata_address": 5775760,
+            "metadata_offset": 2212240,
+            "metadata_sha256": "89e49ba332f0ded462db424ad88a8af7dd9ced947038767a2da8bf8f8ec128fc",
+            "original_phdr_offset": 64,
+            "payload_bytes": 608,
+            "relocated_phdr_offset": 2211840,
+            "sha256": "22b38fdbb49b10985e733574fe36c725bec3032e402d95a47cdedfe32b7124a8",
+            "size": 2212848
+          },
+          {
+            "candidate_probes": 1,
+            "file": "single-pointer",
+            "metadata_address": 5775792,
+            "metadata_offset": 2212272,
+            "metadata_sha256": "89e49ba332f0ded462db424ad88a8af7dd9ced947038767a2da8bf8f8ec128fc",
+            "original_phdr_offset": 64,
+            "payload_bytes": 640,
+            "relocated_phdr_offset": 2211840,
+            "sha256": "55bad0121d80dec11f15342cd1481e7372271bf81dbe095fcffa10256071d202",
+            "size": 2212880
+          },
+          {
+            "candidate_probes": 262144,
+            "file": "many-pointers",
+            "metadata_address": 14164368,
+            "metadata_offset": 10600848,
+            "metadata_sha256": "89e49ba332f0ded462db424ad88a8af7dd9ced947038767a2da8bf8f8ec128fc",
+            "original_phdr_offset": 64,
+            "payload_bytes": 8389216,
+            "relocated_phdr_offset": 2211840,
+            "sha256": "ad2051fddcf7329f1002d0823b5cc8a80eac20af28deb44bd0a0c4a6fd9a034a",
+            "size": 10601456
+          }
+        ],
+        "go_version": "go version go1.24.13 linux/amd64",
+        "symbols": {
+          "main.main": 4791040,
+          "main.retained": 4791008
+        }
+      },
+      "fixtures": [
+        {
+          "candidate_probes": 0,
+          "file": "relocated-control",
+          "metadata_address": 5775760,
+          "metadata_offset": 2212240,
+          "metadata_sha256": "89e49ba332f0ded462db424ad88a8af7dd9ced947038767a2da8bf8f8ec128fc",
+          "original_phdr_offset": 64,
+          "payload_bytes": 608,
+          "relocated_phdr_offset": 2211840,
+          "sha256": "22b38fdbb49b10985e733574fe36c725bec3032e402d95a47cdedfe32b7124a8",
+          "size": 2212848
+        },
+        {
+          "candidate_probes": 1,
+          "file": "single-pointer",
+          "metadata_address": 5775792,
+          "metadata_offset": 2212272,
+          "metadata_sha256": "89e49ba332f0ded462db424ad88a8af7dd9ced947038767a2da8bf8f8ec128fc",
+          "original_phdr_offset": 64,
+          "payload_bytes": 640,
+          "relocated_phdr_offset": 2211840,
+          "sha256": "55bad0121d80dec11f15342cd1481e7372271bf81dbe095fcffa10256071d202",
+          "size": 2212880
+        },
+        {
+          "candidate_probes": 262144,
+          "file": "many-pointers",
+          "metadata_address": 14164368,
+          "metadata_offset": 10600848,
+          "metadata_sha256": "89e49ba332f0ded462db424ad88a8af7dd9ced947038767a2da8bf8f8ec128fc",
+          "original_phdr_offset": 64,
+          "payload_bytes": 8389216,
+          "relocated_phdr_offset": 2211840,
+          "sha256": "ad2051fddcf7329f1002d0823b5cc8a80eac20af28deb44bd0a0c4a6fd9a034a",
+          "size": 10601456
+        }
       ],
-      "current_step": "Original/fixed regressions and optimized fresh-process memory measurement"
+      "regressions": [
+        {
+          "phase": "original",
+          "passed": 2,
+          "failed": 4,
+          "ignored": 0
+        },
+        {
+          "phase": "fixed",
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "measurement": {
+        "candidate_probes": 262144,
+        "candidate_region_bytes": 8388608,
+        "compiler_environment": {
+          "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": "16",
+          "CARGO_PROFILE_RELEASE_DEBUG": "0",
+          "CARGO_PROFILE_RELEASE_LTO": "false"
+        },
+        "diagnostic_meaning_and_probe_counts_preserved": true,
+        "fixed_median_peak_rss_kib": 14160,
+        "metadata_and_functions_identical": true,
+        "ordinary_complete_reports_identical": true,
+        "original_median_peak_rss_kib": 47504,
+        "processes": 12,
+        "records": [
+          {
+            "diagnostic_counts": {},
+            "elapsed_seconds": 0,
+            "file": "control",
+            "functions": 1786,
+            "iteration": 0,
+            "peak_rss_kib": 5936,
+            "phase": "original",
+            "report_sha256": "eca4154a9a2b66c4ec7508dab3acbd571878945fc6ee52f718980ba4564321f6"
+          },
+          {
+            "diagnostic_counts": {},
+            "elapsed_seconds": 0,
+            "file": "relocated-control",
+            "functions": 1786,
+            "iteration": 0,
+            "peak_rss_kib": 6020,
+            "phase": "original",
+            "report_sha256": "6047a722b42cb08a647f9525ac9d3e49bb207cedc6c537314d6ebfb03426cb08"
+          },
+          {
+            "diagnostic_counts": {
+              "found a pointer-encoded build information header but could not follow its version pointer": 1
+            },
+            "elapsed_seconds": 0,
+            "file": "single-pointer",
+            "functions": 1786,
+            "iteration": 0,
+            "peak_rss_kib": 5924,
+            "phase": "original",
+            "report_sha256": "5b41704ffea687d88cb4dc432fcf595bfd472861504b0c3c9b82758a6fbaa316"
+          },
+          {
+            "diagnostic_counts": {
+              "found a pointer-encoded build information header but could not follow its version pointer": 262144
+            },
+            "elapsed_seconds": 0.04,
+            "file": "many-pointers",
+            "functions": 1786,
+            "iteration": 0,
+            "peak_rss_kib": 47620,
+            "phase": "original",
+            "report_sha256": "fd729955f4dc40c95a21d1b262e266a82e00eaa1b87f3f37178df0c24e4cd59e"
+          },
+          {
+            "diagnostic_counts": {
+              "found a pointer-encoded build information header but could not follow its version pointer": 262144
+            },
+            "elapsed_seconds": 0.04,
+            "file": "many-pointers",
+            "functions": 1786,
+            "iteration": 1,
+            "peak_rss_kib": 47504,
+            "phase": "original",
+            "report_sha256": "fd729955f4dc40c95a21d1b262e266a82e00eaa1b87f3f37178df0c24e4cd59e"
+          },
+          {
+            "diagnostic_counts": {
+              "found a pointer-encoded build information header but could not follow its version pointer": 262144
+            },
+            "elapsed_seconds": 0.04,
+            "file": "many-pointers",
+            "functions": 1786,
+            "iteration": 2,
+            "peak_rss_kib": 47504,
+            "phase": "original",
+            "report_sha256": "fd729955f4dc40c95a21d1b262e266a82e00eaa1b87f3f37178df0c24e4cd59e"
+          },
+          {
+            "diagnostic_counts": {},
+            "elapsed_seconds": 0,
+            "file": "control",
+            "functions": 1786,
+            "iteration": 0,
+            "peak_rss_kib": 5984,
+            "phase": "fixed",
+            "report_sha256": "eca4154a9a2b66c4ec7508dab3acbd571878945fc6ee52f718980ba4564321f6"
+          },
+          {
+            "diagnostic_counts": {},
+            "elapsed_seconds": 0,
+            "file": "relocated-control",
+            "functions": 1786,
+            "iteration": 0,
+            "peak_rss_kib": 5880,
+            "phase": "fixed",
+            "report_sha256": "6047a722b42cb08a647f9525ac9d3e49bb207cedc6c537314d6ebfb03426cb08"
+          },
+          {
+            "diagnostic_counts": {
+              "found a pointer-encoded build information header but could not follow its version pointer": 1
+            },
+            "elapsed_seconds": 0,
+            "file": "single-pointer",
+            "functions": 1786,
+            "iteration": 0,
+            "peak_rss_kib": 5984,
+            "phase": "fixed",
+            "report_sha256": "5b41704ffea687d88cb4dc432fcf595bfd472861504b0c3c9b82758a6fbaa316"
+          },
+          {
+            "diagnostic_counts": {
+              "found 262144 pointer-encoded build information headers but could not follow their version pointers (candidate probes in this scan)": 1
+            },
+            "elapsed_seconds": 0.01,
+            "file": "many-pointers",
+            "functions": 1786,
+            "iteration": 0,
+            "peak_rss_kib": 14160,
+            "phase": "fixed",
+            "report_sha256": "fd729955f4dc40c95a21d1b262e266a82e00eaa1b87f3f37178df0c24e4cd59e"
+          },
+          {
+            "diagnostic_counts": {
+              "found 262144 pointer-encoded build information headers but could not follow their version pointers (candidate probes in this scan)": 1
+            },
+            "elapsed_seconds": 0.01,
+            "file": "many-pointers",
+            "functions": 1786,
+            "iteration": 1,
+            "peak_rss_kib": 14224,
+            "phase": "fixed",
+            "report_sha256": "fd729955f4dc40c95a21d1b262e266a82e00eaa1b87f3f37178df0c24e4cd59e"
+          },
+          {
+            "diagnostic_counts": {
+              "found 262144 pointer-encoded build information headers but could not follow their version pointers (candidate probes in this scan)": 1
+            },
+            "elapsed_seconds": 0.01,
+            "file": "many-pointers",
+            "functions": 1786,
+            "iteration": 2,
+            "peak_rss_kib": 14124,
+            "phase": "fixed",
+            "report_sha256": "fd729955f4dc40c95a21d1b262e266a82e00eaa1b87f3f37178df0c24e4cd59e"
+          }
+        ],
+        "reduction_percent": 70.19198383294038,
+        "stress_processes_per_version": 3
+      },
+      "full_formats": {
+        "passed": 1711,
+        "failed": 0,
+        "ignored": 10,
+        "targets": 208
+      },
+      "gates": {
+        "fmt": "passed",
+        "all_target_formats_clippy_warnings_denied": "passed",
+        "layers": "passed",
+        "locks": "passed (387 files)",
+        "secrets": "passed",
+        "five_crate_webassembly": "passed",
+        "patch_whitespace": "passed",
+        "clean_checkout": "passed"
+      }
     },
-    "planned": [
-      "Six permanent original/fixed regression comparisons",
-      "Native Go debug/buildinfo and go tool nm comparison on original and relocated complete controls",
-      "Three fresh optimized processes per version on a fixed 8 MiB region of 262144 failed candidate probes, plus ordinary controls; exact complete metadata and function result equality",
-      "Full formats tests, fmt, strict all-target Clippy, layers, locks, secrets and complete five-crate WebAssembly gate"
-    ]
+    "final_identity": {
+      "run_url": "https://github.com/Afloat16/billion-context/actions/runs/43071242390",
+      "job_url": "https://github.com/Afloat16/billion-context/actions/runs/43071242390/job/130699362457",
+      "result": "success",
+      "carrier_head": "c0c9cca4cc767ca44249ff986e9efa42ea8ce68d",
+      "base": "3ce1ce9f52077a53811be8a0309fdbe85b16b417",
+      "claim": "ace2048a1d6e9424bf5aa31e399119cabdb63659",
+      "claim_preceded_implementation": true,
+      "entire_non_documentation_tree_identical": true,
+      "final": "8779ef0f251418d1007e475590bb9cb7326d5ce6",
+      "final_changed_only": [
+        "docs/ROADMAP.md",
+        "docs/STATUS.md"
+      ],
+      "hashes": {
+        "Cargo.lock": "9634f17a91a00ca9bffd49b493637c7b48fd663c1d950fab15730efbb0ac7b24",
+        "Cargo.toml": "70f10d98f2b3340322e616f7922d158c6575fce24c4735154bc791ba554a9286",
+        "crates/formats/Cargo.toml": "668ccbf2500bcccb83bbc0c56cb6799ad14c3d8708f60e15eb665e36758ca7a8",
+        "crates/formats/src/go.rs": "19c1ce945c0a716e06e8e6f569880445b8cbd2421f91ec03c14fa12ec0c356ff",
+        "crates/formats/tests/go_buildinfo_diagnostics.rs": "0d4c43a27fb165a3d779e9385370453717caa3cfff78bc9bd512e662e1c5f4a7"
+      },
+      "tested": "da3e2b157a5e0d9dfb98dafe2fe9646159719a4f",
+      "fmt": "passed",
+      "layers": "passed",
+      "locks": "passed (387 files)",
+      "secrets": "passed",
+      "patch_whitespace": "passed",
+      "clean_checkout": "passed"
+    }
   },
   "publication": {
-    "status": "not yet ready",
-    "reason": "Awaiting actual correctness, memory measurement and full repository gates. Craft PR publication remains blocked by previously reported API 403 and auto-review rejection; no rejected action has been retried."
-  }
+    "status": "ready_pending_user_pr_click",
+    "actual_pr": false,
+    "merged": false,
+    "reason": "The patch, validation, complete title/body and prefilled comparison are ready. Craft PR creation remains blocked by the previously reported API 403 and automatic approval-review rejection; neither denied action was retried.",
+    "base": "main",
+    "head": "Afloat16:bugfix/r3.12-go-buildinfo-diagnostics-20261111",
+    "commit": "8779ef0f251418d1007e475590bb9cb7326d5ce6",
+    "prefill_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-go-buildinfo-diagnostics-20261111?expand=1&title=Bound%20repeated%20Go%20build%20information%20diagnostics%20%28R3.12%29&body=%23%23%20Problem%0A%0AEvery%20aligned%2C%20pointer-encoded%20Go%20build%20information%20candidate%20with%20an%20unreadable%20version%20pointer%20appends%20the%20same%20owned%20diagnostic%20string.%20A%20damaged%20region%20can%20therefore%20retain%20hundreds%20of%20thousands%20of%20identical%20strings%20while%20the%20reader%20continues%20looking%20for%20valid%20metadata.%20The%20whole-file%20fallback%20can%20probe%20the%20same%20offsets%20again.%0A%0A%23%23%20Change%0A%0ACount%20these%20failed%20probes%20locally%20and%20emit%20one%20diagnostic%20after%20each%20candidate%20scan.%20A%20single%20failure%20keeps%20its%20exact%20existing%20text%3B%20repeated%20failures%20retain%20the%20specific%20reason%20and%20count.%20The%20count%20explicitly%20describes%20probes%20in%20that%20scan%2C%20rather%20than%20unique%20file%20offsets.%0A%0AThe%20scan%20still%20reaches%20later%20readable%20inline%20or%20pointer-encoded%20build%20information.%20Module%20diagnostics%2C%20address%20mapping%2C%20function%20decoding%2C%20input%20limits%20and%20the%20public%20API%20remain%20unchanged.%20There%20is%20no%20new%20dependency.%0A%0AThe%20public%20R3.12%20claim%20is%20commit%20%60ace2048a1d6e9424bf5aa31e399119cabdb63659%60%2C%20before%20implementation.%20ROADMAP%20and%20STATUS%20record%20the%20completed%20work%20and%20evidence.%0A%0A%23%23%20Regression%20and%20native%20evidence%0A%0A-%20Six%20permanent%20integration%20tests%20cover%20ordinary%20metadata%2C%20exact%20single-failure%20wording%2C%20repeated%20failures%20before%20valid%20inline%20metadata%2C%20fallback%20rescanning%20without%20valid%20metadata%2C%2032%2F64-bit%20pointer%20metadata%20in%20both%20byte%20orders%2C%20and%20invalid-width%2Funaligned%20controls.%20Against%20original%20%603ce1ce9f%60%2C%20two%20controls%20pass%20and%20four%20bounded-diagnostic%20cases%20fail%3B%20the%20fixed%20implementation%20passes%20all%20six.%0A-%20Go%201.24.13%20compiles%20an%20original%20owned%20program.%20Native%20%60debug%2Fbuildinfo.ReadFile%60%20agrees%20on%20the%20original%20and%20relocated%20complete%20controls%3B%20%60go%20tool%20nm%60%20verifies%20the%20original%20%60main.main%60%20and%20%60main.retained%60%20addresses%20in%20each%20generated%20image.%0A-%20The%20stress%20image%20places%20262%2C144%20unreadable%20pointer%20headers%20in%20an%208%20MiB%20region%20before%20the%20byte-identical%20native%20build%20information%20block.%20Both%20reader%20versions%20recover%20identical%20complete%20metadata%20and%20all%201%2C786%20decoded%20functions.%20Every%20report%20field%20other%20than%20the%20intentionally%20aggregated%20top-level%20diagnostic%20is%20compared%20directly%2C%20with%20matching%20full-report%20hashes.%0A-%20Ordinary%20control%20reports%2C%20including%20diagnostics%2C%20remain%20identical.%20The%20native%20Go%20reader%20is%20used%20for%20the%20complete%20controls%3B%20it%20is%20not%20claimed%20to%20accept%20a%20damaged%20prefix%20or%20to%20execute%20the%20transformed%20images.%0A%0A%23%23%20Measured%20retention%0A%0AActual%20public%20%60go%3A%3Ainspect%60%20calls%20run%20in%20fresh%20processes%20under%20identical%20optimized%20Rust%201.99.0%20builds%2C%20with%20only%20%60go.rs%60%20swapped%20between%20original%20and%20fixed%20code.%20Release%20LTO%20is%20disabled%2C%20codegen-units%20is%2016%20and%20debug%20information%20is%20disabled%20in%20both%20builds.%0A%0A%7C%208%20MiB%20repeated-header%20fixture%20%7C%20Original%20peak%20RSS%2C%20KiB%20%7C%20Fixed%20peak%20RSS%2C%20KiB%20%7C%0A%7C%20---%20%7C%20---%3A%20%7C%20---%3A%20%7C%0A%7C%20Process%201%20%7C%2047%2C620%20%7C%2014%2C160%20%7C%0A%7C%20Process%202%20%7C%2047%2C504%20%7C%2014%2C224%20%7C%0A%7C%20Process%203%20%7C%2047%2C504%20%7C%2014%2C124%20%7C%0A%7C%20Median%20%7C%2047%2C504%20%7C%2014%2C160%20%7C%0A%0AMedian%20peak%20RSS%20falls%20%2A%2A70.2%25%20on%20this%20bounded%20fixture%2A%2A.%20There%20are%20twelve%20measured%20processes%20in%20total%2C%20including%20the%20original%2C%20relocated%20and%20single-failure%20controls%20for%20both%20builds.%20This%20is%20repeated-diagnostic%20aggregation%2C%20not%20a%20reduced%20scan%20limit%20or%20omitted%20metadata.%0A%0A%23%23%20Validation%0A%0A%5BFull%20validation%20at%20%60da3e2b1%60%5D%28https%3A%2F%2Fgithub.com%2FAfloat16%2Fbillion-context%2Factions%2Fruns%2F43069839827%2Fjob%2F130694422683%29%3A%0A%0A-%20Complete%20formats%20suite%3A%20%2A%2A1%2C711%20passed%2C%200%20failed%2C%2010%20ignored%2A%2A%20across%20208%20test%20targets.%0A-%20Rust%201.99.0%20formatting%2C%20strict%20all-target%20formats%20Clippy%2C%20layers%2C%20locks%20and%20secrets%20passed.%0A-%20The%20complete%20five-crate%20WebAssembly%20gate%20passed.%0A-%20Original%2Ffixed%20comparisons%2C%20native%20controls%2C%20fresh-process%20measurements%20and%20a%20clean%20checkout%20passed.%0A%0A%5BFinal%20source%20identity%20and%20documentation%20checks%5D%28https%3A%2F%2Fgithub.com%2FAfloat16%2Fbillion-context%2Factions%2Fruns%2F43071242390%29%20verify%20that%20final%20%608779ef0%60%20changes%20only%20ROADMAP%20and%20STATUS%20relative%20to%20the%20fully%20tested%20implementation%2C%20retaining%20the%20entire%20product%2Ftest%2Fdependency%20tree%20and%20the%20claim-before-code%20ancestry.%0A%0ATwo%20earlier%20validation%20runs%20stopped%20while%20constructing%20the%20native%20ELF%20fixture%2C%20before%20any%20product%20tests%3A%20%5Bfirst%20attempt%5D%28https%3A%2F%2Fgithub.com%2FAfloat16%2Fbillion-context%2Factions%2Fruns%2F43068899521%29%2C%20%5Bsecond%20attempt%5D%28https%3A%2F%2Fgithub.com%2FAfloat16%2Fbillion-context%2Factions%2Fruns%2F43069518509%29.%20The%20corrected%20fixture%20relocates%20the%20whole%20program-header%20table%20instead%20of%20treating%20zero%20section-header%20bytes%20as%20free%20space.%20Those%20failures%20remain%20recorded.%0A"
+  },
+  "tested_head": "da3e2b157a5e0d9dfb98dafe2fe9646159719a4f",
+  "title": "Bound repeated Go build information diagnostics (R3.12)",
+  "body": "## Problem\n\nEvery aligned, pointer-encoded Go build information candidate with an unreadable version pointer appends the same owned diagnostic string. A damaged region can therefore retain hundreds of thousands of identical strings while the reader continues looking for valid metadata. The whole-file fallback can probe the same offsets again.\n\n## Change\n\nCount these failed probes locally and emit one diagnostic after each candidate scan. A single failure keeps its exact existing text; repeated failures retain the specific reason and count. The count explicitly describes probes in that scan, rather than unique file offsets.\n\nThe scan still reaches later readable inline or pointer-encoded build information. Module diagnostics, address mapping, function decoding, input limits and the public API remain unchanged. There is no new dependency.\n\nThe public R3.12 claim is commit `ace2048a1d6e9424bf5aa31e399119cabdb63659`, before implementation. ROADMAP and STATUS record the completed work and evidence.\n\n## Regression and native evidence\n\n- Six permanent integration tests cover ordinary metadata, exact single-failure wording, repeated failures before valid inline metadata, fallback rescanning without valid metadata, 32/64-bit pointer metadata in both byte orders, and invalid-width/unaligned controls. Against original `3ce1ce9f`, two controls pass and four bounded-diagnostic cases fail; the fixed implementation passes all six.\n- Go 1.24.13 compiles an original owned program. Native `debug/buildinfo.ReadFile` agrees on the original and relocated complete controls; `go tool nm` verifies the original `main.main` and `main.retained` addresses in each generated image.\n- The stress image places 262,144 unreadable pointer headers in an 8 MiB region before the byte-identical native build information block. Both reader versions recover identical complete metadata and all 1,786 decoded functions. Every report field other than the intentionally aggregated top-level diagnostic is compared directly, with matching full-report hashes.\n- Ordinary control reports, including diagnostics, remain identical. The native Go reader is used for the complete controls; it is not claimed to accept a damaged prefix or to execute the transformed images.\n\n## Measured retention\n\nActual public `go::inspect` calls run in fresh processes under identical optimized Rust 1.99.0 builds, with only `go.rs` swapped between original and fixed code. Release LTO is disabled, codegen-units is 16 and debug information is disabled in both builds.\n\n| 8 MiB repeated-header fixture | Original peak RSS, KiB | Fixed peak RSS, KiB |\n| --- | ---: | ---: |\n| Process 1 | 47,620 | 14,160 |\n| Process 2 | 47,504 | 14,224 |\n| Process 3 | 47,504 | 14,124 |\n| Median | 47,504 | 14,160 |\n\nMedian peak RSS falls **70.2% on this bounded fixture**. There are twelve measured processes in total, including the original, relocated and single-failure controls for both builds. This is repeated-diagnostic aggregation, not a reduced scan limit or omitted metadata.\n\n## Validation\n\n[Full validation at `da3e2b1`](https://github.com/Afloat16/billion-context/actions/runs/43069839827/job/130694422683):\n\n- Complete formats suite: **1,711 passed, 0 failed, 10 ignored** across 208 test targets.\n- Rust 1.99.0 formatting, strict all-target formats Clippy, layers, locks and secrets passed.\n- The complete five-crate WebAssembly gate passed.\n- Original/fixed comparisons, native controls, fresh-process measurements and a clean checkout passed.\n\n[Final source identity and documentation checks](https://github.com/Afloat16/billion-context/actions/runs/43071242390) verify that final `8779ef0` changes only ROADMAP and STATUS relative to the fully tested implementation, retaining the entire product/test/dependency tree and the claim-before-code ancestry.\n\nTwo earlier validation runs stopped while constructing the native ELF fixture, before any product tests: [first attempt](https://github.com/Afloat16/billion-context/actions/runs/43068899521), [second attempt](https://github.com/Afloat16/billion-context/actions/runs/43069518509). The corrected fixture relocates the whole program-header table instead of treating zero section-header bytes as free space. Those failures remain recorded.\n",
+  "prefill_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-go-buildinfo-diagnostics-20261111?expand=1&title=Bound%20repeated%20Go%20build%20information%20diagnostics%20%28R3.12%29&body=%23%23%20Problem%0A%0AEvery%20aligned%2C%20pointer-encoded%20Go%20build%20information%20candidate%20with%20an%20unreadable%20version%20pointer%20appends%20the%20same%20owned%20diagnostic%20string.%20A%20damaged%20region%20can%20therefore%20retain%20hundreds%20of%20thousands%20of%20identical%20strings%20while%20the%20reader%20continues%20looking%20for%20valid%20metadata.%20The%20whole-file%20fallback%20can%20probe%20the%20same%20offsets%20again.%0A%0A%23%23%20Change%0A%0ACount%20these%20failed%20probes%20locally%20and%20emit%20one%20diagnostic%20after%20each%20candidate%20scan.%20A%20single%20failure%20keeps%20its%20exact%20existing%20text%3B%20repeated%20failures%20retain%20the%20specific%20reason%20and%20count.%20The%20count%20explicitly%20describes%20probes%20in%20that%20scan%2C%20rather%20than%20unique%20file%20offsets.%0A%0AThe%20scan%20still%20reaches%20later%20readable%20inline%20or%20pointer-encoded%20build%20information.%20Module%20diagnostics%2C%20address%20mapping%2C%20function%20decoding%2C%20input%20limits%20and%20the%20public%20API%20remain%20unchanged.%20There%20is%20no%20new%20dependency.%0A%0AThe%20public%20R3.12%20claim%20is%20commit%20%60ace2048a1d6e9424bf5aa31e399119cabdb63659%60%2C%20before%20implementation.%20ROADMAP%20and%20STATUS%20record%20the%20completed%20work%20and%20evidence.%0A%0A%23%23%20Regression%20and%20native%20evidence%0A%0A-%20Six%20permanent%20integration%20tests%20cover%20ordinary%20metadata%2C%20exact%20single-failure%20wording%2C%20repeated%20failures%20before%20valid%20inline%20metadata%2C%20fallback%20rescanning%20without%20valid%20metadata%2C%2032%2F64-bit%20pointer%20metadata%20in%20both%20byte%20orders%2C%20and%20invalid-width%2Funaligned%20controls.%20Against%20original%20%603ce1ce9f%60%2C%20two%20controls%20pass%20and%20four%20bounded-diagnostic%20cases%20fail%3B%20the%20fixed%20implementation%20passes%20all%20six.%0A-%20Go%201.24.13%20compiles%20an%20original%20owned%20program.%20Native%20%60debug%2Fbuildinfo.ReadFile%60%20agrees%20on%20the%20original%20and%20relocated%20complete%20controls%3B%20%60go%20tool%20nm%60%20verifies%20the%20original%20%60main.main%60%20and%20%60main.retained%60%20addresses%20in%20each%20generated%20image.%0A-%20The%20stress%20image%20places%20262%2C144%20unreadable%20pointer%20headers%20in%20an%208%20MiB%20region%20before%20the%20byte-identical%20native%20build%20information%20block.%20Both%20reader%20versions%20recover%20identical%20complete%20metadata%20and%20all%201%2C786%20decoded%20functions.%20Every%20report%20field%20other%20than%20the%20intentionally%20aggregated%20top-level%20diagnostic%20is%20compared%20directly%2C%20with%20matching%20full-report%20hashes.%0A-%20Ordinary%20control%20reports%2C%20including%20diagnostics%2C%20remain%20identical.%20The%20native%20Go%20reader%20is%20used%20for%20the%20complete%20controls%3B%20it%20is%20not%20claimed%20to%20accept%20a%20damaged%20prefix%20or%20to%20execute%20the%20transformed%20images.%0A%0A%23%23%20Measured%20retention%0A%0AActual%20public%20%60go%3A%3Ainspect%60%20calls%20run%20in%20fresh%20processes%20under%20identical%20optimized%20Rust%201.99.0%20builds%2C%20with%20only%20%60go.rs%60%20swapped%20between%20original%20and%20fixed%20code.%20Release%20LTO%20is%20disabled%2C%20codegen-units%20is%2016%20and%20debug%20information%20is%20disabled%20in%20both%20builds.%0A%0A%7C%208%20MiB%20repeated-header%20fixture%20%7C%20Original%20peak%20RSS%2C%20KiB%20%7C%20Fixed%20peak%20RSS%2C%20KiB%20%7C%0A%7C%20---%20%7C%20---%3A%20%7C%20---%3A%20%7C%0A%7C%20Process%201%20%7C%2047%2C620%20%7C%2014%2C160%20%7C%0A%7C%20Process%202%20%7C%2047%2C504%20%7C%2014%2C224%20%7C%0A%7C%20Process%203%20%7C%2047%2C504%20%7C%2014%2C124%20%7C%0A%7C%20Median%20%7C%2047%2C504%20%7C%2014%2C160%20%7C%0A%0AMedian%20peak%20RSS%20falls%20%2A%2A70.2%25%20on%20this%20bounded%20fixture%2A%2A.%20There%20are%20twelve%20measured%20processes%20in%20total%2C%20including%20the%20original%2C%20relocated%20and%20single-failure%20controls%20for%20both%20builds.%20This%20is%20repeated-diagnostic%20aggregation%2C%20not%20a%20reduced%20scan%20limit%20or%20omitted%20metadata.%0A%0A%23%23%20Validation%0A%0A%5BFull%20validation%20at%20%60da3e2b1%60%5D%28https%3A%2F%2Fgithub.com%2FAfloat16%2Fbillion-context%2Factions%2Fruns%2F43069839827%2Fjob%2F130694422683%29%3A%0A%0A-%20Complete%20formats%20suite%3A%20%2A%2A1%2C711%20passed%2C%200%20failed%2C%2010%20ignored%2A%2A%20across%20208%20test%20targets.%0A-%20Rust%201.99.0%20formatting%2C%20strict%20all-target%20formats%20Clippy%2C%20layers%2C%20locks%20and%20secrets%20passed.%0A-%20The%20complete%20five-crate%20WebAssembly%20gate%20passed.%0A-%20Original%2Ffixed%20comparisons%2C%20native%20controls%2C%20fresh-process%20measurements%20and%20a%20clean%20checkout%20passed.%0A%0A%5BFinal%20source%20identity%20and%20documentation%20checks%5D%28https%3A%2F%2Fgithub.com%2FAfloat16%2Fbillion-context%2Factions%2Fruns%2F43071242390%29%20verify%20that%20final%20%608779ef0%60%20changes%20only%20ROADMAP%20and%20STATUS%20relative%20to%20the%20fully%20tested%20implementation%2C%20retaining%20the%20entire%20product%2Ftest%2Fdependency%20tree%20and%20the%20claim-before-code%20ancestry.%0A%0ATwo%20earlier%20validation%20runs%20stopped%20while%20constructing%20the%20native%20ELF%20fixture%2C%20before%20any%20product%20tests%3A%20%5Bfirst%20attempt%5D%28https%3A%2F%2Fgithub.com%2FAfloat16%2Fbillion-context%2Factions%2Fruns%2F43068899521%29%2C%20%5Bsecond%20attempt%5D%28https%3A%2F%2Fgithub.com%2FAfloat16%2Fbillion-context%2Factions%2Fruns%2F43069518509%29.%20The%20corrected%20fixture%20relocates%20the%20whole%20program-header%20table%20instead%20of%20treating%20zero%20section-header%20bytes%20as%20free%20space.%20Those%20failures%20remain%20recorded.%0A",
+  "commits": [
+    {
+      "sha": "ace2048a1d6e9424bf5aa31e399119cabdb63659",
+      "message": "Claim bounded Go build information diagnostics (R3.12)"
+    },
+    {
+      "sha": "da3e2b157a5e0d9dfb98dafe2fe9646159719a4f",
+      "message": "Aggregate unreadable Go build information pointer diagnostics (R3.12)"
+    },
+    {
+      "sha": "8779ef0f251418d1007e475590bb9cb7326d5ce6",
+      "message": "Record native Go diagnostic memory and compatibility verification (R3.12)"
+    }
+  ]
 }
