@@ -142,7 +142,9 @@ fn cargo_programs(app: &Path) -> Vec<String> {
 pub fn launch(app: &Path, godot: Option<&Path>) -> Option<(PathBuf, Vec<String>)> {
     if app.join("project.godot").is_file() {
         let root = std::path::absolute(app).ok()?;
-        return godot.map(|g| (g.to_path_buf(), vec!["--path".to_string(), root.display().to_string()]));
+        // Godot decodes --path as UTF-8. A lossy conversion could open a different project.
+        let project = root.to_str()?;
+        return godot.map(|g| (g.to_path_buf(), vec!["--path".into(), project.into()]));
     }
     if uses_electron(app) {
         let root = std::path::absolute(app).ok()?;
@@ -248,6 +250,23 @@ pub fn is_program(p: &Path) -> bool {
 #[cfg(test)]
 mod launch_tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn godot_does_not_open_a_different_project_after_lossy_conversion() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let dir = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let app = dir.path().join(std::ffi::OsStr::from_bytes(b"game-\xff"));
+        let other = dir.path().join("game-\u{fffd}");
+        for folder in [&app, &other] {
+            std::fs::create_dir(folder).unwrap();
+            std::fs::write(folder.join("project.godot"), "").unwrap();
+        }
+        let godot = Path::new("godot");
+        assert_eq!(launch(&other, Some(godot)), Some((godot.into(), vec!["--path".into(), other.to_str().unwrap().into()])));
+        assert_eq!(launch(&app, Some(godot)), None);
+    }
 
     /// The child runs inside the project, so an app path passed to it must survive that cwd change.
     #[test]

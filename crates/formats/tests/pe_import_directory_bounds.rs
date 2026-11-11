@@ -84,6 +84,22 @@ fn import_directories_stop_at_the_selected_mapping_extent() {
 }
 
 #[test]
+fn bound_names_require_a_terminator_inside_the_directory() {
+    let (data, headers) = bound(39, 1);
+    let table = pe::import_table(&data, &headers);
+    assert!(table.truncated);
+    assert_eq!(table.bound_modules[0].name, "one.dll");
+    assert!(table.bound_modules[0].forwarders.is_empty());
+    assert_eq!(table.warnings, ["a bound forwarder name is outside its directory"]);
+
+    let (data, headers) = bound(31, 1);
+    let table = pe::import_table(&data, &headers);
+    assert!(table.truncated);
+    assert!(table.bound_modules[0].name.is_empty());
+    assert!(table.warnings.iter().any(|warning| warning == "a bound import name is outside its directory"));
+}
+
+#[test]
 fn complete_import_directories_keep_names_referenced_outside_the_descriptor_span() {
     for (data, headers) in [normal(40), delayed(64)] {
         let table = pe::import_table(&data, &headers);
