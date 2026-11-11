@@ -1,15 +1,16 @@
 //! A minimal read-only ext2/3/4 reader: the superblock, block-group descriptors (32- or 64-byte),
 //! inodes, directory entries, and regular-file data via either classic block pointers
-//! (direct/indirect/double-indirect) or ext4 extent trees (depth 0 and 1). It extracts regular
+//! (direct, single-, double- and triple-indirect) or ext4 extent trees (depth 0 and 1). It extracts regular
 //! files, directories and fast symlinks from the root inode down, strictly bounded.
 //!
-//! Deliberately NOT handled (reported in warnings): triple-indirect blocks, inline data, directory
+//! Deliberately NOT handled (reported in warnings): inline data, directory
 //! HTree index specifics (directories are read as linear entry lists, which is layout-compatible),
 //! encryption, and 64-bit block numbers beyond the low 32 bits. These make a file appear as
 //! unrecovered rather than producing wrong bytes.
 
-use super::{FsEntry, FsImage, Limits, is_dot, join};
+use super::{FsEntry, FsImage, FsKind, Limits, is_dot, join};
 use crate::bytes::Reader;
+use std::collections::BTreeSet;
 
 struct Sb {
     block_size: u64,
@@ -104,7 +105,7 @@ fn file_block_map(data: &[u8], sb: &Sb, inode_off: u64, flags: u32, nblocks: u64
             }
         }
         // Each root owns its full logical span, including when its pointer is zero.
-        for (level, slot, first) in [(1, 48, 12), (2, 52, 12 + per)] {
+        for (level, slot, first) in [(1, 48, 12), (2, 52, 12 + per), (3, 56, 12 + per + per * per)] {
             logical = first;
             if let Some(root) = r.u32_le(ib + slot).filter(|&p| p != 0)
                 && let Err(block) = read_indirect(data, sb, u64::from(root), level, per, &mut logical, &mut map)
@@ -114,29 +115,25 @@ fn file_block_map(data: &[u8], sb: &Sb, inode_off: u64, flags: u32, nblocks: u64
                 return None;
             }
         }
-        if nblocks > 12 + per + per * per && r.u32_le(ib + 56).is_some_and(|p| p != 0) {
-            img.warn("ext: triple-indirect blocks are not followed");
-            img.complete = false;
-            return None;
-        }
     }
     Some(map)
 }
 
 fn read_indirect(data: &[u8], sb: &Sb, block: u64, level: u8, per: u64, logical: &mut u64, map: &mut Vec<Option<u64>>) -> Result<(), u64> {
-    if *logical as usize >= map.len() {
+    if usize::try_from(*logical).ok().is_none_or(|i| i >= map.len()) {
         return Ok(());
     }
     let b = block_bytes(data, sb, block).ok_or(block)?;
     let r = Reader::new(b);
     for i in 0..per {
-        if *logical as usize >= map.len() {
+        if usize::try_from(*logical).ok().is_none_or(|i| i >= map.len()) {
             return Ok(());
         }
         let off = usize::try_from(i.saturating_mul(4)).map_err(|_| block)?;
         let ptr = r.u32_le(off).ok_or(block)?;
         if ptr == 0 {
-            *logical += if level == 1 { 1 } else { per };
+            let span = per.checked_pow(u32::from(level.saturating_sub(1))).ok_or(block)?;
+            *logical = logical.checked_add(span).ok_or(block)?;
             continue;
         }
         if level == 1 {
@@ -224,15 +221,14 @@ fn file_data(data: &[u8], sb: &Sb, inode_off: u64, flags: u32, size: u64, limits
 }
 
 #[allow(clippy::too_many_arguments)]
-fn walk(data: &[u8], sb: &Sb, ino: u32, parent: &str, limits: &Limits, img: &mut FsImage, depth: usize, seen: &mut Vec<u32>) {
+fn walk(data: &[u8], sb: &Sb, ino: u32, parent: &str, limits: &Limits, img: &mut FsImage, depth: usize, seen: &mut BTreeSet<u32>) {
     if depth > limits.max_depth || seen.len() > limits.max_entries {
         img.complete = false;
         return;
     }
-    if seen.contains(&ino) {
+    if !seen.insert(ino) {
         return;
     }
-    seen.push(ino);
     let Some(inode_off) = inode_offset(data, sb, ino) else { return };
     let r = Reader::new(data);
     let io = usize::try_from(inode_off).ok().filter(|&o| o.checked_add(128).is_some_and(|end| end <= data.len()));
@@ -270,8 +266,40 @@ fn walk(data: &[u8], sb: &Sb, ino: u32, parent: &str, limits: &Limits, img: &mut
     }
 }
 
+/// A short target can still live in a data block. Only allocation accounted for by
+/// external attributes may coexist with an inline target in the classic inode layout.
+fn inline_symlink(r: &Reader, sb: &Sb, io: usize, size: u64, flags: u32) -> bool {
+    if size >= 60 || flags & 0x1000_0000 != 0 {
+        return false;
+    }
+    if sb.incompat & 0x400 != 0 {
+        // EA_INODE makes i_blocks include external attribute values as well.
+        return size != 0;
+    }
+    let ro_compat = r.u32_le(1024 + 100).unwrap_or(0);
+    let huge_files = ro_compat & 8 != 0;
+    let high = if huge_files { u64::from(r.u16_le(io + 116).unwrap_or(0)) << 32 } else { 0 };
+    let blocks = u64::from(r.u32_le(io + 28).unwrap_or(0)) | high;
+    let unit = if huge_files && flags & 0x4_0000 != 0 { sb.block_size / 512 } else { 1 };
+    let has_attributes = r.u32_le(io + 104).unwrap_or(0) != 0 || (sb.incompat & 0x80 != 0 && r.u16_le(io + 118).unwrap_or(0) != 0);
+    let attribute_sectors = if has_attributes {
+        let cluster_size = if ro_compat & 0x200 != 0 {
+            let Some(size) = r.u32_le(1024 + 28).and_then(|log| log.checked_add(10)).and_then(|shift| 1u64.checked_shl(shift)) else {
+                return false;
+            };
+            size
+        } else {
+            sb.block_size
+        };
+        cluster_size / 512
+    } else {
+        0
+    };
+    blocks.checked_mul(unit) == Some(attribute_sectors)
+}
+
 #[allow(clippy::too_many_arguments)]
-fn child_entry(data: &[u8], sb: &Sb, ino: u32, ftype: u8, path: String, limits: &Limits, img: &mut FsImage, depth: usize, seen: &mut Vec<u32>) {
+fn child_entry(data: &[u8], sb: &Sb, ino: u32, ftype: u8, path: String, limits: &Limits, img: &mut FsImage, depth: usize, seen: &mut BTreeSet<u32>) {
     // ftype: 1=file, 2=dir, 7=symlink (when the filetype feature is on); fall back to i_mode.
     let Some(io) = inode_offset(data, sb, ino).and_then(|o| usize::try_from(o).ok()).filter(|&o| o.checked_add(128).is_some_and(|end| end <= data.len()))
     else {
@@ -286,14 +314,17 @@ fn child_entry(data: &[u8], sb: &Sb, ino: u32, ftype: u8, path: String, limits: 
         walk(data, sb, ino, &path, limits, img, depth + 1, seen);
     } else if is_link {
         let size = u64::from(r.u32_le(io + 4).unwrap_or(0));
-        // Fast symlink: target stored inline in i_block when size < 60.
-        let target = if size < 60 {
-            String::from_utf8_lossy(data.get(io + 40..io + 40 + size as usize).unwrap_or(&[])).into_owned()
+        let flags = r.u32_le(io + 32).unwrap_or(0);
+        let target = if flags & 0x1000_0000 != 0 {
+            img.warn(format!("{path}: inline-data symlink not read"));
+            img.complete = false;
+            None
+        } else if inline_symlink(&r, sb, io, size, flags) {
+            data.get(io + 40..io + 40 + size as usize).map(|b| String::from_utf8_lossy(b).into_owned())
         } else {
-            let flags = r.u32_le(io + 32).unwrap_or(0);
-            file_data(data, sb, io as u64, flags, size, limits, img).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default()
+            file_data(data, sb, io as u64, flags, size, limits, img).map(|b| String::from_utf8_lossy(&b).into_owned())
         };
-        img.entries.push(FsEntry::symlink(path, target));
+        img.entries.push(FsEntry { path, kind: FsKind::Symlink, size, symlink_target: target, data: None });
     } else {
         let size = u64::from(r.u32_le(io + 4).unwrap_or(0)) | (u64::from(r.u32_le(io + 108).unwrap_or(0)) << 32);
         let flags = r.u32_le(io + 32).unwrap_or(0);
@@ -314,7 +345,7 @@ pub fn read(data: &[u8], limits: &Limits) -> FsImage {
         img.warn("filesystem is encrypted; file contents are not decrypted");
         img.complete = false;
     }
-    let mut seen = Vec::new();
+    let mut seen = BTreeSet::new();
     walk(data, &sb, 2, "", limits, &mut img, 0, &mut seen);
     img
 }
