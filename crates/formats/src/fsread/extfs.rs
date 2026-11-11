@@ -8,7 +8,7 @@
 //! encryption, and 64-bit block numbers beyond the low 32 bits. These make a file appear as
 //! unrecovered rather than producing wrong bytes.
 
-use super::{FsEntry, FsImage, Limits, is_dot, join};
+use super::{FsEntry, FsImage, FsKind, Limits, is_dot, join};
 use crate::bytes::Reader;
 use std::collections::BTreeSet;
 
@@ -270,6 +270,38 @@ fn walk(data: &[u8], sb: &Sb, ino: u32, parent: &str, limits: &Limits, img: &mut
     }
 }
 
+/// A short target can still live in a data block. Only allocation accounted for by
+/// external attributes may coexist with an inline target in the classic inode layout.
+fn inline_symlink(r: &Reader, sb: &Sb, io: usize, size: u64, flags: u32) -> bool {
+    if size >= 60 || flags & 0x1000_0000 != 0 {
+        return false;
+    }
+    if sb.incompat & 0x400 != 0 {
+        // EA_INODE makes i_blocks include external attribute values as well.
+        return size != 0;
+    }
+    let ro_compat = r.u32_le(1024 + 100).unwrap_or(0);
+    let huge_files = ro_compat & 8 != 0;
+    let high = if huge_files { u64::from(r.u16_le(io + 116).unwrap_or(0)) << 32 } else { 0 };
+    let blocks = u64::from(r.u32_le(io + 28).unwrap_or(0)) | high;
+    let unit = if huge_files && flags & 0x4_0000 != 0 { sb.block_size / 512 } else { 1 };
+    let has_attributes = r.u32_le(io + 104).unwrap_or(0) != 0 || (sb.incompat & 0x80 != 0 && r.u16_le(io + 118).unwrap_or(0) != 0);
+    let attribute_sectors = if has_attributes {
+        let cluster_size = if ro_compat & 0x200 != 0 {
+            let Some(size) = r.u32_le(1024 + 28).and_then(|log| log.checked_add(10)).and_then(|shift| 1u64.checked_shl(shift)) else {
+                return false;
+            };
+            size
+        } else {
+            sb.block_size
+        };
+        cluster_size / 512
+    } else {
+        0
+    };
+    blocks.checked_mul(unit) == Some(attribute_sectors)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn child_entry(data: &[u8], sb: &Sb, ino: u32, ftype: u8, path: String, limits: &Limits, img: &mut FsImage, depth: usize, seen: &mut BTreeSet<u32>) {
     // ftype: 1=file, 2=dir, 7=symlink (when the filetype feature is on); fall back to i_mode.
@@ -286,14 +318,17 @@ fn child_entry(data: &[u8], sb: &Sb, ino: u32, ftype: u8, path: String, limits: 
         walk(data, sb, ino, &path, limits, img, depth + 1, seen);
     } else if is_link {
         let size = u64::from(r.u32_le(io + 4).unwrap_or(0));
-        // Fast symlink: target stored inline in i_block when size < 60.
-        let target = if size < 60 {
-            String::from_utf8_lossy(data.get(io + 40..io + 40 + size as usize).unwrap_or(&[])).into_owned()
+        let flags = r.u32_le(io + 32).unwrap_or(0);
+        let target = if flags & 0x1000_0000 != 0 {
+            img.warn(format!("{path}: inline-data symlink not read"));
+            img.complete = false;
+            None
+        } else if inline_symlink(&r, sb, io, size, flags) {
+            data.get(io + 40..io + 40 + size as usize).map(|b| String::from_utf8_lossy(b).into_owned())
         } else {
-            let flags = r.u32_le(io + 32).unwrap_or(0);
-            file_data(data, sb, io as u64, flags, size, limits, img).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default()
+            file_data(data, sb, io as u64, flags, size, limits, img).map(|b| String::from_utf8_lossy(&b).into_owned())
         };
-        img.entries.push(FsEntry::symlink(path, target));
+        img.entries.push(FsEntry { path, kind: FsKind::Symlink, size, symlink_target: target, data: None });
     } else {
         let size = u64::from(r.u32_le(io + 4).unwrap_or(0)) | (u64::from(r.u32_le(io + 108).unwrap_or(0)) << 32);
         let flags = r.u32_le(io + 32).unwrap_or(0);
