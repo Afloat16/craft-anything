@@ -447,15 +447,31 @@ pub fn read_entry_unverified(data: &[u8], e: &ZipEntry, max_bytes: u64) -> Resul
     Ok(out)
 }
 
+// One byte's remainder for the reflected IEEE polynomial, evaluated at compile time.
+// The fixed 1 KiB table avoids rebuilding it or allocating memory when checking an entry.
+const CRC32_TABLE: [u32; 256] = {
+    let mut table = [0; 256];
+    let mut byte = 0;
+    while byte < table.len() {
+        let mut remainder = byte as u32;
+        let mut bit = 0;
+        while bit < 8 {
+            remainder = (remainder >> 1) ^ (0xedb8_8320 & (remainder & 1).wrapping_neg());
+            bit += 1;
+        }
+        table[byte] = remainder;
+        byte += 1;
+    }
+    table
+};
+
 /// CRC-32 (IEEE, as used by ZIP and PNG).
 pub fn crc32(data: &[u8]) -> u32 {
     let mut crc = 0xffff_ffffu32;
     for &b in data {
-        crc ^= u32::from(b);
-        for _ in 0..8 {
-            let mask = (crc & 1).wrapping_neg();
-            crc = (crc >> 1) ^ (0xedb8_8320 & mask);
-        }
+        // Truncation selects the low byte; every u8 has an entry in the fixed table.
+        let index = usize::from((crc as u8) ^ b);
+        crc = (crc >> 8) ^ CRC32_TABLE.get(index).copied().unwrap_or_default();
     }
     !crc
 }
