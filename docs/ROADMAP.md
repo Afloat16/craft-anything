@@ -1517,7 +1517,7 @@ Owner: open · Status: todo
 - [x] `adb` `parse_ps` reads its header line before the 64 KiB cap, so a hostile header can
       materialize a full token list; cap it like the body lines
       — claimed: Afloat16, branch bugfix/r3.3-cap-adb-process-header
-- [ ] Read Frida process names and application identifiers from their table columns,
+- [x] Read Frida process names and application identifiers from their table columns,
       preserving name whitespace instead of treating a dotted name suffix as an identifier.
       — claimed: Afloat16, branch bugfix/r3.3-frida-process-columns-20261111
 
