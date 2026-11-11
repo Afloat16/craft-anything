@@ -1611,6 +1611,8 @@ Owner: open · Status: in progress
 Owner: open · Status: in progress
 - [x] Preserve readable ZIP64 end-record fields with framing warnings and classic fallback for unusable locators; reject undersized, overflowing or truncated fixed records.
       — claimed: Afloat16, branch bugfix/r3.12-zip64-record-extent
+- [x] Recover ZIP64 records shifted by prepended data with a bounded lookbehind and preserve the fallback for locator-shaped classic comments.
+      — claimed: Afloat16, branch bugfix/r3.12-zip64-prefix-recovery-20261111
 - [x] Preserve fractional seconds when projecting binary plist dates and keyed-archive NSDate values, including dates before the reference epoch and rounding across a day boundary.
       — claimed: Afloat16, branch bugfix/r3.12-plist-fractional-dates-20261111
 - [x] Mark Python code inventories as cut short whenever a name or constant is shortened, and count truncation markers in the retained-text budget.

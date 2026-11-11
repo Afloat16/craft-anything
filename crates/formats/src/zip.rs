@@ -8,6 +8,9 @@ use crate::bytes::Reader;
 
 /// Biggest tail we search for the end-of-central-directory record (64 KiB comment + record).
 pub(crate) const EOCD_SEARCH: usize = 22 + 0xffff;
+const ZIP64_FIXED_SIZE: usize = 56;
+/// Bound the search for a record shifted by a prepended stub, including extensible data.
+const ZIP64_RECOVERY_SEARCH: usize = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ZipError {
@@ -95,6 +98,53 @@ pub fn looks_like_zip(data: &[u8]) -> bool {
     data.starts_with(b"PK\x03\x04") || data.starts_with(b"PK\x05\x06") || data.starts_with(b"PK\x07\x08")
 }
 
+/// Recover a shifted end record only when its fixed fields still describe the classic
+/// directory. Longer records must frame their extension exactly; the adjacent fixed
+/// record can still report an inconsistent size through the normal warning path.
+fn recover_zip64_record(data: &[u8], loc: usize, disk_entries: u64, total: u64, cd_size: u64, cd_offset: u64) -> Option<usize> {
+    let r = Reader::new(data);
+    let last = loc.checked_sub(ZIP64_FIXED_SIZE)?;
+    let first = loc.saturating_sub(ZIP64_RECOVERY_SEARCH);
+    let candidates = data.get(first..last.checked_add(4)?)?;
+    candidates.windows(4).enumerate().rev().find_map(|(relative, signature)| {
+        if signature != b"PK\x06\x06" {
+            return None;
+        }
+        let rec = first.checked_add(relative)?;
+        let fixed = Reader::new(r.slice(rec, ZIP64_FIXED_SIZE)?);
+        let payload_size = fixed.u64_le(4)?;
+        if payload_size < 44 {
+            return None;
+        }
+        let declared_end = (rec as u64).checked_add(12)?.checked_add(payload_size)?;
+        if rec != last && declared_end != loc as u64 {
+            return None;
+        }
+        let record_disk_entries = fixed.u64_le(24)?;
+        let record_total = fixed.u64_le(32)?;
+        let record_cd_size = fixed.u64_le(40)?;
+        let record_cd_offset = fixed.u64_le(48)?;
+        if fixed.u32_le(16)? != 0
+            || fixed.u32_le(20)? != 0
+            || record_disk_entries != record_total
+            || (disk_entries != 0xffff && disk_entries != record_disk_entries)
+            || (total != 0xffff && total != record_total)
+            || (cd_size != 0xffff_ffff && cd_size != record_cd_size)
+            || (cd_offset != 0xffff_ffff && cd_offset != record_cd_offset)
+            || record_cd_offset.checked_add(record_cd_size)? > rec as u64
+        {
+            return None;
+        }
+        if record_total > 0 {
+            let directory = rec.checked_sub(usize::try_from(record_cd_size).ok()?)?;
+            if record_cd_size < 46 || r.slice(directory, 4) != Some(b"PK\x01\x02") {
+                return None;
+            }
+        }
+        Some(rec)
+    })
+}
+
 /// Parse the central directory, keeping at most `max_entries`.
 pub fn parse(data: &[u8], max_entries: usize) -> Result<ZipArchive, ZipError> {
     let r = Reader::new(data);
@@ -120,9 +170,15 @@ pub fn parse(data: &[u8], max_entries: usize) -> Result<ZipArchive, ZipError> {
                 return Err(ZipError::Unsupported("multi-volume ZIP archives".into()));
             }
             let rec = r.u64_le(loc + 8).ok_or(ZipError::Truncated("zip64 locator"))?;
-            if let Ok(rec) = usize::try_from(rec)
-                && r.slice(rec, 4) == Some(b"PK\x06\x06")
-            {
+            let rec = usize::try_from(rec).ok().filter(|&rec| r.slice(rec, 4) == Some(b"PK\x06\x06"));
+            let rec = rec.or_else(|| {
+                let recovered = recover_zip64_record(data, loc, disk_entries, total, cd_size, cd_offset);
+                if recovered.is_some() {
+                    warnings.push("ZIP64 locator offset does not identify its end record; recovered the record before the locator".into());
+                }
+                recovered
+            });
+            if let Some(rec) = rec {
                 let payload_size = r.u64_le(rec + 4).ok_or(ZipError::Truncated("zip64 record size"))?;
                 if payload_size < 44 {
                     return Err(ZipError::Corrupt("ZIP64 end record is smaller than its fixed fields".into()));
@@ -133,7 +189,7 @@ pub fn parse(data: &[u8], max_entries: usize) -> Result<ZipArchive, ZipError> {
                     .ok_or_else(|| ZipError::Corrupt("ZIP64 end record extent overflows".into()))?;
                 // Fixed fields must be present before the locator. A bad declared extension
                 // length cannot make the reader borrow locator or classic end-record bytes.
-                if rec.checked_add(56).is_none_or(|end| end > loc) {
+                if rec.checked_add(ZIP64_FIXED_SIZE).is_none_or(|end| end > loc) {
                     return Err(ZipError::Truncated("zip64 record fixed fields"));
                 }
                 if declared_end != loc as u64 {
