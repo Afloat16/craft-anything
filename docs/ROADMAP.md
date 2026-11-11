@@ -718,6 +718,9 @@ yet, and the quick start is how every new person begins.
 
 ### R1.5 External engine trait in L3
 Owner: open · Status: in progress
+- [ ] Keep partial CDP WebSocket messages across observation deadlines and cancellation,
+      so the next read can finish the same message within the existing size limit.
+      — claimed: Afloat16, branch bugfix/r1.5-cdp-fragment-deadlines-20261111
 - [x] Find Chrome, Brave, Chromium and Edge installed as Flatpaks on Linux (system and per-user
       exports), and keep a Flatpak or Snap browser's private profile in the home folder its
       sandbox shares, since its /tmp is its own (#747). Unit-tested; not run on a real Flatpak
