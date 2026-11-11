@@ -195,7 +195,15 @@ fn skip_string(chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>, text:
         chars.next();
         chars.next();
         let mut quotes = 0;
-        for (_, c) in chars.by_ref() {
+        while let Some((i, c)) = chars.next() {
+            // Block strings only escape a triple quote; other backslashes stay literal.
+            if c == '\\' && text.get(i + 1..i + 4) == Some("\"\"\"") {
+                chars.next();
+                chars.next();
+                chars.next();
+                quotes = 0;
+                continue;
+            }
             quotes = if c == '"' { quotes + 1 } else { 0 };
             if quotes == 3 {
                 return Some(());
