@@ -1624,6 +1624,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-module-role-queue
 - [x] Resolve webpack module-loader calls by the wrapper parameter's binding, so nested parameters and local variables with the same name do not create dependency edges.
       — claimed: Afloat16, branch bugfix/r3.12-webpack-require-bindings
+- [ ] Preserve escaped JavaScript identifier bindings and references when choosing recovered webpack parameter names.
+      — claimed: Afloat16, branch bugfix/r3.12-js-escaped-rename-collisions-20261111
 - [x] Keep sequence splitting from introducing JavaScript strict-mode directives.
       — claimed: Plastic-time, branch rrfz/bugfix-r3.12-js-sequence-directives
 - [x] Match numeric bundle module and chunk identities by their JavaScript value, so hexadecimal, separated and exponent literals connect to equivalent dependency references.
