@@ -8,6 +8,8 @@ use serde::Serialize;
 const MAX_DEPTH: usize = 32;
 /// Most certificates taken from one PKCS#7 blob.
 const MAX_CERTS: usize = 64;
+/// A readable encoding limitation, distinct from the result of a signature check.
+pub const NON_MINIMAL_LENGTH_NOTE: &str = "An element uses a non-minimal ASN.1 length; not strict DER.";
 
 /// One TLV: tag byte, and the content range within the input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,6 +21,8 @@ pub struct Tlv {
     pub content: usize,
     /// Content length.
     pub len: usize,
+    /// The length uses a redundant long form or leading zero octet. Contents remain readable.
+    pub non_minimal_length: bool,
 }
 
 impl Tlv {
@@ -42,34 +46,61 @@ impl Tlv {
 }
 
 /// Read one TLV at `off`. Only single-byte tags and definite lengths of up to 4 bytes.
+/// Redundant length encodings are retained and flagged, rather than hiding their contents.
 pub fn read(data: &[u8], off: usize) -> Option<Tlv> {
     let tag = *data.get(off)?;
     if tag & 0x1f == 0x1f {
         return None;
     }
     let l0 = *data.get(off.checked_add(1)?)?;
-    let (len, hdr) = if l0 & 0x80 == 0 {
-        (usize::from(l0), 2usize)
+    let (len, hdr, non_minimal_length) = if l0 & 0x80 == 0 {
+        (usize::from(l0), 2usize, false)
     } else {
         let n = usize::from(l0 & 0x7f);
-        if n == 0 || n > 4 || *data.get(off.checked_add(2)?)? == 0 {
+        if n == 0 || n > 4 {
             return None;
         }
+        let leading_zero = *data.get(off.checked_add(2)?)? == 0;
         let mut v = 0usize;
         for i in 0..n {
             v = v.checked_mul(256)?.checked_add(usize::from(*data.get(off.checked_add(2 + i)?)?))?;
         }
-        if v < 128 {
-            return None;
-        }
-        (v, 2 + n)
+        (v, 2 + n, leading_zero || v < 128)
     };
     let content = off.checked_add(hdr)?;
     let end = content.checked_add(len)?;
     if end > data.len() {
         return None;
     }
-    Some(Tlv { tag, start: off, content, len })
+    Some(Tlv { tag, start: off, content, len, non_minimal_length })
+}
+
+/// Whether a non-minimal length is found while walking constructed elements within the
+/// reader's depth/child limits and a 100,000-node budget. False is not a full DER validation.
+pub fn has_non_minimal_length(data: &[u8]) -> bool {
+    fn walk(data: &[u8], value: &Tlv, depth: usize, remaining: &mut usize) -> bool {
+        if *remaining == 0 {
+            return false;
+        }
+        *remaining -= 1;
+        if value.non_minimal_length {
+            return true;
+        }
+        if depth >= MAX_DEPTH || !value.constructed() {
+            return false;
+        }
+        for child in children(data, value) {
+            if *remaining == 0 {
+                break;
+            }
+            if walk(data, &child, depth + 1, remaining) {
+                return true;
+            }
+        }
+        false
+    }
+    let mut remaining = 100_000;
+    read(data, 0).is_some_and(|value| walk(data, &value, 0, &mut remaining))
 }
 
 /// The children of a constructed TLV (stops at the first malformed child).
@@ -220,6 +251,9 @@ pub struct CertInfo {
     pub signature_algorithm: String,
     pub public_key_algorithm: String,
     pub version: u8,
+    /// Encoding limitations that do not discard the readable certificate facts.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
 }
 
 fn alg(data: &[u8], seq: &Tlv) -> String {
@@ -242,6 +276,9 @@ pub fn certificate(data: &[u8]) -> Option<CertInfo> {
     let parts = children(data, &cert);
     let tbs = parts.first().filter(|t| t.tag == 0x30)?;
     let mut info = CertInfo { version: 1, ..CertInfo::default() };
+    if has_non_minimal_length(data) {
+        info.notes.push(NON_MINIMAL_LENGTH_NOTE.into());
+    }
     if let Some(sa) = parts.get(1) {
         info.signature_algorithm = alg(data, sa);
     }
@@ -598,17 +635,45 @@ mod tests {
     }
 
     #[test]
-    fn der_lengths_use_the_shortest_encoding() {
-        for (header, len, valid) in [
-            (&[0x04, 0x7f][..], 127, true),
-            (&[0x04, 0x81, 0x7f], 127, false),
-            (&[0x04, 0x81, 0x80], 128, true),
-            (&[0x04, 0x82, 0x00, 0x80], 128, false),
-            (&[0x04, 0x82, 0x01, 0x00], 256, true),
+    fn der_lengths_retain_contents_and_mark_non_minimal_encodings() {
+        for (header, len, non_minimal) in [
+            (&[0x04, 0x00][..], 0, false),
+            (&[0x04, 0x81, 0x00], 0, true),
+            (&[0x04, 0x7f], 127, false),
+            (&[0x04, 0x81, 0x7f], 127, true),
+            (&[0x04, 0x81, 0x80], 128, false),
+            (&[0x04, 0x82, 0x00, 0x80], 128, true),
+            (&[0x04, 0x82, 0x01, 0x00], 256, false),
+            (&[0x04, 0x83, 0x00, 0x01, 0x00], 256, true),
         ] {
             let mut data = header.to_vec();
             data.resize(header.len() + len, 0);
-            assert_eq!(read(&data, 0).map(|t| t.len), valid.then_some(len));
+            let value = read(&data, 0).unwrap();
+            assert_eq!(value.len, len);
+            assert_eq!(value.non_minimal_length, non_minimal);
+            assert_eq!(value.bytes(&data), Some(&data[header.len()..]));
+            assert_eq!(has_non_minimal_length(&data), non_minimal);
+        }
+    }
+
+    #[test]
+    fn length_inspection_is_bounded_and_does_not_decode_primitive_payloads() {
+        use craft_anything_testkit::android::der;
+        let redundant = [0x04, 0x81, 0];
+        assert!(has_non_minimal_length(&der(0x30, &redundant)));
+        assert!(!has_non_minimal_length(&der(0x04, &redundant)));
+        let mut nested = redundant.to_vec();
+        for _ in 0..MAX_DEPTH {
+            nested = der(0x30, &nested);
+        }
+        assert!(has_non_minimal_length(&nested));
+        nested = der(0x30, &nested);
+        assert!(!has_non_minimal_length(&nested));
+        let branch = der(0x30, &[0x05, 0].repeat(4095));
+        let over_budget = der(0x30, &[branch.repeat(25), redundant.to_vec()].concat());
+        assert!(!has_non_minimal_length(&over_budget));
+        for invalid in [&[0x04, 0x80][..], &[0x04, 0x85, 0, 0, 0, 0, 0], &[0x04, 0x82, 0], &[0x04, 0x81, 0x7f]] {
+            assert!(read(invalid, 0).is_none());
         }
     }
 

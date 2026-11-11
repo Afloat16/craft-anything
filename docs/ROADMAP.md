@@ -1746,7 +1746,7 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-ec-named-curve-20261110
 - [x] Verify RSASSA-PSS signatures using their declared digest, mask and salt parameters, enforce PSS public-key constraints, and require signed and outer certificate parameters to agree.
       — claimed: Afloat16, branch bugfix/r3.12-rsa-pss-parameters-20261110
-- [x] Require DER lengths to use the shortest encoding, rejecting long-form values below 128 and redundant leading zero length octets.
+- [x] Retain readable ASN.1 elements with redundant length encodings, mark non-minimal lengths, and report the not-strict-DER limitation in certificate and signature views.
       — claimed: Afloat16, branch bugfix/r3.12-canonical-der-lengths
 - [x] Validate DER algorithm identifiers, signature and key bit strings, and name fields before using them as certificate verification inputs.
       — claimed: Afloat16, branch bugfix/r3.12-der-verification-fields
