@@ -236,16 +236,25 @@ impl Frida {
                 args.push(OsString::from(pid.to_string()));
             }
             Attach::Spawn { program, argv } => {
+                // The CLI expands options files before parsing, even after its end-of-options
+                // marker. Refuse those spellings instead of reading a target argument as a file.
+                if argv.iter().any(|a| a == "-O" || a == "--options-file" || a.starts_with("--options-file=")) {
+                    return Err(ToolError::invalid("Frida cannot pass -O or --options-file as a literal spawned-program argument")
+                        .with_remediation("Start the program separately and attach by PID if it requires an options-file argument."));
+                }
                 args.push(OsStr::new("-f").into());
                 args.push(program.as_os_str().to_owned());
-                for a in argv {
-                    args.push(OsString::from(a));
-                }
             }
         }
         args.push(OsStr::new("-l").into());
         args.push(script_file.as_os_str().to_owned());
         args.push(OsStr::new("-q").into());
+        if let Attach::Spawn { argv, .. } = attach
+            && !argv.is_empty()
+        {
+            args.push(OsStr::new("--").into());
+            args.extend(argv.iter().map(OsString::from));
+        }
         self.proc(&self.path, INSTALL).args(args).run()
     }
 }
