@@ -382,11 +382,13 @@ pub fn parse(data: &[u8]) -> Result<ClassFile, FormatError> {
         interfaces.push(class_name_at(&pool, i));
     }
     // Fields
-    let fields = parse_members(&mut c, &pool, &mut warnings, "field")?;
-    // Methods
-    let methods = parse_members(&mut c, &pool, &mut warnings, "method")?;
+    let (fields, fields_complete) = parse_members(&mut c, &pool, &mut warnings, "field")?;
+    // A broken outer attribute length leaves no trustworthy next member/table
+    // boundary. Keep the facts already read, without reinterpreting its payload.
+    let (methods, methods_complete) =
+        if fields_complete { parse_members(&mut c, &pool, &mut warnings, "method")? } else { (Vec::new(), false) };
     // Class attributes
-    let attrs = read_attrs(&mut c, &pool);
+    let attrs = if methods_complete { read_attrs(&mut c, &pool, &mut warnings, "class").0 } else { Vec::new() };
     let mut source_file = None;
     let mut signature = None;
     let mut inner_classes = Vec::new();
@@ -491,15 +493,24 @@ struct RawAttr<'a, 'p> {
     info: &'a [u8],
 }
 
-fn read_attrs<'a, 'p>(c: &mut Cursor<'a>, pool: &'p [Const]) -> Vec<RawAttr<'a, 'p>> {
-    let n = c.u16().unwrap_or(0) as usize;
+fn read_attrs<'a, 'p>(c: &mut Cursor<'a>, pool: &'p [Const], warnings: &mut Vec<String>, what: &str) -> (Vec<RawAttr<'a, 'p>>, bool) {
     let mut out = Vec::new();
-    for _ in 0..n.min(MAX_ATTRS) {
-        let (Some(ni), Some(len)) = (c.u16(), c.u32()) else { break };
-        let Some(info) = c.take(len as usize) else { break };
+    let Some(n) = c.u16() else {
+        warnings.push(format!("{what} attributes count is truncated"));
+        return (out, false);
+    };
+    for _ in 0..usize::from(n).min(MAX_ATTRS) {
+        let (Some(ni), Some(len)) = (c.u16(), c.u32()) else {
+            warnings.push(format!("{what} attribute header is truncated"));
+            return (out, false);
+        };
+        let Some(info) = c.take(len as usize) else {
+            warnings.push(format!("{what} attribute data is truncated"));
+            return (out, false);
+        };
         out.push(RawAttr { name: utf8_of(pool, ni), info });
     }
-    out
+    (out, true)
 }
 
 fn bootstrap_table(data: &[u8]) -> Option<Vec<(u16, Vec<u16>)>> {
@@ -514,18 +525,24 @@ fn bootstrap_table(data: &[u8]) -> Option<Vec<(u16, Vec<u16>)>> {
     (cursor.pos == data.len()).then_some(table)
 }
 
-fn parse_members(c: &mut Cursor<'_>, pool: &[Const], warnings: &mut Vec<String>, what: &str) -> Result<Vec<Member>, FormatError> {
+fn parse_members(c: &mut Cursor<'_>, pool: &[Const], warnings: &mut Vec<String>, what: &str) -> Result<(Vec<Member>, bool), FormatError> {
     let n = c.u16().ok_or_else(|| FormatError::Truncated(format!("{what} count")))? as usize;
     let mut out = Vec::new();
     for _ in 0..n.min(MAX_ITEMS) {
         let (Some(access), Some(name_idx), Some(desc_idx)) = (c.u16(), c.u16(), c.u16()) else {
             warnings.push(format!("{what} table ended early"));
-            break;
+            return Ok((out, false));
         };
         let mut m = Member { access, name: utf8_of(pool, name_idx).to_string(), descriptor: utf8_of(pool, desc_idx).to_string(), ..Default::default() };
-        for a in read_attrs(c, pool) {
+        let (attrs, complete) = read_attrs(c, pool, warnings, what);
+        for a in attrs {
             match a.name {
-                "Code" => m.code = parse_code(a.info, pool),
+                "Code" => {
+                    m.code = parse_code(a.info, pool, warnings);
+                    if m.code.is_none() {
+                        warnings.push(format!("{what} Code attribute ended early"));
+                    }
+                }
                 "ConstantValue" => {
                     if let Some(i) = Reader::new(a.info).u16_be(0) {
                         m.constant_value = Some(const_display(pool, i));
@@ -543,11 +560,14 @@ fn parse_members(c: &mut Cursor<'_>, pool: &[Const], warnings: &mut Vec<String>,
             }
         }
         out.push(m);
+        if !complete {
+            return Ok((out, false));
+        }
     }
-    Ok(out)
+    Ok((out, true))
 }
 
-fn parse_code(info: &[u8], pool: &[Const]) -> Option<Code> {
+fn parse_code(info: &[u8], pool: &[Const], warnings: &mut Vec<String>) -> Option<Code> {
     let mut c = Cursor::new(info);
     let max_stack = c.u16()?;
     let max_locals = c.u16()?;
@@ -560,7 +580,10 @@ fn parse_code(info: &[u8], pool: &[Const]) -> Option<Code> {
         exceptions.push(ExceptionEntry { start_pc, end_pc, handler_pc, catch_type: (catch != 0).then(|| class_name_at(pool, catch)) });
     }
     let mut line_numbers = Vec::new();
-    for a in read_attrs(&mut c, pool) {
+    // The enclosing Code attribute already bounds this cursor. A damaged
+    // nested table does not erase its bytecode or hide the following method.
+    let (attrs, _) = read_attrs(&mut c, pool, warnings, "Code");
+    for a in attrs {
         if a.name == "LineNumberTable" {
             let mut lc = Cursor::new(a.info);
             let n = lc.u16().unwrap_or(0) as usize;

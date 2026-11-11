@@ -319,6 +319,18 @@ fn warn_lims(warnings: &[String]) -> Vec<Limitation> {
     warnings.iter().take(50).map(|w| Limitation::new("parse_warning", w.clone())).collect()
 }
 
+fn parsed_coverage(mut coverage: Coverage, warnings: &[String]) -> Coverage {
+    if !warnings.is_empty() {
+        coverage.status = CoverageStatus::Partial;
+        coverage.total = None;
+    }
+    coverage
+}
+
+fn parsed_summary(summary: String, warnings: &[String]) -> String {
+    if warnings.is_empty() { summary } else { format!("{summary} Parsing is incomplete; see limitations.") }
+}
+
 fn ev(ctx: &Ctx<'_>, op: &str, src: &Source, params: Value) -> EvidenceBuilder {
     builder(ctx, op, src.input.subject.clone(), params)
         .authority(Authority::OriginalFiles)
@@ -492,10 +504,10 @@ fn java_classes_find(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, Too
         json!({"path": p.path, "query": p.query, "include_methods": p.include_methods, "offset": p.offset, "limit": p.limit}),
     )
     .result(json!({"query": p.query, "matches": rows.len(), "classes_total": classes.len(), "classes": slice}))
-    .summary(summary)
+    .summary(parsed_summary(summary, &warnings))
     .confidence(Confidence::Observed)
     .limitations(warn_lims(&warnings))
-    .coverage(cov);
+    .coverage(parsed_coverage(cov, &warnings));
     Ok(ToolOutput::evidence(b.build()?))
 }
 
@@ -575,10 +587,10 @@ fn java_class_show(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolE
             "methods": methods,
             "pseudo_java": decompiled,
         }))
-        .summary(summary)
+        .summary(parsed_summary(summary, &cf.warnings))
         .confidence(if p.decompile { Confidence::Inferred } else { Confidence::Observed })
         .limitations(lims)
-        .coverage(Coverage::complete(1))
+        .coverage(parsed_coverage(Coverage::complete(1), &cf.warnings))
         .location(Location::new("class", cf.this_class.clone()));
     Ok(ToolOutput::evidence(b.build()?))
 }
@@ -601,14 +613,26 @@ fn java_method_show(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, Tool
     let overloads: Vec<&java_class::Member> = cf.methods.iter().filter(|m| m.name == p.method_name).collect();
     if overloads.is_empty() {
         let names: Vec<String> = cf.methods.iter().take(400).map(|m| m.name.clone()).collect();
-        return Err(ToolError::invalid(format!("{} has no method named {}", cf.name_dotted(), p.method_name))
-            .with_remediation("List the class's methods with java_class_show.")
-            .with_details(json!({"reason": "method_not_found", "methods": names})));
+        let message = if cf.warnings.is_empty() {
+            format!("{} has no method named {}", cf.name_dotted(), p.method_name)
+        } else {
+            format!("{} was not found in the readable methods of {}; parsing is incomplete.", p.method_name, cf.name_dotted())
+        };
+        return Err(ToolError::invalid(message)
+            .with_remediation("List the class's methods and parse limitations with java_class_show.")
+            .with_details(json!({"reason": "method_not_found", "methods": names, "parse_incomplete": !cf.warnings.is_empty()})));
     }
     let m = match &p.descriptor {
         Some(d) => *overloads.iter().find(|m| &m.descriptor == d).ok_or_else(|| {
-            ToolError::invalid(format!("{} has no overload with descriptor {d}", p.method_name))
-                .with_details(json!({"overloads": overloads.iter().map(|m| m.descriptor.clone()).collect::<Vec<_>>()}))
+            let message = if cf.warnings.is_empty() {
+                format!("{} has no overload with descriptor {d}", p.method_name)
+            } else {
+                format!("No readable overload of {} has descriptor {d}; parsing is incomplete.", p.method_name)
+            };
+            ToolError::invalid(message).with_details(json!({
+                "overloads": overloads.iter().map(|m| m.descriptor.clone()).collect::<Vec<_>>(),
+                "parse_incomplete": !cf.warnings.is_empty(),
+            }))
         })?,
         None => overloads[0],
     };
@@ -639,8 +663,10 @@ fn java_method_show(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, Tool
                     "This method is native: its code is not in the class file."
                 } else if m.access & 0x0400 != 0 {
                     "This method is abstract: it has no body."
-                } else {
+                } else if cf.warnings.is_empty() {
                     "This method has no Code attribute."
+                } else {
+                    "No readable Code attribute is available; see parse warnings."
                 },
             ));
             (Vec::new(), true)
@@ -693,10 +719,10 @@ fn java_method_show(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, Tool
             "listing": listing,
             "pseudo_java": pseudo,
         }))
-        .summary(summary)
+        .summary(parsed_summary(summary, &cf.warnings))
         .confidence(if p.decompile { Confidence::Inferred } else { Confidence::Observed })
         .limitations(lims)
-        .coverage(cov)
+        .coverage(parsed_coverage(cov, &cf.warnings))
         .location(Location::new("method", reference.clone()));
     Ok(ToolOutput::evidence(b.build()?))
 }
@@ -738,7 +764,8 @@ fn java_class_users_find(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput,
         classes.len(),
         match &defined_in {
             Some(d) => format!("; defined in {d}"),
-            None => "; not defined in this archive (JRE or external library class)".into(),
+            None if warnings.is_empty() => "; not defined in this archive (JRE or external library class)".into(),
+            None => "; no definition found in the readable class data".into(),
         }
     );
     let mut lims = warn_lims(&warnings);
@@ -755,10 +782,10 @@ fn java_class_users_find(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput,
     }
     let b = ev(ctx, "java_class_users_find", &src, json!({"path": p.path, "class_name": p.class_name, "method_name": p.method_name, "offset": p.offset, "limit": p.limit}))
         .result(json!({"class": owner, "method_name": p.method_name, "defined_in": defined_in, "references_total": rows.len(), "callers": callers.len(), "references": slice}))
-        .summary(summary)
+        .summary(parsed_summary(summary, &warnings))
         .confidence(Confidence::Observed)
         .limitations(lims)
-        .coverage(cov)
+        .coverage(parsed_coverage(cov, &warnings))
         .location(Location::new("class", owner.clone()));
     Ok(ToolOutput::evidence(b.build()?))
 }
