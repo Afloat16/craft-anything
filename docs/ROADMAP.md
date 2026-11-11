@@ -1637,7 +1637,7 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Read legacy method-20 Zstandard ZIP members with the bounded decoder while preserving the recorded method and integrity checks.
+- [x] Read legacy method-20 Zstandard ZIP members with the bounded decoder while preserving the recorded method and integrity checks.
       — claimed: Afloat16, branch bugfix/r3.12-zip-legacy-zstandard-20261111
 - [x] Preserve readable ZIP64 end-record fields with framing warnings and classic fallback for unusable locators; reject undersized, overflowing or truncated fixed records.
       — claimed: Afloat16, branch bugfix/r3.12-zip64-record-extent
