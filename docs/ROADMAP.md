@@ -1662,7 +1662,7 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-module-role-queue
 - [x] Resolve webpack module-loader calls by the wrapper parameter's binding, so nested parameters and local variables with the same name do not create dependency edges.
       — claimed: Afloat16, branch bugfix/r3.12-webpack-require-bindings
-- [ ] Match repeated stars as recursive wildcards only at complete path-component boundaries,
+- [x] Match repeated stars as recursive wildcards only at complete path-component boundaries,
       so ordinary filename stars do not suppress unrelated source directories.
       — claimed: Afloat16, branch bugfix/r3.12-gitignore-component-stars-20261111
 - [x] Keep sequence splitting from introducing JavaScript strict-mode directives.
