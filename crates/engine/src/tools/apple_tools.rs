@@ -919,13 +919,12 @@ fn apple_archive_decode(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, 
         ))
     })?;
     let tree = a.project(root);
-    let rows = a.rows();
-    let total = rows.len();
-    let page_rows: Vec<&keyed_archive::ObjectRow> = rows.iter().skip(p.offset).take(p.limit).collect();
-    let mut classes: BTreeMap<String, usize> = BTreeMap::new();
-    for r in &rows {
-        if let Some(c) = &r.class {
-            *classes.entry(c.clone()).or_insert(0) += 1;
+    let total = a.objects.len();
+    let page_rows = a.rows_page(p.offset, p.limit);
+    let mut classes: BTreeMap<&str, usize> = BTreeMap::new();
+    for i in 0..total {
+        if let Some(c) = a.class_name(i as u64) {
+            *classes.entry(c).or_insert(0) += 1;
         }
     }
     let summary = format!(
@@ -933,7 +932,7 @@ fn apple_archive_decode(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, 
         inp.name,
         if a.archiver.is_empty() { "an unnamed archiver" } else { a.archiver.as_str() },
         total,
-        a.class_of(root).unwrap_or_else(|| "a plain value".into())
+        a.class_name(root).unwrap_or("a plain value")
     );
     let mut b = builder(ctx, "apple_archive_decode", inp.subject.clone(), json!({"path": inp.path, "root": root_name, "offset": p.offset, "limit": p.limit}))
         .result(json!({

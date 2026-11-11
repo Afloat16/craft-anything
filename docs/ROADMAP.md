@@ -1604,7 +1604,7 @@ Owner: open · Status: in progress
       Source [`a5bcfaed`](https://github.com/Afloat16/craft-anything/commit/a5bcfaedcb1ad67c8bb7f06c7143befc8292409c) passed [formats tests, fmt and clippy](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226891917)
       and [layers, locks, secret scanning, wasm checks and Cargo.lock stability](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).
       The [unchanged-code baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) reproduces the new regression cases.
-- [ ] Build only the requested keyed-archive object rows and count shared class names without copying them for every object.
+- [x] Build only the requested keyed-archive object rows and count shared class names without copying them for every object.
       — claimed: Afloat16, branch bugfix/r3.12-keyed-archive-page-before-copy-20261110
 - [x] Bound rejected ASAR names by the archive listing limit.
       — claimed: Afloat16, branch bugfix/r3.12-asar-limit-bounds-20261107
