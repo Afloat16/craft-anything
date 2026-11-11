@@ -332,6 +332,15 @@ pub struct DecodeIssue {
     pub reason: String,
 }
 
+fn relative_destination(end: usize, displacement: i32, body_len: usize) -> Option<u32> {
+    let absolute = i64::try_from(end).ok()?.checked_add(i64::from(displacement))?;
+    let absolute = usize::try_from(absolute).ok()?;
+    if absolute >= body_len {
+        return None;
+    }
+    u32::try_from(absolute).ok()
+}
+
 /// Decode IL bytes. Stops at the first undecodable byte (reported) or after `max` instructions.
 pub fn decode(code: &[u8], max: usize) -> (Vec<Instr>, Option<DecodeIssue>) {
     let r = Reader::new(code);
@@ -360,6 +369,7 @@ pub fn decode(code: &[u8], max: usize) -> (Vec<Instr>, Option<DecodeIssue>) {
             }
         };
         let trunc = || Some(DecodeIssue { offset: start as u32, reason: format!("operand of {name} runs past the body") });
+        let destination = || Some(DecodeIssue { offset: start as u32, reason: format!("destination of {name} lies outside the method body") });
         let operand = match kind {
             K::None => Operand::None,
             K::ShortI => match r.u8(pc) {
@@ -391,11 +401,17 @@ pub fn decode(code: &[u8], max: usize) -> (Vec<Instr>, Option<DecodeIssue>) {
                 None => return (out, trunc()),
             },
             K::ShortBr => match r.u8(pc) {
-                Some(v) => Operand::Targets(vec![((pc + 1) as i64 + i64::from(v as i8)) as u32]),
+                Some(v) => match relative_destination(pc + 1, i32::from(v as i8), code.len()) {
+                    Some(target) => Operand::Targets(vec![target]),
+                    None => return (out, destination()),
+                },
                 None => return (out, trunc()),
             },
             K::Br => match r.u32_le(pc) {
-                Some(v) => Operand::Targets(vec![((pc + 4) as i64 + i64::from(v as i32)) as u32]),
+                Some(v) => match relative_destination(pc + 4, v as i32, code.len()) {
+                    Some(target) => Operand::Targets(vec![target]),
+                    None => return (out, destination()),
+                },
                 None => return (out, trunc()),
             },
             K::Switch => {
@@ -406,7 +422,12 @@ pub fn decode(code: &[u8], max: usize) -> (Vec<Instr>, Option<DecodeIssue>) {
                 if end > code.len() {
                     return (out, trunc());
                 }
-                let targets = (0..n).filter_map(|i| r.u32_le(pc + 4 + i * 4)).map(|d| (end as i64 + i64::from(d as i32)) as u32).collect();
+                let mut targets = Vec::with_capacity(n);
+                for i in 0..n {
+                    let Some(displacement) = r.u32_le(pc + 4 + i * 4) else { return (out, trunc()) };
+                    let Some(target) = relative_destination(end, displacement as i32, code.len()) else { return (out, destination()) };
+                    targets.push(target);
+                }
                 pc = end;
                 out.push(Instr { offset: start as u32, opcode: name, kind, operand: Operand::Targets(targets) });
                 continue;

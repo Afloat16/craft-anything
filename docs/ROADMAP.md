@@ -1661,9 +1661,6 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-zstandard-multiple-frames
 - [x] Read concatenated XZ streams and four-byte stream padding while sharing one output budget.
       — claimed: Afloat16, branch feature/r3.12-xz-concatenation-20261109
-      Source [`cd5d8c70`](https://github.com/Afloat16/craft-anything/commit/cd5d8c7006070db9b220d9397346de9cecd89900) passed [formats tests, fmt and clippy](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895411)
-      and [layers, locks, secret scanning, wasm checks and Cargo.lock stability](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).
-      The [unchanged-code baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) reproduces the new regression cases.
 - [x] SQLite TEXT values cut at the 4 KiB cap can end in a spurious U+FFFD when the cut lands
       inside a character; cut at a UTF-8/UTF-16 boundary and keep the `truncated` flag
       — tests cover a UTF-8 character, a UTF-16 surrogate pair and a UTF-16 continuation-like
@@ -2015,6 +2012,10 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-elf-version-section-bounds-20261109
 - [x] Keep PE optional-header reads within the declared header.
       — claimed: Afloat16, branch bugfix/r3.12-pe-optional-header-framing-20261105
+- [x] Bound import descriptor walks by mapped file bytes and report incomplete metadata. Normal imports keep
+      following the terminator when their declared size is short or zero; delay-load and bound metadata
+      also respect their directory sizes. Preserve the shared retained-text budget.
+      — claimed: Afloat16, branch bugfix/r3.12-pe-import-directory-bounds-20261109
 - [x] Use the PE image's declared header extent when an RVA is not mapped by a section.
       — claimed: Afloat16, branch bugfix/r3.12-pe-header-rva-span
 - [x] Keep PE entry points, import slots and exception function starts from wrapping image-base arithmetic into unrelated addresses.
@@ -2065,6 +2066,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-dotnet-volatile-modifiers-20261110
 - [x] Preserve complete Unicode characters in shortened .NET strings.
       — claimed: Afloat16, branch bugfix/r3.12-dotnet-user-string-surrogate-limit-20261105
+- [x] Reject CIL branch and switch destinations outside the method body without wrapping signed displacements.
+      — claimed: Afloat16, branch bugfix/r3.12-cil-branch-target-ranges-20261111
 - [x] Validate CIL method exception-section kinds, extents and complete clause records before reading exception handlers.
       — claimed: Afloat16, branch bugfix/r3.12-cil-exception-framing-20261110
 - [x] Read Dart version hashes and feature strings only from the bytes belonging to that snapshot.

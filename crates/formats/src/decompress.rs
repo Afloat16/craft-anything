@@ -89,6 +89,18 @@ pub fn xz(input: &[u8], max_out: u64) -> Result<Vec<u8>, DecompressError> {
     Ok(out.buf)
 }
 
+/// Decode one XZ container block, retaining the decoder's rejection of trailing streams.
+pub(crate) fn xz_single(input: &[u8], max_out: u64) -> Result<Vec<u8>, DecompressError> {
+    let mut out = CapWrite::new(cap_of(max_out));
+    let mut cursor = io::Cursor::new(input);
+    match lzma_rs::xz_decompress(&mut cursor, &mut out) {
+        Ok(()) => Ok(out.buf),
+        Err(_) if out.exceeded => Err(DecompressError::TooLarge),
+        Err(lzma_rs::error::Error::HeaderTooShort(_)) => Err(DecompressError::Truncated),
+        Err(_) => Err(DecompressError::Corrupt),
+    }
+}
+
 /// Find stream boundaries backwards through their checked footer/index sizes, without
 /// repeatedly trying the decoder at candidate magic bytes inside compressed data.
 fn xz_stream_ranges(input: &[u8], max_out: u64) -> Result<Vec<std::ops::Range<usize>>, DecompressError> {
