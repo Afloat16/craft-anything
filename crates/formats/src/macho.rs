@@ -118,6 +118,8 @@ pub fn load_command_name(cmd: u32) -> String {
         0x29 => "LC_DATA_IN_CODE",
         0x2a => "LC_SOURCE_VERSION",
         0x2c => "LC_ENCRYPTION_INFO_64",
+        0x2f => "LC_VERSION_MIN_TVOS",
+        0x30 => "LC_VERSION_MIN_WATCHOS",
         0x32 => "LC_BUILD_VERSION",
         0x8000_0018 => "LC_LOAD_WEAK_DYLIB",
         0x8000_001c => "LC_RPATH",
@@ -314,9 +316,16 @@ pub fn enrich(data: &[u8], b: &mut Binary) {
                 b.info.insert("min_os".into(), nibble_version(r.u32_le(pos + 12).unwrap_or(0)));
                 b.info.insert("sdk".into(), nibble_version(r.u32_le(pos + 16).unwrap_or(0)));
             }
-            0x24 | 0x25 => {
-                b.info.insert("platform".into(), if cmd == 0x24 { "macos" } else { "ios" }.into());
+            0x24 | 0x25 | 0x2f | 0x30 => {
+                let platform = match cmd {
+                    0x24 => 1,
+                    0x25 => 2,
+                    0x2f => 3,
+                    _ => 4,
+                };
+                b.info.insert("platform".into(), crate::macho_deps::platform_name(platform));
                 b.info.insert("min_os".into(), nibble_version(r.u32_le(pos + 8).unwrap_or(0)));
+                b.info.insert("sdk".into(), nibble_version(r.u32_le(pos + 12).unwrap_or(0)));
             }
             0x8000_0034 => {
                 b.info.insert("fixups".into(), "chained fixups".into());
