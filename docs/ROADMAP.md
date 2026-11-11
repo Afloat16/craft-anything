@@ -2434,6 +2434,8 @@ Owner: open · Status: in progress
       and named references), keeps script and title text through lookalike closing tags, and skips
       raw-text elements, markup inside attribute values and custom tag names such as
       `<script:widget>` (#591–#596, by Afloat16)
+- [ ] Match legacy JavaScript script MIME types exactly so data blocks with unsupported version suffixes do not enter page inventories.
+      — claimed: Afloat16, branch bugfix/r3.13-html-script-mime-versions-20261111
 - [x] HAR reports redact credentials whose query names are percent-encoded (and the stand-in
       backend matches older recordings the same way), redact declared secrets in every kept field
       (names, methods, hosts, versions, timings), count body bytes before text conversion, and
