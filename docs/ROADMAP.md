@@ -1241,9 +1241,11 @@ Gaps found while using the app for real projects.
       — claimed: AlexJoaquimPereira, branch bugfix/r2.9-note-just-ask; commit 78d3963
 - [x] A note still waiting when the app closes is sent by the next run instead of deleted when it
       starts (#1620): its hand-over file keeps the person's words (`notes::Left`), and a run started
-      without a message sends them. A file from before this has only the hand-over text, whose
-      Just-ask answers may be from the other mode, so it's still dropped. Unit-tested; not run live
-      — claimed: justinjohn0306, branch `bugfix/r2.9-notes-survive-restart`
+      without a message takes them as its own waiting notes, so they stay on disk until its builder
+      takes them; a folder it can't read is moved aside (`notes-unread-…`), not deleted. A file
+      from before this has only the hand-over text, whose Just-ask answers may be from the other
+      mode, so it's still dropped. Unit-tested; not run live
+      — claimed: justinjohn0306, branches `bugfix/r2.9-notes-survive-restart`, `bugfix/r2.9-left-notes-kept`
 - [x] Record which mode a builder's session ran in: `agent_session` is kept across modes, so a Clean
       room build or question can resume a session from a Deep build and carry what it read, and such
       a question's answer is recorded as asked in Clean room. Don't resume one for Clean room
@@ -1607,6 +1609,8 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
+- [x] Preserve readable ZIP64 end-record fields with framing warnings and classic fallback for unusable locators; reject undersized, overflowing or truncated fixed records.
+      — claimed: Afloat16, branch bugfix/r3.12-zip64-record-extent
 - [x] Preserve fractional seconds when projecting binary plist dates and keyed-archive NSDate values, including dates before the reference epoch and rounding across a day boundary.
       — claimed: Afloat16, branch bugfix/r3.12-plist-fractional-dates-20261111
 - [x] Mark Python code inventories as cut short whenever a name or constant is shortened, and count truncation markers in the retained-text budget.
@@ -1857,12 +1861,16 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-bom-directory-bounds
 - [x] Count empty tensor shapes consistently across axis orders.
       — claimed: Afloat16, branch bugfix/r3.12-tensor-zero-dimension-product-20261105
+- [x] Read certificate choices from the SignedData certificate set only and enforce the certificate limit across the blob.
+      — claimed: Afloat16, branch bugfix/r3.12-signeddata-certificate-set
 - [x] Find APK signatures through valid ZIP comments and framed central directories.
       — claimed: Afloat16, branch bugfix/r3.12-apk-sign-eocd-comment-boundary-20261105
 - [x] Require APK signer SDK ranges and ordered signature-algorithm lists to match their signed copies, with complete required signer fields, before reporting verification.
       — claimed: Afloat16, branch bugfix/r3.12-apk-signed-metadata-20261110
 - [x] Include an Android package's type-ID offset in resource identities while retaining its local type-name indices; reject shifted IDs outside the one-byte type field.
       — claimed: Afloat16, branch bugfix/r3.12-arsc-type-id-offset-20261110
+- [x] Keep Android resource entry data after the offset table; retain readable identities with a warning when bag headers or records are incomplete, without inventing parent or bag values.
+      — claimed: Afloat16, branch bugfix/r3.12-resource-table-identity
 - [x] Keep Android resource packages, child chunks and library records inside their enclosing declared ranges.
       — claimed: Afloat16, branch bugfix/r3.12-arsc-parent-chunk-boundaries-20261109
       Source `ea680eeb9e92`; [format checks](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895431) and [compatibility gates](https://github.com/Afloat16/claude-mem/actions/runs/42642583301/job/129247271153) passed.
@@ -2150,6 +2158,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch feature/r3.12-cramfs-direct-block-pointers-20261111
 - [x] Recover files and symlinks from cramfs blocks marked uncompressed while preserving mixed compressed runs and recovery limits.
       — claimed: Afloat16, branch bugfix/r3.12-cramfs-uncompressed-blocks-20261110
+- [x] Preserve ext device, socket and FIFO inode kinds without exposing their block fields as regular-file contents.
+      — claimed: Afloat16, branch bugfix/r3.12-ext-special-inode-kinds-20261111
 - [x] Use ordered visited-node membership in ROMFS, ext, SquashFS and JFFS2 directory walks so wide filesystem trees avoid repeated scans of every previously visited node.
       — claimed: Afloat16, branch bugfix/r3.12-filesystem-page-visits-20261110
 - [x] Read ROMFS names at the configured name-length limit.
@@ -2234,6 +2244,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-dns-record-evidence
 - [x] Resolve keyed archive references consistently in nested objects and object rows.
       — claimed: Afloat16, branch bugfix/r3.12-keyed-archive-references
+- [x] Recognize UTF-16 XML keyed-archive NIBs after either byte-order mark so their objects, classes and references reach the existing plist decoder.
+      — claimed: Afloat16, branch bugfix/r3.12-nib-utf16-detection-20261111
 - [x] Reject NIB variable-length integers whose tenth byte exceeds the unsigned 64-bit range, instead of letting truncated high bits become an unrelated length or index.
       — claimed: Afloat16, branch bugfix/r3.12-nib-integer-overflow-20261110
 - [x] Accept binary plist arrays and sets that name one stored value many times; repeated data and

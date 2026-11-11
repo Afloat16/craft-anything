@@ -139,8 +139,15 @@ pub fn scan<'a>(src: &'a str, max_tokens: usize, mut emit: impl FnMut(Token<'a>)
             }
             tok_kind = TokKind::Ident;
         } else if c.is_ascii_digit() || (c == b'.' && next.is_ascii_digit()) {
-            while b.get(i).is_some_and(|&d| d.is_ascii_alphanumeric() || d == b'.' || d == b'_') {
-                i += 1;
+            let radix = c == b'0' && matches!(next, b'x' | b'X' | b'b' | b'B' | b'o' | b'O');
+            while let Some(&d) = b.get(i) {
+                let exp_sign =
+                    !radix && matches!(d, b'+' | b'-') && matches!(b.get(i.wrapping_sub(1)), Some(b'e' | b'E')) && b.get(i + 1).is_some_and(u8::is_ascii_digit);
+                if d.is_ascii_alphanumeric() || d == b'.' || d == b'_' || exp_sign {
+                    i += 1;
+                } else {
+                    break;
+                }
             }
             tok_kind = TokKind::Number;
         } else if c == b'/' && regex_allowed(last_sig) {
@@ -163,8 +170,8 @@ pub fn scan<'a>(src: &'a str, max_tokens: usize, mut emit: impl FnMut(Token<'a>)
             i = i.min(b.len());
             tok_kind = TokKind::Regex;
         } else {
-            let rest = slice(i, (i + 4).min(b.len()));
-            let len = PUNCTS.iter().find(|p| rest.starts_with(**p)).map_or(1, |p| p.len());
+            let rest = b.get(i..).unwrap_or_default();
+            let len = PUNCTS.iter().find(|p| rest.starts_with(p.as_bytes())).map_or(1, |p| p.len());
             // Never split a multi-byte character.
             let mut z = i + len;
             while z < b.len() && !src.is_char_boundary(z) {
@@ -343,6 +350,15 @@ mod tests {
     }
 
     #[test]
+    fn operators_before_non_ascii_identifier() {
+        for (src, op) in [("a===日本", "==="), ("a>>日本", ">>"), ("a=>é", "=>"), ("a!==😀", "!==")] {
+            let t: Vec<&str> = tokenize(src, 100).0.into_iter().map(|t| t.text).collect();
+            assert_eq!(t.len(), 3, "{src}: {t:?}");
+            assert_eq!(t[1], op, "{src}");
+        }
+    }
+
+    #[test]
     fn whitespace_does_not_count_against_limit() {
         let (t, truncated) = tokenize("a b c d", 4);
         assert_eq!(t.len(), 4);
@@ -350,6 +366,13 @@ mod tests {
         let (t, truncated) = tokenize("a b c d", 3);
         assert_eq!(t.len(), 3);
         assert!(truncated);
+    }
+
+    #[test]
+    fn exponent_sign() {
+        let texts = |s: &str| tokenize(s, 100).0.into_iter().map(|t| t.text.to_string()).collect::<Vec<_>>();
+        assert_eq!(texts("x = 1e+5 + 2.5E-3;"), ["x", "=", "1e+5", "+", "2.5E-3", ";"]);
+        assert_eq!(texts("0x1e+5"), ["0x1e", "+", "5"]);
     }
 
     #[test]

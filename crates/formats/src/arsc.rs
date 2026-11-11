@@ -458,6 +458,10 @@ fn parse_type(r: &Reader<'_>, c: usize, ch: usize, sz: usize, p: &Pkg<'_>, type_
         table.warnings.push(format!("{tname} ({cfg}): entry table runs past its chunk"));
         return;
     }
+    if count != 0 && (entries_start < ch.saturating_add(table_bytes) || entries_start > sz) {
+        table.warnings.push(format!("{tname} ({cfg}): invalid entry data start"));
+        return;
+    }
     for i in 0..count {
         let at = c + ch;
         if sparse {
@@ -510,12 +514,27 @@ fn parse_type(r: &Reader<'_>, c: usize, ch: usize, sz: usize, p: &Pkg<'_>, type_
         } else {
             entry.key = r.u32_le(e + 4).and_then(|k| p.keys.get(k)).unwrap_or("").to_string();
             if eflags & 0x01 != 0 {
+                if esize < 16 || e.saturating_add(esize) > end {
+                    table.truncated = true;
+                    table.warnings.push(format!("{tname} ({cfg}): incomplete bag header"));
+                    table.entries.push(entry);
+                    continue;
+                }
+                let n = r.u32_le(e + 12).unwrap_or(0) as usize;
+                let mut m = e + esize;
+                if n > (end - m) / 12 {
+                    table.truncated = true;
+                    table.warnings.push(format!("{tname} ({cfg}): incomplete bag data"));
+                    table.entries.push(entry);
+                    continue;
+                }
                 let parent = r.u32_le(e + 8).unwrap_or(0);
                 if parent != 0 {
                     entry.parent = Some(format!("@{parent:#010x}"));
                 }
-                let n = r.u32_le(e + 12).unwrap_or(0) as usize;
-                let mut m = e.saturating_add(esize.max(16));
+                if n > MAX_BAG {
+                    table.truncated = true;
+                }
                 for _ in 0..n.min(MAX_BAG) {
                     if m.saturating_add(12) > end {
                         break;
