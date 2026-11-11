@@ -140,12 +140,20 @@ pub fn base64_decode(text: &str) -> Option<Vec<u8>> {
     crate::bytes::decode_base64(text, false)
 }
 
-/// An Apple absolute time (seconds since 2001-01-01Z) as ISO-8601 UTC.
+/// An Apple absolute time (seconds since 2001-01-01Z) as ISO-8601 UTC, rounded to nanoseconds.
 pub fn apple_date_iso(secs: f64) -> String {
     if !secs.is_finite() || secs.abs() > 1e13 {
         return format!("{secs}");
     }
-    let unix = secs.floor() as i64 + 978_307_200;
+    // Separate the fraction before adding the epoch offset, which would otherwise lose
+    // precision for small intervals. Floor keeps pre-epoch fractions in the preceding second.
+    let whole = secs.floor();
+    let mut nanos = ((secs - whole) * 1_000_000_000.0).round() as u32;
+    let mut unix = whole as i64 + 978_307_200;
+    if nanos == 1_000_000_000 {
+        unix += 1;
+        nanos = 0;
+    }
     let days = unix.div_euclid(86_400);
     let rem = unix.rem_euclid(86_400);
     // Civil date from days since 1970-01-01.
@@ -159,7 +167,8 @@ pub fn apple_date_iso(secs: f64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
+    let fraction = if nanos == 0 { String::new() } else { format!(".{nanos:09}").trim_end_matches('0').to_string() };
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}{fraction}Z", rem / 3600, rem % 3600 / 60, rem % 60)
 }
 
 /// True when the bytes look like a property list of either kind.
