@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-11-11",
+  "updated_at": "2026-11-11T15:14:00Z",
   "items": [
     {
       "key": "craft-zip-crc32",
@@ -61,18 +61,18 @@
       "repository": "storytold/craft-anything",
       "branch": "bugfix/r3.12-sqlite-schema-completeness-20261111",
       "base": "35f11365026263f43884eadc9ec3296b99893ba1",
-      "head": "98561b89f9792c0c7a42d5e27a5d16aa70936b69",
+      "head": "6bafba62e745cd3e5fbebb2baf085fffee62ed7b",
       "public_claim": "a03b9f5e7cdd42012a7ada9115f9408becd2953d",
       "original_claim": "86ebafd0628529696a30da316679b28fab7c6ed8",
-      "state": "validation_requested",
+      "state": "validation_in_progress",
       "actual_pr": false,
       "merged": false,
       "validation": {
         "carrier_repository": "Afloat16/billion-context",
         "carrier_branch": "validation/craft-sqlite-schema-completeness-20261111",
-        "carrier_commit": "addf9c0b955493b3681b7ac0e53878da0341c209",
+        "carrier_commit": "7a28005d4d86faf95a5895f59ecb241a4224975d",
         "workflow": ".github/workflows/validation-craft-sqlite-schema.yml",
-        "run": null,
+        "run": 43046176741,
         "conclusion": null,
         "expected_differential": {
           "synthetic_formats": {
@@ -101,11 +101,20 @@
           "full Wasm gate",
           "unchanged source/lockfile/working tree"
         ],
-        "notes": "Expected counts are test plans, not executed results. Original source overlays are restored before fixed-head checks; only new test files/testkit helper remain during baseline verification."
+        "notes": "Expected counts are test plans, not executed results. Original source overlays are restored before fixed-head checks; only new test files/testkit helper remain during baseline verification.",
+        "previous_runs": [
+          {
+            "id": 43045814775,
+            "job": 130609323395,
+            "head": "98561b89f9792c0c7a42d5e27a5d16aa70936b69",
+            "conclusion": "failure",
+            "reason": "rustfmt required collapsing one testkit array expression; all compilation/test/gate steps skipped"
+          }
+        ]
       },
       "dedupe": "Whole-history searches for SQLite schema, schema_truncated, SQLite incomplete and schema coverage. Merged #1608 only propagated incomplete walks into row reads/counts; whole_schema and database tool evidence remain omitted. Current code and public ROADMAP checked at latest main.",
       "scope": "Carry RowWalk.incomplete into schema()/Overview and db_sqlite_show evidence, preserve readable objects and existing row paging, qualify uncertain missing-table errors. No traversal or SQL-language expansion.",
-      "notes": "Implementation is published; source/test formatting-only successor to bbb195d. Latest main base35f113 source files identical to prior22c44. Public claim was replayed before code. Awaiting actual CI results and independent review.",
+      "notes": "Only formatting was changed after the first implementation. Initial run failed at rustfmt and did not compile or run tests; the rerun is in progress. No passing regression/gate count is claimed yet.",
       "changed_paths": [
         "crates/formats/src/sqlite.rs",
         "crates/engine/src/tools/database_tools.rs",
