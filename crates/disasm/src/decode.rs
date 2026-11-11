@@ -812,7 +812,23 @@ fn decode_a64(bytes: &[u8], addr: u64, fmt: bool) -> Option<Insn> {
         _ => {
             let mut it = regs_in_order.into_iter();
             if let Some(d) = it.next() {
-                if op_name.ends_with('S') && first_reg.as_deref() == Some("zr") {
+                if first_reg.as_deref() == Some("zr")
+                    && (op_name.ends_with('S')
+                        || matches!(
+                            inst.opcode,
+                            Opcode::ADD
+                                | Opcode::SUB
+                                | Opcode::AND
+                                | Opcode::ORR
+                                | Opcode::EOR
+                                | Opcode::MADD
+                                | Opcode::MSUB
+                                | Opcode::SMULL
+                                | Opcode::UMULL
+                                | Opcode::SDIV
+                                | Opcode::UDIV
+                        ))
+                {
                     push_unique(&mut reads, d);
                 } else {
                     push_unique(&mut writes, d);
