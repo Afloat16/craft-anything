@@ -1488,11 +1488,15 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch feature/r3.9-rgb9e5-textures-20261110
 - [ ] Unreal 5 and Oodle: IoStore packages, unversioned properties and Oodle-compressed paks
 - [ ] Game files: save pictures from IoStore containers (needs the Unreal 5 support above)
+- [x] Decode Unreal packed 10-bit normalized and 11-bit floating-point textures through the bounded picture exporter.
+      — claimed: Afloat16, branch feature/r3.9-unreal-packed-textures-20261111
 - [x] Unreal: decode cooked half- and full-precision floating-point textures with the shared bounded pixel reader.
       — claimed: Afloat16, branch feature/r3.9-unreal-float-textures-20261109
       Source `75b507c0b96f`; [format checks](https://github.com/Afloat16/claude-mem/actions/runs/42634877637/job/129220281335) and [compatibility gates](https://github.com/Afloat16/claude-mem/actions/runs/42642583301/job/129247271153) passed.
 - [ ] Unreal: sounds and meshes out (so a Deep-mode rebuild needs no outside converter for them)
 
+- [x] Decode Unity EAC single-channel and dual-channel textures through the bounded picture exporter.
+      — claimed: Afloat16, branch feature/r3.9-unity-eac-textures-20261111
 - [x] Decode Unity ETC1 RGB textures through the bounded picture exporter, including both block modes and clipped edges.
       — claimed: Afloat16, branch feature/r3.9-etc1-textures-20261110
 - [x] Decode Unreal DXT3 (BC2) texture blocks, including explicit alpha and clipped edge blocks.
@@ -2010,6 +2014,10 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-elf-version-section-bounds-20261109
 - [x] Keep PE optional-header reads within the declared header.
       — claimed: Afloat16, branch bugfix/r3.12-pe-optional-header-framing-20261105
+- [x] Bound import descriptor walks by mapped file bytes and report incomplete metadata. Normal imports keep
+      following the terminator when their declared size is short or zero; delay-load and bound metadata
+      also respect their directory sizes. Preserve the shared retained-text budget.
+      — claimed: Afloat16, branch bugfix/r3.12-pe-import-directory-bounds-20261109
 - [x] Use the PE image's declared header extent when an RVA is not mapped by a section.
       — claimed: Afloat16, branch bugfix/r3.12-pe-header-rva-span
 - [x] Keep PE entry points, import slots and exception function starts from wrapping image-base arithmetic into unrelated addresses.
@@ -2056,10 +2064,14 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-wasm-function-count
 - [x] Reject TypeSpec handles where CLI class/value-type and generic signatures require TypeDef or TypeRef, while retaining standalone TypeSpec and custom-modifier decoding.
       — claimed: Afloat16, branch bugfix/r3.12-dotnet-signature-type-handles-20261110
+- [x] Keep CLI multidimensional array ranks and bounds distinct from vector signatures.
+      — claimed: Afloat16, branch bugfix/r3.12-cli-array-shapes-20261111
 - [x] Recognize volatile type notation from required `System.Runtime.CompilerServices.IsVolatile` modifiers across the complete modifier list.
       — claimed: Afloat16, branch bugfix/r3.12-dotnet-volatile-modifiers-20261110
 - [x] Preserve complete Unicode characters in shortened .NET strings.
       — claimed: Afloat16, branch bugfix/r3.12-dotnet-user-string-surrogate-limit-20261105
+- [x] Reject CIL branch and switch destinations outside the method body without wrapping signed displacements.
+      — claimed: Afloat16, branch bugfix/r3.12-cil-branch-target-ranges-20261111
 - [x] Validate CIL method exception-section kinds, extents and complete clause records before reading exception handlers.
       — claimed: Afloat16, branch bugfix/r3.12-cil-exception-framing-20261110
 - [x] Read Dart version hashes and feature strings only from the bytes belonging to that snapshot.
@@ -2101,10 +2113,12 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-cramfs-hole-blocks-20261110
 - [x] Charge firmware ZIP outputs before decoding the next member, so byte and file limits bound retained member data.
       — claimed: Afloat16, branch bugfix/r3.12-firmware-zip-output-budget-20261110
-- [x] Refuse JFFS2 data nodes whose decoded length disagrees with their declared extent, keeping corruption out of recovered files.
+- [x] Skip inconsistent JFFS2 data nodes and recover files when later valid nodes cover their damaged extents within the final file size.
       — claimed: Afloat16, branch bugfix/r3.12-jffs2-decoded-node-lengths-20261111
 - [x] Bound filesystem and archive recovery by the recorded image, node, directory and member limits.
       — claimed: Afloat16, branch bugfix/r3.12-filesystem-archive-bounds
+- [x] Recover cramfs direct block pointers, including shared uncompressed pages and length-prefixed compressed blocks.
+      — claimed: Afloat16, branch feature/r3.12-cramfs-direct-block-pointers-20261111
 - [x] Recover files and symlinks from cramfs blocks marked uncompressed while preserving mixed compressed runs and recovery limits.
       — claimed: Afloat16, branch bugfix/r3.12-cramfs-uncompressed-blocks-20261110
 - [x] Use ordered visited-node membership in ROMFS, ext, SquashFS and JFFS2 directory walks so wide filesystem trees avoid repeated scans of every previously visited node.
@@ -2127,6 +2141,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch refactor/r3.12-firmware-owned-payloads-20261110
 - [x] Bound and cancel CRC cpio verification across firmware probes, and reject non-hex checksum
       fields — claimed: Afloat16, branch bugfix/r3.12-bound-cpio-crc-scans-20261103
+- [x] Distinguish short block-backed ext symlinks from inline symlinks using inode allocation metadata.
+      — claimed: Afloat16, branch bugfix/r3.12-ext-block-backed-short-symlinks-20261111
 - [x] More parsers keep to the bytes they declare and refuse impossible values: signed LEB128 past
       64 bits, damaged modified UTF-8 (valid text around it survives), widened Java instructions
       and invocation operands, DEX register lists and array widths, SQLite text in the database's
@@ -2291,6 +2307,8 @@ Owner: open · Status: in progress
       and [layers, locks, secret scanning, wasm checks and Cargo.lock stability](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).
       The [unchanged-code baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) reproduces the new regression cases.
 
+- [x] Reject duplicate GGUF metadata keys and tensor names before they overwrite metadata or inflate parameter totals.
+      — claimed: Afloat16, branch bugfix/r3.12-gguf-duplicate-identities-20261111
 - [x] Calculate GGUF quantized tensor byte ranges from their block layout and diagnose invalid row widths.
       — claimed: Afloat16, branch bugfix/r3.12-gguf-quantized-extents-20261110
 

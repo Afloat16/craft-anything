@@ -202,29 +202,33 @@ fn reassemble(inode: &Inode, limits: &Limits, img: &mut FsImage) -> Option<Vec<u
     let mut out = vec![0u8; size];
     let mut ordered: Vec<&DataNode> = inode.nodes.iter().collect();
     ordered.sort_by_key(|n| n.version);
+    // Only damaged extents still present in the final file prevent recovery. A newer valid
+    // node can replace them; bytes from older valid nodes cannot stand in for damaged data.
+    let mut damaged = BTreeMap::new();
     for node in ordered {
+        let start = node.offset as usize;
+        let end = start.saturating_add(node.dsize as usize).min(size);
         let chunk = match node.compr {
             0 => node.data.clone(),
             1 => {
                 // An older extent may reach past the file's final size. Only clear its surviving bytes.
-                let start = node.offset as usize;
-                let end = start.saturating_add(node.dsize as usize).min(size);
                 if let Some(dst) = out.get_mut(start..end) {
                     dst.fill(0);
                 }
+                update_damage(&mut damaged, start, end, false);
                 continue;
             }
             6 => match crate::firmware::inflate(&node.data, true, u64::from(node.dsize), true) {
                 Ok(i) => i.data.unwrap_or_default(),
                 Err(_) => {
                     img.warn("jffs2: a zlib data node did not inflate");
-                    img.complete = false;
-                    return None;
+                    update_damage(&mut damaged, start, end, true);
+                    continue;
                 }
             },
             _ => {
                 img.warn("jffs2: a data node uses an unsupported compression (rtime/rubin/lzo)");
-                img.complete = false;
+                update_damage(&mut damaged, start, end, true);
                 continue;
             }
         };
@@ -233,19 +237,45 @@ fn reassemble(inode: &Inode, limits: &Limits, img: &mut FsImage) -> Option<Vec<u
         // an overlong raw node must not overwrite the following extent.
         if chunk.len() as u64 != u64::from(node.dsize) {
             img.warn("jffs2: a data node's decoded length disagrees with its declared extent");
-            img.complete = false;
-            return None;
+            update_damage(&mut damaged, start, end, true);
+            continue;
         }
-        let off = node.offset as usize;
-        let end = off.saturating_add(chunk.len()).min(out.len());
-        if off < out.len()
-            && let Some(dst) = out.get_mut(off..end)
+        if start < size
+            && let Some(dst) = out.get_mut(start..end)
         {
-            dst.copy_from_slice(chunk.get(..end - off).unwrap_or(&[]));
+            dst.copy_from_slice(chunk.get(..end - start).unwrap_or(&[]));
         }
+        update_damage(&mut damaged, start, end, false);
+    }
+    if !damaged.is_empty() {
+        img.complete = false;
+        return None;
     }
     img.bytes = img.bytes.saturating_add(out.len() as u64);
     Some(out)
+}
+
+/// Replace the damage state of one extent. The non-overlapping ranges grow with the bounded
+/// node count, rather than allocating another buffer proportional to file size.
+fn update_damage(damaged: &mut BTreeMap<usize, usize>, start: usize, end: usize, invalid: bool) {
+    if start >= end {
+        return;
+    }
+    while let Some((&left, &right)) = damaged.range(..end).next_back() {
+        if right <= start {
+            break;
+        }
+        damaged.remove(&left);
+        if left < start {
+            damaged.insert(left, start);
+        }
+        if right > end {
+            damaged.insert(end, right);
+        }
+    }
+    if invalid {
+        damaged.insert(start, end);
+    }
 }
 
 #[cfg(test)]

@@ -329,17 +329,27 @@ impl<'m, 'a> Names<'m, 'a> {
                 if nsizes > rank {
                     return None;
                 }
-                for _ in 0..nsizes {
-                    c.cu32()?;
-                }
+                let sizes = (0..nsizes).map(|_| c.cu32()).collect::<Option<Vec<_>>>()?;
                 let nlo = c.cu32()?;
                 if nlo > rank {
                     return None;
                 }
-                for _ in 0..nlo {
-                    c.ci32()?;
-                }
-                format!("{el}[{}]", ",".repeat(rank as usize - 1))
+                let lower_bounds = (0..nlo).map(|_| c.ci32()).collect::<Option<Vec<_>>>()?;
+                // General ARRAY is not SZARRAY, even at rank one. Keep its CLI shape
+                // notation, including any sizes and signed lower bounds from metadata.
+                let dimensions = (0..rank as usize)
+                    .map(|dimension| match (sizes.get(dimension), lower_bounds.get(dimension)) {
+                        (Some(&size), lower) => {
+                            let lower = i64::from(lower.copied().unwrap_or(0));
+                            let upper = lower + i64::from(size) - 1;
+                            format!("{lower}...{upper}")
+                        }
+                        (None, Some(lower)) => format!("{lower}..."),
+                        (None, None) if rank == 1 => "*".into(),
+                        (None, None) => String::new(),
+                    })
+                    .collect::<Vec<_>>();
+                format!("{el}[{}]", dimensions.join(","))
             }
             0x15 => {
                 let kind = c.u8()?;
