@@ -1641,8 +1641,8 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Bound retained diagnostics for unreadable Go build information version pointers while continuing the candidate scans and preserving later readable metadata.
-      — claimed: Afloat16, branch bugfix/r3.12-go-buildinfo-diagnostics-20261111
+- [x] Bound retained diagnostics for unreadable Go build information version pointers while continuing the candidate scans and preserving later readable metadata.
+      — complete: Afloat16; single failures keep their original diagnostic, repeated failures report their count per scan. Six regressions, native Go controls and three fresh processes per build verify unchanged metadata/functions with 70.2% lower median peak RSS on an 8 MiB repeated-header region.
 - [x] Keep source-to-bundle comparisons uncertain when source-map inventories are truncated, preserving positive matches and reporting partial tool evidence.
       — claimed: Afloat16, branch bugfix/r3.12-source-map-comparison-uncertainty-20261111
 - [x] Bound expanded source-map inventories by retained path bytes and entries before allocation, preserving bounded prefixes and reporting truncation.
