@@ -5,7 +5,7 @@
 use crate::FormatError;
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Most metadata entries kept.
 const MAX_METADATA: usize = 65_536;
@@ -234,9 +234,6 @@ impl<'a> Cursor<'a> {
     fn raw_str(&mut self) -> Option<&'a [u8]> {
         let n = usize::try_from(self.u64()?).ok()?;
         self.take(n)
-    }
-    fn string(&mut self) -> Option<String> {
-        self.raw_str().map(|b| String::from_utf8_lossy(b).into_owned())
     }
     /// Skip a bounded string without building it, keeping only its first characters.
     fn short_string(&mut self) -> Option<(String, bool)> {
@@ -468,21 +465,29 @@ fn parse_gguf(prefix: &[u8], file_size: u64) -> Result<ModelReport, FormatError>
     r.declared_tensors = tensor_count;
     r.declared_metadata = kv_count;
 
+    // Borrow complete identities: display truncation and retained-entry caps must not
+    // change which binary records are considered duplicates.
+    let mut metadata_keys = BTreeSet::new();
+    let mut tensor_names = BTreeSet::new();
     let mut alignment = 32u64;
     let mut file_type = None;
     let mut ended_early = false;
     let mut i = 0u64;
     while i < kv_count {
         let parsed = (|| {
-            let key = c.string()?;
+            let identity = c.raw_str()?;
+            let key = String::from_utf8_lossy(identity).into_owned();
             let t = c.u32()?;
             let (value, value_type, count, shortened) = gguf_value(&mut c, t, 0)?;
-            Some(ModelMetadata { key, value_type, value, count, shortened })
+            Some((identity, ModelMetadata { key, value_type, value, count, shortened }))
         })();
-        let Some(entry) = parsed else {
+        let Some((identity, entry)) = parsed else {
             ended_early = true;
             break;
         };
+        if !metadata_keys.insert(identity) {
+            return Err(FormatError::Malformed(format!("GGUF duplicate metadata key at index {i}")));
+        }
         r.metadata_read = r.metadata_read.saturating_add(1);
         match entry.key.as_str() {
             "general.architecture" => r.architecture = entry.value.as_str().map(str::to_string),
@@ -505,7 +510,8 @@ fn parse_gguf(prefix: &[u8], file_size: u64) -> Result<ModelReport, FormatError>
         let mut i = 0u64;
         while i < tensor_count {
             let parsed = (|| {
-                let name = c.string()?;
+                let identity = c.raw_str()?;
+                let name = String::from_utf8_lossy(identity).into_owned();
                 let dims = c.u32()?;
                 if dims > MAX_DIMS {
                     return None;
@@ -516,12 +522,15 @@ fn parse_gguf(prefix: &[u8], file_size: u64) -> Result<ModelReport, FormatError>
                 }
                 let ty = c.u32()?;
                 let offset = c.u64()?;
-                Some((name, shape, ty, offset))
+                Some((identity, name, shape, ty, offset))
             })();
-            let Some((name, shape, ty, data_offset)) = parsed else {
+            let Some((identity, name, shape, ty, data_offset)) = parsed else {
                 ended_early = true;
                 break;
             };
+            if !tensor_names.insert(identity) {
+                return Err(FormatError::Malformed(format!("GGUF duplicate tensor name at index {i}")));
+            }
             let (parameters, overflow) = element_count(&shape);
             if overflow {
                 r.warn(format!("{name}: its shape multiplies past what a number can hold"));
