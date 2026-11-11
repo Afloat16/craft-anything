@@ -231,9 +231,13 @@ pub fn dir_of(path: &str) -> &str {
     path.rsplit_once('/').map_or("", |(d, _)| d)
 }
 
-/// Join and normalise; `None` when the result would escape the root.
+/// Join a URL-like relative path without its query or fragment; `None` if it escapes the root.
 pub fn join_rel(base_dir: &str, rel: &str) -> Option<String> {
-    let rel = rel.split(['?', '#']).next().unwrap_or(rel);
+    join_file_path(base_dir, rel.split(['?', '#']).next().unwrap_or(rel))
+}
+
+/// Normalise a literal file path without interpreting URL query or fragment characters.
+fn join_file_path(base_dir: &str, rel: &str) -> Option<String> {
     let mut parts: Vec<&str> = if rel.starts_with('/') { Vec::new() } else { base_dir.split('/').filter(|p| !p.is_empty()).collect() };
     for p in rel.split(['/', '\\']) {
         match p {
@@ -265,10 +269,14 @@ struct Resolver<'a> {
 
 impl Resolver<'_> {
     fn resolve(&self, from_dir: &str, spec: &str) -> Option<String> {
+        self.resolve_file(from_dir, spec.split(['?', '#']).next().unwrap_or(spec))
+    }
+
+    fn resolve_file(&self, from_dir: &str, spec: &str) -> Option<String> {
         if !(spec.starts_with('.') || spec.starts_with('/')) {
             return None;
         }
-        let base = join_rel(from_dir, spec)?;
+        let base = join_file_path(from_dir, spec)?;
         let candidates = [
             base.clone(),
             format!("{base}.js"),
@@ -449,7 +457,7 @@ pub fn analyze_application(input: &AppInput, opts: &AppOptions, cancelled: &dyn 
         .package
         .as_ref()
         .and_then(|p| p.get("main").and_then(Value::as_str))
-        .and_then(|m| resolver.resolve(&pkg_root, &if m.starts_with('.') { m.to_string() } else { format!("./{m}") }))
+        .and_then(|m| resolver.resolve_file(&pkg_root, &if m.starts_with('.') { m.to_string() } else { format!("./{m}") }))
         .or_else(|| {
             ["main.js", "index.js", "main.cjs", "dist/main.js", "dist/main/index.js"]
                 .iter()
@@ -465,7 +473,13 @@ pub fn analyze_application(input: &AppInput, opts: &AppOptions, cancelled: &dyn 
         let dir = dir_of(a.host.as_deref().unwrap_or(&a.path)).to_string();
         let mut v = Vec::new();
         for imp in a.facts.imports.iter().take(2000) {
-            let resolved = if imp.literal { resolver.resolve(&dir, &imp.specifier) } else { None };
+            let resolved = if !imp.literal {
+                None
+            } else if imp.kind == "require" {
+                resolver.resolve_file(&dir, &imp.specifier)
+            } else {
+                resolver.resolve(&dir, &imp.specifier)
+            };
             v.push(ResolvedImport { kind: imp.kind.clone(), specifier: imp.specifier.clone(), resolved, line: imp.line });
         }
         if let Some(h) = &a.html {

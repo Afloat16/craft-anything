@@ -1642,7 +1642,7 @@ Owner: open · Status: in progress
 - [x] Read the explicit module-format byte in current Node SEA blobs while retaining the older layouts;
       report the stored format and recover the main script, assets and execution arguments at their real offsets.
       — claimed: Afloat16, branch bugfix/r3.12-node-sea-module-format-20261110
-- [ ] Preserve literal CommonJS file names and package entry paths containing query or fragment characters when connecting application modules.
+- [x] Preserve literal CommonJS file names and package entry paths containing query or fragment characters when connecting application modules.
       — claimed: Afloat16, branch bugfix/r3.12-commonjs-literal-filenames-20261111
 - [x] Deduplicate modules before queueing role propagation, so repeated imports do not exhaust the application graph's traversal limit before reachable modules receive their roles.
       — claimed: Afloat16, branch bugfix/r3.12-module-role-queue
