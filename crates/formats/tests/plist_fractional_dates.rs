@@ -26,9 +26,20 @@ fn keyed_archive_dates_keep_their_subsecond_time() {
 
 #[test]
 fn rounding_carries_into_the_next_second_and_day() {
-    assert_eq!(plist::apple_date_iso(86_399.999_999_999_6), "2001-01-02T00:00:00Z");
-    assert_eq!(plist::apple_date_iso(-0.000_000_000_4), "2001-01-01T00:00:00Z");
-    assert_eq!(plist::apple_date_iso(0.000_000_001), "2001-01-01T00:00:00.000000001Z");
+    assert_eq!(plist::apple_date_iso(86_399.999_999_6), "2001-01-02T00:00:00Z");
+    assert_eq!(plist::apple_date_iso(-0.000_000_4), "2001-01-01T00:00:00Z");
+    assert_eq!(plist::apple_date_iso(0.000_001), "2001-01-01T00:00:00.000001Z");
+    assert_eq!(plist::apple_date_iso(0.000_000_001), "2001-01-01T00:00:00Z");
+}
+
+#[test]
+fn modern_dates_do_not_display_float_noise_as_nanosecond_precision() {
+    for (seconds, expected) in
+        [(700_000_000.3, "2023-03-08T20:26:40.3Z"), (-700_000_000.3, "1978-10-27T03:33:19.7Z"), (800_000_000.123_456, "2026-05-09T06:13:20.123456Z")]
+    {
+        let bytes = fx::to_bplist(&fx::P::Date(seconds));
+        assert_eq!(plist::parse(&bytes).unwrap().to_json(), json!({"$date": expected}));
+    }
 }
 
 #[test]
