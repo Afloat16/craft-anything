@@ -471,7 +471,7 @@ fn js_sources_restore(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, To
         let text = String::from_utf8_lossy(&bytes).into_owned();
         let in_sha = sha256_hex(&bytes);
         let stem = safe_module_path(rel, ".js");
-        let mut record = json!({"input": rel, "sha256": in_sha, "bytes": bytes.len()});
+        let mut record = json!({"input": rel, "input_index": n, "sha256": in_sha, "bytes": bytes.len()});
         // Whole-file pretty print.
         match pretty_print(rel, &text, level, &limits) {
             Ok((pretty, rewrites)) => {
@@ -518,11 +518,16 @@ fn js_sources_restore(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, To
                         continue;
                     }
                     let target = format!("sources/{}/{}", stem.trim_end_matches(".js"), safe_module_path(&src, ""));
-                    let comps: Vec<String> = target.split('/').filter(|c| !c.is_empty()).map(String::from).collect();
+                    let mut comps: Vec<String> = target.split('/').filter(|c| !c.is_empty()).map(String::from).collect();
+                    if recovery_path_conflicts(&out, &comps) {
+                        // Keep ordinary paths; give each colliding source occurrence its own directory.
+                        let name = comps.last().cloned().unwrap_or_else(|| "module".into());
+                        comps = vec!["sources-collisions".into(), n.to_string(), i.to_string(), name];
+                    }
                     match write_new_file(&out, &comps, content.as_bytes()) {
                         Ok(w) => {
                             originals_total += 1;
-                            outputs.push(json!({"path": rel_to(&out, &w), "kind": "original-source", "from": rel, "source_map_source": src}));
+                            outputs.push(json!({"path": rel_to(&out, &w), "kind": "original-source", "from": rel, "input_index": n, "source_map_source": src, "source_map_index": i}));
                         }
                         Err(e) => notes.push(format!("{rel} original {src}: {e}")),
                     }
@@ -552,6 +557,20 @@ fn js_sources_restore(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, To
         .location(Location::new("path", out.display().to_string()))
         .build()?;
     Ok(ToolOutput::evidence(ev))
+}
+
+// Check aliases and file/directory prefixes on this filesystem. The writer still checks
+// parents and creates the chosen file exclusively.
+fn recovery_path_conflicts(root: &Path, components: &[String]) -> bool {
+    let mut path = root.to_path_buf();
+    for (index, component) in components.iter().enumerate() {
+        path.push(component);
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else { return false };
+        if index == components.len().saturating_sub(1) || !metadata.is_dir() {
+            return true;
+        }
+    }
+    false
 }
 
 fn find_map(script: &Path, url: Option<&str>) -> Option<craft_anything_formats::sourcemap::SourceMap> {
@@ -663,6 +682,92 @@ mod tests {
                 .iter()
                 .any(|output| { output["kind"] == "original-source" && output["source_map_source"] == "src/original.js" })
         );
+    }
+
+    fn write_recovery_map(input: &std::path::Path, sources: &[&str], contents: &[String]) {
+        std::fs::write(input, "export const compiled = 1;\n").unwrap();
+        let map = json!({
+            "version": 3,
+            "sourceRoot": "src",
+            "sources": sources,
+            "sourcesContent": contents,
+            "names": [],
+            "mappings": ""
+        });
+        std::fs::write(input.with_extension("js.map"), serde_json::to_vec(&map).unwrap()).unwrap();
+    }
+
+    fn check_recovered_source_paths(sources: &[&str], paths: &[&str]) {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("app.js");
+        let contents: Vec<String> = (0..sources.len()).map(|i| format!("export const source{i} = {i};\n")).collect();
+        write_recovery_map(&input, sources, &contents);
+        let out = dir.path().join("recovered");
+        let e = Engine::new(crate::testing::session());
+        let result = call(&e, "js_sources_restore", json!({"path": input, "output_directory": out})).unwrap();
+        let manifest: Value = serde_json::from_slice(&std::fs::read(out.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(manifest["outputs"], result["result"]["outputs"]);
+        let originals: Vec<_> = manifest["outputs"].as_array().unwrap().iter().filter(|o| o["kind"] == "original-source").collect();
+        assert_eq!(originals.len(), sources.len(), "{manifest}");
+        assert_eq!(manifest["inputs"][0]["input_index"], 0);
+        assert_eq!(paths.len(), sources.len());
+        for (i, original) in originals.iter().enumerate() {
+            assert_eq!(original["path"], paths[i]);
+            assert_eq!(original["source_map_source"], format!("src/{}", sources[i]));
+            assert_eq!(original["source_map_index"], i);
+            assert_eq!(original["input_index"], 0);
+            assert_eq!(std::fs::read_to_string(out.join(paths[i])).unwrap(), contents[i]);
+        }
+        assert_eq!(manifest["notes"], json!([]));
+    }
+
+    #[test]
+    fn recover_preserves_normalized_and_duplicate_source_paths() {
+        check_recovered_source_paths(
+            &["/main.js", "main.js", "main.js"],
+            &["sources/app/src/main.js", "sources-collisions/0/1/main.js", "sources-collisions/0/2/main.js"],
+        );
+    }
+
+    #[test]
+    fn recover_preserves_source_file_before_its_child() {
+        check_recovered_source_paths(&["module", "module/child.js"], &["sources/app/src/module", "sources-collisions/0/1/child.js"]);
+    }
+
+    #[test]
+    fn recover_preserves_source_child_before_its_parent_file() {
+        check_recovered_source_paths(&["module/child.js", "module"], &["sources/app/src/module/child.js", "sources-collisions/0/1/module"]);
+    }
+
+    #[test]
+    fn recover_preserves_sources_from_same_named_inputs() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut inputs = Vec::new();
+        let contents = ["export const first = 1;\n".to_string(), "export const second = 2;\n".to_string()];
+        for (i, content) in contents.iter().enumerate() {
+            let parent = dir.path().join(i.to_string());
+            std::fs::create_dir(&parent).unwrap();
+            let input = parent.join("app.js");
+            write_recovery_map(&input, &["main.js"], std::slice::from_ref(content));
+            inputs.push(input);
+        }
+        let out = dir.path().join("recovered");
+        let e = Engine::new(crate::testing::session());
+        let result = call(&e, "js_sources_restore", json!({"path": inputs[0], "additional_paths": [inputs[1]], "output_directory": out})).unwrap();
+        let manifest: Value = serde_json::from_slice(&std::fs::read(out.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(manifest["outputs"], result["result"]["outputs"]);
+        let originals: Vec<_> = manifest["outputs"].as_array().unwrap().iter().filter(|o| o["kind"] == "original-source").collect();
+        assert_eq!(originals.len(), 2, "{manifest}");
+        for (i, path) in ["sources/app/src/main.js", "sources-collisions/1/0/main.js"].iter().enumerate() {
+            assert_eq!(manifest["inputs"][i]["input_index"], i);
+            assert_eq!(originals[i]["path"], *path);
+            assert_eq!(originals[i]["from"], "app.js");
+            assert_eq!(originals[i]["source_map_source"], "src/main.js");
+            assert_eq!(originals[i]["source_map_index"], 0);
+            assert_eq!(originals[i]["input_index"], i);
+            assert_eq!(std::fs::read_to_string(out.join(path)).unwrap(), contents[i]);
+        }
+        assert_eq!(manifest["notes"], json!([]));
     }
 
     #[test]

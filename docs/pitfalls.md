@@ -1021,3 +1021,11 @@ an archive parser, but the installer wrote earlier listed files and returned suc
 partial inventory for inspection, expose the stop as typed data, and make extraction check it before
 writing any member. Missing end markers need their own compatibility control; `complete: false`
 alone does not identify a refused metadata record.
+
+**Safe recovery paths erased distinct source identities.** Source-map names such as `src//main.js`
+and `src/main.js` became the same safe path, so exclusive creation kept the first file and dropped
+the second. A file can also occupy a later source's parent directory, or arrive after its own
+child. Preserve ordinary output paths and put collisions in an independent input/source-index
+directory; keep complete source identities in the manifest. Check both prefix orders and
+same-named input scripts through the real recovery tool, and retain the writer's symlink and
+exclusive-creation checks after selecting a name.
