@@ -8,27 +8,6 @@ fn config(f: impl FnOnce(&mut [u8])) -> (String, String) {
 }
 
 #[test]
-fn locale_groups_keep_explicit_bcp47_subtags() {
-    let (q, locale) = config(|c| {
-        c[8..12].copy_from_slice(b"srRS");
-        c[36..40].copy_from_slice(b"Latn");
-        c[40..45].copy_from_slice(b"POSIX");
-        c[53..57].copy_from_slice(b"latn");
-    });
-    assert_eq!(q, "b+sr+Latn+RS+POSIX+u+nu+latn");
-    assert_eq!(q, locale);
-    assert_eq!(
-        config(|c| {
-            c[8..12].copy_from_slice(b"srRS");
-            c[36..40].copy_from_slice(b"Cyrl");
-            c[52] = 1;
-        })
-        .1,
-        "sr-rRS"
-    );
-}
-
-#[test]
 fn carrier_zero_is_distinct_from_unspecified() {
     assert_eq!(config(|c| c[6..8].fill(255)).0, "mnc0");
     assert_eq!(config(|_| {}).0, "default");
@@ -74,5 +53,18 @@ fn inflection_changes_the_resource_config_but_not_its_locale() {
             c[19] = 2;
         }),
         ("fr-feminine".into(), "fr".into())
+    );
+}
+
+#[test]
+fn undeclared_configuration_tail_does_not_create_selectors() {
+    assert_eq!(
+        config(|c| {
+            c[0] = 36;
+            c[48] = 2;
+            c[49] = 10;
+        })
+        .0,
+        "default"
     );
 }

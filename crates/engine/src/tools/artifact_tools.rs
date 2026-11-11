@@ -73,15 +73,7 @@ pub(crate) fn abs_path(p: &str, what: &str) -> Result<PathBuf, ToolError> {
 
 /// Read a whole file, refusing ones larger than `max`.
 pub(crate) fn read_capped(path: &Path, max: u64) -> Result<Vec<u8>, ToolError> {
-    let meta = std::fs::metadata(path).map_err(|e| ToolError::io(path.display(), e))?;
-    if !meta.is_file() {
-        return Err(ToolError::invalid(format!("{} is not a regular file", path.display())));
-    }
-    if meta.len() > max {
-        return Err(ToolError::new(ErrorCode::OverLimit, format!("{} is {} bytes; the limit is {max}", path.display(), meta.len()))
-            .with_remediation("Raise the size limit parameter if you really want to read it."));
-    }
-    std::fs::read(path).map_err(|e| ToolError::io(path.display(), e))
+    craft_anything_platform::fs::read_file_capped(path, max)
 }
 
 /// One file found by [`walk_dir`].
@@ -650,9 +642,11 @@ fn core_archive_extract(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, 
     }
     let mut members: Vec<(String, Member<'_>)> = Vec::new();
     let mut contradictions = Vec::new();
+    let listing_truncated;
     match kind {
         "asar" => {
             let a = asar::parse(&bytes, p.max_files.saturating_mul(2)).map_err(|e| ToolError::new(ErrorCode::GarbledOutput, e.to_string()))?;
+            listing_truncated = a.truncated;
             for r in &a.rejected_names {
                 members.push((r.clone(), Member::Skip("name could escape the folder".into())));
             }
@@ -690,6 +684,7 @@ fn core_archive_extract(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, 
         }
         "zip" | "apk" | "ipa" | "jar" | "hap" | "msix" => {
             let z = zip::parse(&bytes, p.max_files.saturating_mul(2)).map_err(|e| ToolError::new(ErrorCode::GarbledOutput, e.to_string()))?;
+            listing_truncated = z.truncated;
             for e in z.entries.iter().filter(|e| !e.is_dir) {
                 if let Some(kind) = e.special_kind() {
                     members.push((e.name.clone(), Member::Skip(format!("{kind} member is not a regular file"))));
@@ -763,13 +758,18 @@ fn core_archive_extract(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, 
         out.display(),
         if skipped.is_empty() { String::new() } else { format!("; skipped {}", skipped.len()) }
     );
+    let mut limitations =
+        vec![Limitation::new("nested_not_extracted", "Archives inside the archive are written as files, not unpacked; run core_archive_extract on them.")];
+    if listing_truncated {
+        limitations.push(Limitation::new("truncated", "The archive listing was cut short; members beyond it were not read."));
+    }
     let ev = EvidenceBuilder::new("core_archive_extract", Subject { kind: kind.into(), sha256: Some(sha256_hex(&bytes)), name: Some(name) }, env(ctx))
         .params(json!({"path": path, "max_files": p.max_files, "max_bytes": p.max_bytes}))
         .result(json!({"output_directory": out, "files_written": written, "bytes_written": total, "skipped": skipped.iter().take(2000).collect::<Vec<_>>(), "contradictions": contradictions}))
         .summary(summary)
         .confidence(Confidence::Observed)
-        .limitation(Limitation::new("nested_not_extracted", "Archives inside the archive are written as files, not unpacked; run core_archive_extract on them."))
-        .coverage(Coverage { status: if skipped.is_empty() { craft_anything_evidence::CoverageStatus::Complete } else { craft_anything_evidence::CoverageStatus::Partial }, examined: Some(written as u64), total: Some(members.len() as u64), next_offset: None })
+        .limitations(limitations)
+        .coverage(Coverage { status: if skipped.is_empty() && !listing_truncated { craft_anything_evidence::CoverageStatus::Complete } else { craft_anything_evidence::CoverageStatus::Partial }, examined: Some(written as u64), total: (!listing_truncated).then_some(members.len() as u64), next_offset: None })
         .location(Location::new("path", out.display().to_string()).with_label("output folder"))
         .build()?;
     Ok(ToolOutput::evidence(ev))

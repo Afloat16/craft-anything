@@ -75,7 +75,12 @@ pub struct OpenAi {
     /// The AI's own limit on one streamed answer (a slow local model can need hours); none uses
     /// the defaults.
     pub stream_limit: Option<std::time::Duration>,
+    /// The longest answer to ask for, once OpenRouter has said the key can't afford more (#1213).
+    pub answer_cap: Option<u64>,
 }
+
+/// An answer cap smaller than this would cut a builder's file writes short: such a refusal stays one.
+const MIN_AFFORDABLE_ANSWER: u64 = 4096;
 
 impl OpenAi {
     pub fn official(base: Option<&str>, key: String, model: &str) -> Self {
@@ -105,6 +110,7 @@ impl OpenAi {
             auto_react: true,
             openrouter: false,
             stream_limit: None,
+            answer_cap: None,
         }
     }
 
@@ -158,6 +164,9 @@ impl OpenAi {
             "stream_options": {"include_usage": true},
             "messages": messages,
         });
+        if let (Some(cap), Some(o)) = (self.answer_cap, body.as_object_mut()) {
+            o.insert("max_tokens".into(), json!(cap));
+        }
         if !self.react
             && !req.tools.is_empty()
             && let Some(o) = body.as_object_mut()
@@ -179,9 +188,56 @@ impl OpenAi {
         body
     }
 
+    /// The models the server says are loaded now, read at the root of a `…/v1` address: Ollama's
+    /// `/api/ps` (Ollama and FastFlowLM answer it), else LM Studio's `/api/v0/models`, whose
+    /// entries say `state: "loaded"` (embedding models left out). Empty when the address doesn't
+    /// end in `/v1`, or the server answers neither: `/models` may list every model a server has
+    /// downloaded or can download, and asking for another loads or downloads it (#1434).
+    pub fn loaded_models(&self, timeout: std::time::Duration) -> Vec<String> {
+        let Some(root) = self.base_url.strip_suffix("/v1") else { return Vec::new() };
+        let agent = http::quick_agent(timeout);
+        let get = |path: &str| http::get_json(&agent, &self.label, &format!("{root}{path}"), &self.headers()).ok();
+        let ids = |entries: Vec<&Value>, keys: &[&str]| {
+            let mut out: Vec<String> = Vec::new();
+            for m in entries {
+                let id = keys.iter().find_map(|k| m.get(*k)).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
+                if let Some(id) = id
+                    && !out.iter().any(|seen| seen == id)
+                {
+                    out.push(id.to_string());
+                }
+            }
+            out
+        };
+        let running =
+            get("/api/ps").map(|v| ids(v.get("models").and_then(Value::as_array).map(|a| a.iter().collect()).unwrap_or_default(), &["model", "name"]));
+        if let Some(found) = running.filter(|r| !r.is_empty()) {
+            return found;
+        }
+        let Some(v) = get("/api/v0/models") else { return Vec::new() };
+        let loaded = v
+            .get("data")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter(|m| m.get("state").and_then(Value::as_str) == Some("loaded"))
+                    .filter(|m| m.get("type").and_then(Value::as_str) != Some("embeddings"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        ids(loaded, &["id"])
+    }
+
     /// Model ids from `GET /models`.
     pub fn list_models(&self, timeout: std::time::Duration) -> Result<Vec<String>, ToolError> {
-        let agent = http::quick_agent(timeout);
+        self.list_models_within(timeout, timeout)
+    }
+
+    /// Like [`OpenAi::list_models`], with its own limit for reaching the server (`connect`) and for
+    /// its answer (`wait`): a server still starting or loading a model is reached at once but may
+    /// take a while to answer, and an address nothing listens at shouldn't hold the person as long.
+    pub fn list_models_within(&self, connect: std::time::Duration, wait: std::time::Duration) -> Result<Vec<String>, ToolError> {
+        let agent = http::agent(connect, wait, wait);
         let v = http::get_json(&agent, &self.label, &self.url("models"), &self.headers())?;
         let arr = v.get("data").or_else(|| v.get("models")).and_then(Value::as_array).cloned().unwrap_or_default();
         // A catalogue may list a model only for another API (Responses, Messages): such an entry
@@ -218,6 +274,11 @@ impl OpenAi {
     }
 }
 
+/// The answer length a 402 says the key can still pay for.
+fn affordable(e: &ToolError) -> Option<u64> {
+    e.details.as_ref().and_then(|d| d.get("affordable_tokens")).and_then(Value::as_u64)
+}
+
 fn rejects_tools(e: &ToolError) -> bool {
     let m = e.message.to_ascii_lowercase();
     let status = e.details.as_ref().and_then(|d| d.get("status")).and_then(Value::as_u64).unwrap_or(0);
@@ -230,6 +291,13 @@ impl ChatModel for OpenAi {
             Err(e) if !self.react && self.auto_react && !req.tools.is_empty() && (rejects_tools(&e) || self.no_provider_for_tools(&e)) => {
                 log::info!("{} rejected tool calling; switching to the text protocol", self.label);
                 self.react = true;
+                self.stream_once(req, on_delta, stop)
+            }
+            // With no max_tokens, OpenRouter holds the model's whole output limit against the key's
+            // credit; it says what it can afford, so ask once more for an answer that long (#1213).
+            Err(e) if self.openrouter && affordable(&e).is_some_and(|n| n >= MIN_AFFORDABLE_ANSWER && self.answer_cap.is_none_or(|c| n < c)) => {
+                self.answer_cap = affordable(&e);
+                log::info!("{} can afford an answer of {:?} tokens; asking for that", self.label, self.answer_cap);
                 self.stream_once(req, on_delta, stop)
             }
             other => other,
