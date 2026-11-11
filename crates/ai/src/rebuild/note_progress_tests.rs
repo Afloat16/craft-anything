@@ -4,7 +4,7 @@ use craft_anything_engine::workspace::progress::BUILD_PROGRESS_FILE;
 fn consumed_notes(notes: &Mutex<Vec<Note>>, dir: &Path) {
     for (id, text) in [(71, "Keep the header blue"), (72, "Use larger text")] {
         notes.lock().unwrap().push(Note { id, text: text.into(), shown: text.into(), pictures: Vec::new(), questions: Vec::new() });
-        notes::hand_over(dir, id, text).unwrap();
+        notes::hand_over(dir, id, text, None).unwrap();
     }
     assert_eq!(notes::claim(dir).len(), 2);
 }
@@ -136,7 +136,7 @@ fn consumed_note_progress_errors_preserve_the_completed_turn() {
             options: Default::default(),
         };
         let opts = RunOptions { message: Some("Apply the requested edits".into()), ..RunOptions::default() };
-        let error = worker.run(&mut ws, entry, Some(api), None, &opts).unwrap_err();
+        let error = worker.run(&mut ws, entry, Some(api), None, super::super::KeptHistory::default(), &opts).unwrap_err();
         let saved = Workspace::open(&ws.root).unwrap();
         assert!(saved.manifest.awaiting_check, "the finished turn must be recorded before a progress error: {error:?}");
         assert_eq!(saved.manifest.last_reply, "Finished the requested edit");
@@ -167,7 +167,7 @@ fn consumed_note_resets_survive_failed_and_cancelled_turns() {
         fn turn(&mut self, _: &TurnRequest<'_>, _: &mut dyn FnMut(Delta), _: &Stop) -> Result<TurnResult, ToolError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.notes.lock().unwrap().push(Note { id: 73, text: self.text.into(), shown: self.text.into(), pictures: Vec::new(), questions: Vec::new() });
-            notes::hand_over(&self.notes_dir, 73, self.text).unwrap();
+            notes::hand_over(&self.notes_dir, 73, self.text, None).unwrap();
             assert_eq!(notes::claim(&self.notes_dir), [self.text]);
             if !self.record.is_empty() {
                 std::fs::write(&self.progress, self.record).unwrap();
@@ -187,7 +187,7 @@ fn consumed_note_resets_survive_failed_and_cancelled_turns() {
 
     for cancelled in [false, true] {
         for text in ["Keep the header blue", "   "] {
-            for record in ["", "{ broken progress", r#"{"version":2,"fingerprint":null,"unchanged_turns":1}"#] {
+            for record in ["", "{ broken progress", r#"{"version":3,"fingerprint":null,"unchanged_turns":1}"#] {
                 let dir = tempfile::tempdir().unwrap();
                 let mut ws = Workspace::create(dir.path(), "Interrupted note", "Build an app", TargetRef::None).unwrap();
                 std::fs::create_dir_all(ws.capture_dir()).unwrap();
@@ -228,7 +228,7 @@ fn consumed_note_resets_survive_failed_and_cancelled_turns() {
                     options: Default::default(),
                 };
                 let opts = RunOptions { continuing: true, ..RunOptions::default() };
-                let error = worker.run(&mut ws, entry, Some(api), None, &opts).unwrap_err();
+                let error = worker.run(&mut ws, entry, Some(api), None, super::super::KeptHistory::default(), &opts).unwrap_err();
                 assert_eq!(calls.load(Ordering::SeqCst), 1, "an interrupted request must not be sent again");
                 if cancelled {
                     assert_eq!(error.code, ErrorCode::Cancelled, "retain cancellation even when the progress record is unreadable");

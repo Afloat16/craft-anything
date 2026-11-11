@@ -6,7 +6,7 @@
 
 use super::{FsEntry, FsImage, FsKind, Limits, join};
 use crate::bytes::Reader;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const DIRENT: u16 = 0xe001;
 const INODE: u16 = 0xe002;
@@ -64,21 +64,32 @@ pub fn read(data: &[u8], limits: &Limits) -> FsImage {
         let nodetype = r.u16_le(pos + 2).unwrap_or(0);
         let totlen = r.u32_le(pos + 4).unwrap_or(0) as usize;
         if !(12..=(8 << 20)).contains(&totlen) {
+            img.warn("jffs2: invalid node size");
+            img.complete = false;
             break;
         }
+        let Some(node) = r.slice(pos, totlen) else {
+            img.warn("jffs2: truncated node");
+            img.complete = false;
+            break;
+        };
+        let node = Reader::new(node);
         nodes += 1;
         match nodetype {
             DIRENT => {
-                if let Some(d) = parse_dirent(&r, data, pos, limits) {
+                if let Some(d) = parse_dirent(&node, limits) {
                     let key = (d.1, d.0.name.clone());
                     let keep = dirents.get(&key).map(|e| d.0.version >= e.version).unwrap_or(true);
                     if keep {
                         dirents.insert(key, d.0);
                     }
+                } else {
+                    img.warn("jffs2: directory entry exceeds its node");
+                    img.complete = false;
                 }
             }
             INODE => {
-                if let Some((ino, node, isize)) = parse_inode(&r, data, pos) {
+                if let Some((ino, node, isize)) = parse_inode(&node) {
                     let e = inodes.entry(ino).or_insert(Inode { isize: 0, isize_version: 0, nodes: Vec::new() });
                     if node.version >= e.isize_version {
                         e.isize = isize;
@@ -87,6 +98,9 @@ pub fn read(data: &[u8], limits: &Limits) -> FsImage {
                     if e.nodes.len() < 100_000 {
                         e.nodes.push(node);
                     }
+                } else {
+                    img.warn("jffs2: inode exceeds its node");
+                    img.complete = false;
                 }
             }
             _ => {}
@@ -103,32 +117,33 @@ pub fn read(data: &[u8], limits: &Limits) -> FsImage {
             children.entry(*pino).or_default().push(d);
         }
     }
-    let mut seen = Vec::new();
+    let mut seen = BTreeSet::new();
     build(&children, &inodes, 1, "", limits, &mut img, 0, &mut seen);
     img
 }
 
 /// Returns (dirent, parent inode).
-fn parse_dirent(r: &Reader, data: &[u8], pos: usize, limits: &Limits) -> Option<(Dirent, u32)> {
-    let pino = r.u32_le(pos + 12)?;
-    let version = r.u32_le(pos + 16)?;
-    let ino = r.u32_le(pos + 20)?;
-    let nsize = usize::from(r.u8(pos + 28)?).min(limits.max_name.max(1));
-    let dtype = r.u8(pos + 29)?;
-    let name = data.get(pos + 40..pos + 40 + nsize).map(|b| String::from_utf8_lossy(b).into_owned())?;
+fn parse_dirent(r: &Reader, limits: &Limits) -> Option<(Dirent, u32)> {
+    let pino = r.u32_le(12)?;
+    let version = r.u32_le(16)?;
+    let ino = r.u32_le(20)?;
+    let nsize = usize::from(r.u8(28)?);
+    let dtype = r.u8(29)?;
+    let name = r.slice(40, nsize)?;
+    let name = String::from_utf8_lossy(name.get(..nsize.min(limits.max_name.max(1)))?).into_owned();
     Some((Dirent { version, ino, dtype, name }, pino))
 }
 
 /// Returns (inode number, data node, isize at this version).
-fn parse_inode(r: &Reader, data: &[u8], pos: usize) -> Option<(u32, DataNode, u32)> {
-    let ino = r.u32_le(pos + 12)?;
-    let version = r.u32_le(pos + 16)?;
-    let isize = r.u32_le(pos + 28)?;
-    let offset = r.u32_le(pos + 44)?;
-    let csize = r.u32_le(pos + 48)? as usize;
-    let dsize = r.u32_le(pos + 52)?;
-    let compr = r.u8(pos + 56)?;
-    let data = data.get(pos + 68..pos + 68 + csize.min(8 << 20))?.to_vec();
+fn parse_inode(r: &Reader) -> Option<(u32, DataNode, u32)> {
+    let ino = r.u32_le(12)?;
+    let version = r.u32_le(16)?;
+    let isize = r.u32_le(28)?;
+    let offset = r.u32_le(44)?;
+    let csize = r.u32_le(48)? as usize;
+    let dsize = r.u32_le(52)?;
+    let compr = r.u8(56)?;
+    let data = r.slice(68, csize)?.to_vec();
     Some((ino, DataNode { version, offset, dsize, compr, data }, isize))
 }
 
@@ -141,15 +156,14 @@ fn build(
     limits: &Limits,
     img: &mut FsImage,
     depth: usize,
-    seen: &mut Vec<u32>,
+    seen: &mut BTreeSet<u32>,
 ) {
-    if depth > limits.max_depth || img.entries.len() >= limits.max_entries || seen.contains(&dir_ino) {
+    if depth > limits.max_depth || img.entries.len() >= limits.max_entries || !seen.insert(dir_ino) {
         if depth > limits.max_depth {
             img.complete = false;
         }
         return;
     }
-    seen.push(dir_ino);
     let Some(kids) = children.get(&dir_ino) else { return };
     for d in kids {
         if img.entries.len() >= limits.max_entries {
@@ -188,34 +202,80 @@ fn reassemble(inode: &Inode, limits: &Limits, img: &mut FsImage) -> Option<Vec<u
     let mut out = vec![0u8; size];
     let mut ordered: Vec<&DataNode> = inode.nodes.iter().collect();
     ordered.sort_by_key(|n| n.version);
+    // Only damaged extents still present in the final file prevent recovery. A newer valid
+    // node can replace them; bytes from older valid nodes cannot stand in for damaged data.
+    let mut damaged = BTreeMap::new();
     for node in ordered {
+        let start = node.offset as usize;
+        let end = start.saturating_add(node.dsize as usize).min(size);
         let chunk = match node.compr {
             0 => node.data.clone(),
-            1 => vec![0u8; node.dsize as usize],
+            1 => {
+                // An older extent may reach past the file's final size. Only clear its surviving bytes.
+                if let Some(dst) = out.get_mut(start..end) {
+                    dst.fill(0);
+                }
+                update_damage(&mut damaged, start, end, false);
+                continue;
+            }
             6 => match crate::firmware::inflate(&node.data, true, u64::from(node.dsize), true) {
                 Ok(i) => i.data.unwrap_or_default(),
                 Err(_) => {
                     img.warn("jffs2: a zlib data node did not inflate");
-                    img.complete = false;
+                    update_damage(&mut damaged, start, end, true);
                     continue;
                 }
             },
             _ => {
                 img.warn("jffs2: a data node uses an unsupported compression (rtime/rubin/lzo)");
-                img.complete = false;
+                update_damage(&mut damaged, start, end, true);
                 continue;
             }
         };
-        let off = node.offset as usize;
-        let end = off.saturating_add(chunk.len()).min(out.len());
-        if off < out.len()
-            && let Some(dst) = out.get_mut(off..end)
-        {
-            dst.copy_from_slice(chunk.get(..end - off).unwrap_or(&[]));
+        // dsize describes the decoded node, independently of the file's final size.
+        // A short decode must not leave fabricated zeros or older bytes in its extent;
+        // an overlong raw node must not overwrite the following extent.
+        if chunk.len() as u64 != u64::from(node.dsize) {
+            img.warn("jffs2: a data node's decoded length disagrees with its declared extent");
+            update_damage(&mut damaged, start, end, true);
+            continue;
         }
+        if start < size
+            && let Some(dst) = out.get_mut(start..end)
+        {
+            dst.copy_from_slice(chunk.get(..end - start).unwrap_or(&[]));
+        }
+        update_damage(&mut damaged, start, end, false);
+    }
+    if !damaged.is_empty() {
+        img.complete = false;
+        return None;
     }
     img.bytes = img.bytes.saturating_add(out.len() as u64);
     Some(out)
+}
+
+/// Replace the damage state of one extent. The non-overlapping ranges grow with the bounded
+/// node count, rather than allocating another buffer proportional to file size.
+fn update_damage(damaged: &mut BTreeMap<usize, usize>, start: usize, end: usize, invalid: bool) {
+    if start >= end {
+        return;
+    }
+    while let Some((&left, &right)) = damaged.range(..end).next_back() {
+        if right <= start {
+            break;
+        }
+        damaged.remove(&left);
+        if left < start {
+            damaged.insert(left, start);
+        }
+        if right > end {
+            damaged.insert(end, right);
+        }
+    }
+    if invalid {
+        damaged.insert(start, end);
+    }
 }
 
 #[cfg(test)]

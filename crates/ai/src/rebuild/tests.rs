@@ -25,7 +25,7 @@ fn refine(k: &str, check: &CheckResult) -> String {
     kind(k).refine(check, true)
 }
 fn follow_up(message: &str, k: &str) -> String {
-    super::follow_up(message, kind(k).as_ref())
+    super::follow_up(message, kind(k).as_ref(), false)
 }
 fn locate(path: &Path, k: &str) -> (PathBuf, Option<PathBuf>) {
     super::locate(path, kind(k).studies_folder())
@@ -368,7 +368,7 @@ fn engine_stacks_get_their_own_steps_checks_and_play() {
     assert!(stack_steps("Unreal Engine", Some(ed)).contains("Game.uproject"));
 
     let d = tempfile::tempdir().unwrap();
-    let stop = CancelToken::default();
+    let stop = CheckStop::default();
     assert_eq!(build_check(d.path(), "app/", "Unity", Some(ed), &stop), (false, "No Unity project found in app/ yet.".into()));
     assert_eq!(build_check(d.path(), "app/", "Godot", Some(ed), &stop), (false, "No Godot project (project.godot) found in app/ yet.".into()));
     assert!(build_check(d.path(), "app/", "Unreal Engine", Some(ed), &stop).1.contains(".uproject"));
@@ -450,8 +450,9 @@ fn notes_added_while_it_works_reach_the_agent_at_its_next_step() {
         editor: None,
         notes: notes.clone(),
         feed: Arc::new(Mutex::new(feed::FeedLog::open(&ws))),
+        keys: crate::KeyStore::file_only(ws.root.join("keys.toml")),
+        kept_checks: Mutex::default(),
         assets: false,
-        decompiled: false,
         usage: None,
         self_check: None,
         reset_progress_after_notes: false,
@@ -1356,8 +1357,9 @@ fn an_api_backend_builds_with_the_build_tools() {
         editor: None,
         notes: Arc::default(),
         feed: Arc::new(Mutex::new(feed::FeedLog::open(&ws))),
+        keys: crate::KeyStore::file_only(ws.root.join("keys.toml")),
+        kept_checks: Mutex::default(),
         assets: false,
-        decompiled: false,
         usage: None,
         self_check: None,
         reset_progress_after_notes: false,
@@ -1457,7 +1459,17 @@ impl TargetKind for SheetKind {
 }
 
 #[test]
-fn the_mechanics_sheet_is_required_and_held_against_the_code() {
+fn builder_instructions_allow_an_unverified_comparison_to_remain_open() {
+    for deep in [false, true] {
+        let steps = super::brief::steps(deep);
+        assert!(!steps.contains("until it says it would pass"), "{steps}");
+        assert!(steps.contains("another builder turn cannot resolve"), "{steps}");
+    }
+    assert!(CHECK_BEFORE_REPLYING.contains("unverified comparisons"), "{CHECK_BEFORE_REPLYING}");
+}
+
+#[test]
+fn the_mechanics_sheet_is_required_without_claiming_effective_behavior() {
     let d = tempfile::tempdir().unwrap();
     let ws = Workspace::create(d.path(), "Arena", "Recreate this game", TargetRef::None).unwrap();
     let engine = Arc::new(Engine::new(craft_anything_engine::testing::session()));
@@ -1473,8 +1485,9 @@ fn the_mechanics_sheet_is_required_and_held_against_the_code() {
         editor: None,
         notes: Arc::default(),
         feed: Arc::new(Mutex::new(feed::FeedLog::open(&ws))),
+        keys: crate::KeyStore::file_only(ws.root.join("keys.toml")),
+        kept_checks: Mutex::default(),
         assets: false,
-        decompiled: false,
         usage: None,
         self_check: None,
         reset_progress_after_notes: false,
@@ -1483,6 +1496,7 @@ fn the_mechanics_sheet_is_required_and_held_against_the_code() {
 
     let none = check(1);
     assert!(!none.passed && none.note.contains("no app/mechanics.json") && none.note.contains("\"version\": 1"), "{}", none.note);
+    assert!(MechanicsCheck.can_refine(&none) && kinds::DeepOnly(MechanicsCheck).can_refine(&none));
 
     std::fs::create_dir_all(ws.app_dir().join("src")).unwrap();
     std::fs::write(ws.mechanics_path(), "{ not json").unwrap();
@@ -1503,26 +1517,85 @@ fn the_mechanics_sheet_is_required_and_held_against_the_code() {
     assert!(ok.passed, "an estimate may stay out of the code: {}", ok.note);
     assert!(ok.note.contains("4 values (1 with a source, 2 estimated)"), "{}", ok.note);
     assert!(ok.note.contains("neither a source nor \"estimated\": crouch."), "{}", ok.note);
-    assert!(!ok.note.contains("aren't in the code"), "{}", ok.note);
-    let claimed: Vec<(&str, bool)> = ok.claims.iter().map(|c| (c.title.as_str(), c.passed)).collect();
-    assert_eq!(claimed, [("walk speed (4.5) is used in the code", true)], "estimates and words make no claim");
+    assert!(ok.claims.is_empty() && !ok.unknowns.is_empty() && !ok.good(0.0), "{ok:?}");
+    assert!(!MechanicsCheck.can_refine(&ok) && !kinds::DeepOnly(MechanicsCheck).can_refine(&ok));
 
-    // A number found in the original but not used in the code fails, and says what to do.
-    std::fs::write(
-        ws.mechanics_path(),
-        r#"{"version": 1, "values": [
-            {"name": "walk speed", "value": 4.5, "source": "function 0x140012a0"},
-            {"name": "grunt speed", "value": 290, "unit": "cm/s", "source": "pak: ENE_Spider_Grunt_Base"},
-            {"name": "guard health", "value": 270, "source": "pak: ENE_Spider_Grunt_Guard"}
-        ]}"#,
-    )
-    .unwrap();
-    let unused = check(4);
-    assert!(!unused.passed, "{}", unused.note);
-    assert!(unused.note.contains("2 numbers from the original aren't in the code as written: grunt speed (290), guard health (270)."), "{}", unused.note);
-    assert!(unused.note.contains("mark it \"estimated\""), "{}", unused.note);
-    let failed: Vec<&str> = unused.failed_claims().map(|c| c.title.as_str()).collect();
-    assert_eq!(failed, ["grunt speed (290) is used in the code", "guard health (270) is used in the code"]);
+    // Provenance remains in the sheet; a differently implemented or missing value isn't proof
+    // of a broken build, and a matching literal isn't proof of effective behavior.
+    std::fs::write(ws.app_dir().join("src/main.rs"), "fn speed() -> f64 { 9.0 / 2.0 }").unwrap();
+    let computed = check(4);
+    assert!(computed.passed && !computed.good(0.0), "{computed:?}");
+    assert!(computed.claims.is_empty() && computed.note.contains("unverified"));
+}
+
+#[test]
+fn mechanics_literals_never_verify_effective_behavior() {
+    for code in [
+        "// walk speed 4.5\nfn speed() -> f64 { 1.0 }",
+        "fn unused() -> f64 { 4.5 }\nfn speed() -> f64 { 1.0 }",
+        "const UNRELATED: f64 = 4.5;\nfn speed() -> f64 { 1.0 }",
+        "fn speed() -> f64 { 4.5 * 2.0 }",
+        "fn speed() -> f64 { 9.0 / 2.0 }",
+        "",
+    ] {
+        let d = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(d.path(), "Arena", "Recreate this game", TargetRef::None).unwrap();
+        std::fs::create_dir_all(ws.app_dir()).unwrap();
+        std::fs::write(ws.app_dir().join("main.rs"), code).unwrap();
+        if code.is_empty() {
+            std::fs::write(ws.app_dir().join("unrelated.json"), r#"{"release":4.5}"#).unwrap();
+        }
+        std::fs::write(ws.mechanics_path(), r#"{"version":1,"values":[{"name":"walk speed","value":4.5,"unit":"m/s","source":"reference measurement"}]}"#)
+            .unwrap();
+        let c = check_worker(&ws, false).run_checks(&ws, &SheetKind, 1).unwrap().remove(0);
+        assert!(c.passed, "a valid sheet is readable even with computed values: {code}: {c:?}");
+        assert!(!c.good(0.0), "source text does not verify behavior: {code}: {c:?}");
+        assert!(c.claims.is_empty(), "no behavior claim can be inferred: {c:?}");
+        assert!(!c.unknowns.is_empty(), "no oracle was run: {c:?}");
+        ws.manifest.checks.push(c.clone());
+        ws.save().unwrap();
+        let saved = Workspace::open(&ws.root).unwrap();
+        assert_eq!(saved.manifest.checks.last().unwrap().unknowns, c.unknowns);
+        let summary = self_check::summary(&[CheckResult::new("build", 1, true, "Build succeeded."), c], 90.0);
+        assert!(summary.contains("unverified"), "a usable build's final summary retains the gap: {summary}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_measured_self_test_does_not_stand_in_for_a_mechanics_comparison() {
+    use std::os::unix::fs::PermissionsExt;
+    for (calculation, expected) in [("$((9 * 10 / 2))", true), ("90 # unrelated 4.5", false)] {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "Arena", "Recreate this game", TargetRef::None).unwrap();
+        std::fs::create_dir_all(ws.app_dir().join("target/debug")).unwrap();
+        std::fs::write(ws.app_dir().join("Cargo.toml"), "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n").unwrap();
+        std::fs::write(ws.mechanics_path(), r#"{"values":[{"name":"walk speed","value":4.5,"source":"controlled reference"}]}"#).unwrap();
+        let program = ws.app_dir().join("target/debug/fixture");
+        // This owned fixture measures integer tenths against a controlled 4.5 m/s reference.
+        // Its report still cannot establish a general binding between sheet entries and state.
+        let script = format!(
+            r#"#!/bin/sh
+tenths={calculation}
+passed=false
+if [ "$tenths" -eq 45 ]; then passed=true; fi
+printf '{{"version":1,"steps":[{{"step":"move","passed":%s}},{{"step":"act","passed":true}},{{"step":"hud","passed":true}}]}}' "$passed" > "$2"
+"#
+        );
+        std::fs::write(&program, script).unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let checks = check_worker(&ws, false).run_checks(&ws, &LaterChecks(&GameKind, 2), 1).unwrap();
+        assert_eq!(checks[0].check, "game-self-test");
+        assert_eq!(checks[0].good(0.0), expected, "{checks:?}");
+        if expected {
+            assert_eq!(checks.len(), 2);
+            assert_eq!(checks[1].check, "mechanics");
+            assert!(checks[1].passed && !checks[1].good(0.0), "even a measured self-test doesn't compare every sheet value: {checks:?}");
+            assert!(checks[1].claims.is_empty() && !checks[1].unknowns.is_empty());
+        } else {
+            assert_eq!(checks.len(), 1, "a failed measured core-loop step stops later checks");
+        }
+    }
 }
 
 #[test]
@@ -1535,7 +1608,14 @@ fn clean_room_studies_nothing_inside_and_deep_mode_looks() {
     for (deep, name) in [(false, "clean"), (true, "deep")] {
         let mut ws = Workspace::create(&d.path().join("projects"), name, "Recreate this game", TargetRef::Local { path: game.clone() }).unwrap();
         let mut w = check_worker(&ws, deep);
-        w.study(&mut ws, kind("game").as_ref()).unwrap();
+        // What an earlier Deep study left: a Clean room study must remove it before writing its own.
+        std::fs::create_dir_all(ws.capture_dir()).unwrap();
+        std::fs::write(ws.capture_dir().join(super::study::HOW_IT_WORKS), "deep notes").unwrap();
+        std::fs::write(ws.capture_dir().join("page.html"), "<p>deep</p>").unwrap();
+        let runs = ws.capture_dir().join(kinds::runs::RUNS_DIR);
+        std::fs::create_dir_all(&runs).unwrap();
+        std::fs::write(runs.join("no-arguments.json"), "{}").unwrap();
+        w.study(&mut ws, kind("game").as_ref(), deep).unwrap();
         let notes = std::fs::read_to_string(ws.capture_dir().join("README.md")).unwrap();
         let files: Vec<_> = std::fs::read_dir(ws.capture_dir()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
         if deep {
@@ -1568,7 +1648,7 @@ fn deep_mode_maps_the_javascript_beside_an_exe_target() {
     for (name, target) in [("folder", app.clone()), ("exe", app.join("App.exe"))] {
         let mut ws = Workspace::create(&d.path().join("projects"), name, "Recreate this app", TargetRef::Local { path: target }).unwrap();
         let mut w = check_worker(&ws, true);
-        w.study(&mut ws, kind("game").as_ref()).unwrap();
+        w.study(&mut ws, kind("game").as_ref(), true).unwrap();
         let notes = std::fs::read_to_string(ws.capture_dir().join("README.md")).unwrap();
         assert!(notes.contains("## JavaScript application"), "{name}: {notes}");
     }
@@ -1619,8 +1699,8 @@ mod picking_up_a_build {
         fn goal(&self) -> &'static str {
             "a thing"
         }
-        fn checks(&self, _ws: &Workspace) -> Vec<Box<dyn Check>> {
-            vec![Box::new(FlakyCheck)]
+        fn checks(&self, ws: &Workspace) -> Vec<Box<dyn Check>> {
+            if ws.mechanics_path().is_file() { vec![Box::new(MechanicsCheck)] } else { vec![Box::new(FlakyCheck)] }
         }
     }
 
@@ -1702,6 +1782,8 @@ mod picking_up_a_build {
         let mut ws = Workspace::create(&b.projects, "x", "A thing", TargetRef::None).unwrap();
         ws.manifest.agent_session = Some("session-1".into());
         ws.manifest.stack = "Anything".into();
+        // The fixture's capture was studied in the default (Deep) session.
+        ws.manifest.capture_deep = Some(true);
         ws.save().unwrap();
         std::fs::create_dir_all(ws.capture_dir()).unwrap();
         std::fs::create_dir_all(ws.app_dir()).unwrap();
@@ -1747,6 +1829,23 @@ mod picking_up_a_build {
         assert!(finished.1.contains("craft-anything-cli"), "{finished:?}");
         assert_eq!(prompts_given(&b), 0, "the agent was asked anyway");
         assert!(!studied(&feed::load(&Workspace::open(&ws.root).unwrap())), "it studied first");
+    }
+
+    #[test]
+    fn a_usable_build_keeps_unverified_mechanics_in_its_ready_summary() {
+        let b = bench();
+        let mut ws = worked_on(&b);
+        ws.manifest.awaiting_check = true;
+        std::fs::write(ws.mechanics_path(), r#"{"values":[{"name":"walk speed","value":4.5,"source":"reference measurement"}]}"#).unwrap();
+        std::fs::write(ws.app_dir().join("main.rs"), "// 4.5\n").unwrap();
+        ws.save().unwrap();
+        let (ok, _) = try_it(&b, &ws);
+        assert!(ok, "unverified mechanics do not make a usable build fail");
+        assert_eq!(prompts_given(&b), 0, "a builder turn cannot supply the check's missing measurement oracle");
+        let saved = Workspace::open(&ws.root).unwrap();
+        assert_eq!(saved.manifest.status, Status::Ready);
+        assert!(saved.manifest.note.contains("unverified"), "{}", saved.manifest.note);
+        assert!(!saved.manifest.checks.last().unwrap().good(0.0));
     }
 
     #[test]
@@ -2080,7 +2179,7 @@ mod picking_up_a_build {
         };
         let mut opts = RunOptions::default();
         opts.kinds.register(Arc::new(FlakyKind));
-        let error = worker.run(&mut ws, entry, Some(api), None, &opts).unwrap_err();
+        let error = worker.run(&mut ws, entry, Some(api), None, super::super::KeptHistory { in_mode: true, elsewhere: false }, &opts).unwrap_err();
         assert!(error.message.contains("two builder turns"), "{error:?}");
         assert_eq!(seen.lock().unwrap().len(), 2);
     }
@@ -2107,7 +2206,7 @@ mod picking_up_a_build {
                 if self.add && self.script.seen.lock().unwrap().len() == 1 {
                     self.notes.lock().unwrap().push(note(self.text));
                     if self.claim {
-                        notes::hand_over(&self.dir, 42, self.text).unwrap();
+                        notes::hand_over(&self.dir, 42, self.text, None).unwrap();
                         assert_eq!(notes::claim(&self.dir), [self.text]);
                     }
                 }
@@ -2191,7 +2290,7 @@ mod picking_up_a_build {
                 };
                 let mut opts = RunOptions::default();
                 opts.kinds.register(Arc::new(NoteKind { notes: worker.notes.clone(), add: mode == "queued-check", text }));
-                let error = worker.run(&mut ws, entry, Some(api), None, &opts).unwrap_err();
+                let error = worker.run(&mut ws, entry, Some(api), None, super::super::KeptHistory { in_mode: true, elsewhere: false }, &opts).unwrap_err();
                 assert!(error.message.contains("two builder turns"), "{error:?}");
                 let requests = seen.lock().unwrap();
                 let expected = if text.trim().is_empty() {
@@ -2276,7 +2375,9 @@ mod picking_up_a_build {
             let b = bench();
             let mut ws = worked_on(&b);
             ws.manifest.agent_session_deep = saved;
+            ws.manifest.capture_deep = Some(deep);
             ws.save().unwrap();
+            std::fs::write(ws.capture_dir().join("README.md"), "# What we found in the Deep run\n\ninside evidence").unwrap();
             b.hub.engine.session().settings.deep_mode = deep;
             let seen = Arc::new(craft_anything_platform::sync::Mutex::new(Vec::new()));
             let mut adapters = crate::cli_agents::AgentAdapters::built_in();
@@ -2286,6 +2387,11 @@ mod picking_up_a_build {
             let told = std::fs::read_to_string(&b.prompts).unwrap();
             assert_eq!(told.contains("Pick up where you left off"), continued, "saved={saved:?}, deep={deep}: {told}");
             assert_eq!(told.contains("Their request"), !continued, "a fresh start gets the brief: {told}");
+            let readme = std::fs::read_to_string(ws.capture_dir().join("README.md")).unwrap();
+            assert_eq!(readme.contains("What we found"), continued, "saved={saved:?}, deep={deep}: the Deep notes are replaced: {readme}");
+            if !continued {
+                assert!(readme.contains("# No target"), "saved={saved:?}, deep={deep}: the new study wrote its notes: {readme}");
+            }
             let expected = continued.then_some("session-1");
             let seen = seen.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             assert!(!seen.is_empty(), "saved={saved:?}, deep={deep}: the stand-in ran");
@@ -2354,6 +2460,154 @@ mod picking_up_a_build {
         assert!(deep.agent_spec(&ws, &entry, &RunOptions::default()).is_ok(), "a Deep run may resume its session");
     }
 
+    /// Add the local API backend the transcript tests start.
+    fn local_api(b: &Bench) {
+        b.hub
+            .add_backend(
+                crate::BackendConfig {
+                    name: "Local".into(),
+                    kind: BackendKind::OpenaiCompatible,
+                    model: "test-model".into(),
+                    base_url: Some("http://127.0.0.1:0/v1".into()),
+                    ssh_host: None,
+                    enabled: true,
+                },
+                None,
+            )
+            .unwrap();
+    }
+
+    /// R2.9: a continuation keeps its API transcript, so the run can recognize completed Study
+    /// work; a genuinely fresh build still starts a new conversation.
+    #[test]
+    fn an_api_continuation_keeps_its_transcript_and_a_fresh_build_drops_it() {
+        let b = bench();
+        local_api(&b);
+        let ws = worked_on(&b);
+        std::fs::write(ws.transcript_path(), b"{}").unwrap();
+        let run = RebuildRun::start(&b.hub, Workspace::open(&ws.root).unwrap(), RunOptions { backend: Some("Local".into()), ..RunOptions::default() }).unwrap();
+        assert!(ws.transcript_path().is_file(), "a continuation keeps the conversation");
+        drop(run);
+
+        let b = bench();
+        local_api(&b);
+        let fresh = Workspace::create(&b.projects, "fresh", "Build a notes app", TargetRef::None).unwrap();
+        std::fs::write(fresh.transcript_path(), b"{}").unwrap();
+        let run = RebuildRun::start(
+            &b.hub,
+            Workspace::open(&fresh.root).unwrap(),
+            RunOptions { backend: Some("Local".into()), message: Some("Build a notes app".into()), ..RunOptions::default() },
+        )
+        .unwrap();
+        assert!(!fresh.transcript_path().exists(), "a fresh build starts a new conversation");
+        drop(run);
+    }
+
+    /// R2.9: a transcript from the other mode isn't "carrying on", so a no-message run still
+    /// studies as a fresh one instead of skipping the Deep study. A follow-up message with a
+    /// rejected transcript studies too, even when a capture from the other mode exists.
+    #[test]
+    fn an_api_transcript_from_the_other_mode_is_not_carried_on() {
+        let mut opts = RunOptions::default();
+        assert!(!super::super::is_carrying_on(&opts, false), "nothing is under way yet");
+        assert!(super::super::is_carrying_on(&opts, true), "a transcript in this mode is carried on");
+        opts.message = Some("change it".into());
+        assert!(!super::super::is_carrying_on(&opts, true), "a new request isn't carrying on");
+        opts.message = None;
+        opts.continuing = true;
+        assert!(super::super::is_carrying_on(&opts, true), "an explicit resume in this mode is");
+        assert!(!super::super::is_carrying_on(&opts, false), "one in another mode is not");
+    }
+
+    /// R2.9: a follow-up with a conversation kept in the other mode studies even when a capture
+    /// exists; one that resumed a conversation in this mode builds from a capture in this mode
+    /// without studying again. A capture from the other mode studies again, whatever conversation
+    /// is kept.
+    #[test]
+    fn a_rejected_transcript_studies_even_with_a_capture() {
+        use super::super::{KeptHistory, starts_with_study};
+        let opts = RunOptions::default();
+        let none = KeptHistory::default();
+        assert!(starts_with_study(&opts, none, true), "no conversation for this mode studies even with a capture in this mode");
+        let mut follow_up = RunOptions { message: Some("change it".into()), ..Default::default() };
+        assert!(!starts_with_study(&follow_up, none, true), "a fresh follow-up with a capture in this mode doesn't study");
+        assert!(starts_with_study(&follow_up, KeptHistory { elsewhere: true, ..Default::default() }, true), "a conversation rejected for mode studies");
+        assert!(!starts_with_study(&follow_up, KeptHistory { in_mode: true, ..Default::default() }, true), "a conversation in this mode carries on");
+        assert!(starts_with_study(&opts, KeptHistory { in_mode: true, ..Default::default() }, false), "no capture to build from: study");
+        assert!(starts_with_study(&follow_up, none, false), "a capture from the other mode studies even for a fresh follow-up");
+        assert!(
+            starts_with_study(&follow_up, KeptHistory { in_mode: true, ..Default::default() }, false),
+            "a capture from the other mode studies even when the conversation is in this mode"
+        );
+        follow_up.message = None;
+        assert!(
+            !starts_with_study(&follow_up, KeptHistory { in_mode: true, ..Default::default() }, true),
+            "a same-mode continuation studies only without a usable capture"
+        );
+    }
+
+    /// R2.9: a capture a Deep study left must not be handed to a Clean room run, even when the
+    /// conversation the project keeps is in Clean room. The run studies again and replaces it.
+    #[test]
+    fn a_capture_from_the_other_mode_is_studied_again() {
+        let b = bench();
+        b.hub.engine.session().settings.deep_mode = false;
+        let target = b.projects.join("target.bin");
+        std::fs::write(&target, b"\x7fELF not really").unwrap();
+        let mut ws = Workspace::create(&b.projects, "mode", "Recreate this app", TargetRef::Local { path: target }).unwrap();
+        // A Deep study's capture, and a conversation the project kept in Clean room.
+        std::fs::create_dir_all(ws.capture_dir()).unwrap();
+        std::fs::write(ws.capture_dir().join("README.md"), "# What we found in the Deep run\n\nDecompiled notes.").unwrap();
+        ws.manifest.capture_deep = Some(true);
+        ws.manifest.agent_session = Some("clean-session".into());
+        ws.manifest.agent_session_deep = Some(false);
+        ws.manifest.stack = "Anything".into();
+        ws.save().unwrap();
+        let (ok, feed) = try_with(&b, &ws, RunOptions::default());
+        let notes = std::fs::read_to_string(ws.capture_dir().join("README.md")).unwrap_or_default();
+        assert!(notes.starts_with("# Clean room"), "the Deep capture must not be handed to Clean room: {notes}\n{feed:?}");
+        assert!(!notes.contains("Decompiled notes"), "{notes}");
+        assert_eq!(Workspace::open(&ws.root).unwrap().manifest.capture_deep, Some(false), "the Clean room study recorded its mode");
+        let _ = ok;
+
+        // The other way: a Clean room capture must not be handed to a Deep run either; Deep studies
+        // again and records its own capture.
+        let b = bench();
+        let target = b.projects.join("target-deep.bin");
+        std::fs::write(&target, b"\x7fELF not really").unwrap();
+        let mut ws = Workspace::create(&b.projects, "mode-deep", "Recreate this app", TargetRef::Local { path: target }).unwrap();
+        std::fs::create_dir_all(ws.capture_dir()).unwrap();
+        std::fs::write(ws.capture_dir().join("README.md"), "# Clean room\n\nNothing inside was read.").unwrap();
+        ws.manifest.capture_deep = Some(false);
+        ws.manifest.agent_session = Some("deep-session".into());
+        ws.manifest.agent_session_deep = Some(true);
+        ws.manifest.stack = "Anything".into();
+        ws.save().unwrap();
+        let (ok, feed) = try_with(&b, &ws, RunOptions::default());
+        let notes = std::fs::read_to_string(ws.capture_dir().join("README.md")).unwrap_or_default();
+        assert!(notes.starts_with("# What we found"), "the Clean room capture must not be handed to Deep: {notes}\n{feed:?}");
+        assert_eq!(Workspace::open(&ws.root).unwrap().manifest.capture_deep, Some(true), "the Deep study recorded its mode");
+        let _ = ok;
+    }
+
+    /// A capture with no recorded mode (a failed study, or one copied in) isn't usable: a run
+    /// studies again. A recorded capture is usable only in its own mode.
+    #[test]
+    fn a_capture_with_no_recorded_mode_is_studied_again() {
+        let d = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(d.path(), "x", "A thing", TargetRef::None).unwrap();
+        assert!(!super::super::capture_in_mode(&ws, false), "no capture yet");
+        std::fs::create_dir_all(ws.capture_dir()).unwrap();
+        assert!(!super::super::capture_in_mode(&ws, true), "a capture with no mode isn't trusted in Deep");
+        assert!(!super::super::capture_in_mode(&ws, false), "nor in Clean room");
+        ws.manifest.capture_deep = Some(true);
+        assert!(super::super::capture_in_mode(&ws, true), "a Deep capture is usable in Deep");
+        assert!(!super::super::capture_in_mode(&ws, false), "but not in Clean room");
+        ws.manifest.capture_deep = Some(false);
+        assert!(!super::super::capture_in_mode(&ws, true), "a Clean room capture isn't handed to Deep");
+        assert!(super::super::capture_in_mode(&ws, false));
+    }
+
     /// A saved session records the mode it ran in, and a lost one clears both.
     #[test]
     fn a_session_is_kept_with_the_mode_it_ran_in() {
@@ -2417,6 +2671,7 @@ mod picking_up_a_build {
         let b = bench();
         let mut ws = Workspace::create(&b.projects, "x", "A website for a bakery", TargetRef::None).unwrap();
         ws.manifest.agent_session = Some("session-1".into());
+        ws.manifest.capture_deep = Some(true);
         ws.save().unwrap();
         std::fs::create_dir_all(ws.capture_dir()).unwrap();
         std::fs::create_dir_all(ws.app_dir()).unwrap();
@@ -2475,6 +2730,27 @@ fn just_ask_is_told_to_the_builder_shortly_and_cut_on_a_character() {
     assert!(super::just_asked(&longest).encode_utf16().count() < 20_000);
 }
 
+/// A run that ends by a caught bug must not leave the saved status as it last was ("Checking"
+/// while nothing runs), so the project looks stuck. Every ending records a status.
+#[test]
+fn a_caught_bug_leaves_a_status_the_person_can_act_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ws = Workspace::create(dir.path(), "x", "Build an app", TargetRef::None).unwrap();
+    let panicked: Result<Result<String, ToolError>, Box<dyn std::any::Any + Send>> = Err(Box::new("boom"));
+    let (ok, message, paused) = super::run_outcome(panicked, &mut ws);
+    assert!(!ok && !paused && message.contains("hit a bug"), "{message}");
+    let saved = Workspace::open(&ws.root).unwrap();
+    assert_eq!(saved.manifest.status, Status::NeedsYou, "a project can't be left saying Checking with nothing running");
+    assert!(saved.manifest.note.contains("hit a bug"), "{}", saved.manifest.note);
+    // A pause is not a failure.
+    let (ok, message, paused) = super::run_outcome(Ok(Err(ToolError::cancelled())), &mut ws);
+    assert!(!ok && paused && message == "Paused.");
+    assert_eq!(Workspace::open(&ws.root).unwrap().manifest.status, Status::Stopped);
+    // A finished run keeps the status the run itself set.
+    let (ok, message, paused) = super::run_outcome(Ok(Ok("Ready.".into())), &mut ws);
+    assert!(ok && !paused && message == "Ready.");
+}
+
 /// #923: with OpenRouter as the builder, every asset call said "No fal.ai key" with one saved. The
 /// project hasn't turned on generated assets, so nothing is sent or spent.
 #[test]
@@ -2509,11 +2785,94 @@ fn check_worker(ws: &Workspace, deep: bool) -> Worker {
         notes: Arc::default(),
         feed: Arc::new(Mutex::new(feed::FeedLog::open(ws))),
         assets: false,
-        decompiled: false,
         usage: None,
         self_check: None,
         reset_progress_after_notes: false,
+        keys: crate::KeyStore::file_only(ws.root.join("keys.toml")),
+        kept_checks: Mutex::default(),
     }
+}
+
+#[test]
+fn a_check_that_worked_stands_while_nothing_it_looks_at_changes() {
+    use craft_anything_engine::workspace::progress::CheckedBuild;
+    use std::cell::Cell;
+    let d = tempfile::tempdir().unwrap();
+    let mut ws = Workspace::create(d.path(), "Arena", "Recreate this game", TargetRef::None).unwrap();
+    std::fs::create_dir_all(ws.app_dir().join("src")).unwrap();
+    std::fs::write(ws.app_dir().join("src/main.rs"), "fn main() {}\n").unwrap();
+    let w = check_worker(&ws, false);
+    let runs = Cell::new(0);
+    let worked = Cell::new(true);
+    let check = |ws: &Workspace, round| {
+        w.checks_unless_unchanged(ws, &SheetKind, round, || {
+            runs.set(runs.get() + 1);
+            Ok(vec![CheckResult::new(CheckResult::BUILD, round, worked.get(), "built")])
+        })
+        .unwrap()
+    };
+
+    assert_eq!(check(&ws, 1)[0].round, 1);
+    assert_eq!(runs.get(), 1);
+    // The builder's own check, then the one after its turn: nothing changed, so it isn't run again.
+    let kept = check(&ws, self_check::SELF_CHECK_ROUND);
+    assert_eq!((runs.get(), kept[0].round, kept[0].passed), (1, self_check::SELF_CHECK_ROUND, true));
+    assert_eq!(check(&ws, 2)[0].round, 2);
+    assert_eq!(runs.get(), 1);
+
+    // A changed file, a new picture to compare with, or Deep mode checks again.
+    std::fs::write(ws.app_dir().join("src/main.rs"), "fn main() { println!(\"hi\"); }\n").unwrap();
+    check(&ws, 3);
+    assert_eq!(runs.get(), 2);
+    std::fs::create_dir_all(ws.reference_dir()).unwrap();
+    std::fs::write(ws.reference_dir().join("look.png"), "a picture").unwrap();
+    check(&ws, 4);
+    assert_eq!(runs.get(), 3);
+    let deep = check_worker(&ws, true);
+    *deep.kept_checks.lock().unwrap_or_else(PoisonError::into_inner) = std::mem::take(&mut *w.kept_checks.lock().unwrap_or_else(PoisonError::into_inner));
+    deep.checks_unless_unchanged(&ws, &SheetKind, 5, || {
+        runs.set(runs.get() + 1);
+        Ok(vec![CheckResult::new(CheckResult::BUILD, 5, true, "built")])
+    })
+    .unwrap();
+    assert_eq!(runs.get(), 4, "Deep mode checks again");
+
+    // A round with a failure is never kept: Try again looks again.
+    worked.set(false);
+    check(&ws, 6);
+    check(&ws, 7);
+    assert_eq!(runs.get(), 6);
+    worked.set(true);
+
+    // Kept across runs: the round saved in the progress record, while craft.json still ends with it.
+    let round = check(&ws, 8);
+    assert_eq!(runs.get(), 7);
+    let saved = w.kept_checks.lock().unwrap_or_else(PoisonError::into_inner).saved_for(8);
+    assert!(w.kept_checks.lock().unwrap_or_else(PoisonError::into_inner).saved_for(7).is_none());
+    ws.manifest.checks.extend(round);
+    let progress = BuildProgress { checked: saved.clone(), ..BuildProgress::default() };
+    let next_run = check_worker(&ws, false);
+    *next_run.kept_checks.lock().unwrap_or_else(PoisonError::into_inner) = kept_check::KeptChecks::from_saved(&progress, &ws);
+    let again = next_run.checks_unless_unchanged(&ws, &SheetKind, 9, || panic!("an unchanged build isn't checked again")).unwrap();
+    assert_eq!((again[0].round, again[0].note.as_str()), (9, "built"));
+    // A copy of the project, with the same files, checks its own build.
+    let other = tempfile::tempdir().unwrap();
+    let copy = Workspace::create(other.path(), "Arena", "Recreate this game", TargetRef::None).unwrap();
+    std::fs::create_dir_all(copy.app_dir().join("src")).unwrap();
+    std::fs::copy(ws.app_dir().join("src/main.rs"), copy.app_dir().join("src/main.rs")).unwrap();
+    std::fs::create_dir_all(copy.reference_dir()).unwrap();
+    std::fs::copy(ws.reference_dir().join("look.png"), copy.reference_dir().join("look.png")).unwrap();
+    let copied = Cell::new(false);
+    next_run
+        .checks_unless_unchanged(&copy, &SheetKind, 10, || {
+            copied.set(true);
+            Ok(Vec::new())
+        })
+        .unwrap();
+    assert!(copied.get(), "a copy is checked again");
+    // A record naming another round than craft.json's last one keeps nothing.
+    let stale = BuildProgress { checked: Some(CheckedBuild { round: 7, ..saved.unwrap() }), ..BuildProgress::default() };
+    assert!(kept_check::KeptChecks::from_saved(&stale, &ws).saved_for(7).is_none());
 }
 
 /// A new Python project reaches the same build/screenshot path as a packaged app. The local
@@ -2852,8 +3211,17 @@ fn a_resumed_game_builder_hears_the_asset_choice_as_it_is_now() {
 }
 
 #[test]
+fn a_resumed_api_builder_waits_for_the_runs_check() {
+    let app = kind("app");
+    for prompt in [super::follow_up("bigger title", app.as_ref(), true), continue_prompt(app.as_ref(), true)] {
+        assert!(prompt.contains("Craft Anything checks your build after your turn"), "{prompt}");
+        assert!(!prompt.contains("rebuild_check"), "{prompt}");
+    }
+}
+
+#[test]
 fn a_stopped_build_is_told_to_carry_on_not_start_over() {
-    let p = continue_prompt(kind("website").as_ref());
+    let p = continue_prompt(kind("website").as_ref(), false);
     assert!(p.contains("stopped before it finished") && p.contains("Pick up where you left off") && p.contains("app/"));
 }
 
@@ -2980,8 +3348,9 @@ fn preparing_the_builders_agent_does_not_lock_up() {
         editor: None,
         notes: Arc::default(),
         feed: Arc::new(Mutex::new(feed::FeedLog::open(&ws))),
+        keys: crate::KeyStore::file_only(ws.root.join("keys.toml")),
+        kept_checks: Mutex::default(),
         assets: false,
-        decompiled: false,
         usage: None,
         self_check: None,
         reset_progress_after_notes: false,
@@ -3022,8 +3391,9 @@ fn the_run_answers_the_builders_own_check_during_its_turn() {
         editor: None,
         notes: Arc::default(),
         feed: Arc::new(Mutex::new(feed::FeedLog::open(&ws))),
+        keys: crate::KeyStore::file_only(ws.root.join("keys.toml")),
+        kept_checks: Mutex::default(),
         assets: false,
-        decompiled: false,
         usage: None,
         self_check: Some((Arc::new(SheetKind), 90.0)),
         reset_progress_after_notes: false,
@@ -3036,6 +3406,120 @@ fn the_run_answers_the_builders_own_check_during_its_turn() {
     let steps: Vec<String> = rx.try_iter().filter_map(|e| if let RunEvent::Step { text, .. } = e { Some(text) } else { None }).collect();
     assert!(steps.iter().any(|s| s.contains("checking its work")) && steps.iter().any(|s| s.contains("checked its work")), "the person sees it: {steps:?}");
     assert!(Inbox::new(self_check::asks_dir(&ws.root)).pending().is_empty(), "nothing left waiting");
+    let left: Vec<_> = std::fs::read_dir(self_check::asks_dir(&ws.root)).unwrap().flatten().map(|e| e.file_name()).collect();
+    // The run leaves its mark for the asker, which reads it after its wait and removes it: an
+    // answer landing as the wait ends can't make the check look untaken.
+    assert!(left.iter().any(|n| n.to_string_lossy().ends_with(".taken")), "the run marks the check it took: {left:?}");
+}
+
+/// A build stopped with a check taken answers it, so the builder isn't left waiting on a check
+/// nothing runs any more; the run's own error stays the stop.
+#[test]
+fn a_stopped_build_answers_the_check_it_took() {
+    let d = tempfile::tempdir().unwrap();
+    let mut ws = Workspace::create(d.path(), "Arena", "Recreate this game", TargetRef::None).unwrap();
+    let (tx, _rx) = std::sync::mpsc::channel();
+    let mut w = Worker {
+        wake: Default::default(),
+        engine: Arc::new(Engine::new(craft_anything_engine::testing::session())),
+        tx,
+        stop: CancelToken::default(),
+        preview: Arc::default(),
+        seen: HashSet::new(),
+        inbox: Inbox::new(ws.inbox_dir()),
+        editor: None,
+        notes: Arc::default(),
+        feed: Arc::new(Mutex::new(feed::FeedLog::open(&ws))),
+        keys: crate::KeyStore::file_only(ws.root.join("keys.toml")),
+        kept_checks: Mutex::default(),
+        assets: false,
+        usage: None,
+        self_check: Some((Arc::new(SheetKind), 90.0)),
+        reset_progress_after_notes: false,
+    };
+    let asks = Inbox::new(self_check::asks_dir(&ws.root));
+    let id = asks.post(craft_anything_engine::inbox::RequestKind::Question, "Check the build", "", Vec::new(), false, None).unwrap();
+    w.stop.cancel();
+    let err = w.answer_self_checks(&mut ws).unwrap_err();
+    assert_eq!(err.code, ErrorCode::Cancelled, "the run still stops");
+    let answer = asks.wait(&id, Duration::from_secs(2), &|| false).expect("the taken check is answered");
+    assert_eq!(answer.text.as_deref(), Some(self_check::STOPPED_ANSWER));
+    assert!(self_check::taken_mark(&ws.root, &id).unwrap().is_file(), "the mark is left for the asker to read");
+}
+
+/// A builder that reads one decompiled function (by its MCP name, as Claude Code calls it) and ends
+/// its turn.
+struct Decompiles {
+    events: Vec<AgentEvent>,
+}
+
+impl Conversation for Decompiles {
+    fn send(&mut self, _text: &str) {
+        let tool = format!("mcp__craft-anything__{}", craft_anything_engine::tools::native_function::PSEUDOCODE_TOOL);
+        self.events = vec![
+            AgentEvent::ToolStarted { call_id: "1".into(), tool, input: json!({"function": "entry"}) },
+            AgentEvent::TextDelta { text: "Read it.".into() },
+            AgentEvent::TurnDone { backend: "test".into(), input_tokens: 0, output_tokens: 0, cost_usd: None, cost_is_estimate: false },
+        ];
+    }
+    fn poll(&mut self) -> Vec<AgentEvent> {
+        std::mem::take(&mut self.events)
+    }
+    fn answer_consent(&mut self, _call_id: &str, _allow: bool) {}
+    fn stop(&mut self) {}
+    fn is_busy(&self) -> bool {
+        !self.events.is_empty()
+    }
+}
+
+/// Every request from the person is a new run: decompiling in an earlier one is kept with the
+/// project, so Deep mode doesn't tell the builder it hasn't decompiled after each request.
+#[test]
+fn decompiling_once_is_remembered_by_the_project() {
+    let d = tempfile::tempdir().unwrap();
+    let mut ws = Workspace::create(d.path(), "Sim", "Recreate this game", TargetRef::None).unwrap();
+    assert!(!ws.manifest.decompiled);
+    let (tx, _rx) = std::sync::mpsc::channel();
+    let mut w = Worker {
+        wake: Default::default(),
+        engine: Arc::new(Engine::new(craft_anything_engine::testing::session())),
+        tx,
+        stop: CancelToken::default(),
+        preview: Arc::default(),
+        seen: HashSet::new(),
+        inbox: Inbox::new(ws.inbox_dir()),
+        editor: None,
+        notes: Arc::default(),
+        feed: Arc::new(Mutex::new(feed::FeedLog::open(&ws))),
+        keys: crate::KeyStore::file_only(ws.root.join("keys.toml")),
+        kept_checks: Mutex::default(),
+        assets: false,
+        usage: None,
+        self_check: None,
+        reset_progress_after_notes: false,
+    };
+    let mut builder = Decompiles { events: Vec::new() };
+    w.turn(&mut ws, &mut builder, "Build it.", true, None).unwrap();
+    assert!(ws.manifest.decompiled, "the decompile is seen by its MCP name");
+    ws.save().unwrap();
+    assert!(Workspace::open(&ws.root).unwrap().manifest.decompiled, "a later run reads it from craft.json");
+}
+
+/// A later request's run, reading the project from disk, reminds only a builder that never
+/// decompiled in it, and only in Deep mode on a program.
+#[test]
+fn a_later_request_is_reminded_only_when_nothing_was_decompiled() {
+    let d = tempfile::tempdir().unwrap();
+    let program = TargetRef::Local { path: d.path().join("game.exe") };
+    let mut ws = Workspace::create(d.path(), "Sim", "Recreate this game", program).unwrap();
+    let reopened = |ws: &Workspace| Workspace::open(&ws.root).unwrap().manifest;
+    assert!(needs_decompile_reminder(true, &reopened(&ws)), "nothing decompiled yet");
+    assert!(!needs_decompile_reminder(false, &reopened(&ws)), "Clean room never decompiles");
+    ws.manifest.decompiled = true;
+    ws.save().unwrap();
+    assert!(!needs_decompile_reminder(true, &reopened(&ws)), "decompiled in an earlier run");
+    let none = Workspace::create(d.path(), "Notes", "A notes app", TargetRef::None).unwrap();
+    assert!(!needs_decompile_reminder(true, &none.manifest), "no program to decompile");
 }
 
 #[test]
@@ -3057,8 +3541,8 @@ fn every_kind_leads_tests_its_own_build_and_keeps_its_unknowns() {
             assert!(deep.contains("(the rendered HTML).\n\nMatch it exactly"), "one clean paragraph break: {deep}");
         }
     }
-    assert!(follow_up("bigger title", "game").contains("check it with rebuild_check"));
-    assert!(continue_prompt(kind("app").as_ref()).contains("check it with rebuild_check"));
+    assert!(follow_up("bigger title", "game").contains("Check it with rebuild_check"));
+    assert!(continue_prompt(kind("app").as_ref(), false).contains("Check it with rebuild_check"));
 }
 
 #[test]
@@ -3219,15 +3703,16 @@ fn a_note_the_builder_took_at_a_step_joins_the_feed_and_isnt_sent_again() {
             Note { id: 2, text: "add a footer".into(), shown: "add a footer".into(), pictures: Vec::new(), questions: Vec::new() },
         ])),
         feed: Arc::new(Mutex::new(feed::FeedLog::open(&ws))),
+        keys: crate::KeyStore::file_only(ws.root.join("keys.toml")),
+        kept_checks: Mutex::default(),
         assets: false,
-        decompiled: false,
         usage: None,
         self_check: None,
         reset_progress_after_notes: false,
     };
     let dir = notes::notes_dir(&ws.inbox_dir());
-    notes::hand_over(&dir, 1, "make the header blue").unwrap();
-    notes::hand_over(&dir, 2, "add a footer").unwrap();
+    notes::hand_over(&dir, 1, "make the header blue", None).unwrap();
+    notes::hand_over(&dir, 2, "add a footer", None).unwrap();
     // The agent's hook takes the first one at a step; the second comes in after it.
     std::fs::rename(dir.join("2.json"), dir.join("2.wait")).unwrap();
     assert_eq!(notes::claim(&dir), ["make the header blue"]);
@@ -3346,6 +3831,60 @@ fn a_persons_own_project_is_judged_by_its_own_build_and_tests_whatever_its_kind(
     assert_eq!(r.iter().map(|c| c.check.as_str()).collect::<Vec<_>>(), [CheckResult::BUILD, kinds::own::OwnTestsCheck::ID]);
     assert!(r.iter().all(|c| c.passed), "{r:?}");
     assert!(r[1].note.starts_with("No tests ran"), "says what wasn't run: {}", r[1].note);
+}
+
+/// A round of the builder's own checks has a time limit and looks at Pause before each check. A
+/// check that couldn't start is a failed result with the reason, never a silent wait.
+#[test]
+fn a_self_check_round_stops_at_pause_and_at_its_time_limit() {
+    use craft_anything_engine::workspace::ExistingFiles::Edit;
+    let (_d, ws) = own_folder("index.html", Edit);
+    let round = self_check::SELF_CHECK_ROUND;
+    // Past its limit before the first check: that check is reported as not run, and nothing runs.
+    let r = check_worker(&ws, false).run_checks_within(&ws, &GameKind, round, Some(Duration::ZERO)).unwrap();
+    assert_eq!(r.len(), 1, "{r:?}");
+    assert!(!r[0].passed && r[0].note.starts_with("Not run:"), "{r:?}");
+    // Paused: the round ends with the cancelled error before any check starts.
+    let paused = check_worker(&ws, false);
+    paused.stop.cancel();
+    let e = paused.run_checks_within(&ws, &GameKind, round, None).unwrap_err();
+    assert_eq!(e.code, ErrorCode::Cancelled);
+    // With time left, both checks run as they do without a limit.
+    let r = check_worker(&ws, false).run_checks_within(&ws, &GameKind, round, Some(Duration::from_secs(600))).unwrap();
+    assert_eq!(r.len(), 2, "{r:?}");
+    assert!(r.iter().all(|c| c.passed), "{r:?}");
+}
+
+/// Each check is said before it runs, as a step of its own, so a stall names the check it is in.
+/// A real round's lines are Check steps (the feed, the CLI and the progress panel keep their
+/// stage); the builder's own checks belong to its Build turn.
+#[test]
+fn every_check_is_said_before_it_runs_as_its_own_step() {
+    use craft_anything_engine::workspace::ExistingFiles::Edit;
+    let (_d, ws) = own_folder("index.html", Edit);
+    let run_round = |round: u32| {
+        let mut worker = check_worker(&ws, false);
+        let (tx, rx) = std::sync::mpsc::channel();
+        worker.tx = tx;
+        let r = worker.run_checks_within(&ws, &GameKind, round, None).unwrap();
+        let said: Vec<(Step, String)> = rx
+            .try_iter()
+            .filter_map(|e| match e {
+                RunEvent::Step { step, text } => Some((step, text)),
+                _ => None,
+            })
+            .collect();
+        (r, said)
+    };
+    let (r, said) = run_round(1);
+    assert_eq!(r.len(), 2, "{r:?}");
+    assert_eq!(said.len(), 2, "{said:?}");
+    assert!(said.iter().all(|(s, _)| *s == Step::Check), "a real round stays in the Check stage: {said:?}");
+    assert!(said[0].1.contains("Checking the build (1 of 2): build"), "{said:?}");
+    assert!(said[1].1.contains("(2 of 2): own-tests"), "{said:?}");
+    let (_, said) = run_round(self_check::SELF_CHECK_ROUND);
+    assert!(said.iter().all(|(s, _)| *s == Step::Build), "the builder's own checks are part of its turn: {said:?}");
+    assert!(said[0].1.starts_with("Checking its work (1 of 2): build"), "{said:?}");
 }
 
 #[test]
@@ -3523,8 +4062,9 @@ fn a_session_left_on_another_computer_starts_a_new_one_from_the_project() {
         editor: None,
         notes: Arc::default(),
         feed: Arc::new(Mutex::new(feed::FeedLog::open(&ws))),
+        keys: crate::KeyStore::file_only(ws.root.join("keys.toml")),
+        kept_checks: Mutex::default(),
         assets: false,
-        decompiled: false,
         usage: None,
         self_check: None,
         reset_progress_after_notes: false,
@@ -3578,8 +4118,9 @@ fn a_missing_session_with_nothing_to_start_from_is_said_plainly() {
         editor: None,
         notes: Arc::default(),
         feed: Arc::new(Mutex::new(feed::FeedLog::open(&ws))),
+        keys: crate::KeyStore::file_only(ws.root.join("keys.toml")),
+        kept_checks: Mutex::default(),
         assets: false,
-        decompiled: false,
         usage: None,
         self_check: None,
         reset_progress_after_notes: false,
@@ -3644,8 +4185,9 @@ fn the_builders_conversation_travels_with_the_project() {
         editor: None,
         notes: Arc::default(),
         feed: Arc::new(Mutex::new(feed::FeedLog::open(&ws))),
+        keys: crate::KeyStore::file_only(ws.root.join("keys.toml")),
+        kept_checks: Mutex::default(),
         assets: false,
-        decompiled: false,
         usage: None,
         self_check: None,
         reset_progress_after_notes: false,
@@ -3721,8 +4263,9 @@ fn a_build_says_when_it_waits_for_an_analysis_started_earlier() {
         editor: None,
         notes: Arc::default(),
         feed: Arc::new(Mutex::new(feed::FeedLog::open(&ws))),
+        keys: crate::KeyStore::file_only(ws.root.join("keys.toml")),
+        kept_checks: Mutex::default(),
         assets: false,
-        decompiled: false,
         usage: None,
         self_check: None,
         reset_progress_after_notes: false,
@@ -3745,4 +4288,83 @@ fn a_build_says_when_it_waits_for_an_analysis_started_earlier() {
         })
         .collect();
     assert!(said.iter().any(|t| t.contains("waiting for Ghidra's analysis of this program, started earlier")), "{said:?}");
+}
+
+/// A later run skips the study; in Deep mode it opens the program again, so the builder's tool
+/// server has it and its first `native_*` call doesn't say "Nothing is open yet" (#1421).
+#[test]
+fn a_later_run_opens_the_projects_program_again_for_the_builder() {
+    let d = tempfile::tempdir().unwrap();
+    let program = d.path().join("game.bin");
+    std::fs::write(&program, b"not really a program").unwrap();
+    let target = TargetRef::Local { path: program.clone() };
+    let app = kind("app");
+    assert_eq!(study::program_to_reopen(&target, app.as_ref(), true), Some(program.clone()));
+    assert_eq!(study::program_to_reopen(&target, app.as_ref(), false), None, "Clean room never opens the original");
+    assert_eq!(study::program_to_reopen(&TargetRef::Local { path: d.path().join("gone.bin") }, app.as_ref(), true), None, "nothing to open");
+    assert_eq!(study::program_to_reopen(&TargetRef::None, app.as_ref(), true), None);
+    // Only a coding agent over SSH has its tools on the other computer; an API builder over SSH
+    // (a tunnelled model) calls them here, so its program is reopened like a local one.
+    assert!(study::tools_run_remotely(true, false), "coding agent over SSH");
+    assert!(!study::tools_run_remotely(true, true), "API builder through an SSH tunnel");
+    assert!(!study::tools_run_remotely(false, false) && !study::tools_run_remotely(false, true));
+
+    for deep in [true, false] {
+        let mut ws = Workspace::create(d.path(), &format!("Copy {deep}"), "Copy this app", target.clone()).unwrap();
+        let mut s = craft_anything_engine::testing::session();
+        s.settings.deep_mode = deep;
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut w = Worker {
+            wake: Default::default(),
+            engine: Arc::new(Engine::new(s)),
+            tx,
+            stop: CancelToken::default(),
+            preview: Arc::default(),
+            seen: HashSet::new(),
+            inbox: Inbox::new(ws.inbox_dir()),
+            editor: None,
+            notes: Arc::default(),
+            feed: Arc::new(Mutex::new(feed::FeedLog::open(&ws))),
+            keys: crate::KeyStore::file_only(ws.root.join("keys.toml")),
+            kept_checks: Mutex::default(),
+            assets: false,
+            usage: None,
+            self_check: None,
+            reset_progress_after_notes: false,
+        };
+        w.reopen_target(&mut ws, app.as_ref(), true, deep).unwrap();
+        assert!(w.engine.session().shared_targets().is_empty(), "a builder over SSH isn't handed this computer's targets");
+        w.reopen_target(&mut ws, app.as_ref(), false, deep).unwrap();
+        let opened: Vec<PathBuf> = w.engine.session().shared_targets().into_iter().map(|t| t.path).collect();
+        if deep {
+            assert_eq!(opened, std::slice::from_ref(&program), "the builder's tool server is handed the program");
+            w.reopen_target(&mut ws, app.as_ref(), false, deep).unwrap();
+            assert_eq!(w.engine.session().shared_targets().len(), 1, "an open program isn't opened twice");
+        } else {
+            assert!(opened.is_empty(), "Clean room opens nothing");
+        }
+    }
+}
+
+/// #1620: a note still waiting when the app closed is the next run's message, not deleted.
+#[test]
+fn a_note_left_waiting_is_the_next_runs_message() {
+    let d = tempfile::tempdir().unwrap();
+    let dir = notes::notes_dir(d.path());
+    let left = |text: &str, picture: &str| notes::Left { text: text.into(), shown: format!("{text}!"), pictures: vec![PathBuf::from(picture)] };
+    notes::hand_over(&dir, 1, "make it blue, with answers", Some(&left("make it blue", "a.png"))).unwrap();
+    notes::hand_over(&dir, 2, "add a footer", Some(&left("add a footer", "b.png"))).unwrap();
+    let mut continuing = RunOptions { continuing: true, ..RunOptions::default() };
+    send_left_notes(&mut continuing, &dir);
+    assert_eq!(continuing.message.as_deref(), Some("make it blue\n\nadd a footer"));
+    assert_eq!(continuing.shown.as_deref(), Some("make it blue!\n\nadd a footer!"));
+    assert_eq!(continuing.shown_pictures, [PathBuf::from("a.png"), PathBuf::from("b.png")]);
+    // A run started with a message: whoever started it sent what was waiting.
+    let mut asked = RunOptions { message: Some("new request".into()), ..RunOptions::default() };
+    send_left_notes(&mut asked, &dir);
+    assert_eq!(asked.message.as_deref(), Some("new request"));
+    assert!(asked.shown.is_none() && asked.shown_pictures.is_empty());
+    let mut nothing = RunOptions::default();
+    send_left_notes(&mut nothing, &d.path().join("none"));
+    assert!(nothing.message.is_none());
 }

@@ -332,6 +332,15 @@ pub struct DecodeIssue {
     pub reason: String,
 }
 
+fn relative_destination(end: usize, displacement: i32, body_len: usize) -> Option<u32> {
+    let absolute = i64::try_from(end).ok()?.checked_add(i64::from(displacement))?;
+    let absolute = usize::try_from(absolute).ok()?;
+    if absolute >= body_len {
+        return None;
+    }
+    u32::try_from(absolute).ok()
+}
+
 /// Decode IL bytes. Stops at the first undecodable byte (reported) or after `max` instructions.
 pub fn decode(code: &[u8], max: usize) -> (Vec<Instr>, Option<DecodeIssue>) {
     let r = Reader::new(code);
@@ -360,6 +369,7 @@ pub fn decode(code: &[u8], max: usize) -> (Vec<Instr>, Option<DecodeIssue>) {
             }
         };
         let trunc = || Some(DecodeIssue { offset: start as u32, reason: format!("operand of {name} runs past the body") });
+        let destination = || Some(DecodeIssue { offset: start as u32, reason: format!("destination of {name} lies outside the method body") });
         let operand = match kind {
             K::None => Operand::None,
             K::ShortI => match r.u8(pc) {
@@ -391,11 +401,17 @@ pub fn decode(code: &[u8], max: usize) -> (Vec<Instr>, Option<DecodeIssue>) {
                 None => return (out, trunc()),
             },
             K::ShortBr => match r.u8(pc) {
-                Some(v) => Operand::Targets(vec![((pc + 1) as i64 + i64::from(v as i8)) as u32]),
+                Some(v) => match relative_destination(pc + 1, i32::from(v as i8), code.len()) {
+                    Some(target) => Operand::Targets(vec![target]),
+                    None => return (out, destination()),
+                },
                 None => return (out, trunc()),
             },
             K::Br => match r.u32_le(pc) {
-                Some(v) => Operand::Targets(vec![((pc + 4) as i64 + i64::from(v as i32)) as u32]),
+                Some(v) => match relative_destination(pc + 4, v as i32, code.len()) {
+                    Some(target) => Operand::Targets(vec![target]),
+                    None => return (out, destination()),
+                },
                 None => return (out, trunc()),
             },
             K::Switch => {
@@ -406,7 +422,12 @@ pub fn decode(code: &[u8], max: usize) -> (Vec<Instr>, Option<DecodeIssue>) {
                 if end > code.len() {
                     return (out, trunc());
                 }
-                let targets = (0..n).filter_map(|i| r.u32_le(pc + 4 + i * 4)).map(|d| (end as i64 + i64::from(d as i32)) as u32).collect();
+                let mut targets = Vec::with_capacity(n);
+                for i in 0..n {
+                    let Some(displacement) = r.u32_le(pc + 4 + i * 4) else { return (out, trunc()) };
+                    let Some(target) = relative_destination(end, displacement as i32, code.len()) else { return (out, destination()) };
+                    targets.push(target);
+                }
                 pc = end;
                 out.push(Instr { offset: start as u32, opcode: name, kind, operand: Operand::Targets(targets) });
                 continue;
@@ -525,26 +546,34 @@ pub fn parse_body(data: &[u8], off: usize) -> Option<MethodBody> {
             if fl & 0x8 != 0 {
                 let mut sect = (code_offset.checked_add(code_size as usize)?.checked_add(3)?) & !3;
                 for _ in 0..64 {
-                    let Some(kind) = r.u8(sect) else {
-                        body.warnings.push("extra data section runs past the file".into());
+                    let Some(header) = r.slice(sect, 4) else {
+                        body.warnings.push("extra data section header runs past the file".into());
                         break;
                     };
+                    let kind = header[0];
                     let fat = kind & 0x40 != 0;
-                    let (size, hdr) = if fat {
-                        let v = r.u32_le(sect).unwrap_or(0) >> 8;
-                        (v as usize, 4usize)
-                    } else {
-                        (usize::from(r.u8(sect + 1).unwrap_or(0)), 4usize)
-                    };
+                    let size =
+                        if fat { usize::from(header[1]) | (usize::from(header[2]) << 8) | (usize::from(header[3]) << 16) } else { usize::from(header[1]) };
+                    let hdr = 4;
                     if size < hdr {
                         body.warnings.push("empty extra data section".into());
                         break;
                     }
-                    if kind & 0x1 != 0 {
+                    let Some(section) = r.slice(sect, size) else {
+                        body.warnings.push("extra data section runs past the file".into());
+                        break;
+                    };
+                    if kind & 0x3f == 0x1 {
                         let csize = if fat { 24 } else { 12 };
-                        let n = (size - hdr) / csize;
+                        let n = if (size - hdr).is_multiple_of(csize) {
+                            (size - hdr) / csize
+                        } else {
+                            body.warnings.push("exception section ends with a partial clause".into());
+                            0
+                        };
+                        let r = Reader::new(section);
                         for i in 0..n.min(MAX_CLAUSES) {
-                            let c = sect + hdr + i * csize;
+                            let c = hdr + i * csize;
                             let (flags, to, tl, ho, hl, tok) = if fat {
                                 (r.u32_le(c), r.u32_le(c + 4), r.u32_le(c + 8), r.u32_le(c + 12), r.u32_le(c + 16), r.u32_le(c + 20))
                             } else {
@@ -580,6 +609,8 @@ pub fn parse_body(data: &[u8], off: usize) -> Option<MethodBody> {
                                 class_token_or_filter: tok,
                             });
                         }
+                    } else {
+                        body.warnings.push(format!("unknown extra data section kind {}", kind & 0x3f));
                     }
                     if kind & 0x80 == 0 {
                         break;
