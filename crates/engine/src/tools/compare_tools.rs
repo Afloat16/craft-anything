@@ -385,11 +385,7 @@ type Rec = (String, Value);
 
 fn load_bundle(path: &str) -> Result<Vec<Rec>, ToolError> {
     let pb = super::artifact_tools::abs_path(path, "bundle path")?;
-    let meta = std::fs::metadata(&pb).map_err(|e| ToolError::io(pb.display(), e))?;
-    if meta.len() > 512 * 1024 * 1024 {
-        return Err(ToolError::new(craft_anything_evidence::ErrorCode::OverLimit, "bundle is too large"));
-    }
-    let bytes = std::fs::read(&pb).map_err(|e| ToolError::io(pb.display(), e))?;
+    let bytes = craft_anything_platform::fs::read_file_capped(&pb, 512 * 1024 * 1024)?;
     let v: Value = serde_json::from_slice(&bytes).map_err(|e| ToolError::invalid(format!("not a bundle: {e}")))?;
     if v.get("format").and_then(Value::as_str) != Some(super::session_tools::BUNDLE_FORMAT) {
         return Err(ToolError::invalid(format!("{path} is not a Craft Anything evidence bundle")));
