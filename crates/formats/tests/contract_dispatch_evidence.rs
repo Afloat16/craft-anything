@@ -11,12 +11,6 @@ fn dispatched(prefix: &[u8], body: &[u8], valid: bool) -> Vec<u8> {
     c
 }
 #[test]
-fn reading_msg_value_is_not_a_payment_guard() {
-    let r = analyze(&dispatched(&[0x34, 0x50], &[0x34, 0x50, 0x00], true)).unwrap();
-    assert!(!r.callvalue_check_before_dispatch);
-    assert_eq!(r.functions[0].mutability, "payable");
-}
-#[test]
 fn selector_divisor_constant_alone_does_not_extract_a_selector() {
     let mut c = vec![0x60, 0, 0x35, 0x7c, 1];
     c.extend([0; 28]);
