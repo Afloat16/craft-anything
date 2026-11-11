@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-11-11 15:23:47 UTC",
+  "updated_at": "2026-11-11 15:35:23 UTC",
   "items": [
     {
       "key": "craft-zip-crc32",
@@ -61,10 +61,10 @@
       "repository": "storytold/craft-anything",
       "branch": "bugfix/r3.12-sqlite-schema-completeness-20261111",
       "base": "3a9ad9c6c5de05701d423b8c7e9cc37b550a7170",
-      "head": "fca8b0c7f9f4fd54a172bf9fe834393f54844a23",
+      "head": "e44c7a07828514d2c22d82accf7183e28cf2c83d",
       "public_claim": "85548704664929fe4a785af39cc47afa43024f28",
       "original_claim": "86ebafd0628529696a30da316679b28fab7c6ed8",
-      "state": "integration_validation_in_progress",
+      "state": "ready_pending_pr_creation",
       "actual_pr": false,
       "merged": false,
       "validation": {
@@ -73,7 +73,7 @@
         "carrier_commit": "253172b45cd29be5d33abf43f1273c6b632f7c9f",
         "workflow": ".github/workflows/validation-craft-sqlite-schema.yml",
         "run": 43047782783,
-        "conclusion": null,
+        "conclusion": "success",
         "expected_differential": {
           "synthetic_formats": {
             "baseline_fail": 6,
@@ -161,14 +161,14 @@
           }
         ],
         "touched_crate_tests": {
-          "passed": 2396,
+          "passed": 2397,
           "failed": 0,
           "ignored": 17,
           "targets": 230
         },
         "touched_crate_counts": {
           "engine": {
-            "passed": 684,
+            "passed": 685,
             "failed": 0,
             "ignored": 7,
             "targets": 20
@@ -273,23 +273,55 @@
             "schema_leaves": 29,
             "complete_objects": 163
           }
-        ]
+        ],
+        "job": 130616271845,
+        "integration_head": "fca8b0c7f9f4fd54a172bf9fe834393f54844a23",
+        "docs_identity": {
+          "head": "e44c7a07828514d2c22d82accf7183e28cf2c83d",
+          "run": 43049284010,
+          "job": 130621650396,
+          "carrier": "119edcf07697b8c90349e972a7ac53f428a1e9c8",
+          "conclusion": "success",
+          "checks": [
+            "only ROADMAP and STATUS changed from fully verified candidate",
+            "all product/test/manifest bytes unchanged",
+            "patch whitespace",
+            "layers",
+            "locks: 386 files",
+            "secrets",
+            "clean tree"
+          ]
+        },
+        "differential_overall_conclusion": "failure",
+        "differential_step_conclusion": "success",
+        "integration_carrier": "253172b45cd29be5d33abf43f1273c6b632f7c9f"
       },
       "dedupe": "Whole-history searches for SQLite schema, schema_truncated, SQLite incomplete and schema coverage. Merged #1608 only propagated incomplete walks into row reads/counts; whole_schema and database tool evidence remain omitted. Current code and public ROADMAP checked at latest main.",
       "scope": "Carry RowWalk.incomplete into schema()/Overview and db_sqlite_show evidence, preserve readable objects and existing row paging, qualify uncertain missing-table errors. No traversal or SQL-language expansion.",
-      "notes": "Rebased claim first onto current main3a9ad9. Unchanged production, shared fixture, parser tests, manifests and lockfile are checked against measured6baf; sole test change uses expect_err. The new integration run executes all three touched-crate test suites and all remaining gates; no repeated original/native comparison is needed for identical product blobs.",
+      "notes": "Completed implementation and all required checks. Native and original-source regressions were executed before the test-assertion style fix; latest-main identity verification establishes unchanged production/fixture/parser-test/manifest/lockfile bytes and exactly that assertion substitution. Final documentation-only source identity and contracts are verified separately. No upstream PR creation or maintainer-permission retry was attempted for this head; the complete prefilled link is ready for the user.",
       "changed_paths": [
-        "crates/formats/src/sqlite.rs",
         "crates/engine/src/tools/database_tools.rs",
-        "crates/testkit/src/sqlite.rs",
+        "crates/engine/tests/sqlite_schema_completeness.rs",
+        "crates/formats/src/sqlite.rs",
         "crates/formats/tests/sqlite_schema_completeness.rs",
-        "crates/engine/tests/sqlite_schema_completeness.rs"
+        "crates/testkit/src/sqlite.rs",
+        "docs/ROADMAP.md",
+        "docs/STATUS.md"
       ],
       "public_claim_history": [
         "86ebafd0628529696a30da316679b28fab7c6ed8",
         "a03b9f5e7cdd42012a7ada9115f9408becd2953d",
         "85548704664929fe4a785af39cc47afa43024f28"
-      ]
+      ],
+      "title": "Report incomplete SQLite schemas in database evidence (R3.12)",
+      "body": "**Roadmap item:** R3.12, SQLite schema completeness.\n\n## Problem\nThe SQLite b-tree walker already records skipped or unreadable pages and rows, repeated children, and exhausted traversal limits. `whole_schema` discarded that state. A readable prefix could therefore be reported as the complete schema, and a table hidden in an unreadable subtree could receive a definitive absent-table error.\n\n## Change\n- Carry the existing incomplete-walk state into `schema()` and `Overview.schema_truncated`, alongside the existing object cap.\n- Preserve readable schema objects and table rows. `db_sqlite_show` adds a `schema_incomplete` limitation and partial coverage; a schema-only result has no asserted total. Row paging retains its existing counts and offsets, while the accompanying incomplete schema keeps the overall evidence partial.\n- Qualify an unsuccessful table lookup as missing from the readable, incomplete schema. Complete-schema behavior is unchanged.\n\nThis covers the schema consumer omitted from #1608, which handled row reads and counts. The walker, SQL parsing, schema field limits and existing row paging remain unchanged.\n\n## Verification\nThe tests cover complete and empty schema controls, both interior child positions, null/cyclic/reused/missing children, wrong page kinds, invalid cells and root framing, truncation and the depth budget. Engine tests verify retained objects, unknown totals, row-page coverage and qualified missing-table errors.\n\nPython SQLite 3.45.1 generated a 16 KiB database with 163 schema objects on 29 schema leaf pages. Seven damaged/truncated variants and three controls check exact retained object fields and readable rows against SQLite's original queries. Every intentionally damaged schema is also rejected by SQLite's integrity check. A corrupt table-data page with an intact schema remains a schema-completeness control.\n\nOriginal source 35f113: parser regressions 6 failed/2 passed, engine regressions 4 failed/1 passed, native database comparisons 7 failed/3 passed. Fixed source 6bafba6: all 8 + 5 + 10 passed. Latest-main integration verifies unchanged product, fixture, parser-test, manifest and lockfile bytes; the only regression change replaces `.err().expect()` with the Clippy-required `.expect_err()`.\n\nOn main 3a9ad9c6c5de05701d423b8c7e9cc37b550a7170, all touched-crate tests passed: formats 1,711; engine 685; testkit 1 (2,397 passed, 0 failed, 17 existing ignored). Rust 1.99 fmt, strict all-target Clippy for all three crates, layers, locks, secrets and the complete five-crate WebAssembly check passed. Source and lockfile remained clean.\n\nPublic claim was pushed before implementation (original 86ebafd; latest-main replay 8554870). The final documentation commit only checks off the ROADMAP claim and adds one STATUS row; it has the same product and tests as the full-gate source fca8b0c.\n\n[Original-source failures, passing controls and fixed native SQLite comparisons](https://github.com/Afloat16/billion-context/actions/runs/43046176741)\n[Latest-main integration and complete gates](https://github.com/Afloat16/billion-context/actions/runs/43047782783)\n[Final documentation identity and repository checks](https://github.com/Afloat16/billion-context/actions/runs/43049284010)\n\nThe earlier differential run remains red because strict Clippy rejected that test assertion style; its differential and complete test steps passed. The first attempt stopped at a fixture formatting difference before compilation. Both records are retained.\n\nNo live application UI or SQLite repair/recovery operation was performed. Tests inspect local fixture files through the actual parser and engine; they do not run user SQL.\n\nNo other project's code, scripts or wording was copied.\n",
+      "prefill_url": "https://github.com/storytold/craft-anything/compare/main...Afloat16:bugfix/r3.12-sqlite-schema-completeness-20261111?expand=1&title=Report%20incomplete%20SQLite%20schemas%20in%20database%20evidence%20(R3.12)&body=**Roadmap%20item%3A**%20R3.12%2C%20SQLite%20schema%20completeness.%0A%0A%23%23%20Problem%0AThe%20SQLite%20b-tree%20walker%20already%20records%20skipped%20or%20unreadable%20pages%20and%20rows%2C%20repeated%20children%2C%20and%20exhausted%20traversal%20limits.%20%60whole_schema%60%20discarded%20that%20state.%20A%20readable%20prefix%20could%20therefore%20be%20reported%20as%20the%20complete%20schema%2C%20and%20a%20table%20hidden%20in%20an%20unreadable%20subtree%20could%20receive%20a%20definitive%20absent-table%20error.%0A%0A%23%23%20Change%0A-%20Carry%20the%20existing%20incomplete-walk%20state%20into%20%60schema()%60%20and%20%60Overview.schema_truncated%60%2C%20alongside%20the%20existing%20object%20cap.%0A-%20Preserve%20readable%20schema%20objects%20and%20table%20rows.%20%60db_sqlite_show%60%20adds%20a%20%60schema_incomplete%60%20limitation%20and%20partial%20coverage%3B%20a%20schema-only%20result%20has%20no%20asserted%20total.%20Row%20paging%20retains%20its%20existing%20counts%20and%20offsets%2C%20while%20the%20accompanying%20incomplete%20schema%20keeps%20the%20overall%20evidence%20partial.%0A-%20Qualify%20an%20unsuccessful%20table%20lookup%20as%20missing%20from%20the%20readable%2C%20incomplete%20schema.%20Complete-schema%20behavior%20is%20unchanged.%0A%0AThis%20covers%20the%20schema%20consumer%20omitted%20from%20%231608%2C%20which%20handled%20row%20reads%20and%20counts.%20The%20walker%2C%20SQL%20parsing%2C%20schema%20field%20limits%20and%20existing%20row%20paging%20remain%20unchanged.%0A%0A%23%23%20Verification%0AThe%20tests%20cover%20complete%20and%20empty%20schema%20controls%2C%20both%20interior%20child%20positions%2C%20null%2Fcyclic%2Freused%2Fmissing%20children%2C%20wrong%20page%20kinds%2C%20invalid%20cells%20and%20root%20framing%2C%20truncation%20and%20the%20depth%20budget.%20Engine%20tests%20verify%20retained%20objects%2C%20unknown%20totals%2C%20row-page%20coverage%20and%20qualified%20missing-table%20errors.%0A%0APython%20SQLite%203.45.1%20generated%20a%2016%20KiB%20database%20with%20163%20schema%20objects%20on%2029%20schema%20leaf%20pages.%20Seven%20damaged%2Ftruncated%20variants%20and%20three%20controls%20check%20exact%20retained%20object%20fields%20and%20readable%20rows%20against%20SQLite's%20original%20queries.%20Every%20intentionally%20damaged%20schema%20is%20also%20rejected%20by%20SQLite's%20integrity%20check.%20A%20corrupt%20table-data%20page%20with%20an%20intact%20schema%20remains%20a%20schema-completeness%20control.%0A%0AOriginal%20source%2035f113%3A%20parser%20regressions%206%20failed%2F2%20passed%2C%20engine%20regressions%204%20failed%2F1%20passed%2C%20native%20database%20comparisons%207%20failed%2F3%20passed.%20Fixed%20source%206bafba6%3A%20all%208%20%2B%205%20%2B%2010%20passed.%20Latest-main%20integration%20verifies%20unchanged%20product%2C%20fixture%2C%20parser-test%2C%20manifest%20and%20lockfile%20bytes%3B%20the%20only%20regression%20change%20replaces%20%60.err().expect()%60%20with%20the%20Clippy-required%20%60.expect_err()%60.%0A%0AOn%20main%203a9ad9c6c5de05701d423b8c7e9cc37b550a7170%2C%20all%20touched-crate%20tests%20passed%3A%20formats%201%2C711%3B%20engine%20685%3B%20testkit%201%20(2%2C397%20passed%2C%200%20failed%2C%2017%20existing%20ignored).%20Rust%201.99%20fmt%2C%20strict%20all-target%20Clippy%20for%20all%20three%20crates%2C%20layers%2C%20locks%2C%20secrets%20and%20the%20complete%20five-crate%20WebAssembly%20check%20passed.%20Source%20and%20lockfile%20remained%20clean.%0A%0APublic%20claim%20was%20pushed%20before%20implementation%20(original%2086ebafd%3B%20latest-main%20replay%208554870).%20The%20final%20documentation%20commit%20only%20checks%20off%20the%20ROADMAP%20claim%20and%20adds%20one%20STATUS%20row%3B%20it%20has%20the%20same%20product%20and%20tests%20as%20the%20full-gate%20source%20fca8b0c.%0A%0A%5BOriginal-source%20failures%2C%20passing%20controls%20and%20fixed%20native%20SQLite%20comparisons%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fbillion-context%2Factions%2Fruns%2F43046176741)%0A%5BLatest-main%20integration%20and%20complete%20gates%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fbillion-context%2Factions%2Fruns%2F43047782783)%0A%5BFinal%20documentation%20identity%20and%20repository%20checks%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fbillion-context%2Factions%2Fruns%2F43049284010)%0A%0AThe%20earlier%20differential%20run%20remains%20red%20because%20strict%20Clippy%20rejected%20that%20test%20assertion%20style%3B%20its%20differential%20and%20complete%20test%20steps%20passed.%20The%20first%20attempt%20stopped%20at%20a%20fixture%20formatting%20difference%20before%20compilation.%20Both%20records%20are%20retained.%0A%0ANo%20live%20application%20UI%20or%20SQLite%20repair%2Frecovery%20operation%20was%20performed.%20Tests%20inspect%20local%20fixture%20files%20through%20the%20actual%20parser%20and%20engine%3B%20they%20do%20not%20run%20user%20SQL.%0A%0ANo%20other%20project's%20code%2C%20scripts%20or%20wording%20was%20copied.%0A",
+      "diff": {
+        "commits": 3,
+        "files": 7,
+        "additions": 274,
+        "deletions": 4
+      }
     }
   ]
 }
