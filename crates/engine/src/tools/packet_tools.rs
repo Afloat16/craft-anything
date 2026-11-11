@@ -8,7 +8,7 @@ use super::native_common::{page, params_json, spec};
 use super::static_input::{self, Input, builder, format_err};
 use super::{Detail, detailed};
 use crate::tool::{Ctx, Effects, Requires, ToolOutput, ToolSpec, Toolset, parse_params, schema_of};
-use craft_anything_evidence::{Authority, Confidence, Coverage, ErrorCode, Limitation, Location, Subject, ToolError};
+use craft_anything_evidence::{Authority, Confidence, Coverage, CoverageStatus, ErrorCode, Limitation, Location, Subject, ToolError};
 use craft_anything_formats::pcap::{self, Capture, Count, FlowTable};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -189,9 +189,17 @@ fn packets_capture_show(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, 
     let cancel = ctx.cancel.clone();
     let s = pcap::summarize(&input.bytes, &|| cancel.is_cancelled()).map_err(|e| format_err(e, "a packet capture"))?;
     ctx.cancel.check()?;
-    let (flows, cov) = page(&s.flows, p.offset, p.limit);
+    let (flows, mut cov) = page(&s.flows, p.offset, p.limit);
+    let scan_incomplete = s.truncated || !s.warnings.is_empty();
+    let incomplete = scan_incomplete || s.flows_untracked_frames > 0 || !s.capped_inventories.is_empty();
+    if incomplete {
+        cov.status = CoverageStatus::Partial;
+        if scan_incomplete || s.flows_untracked_frames > 0 {
+            cov.total = None;
+        }
+    }
     let duration = s.first_ts_ns.zip(s.last_ts_ns).map(|(a, b)| b.saturating_sub(a) as f64 / 1e9);
-    let summary = format!(
+    let mut summary = format!(
         "{} capture: {} packets, {} bytes{}, {} conversations, {} DNS names asked, {} TLS server names, {} HTTP requests.",
         s.format,
         s.packets,
@@ -202,6 +210,9 @@ fn packets_capture_show(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, 
         s.tls_sni.len(),
         s.http_requests.len()
     );
+    if incomplete {
+        summary.push_str(" Results are partial; see limitations.");
+    }
     let mut lims = common_limitations();
     if !s.warnings.is_empty() {
         lims.push(Limitation::new("read_warnings", "Some packets or timestamps may be missing from the summary. See the capture warnings for details."));
@@ -316,14 +327,31 @@ fn packets_fields_show(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, T
         rows.push(row);
     }
     let shown = rows.len() as u64;
-    let cov = Coverage::page(shown, matched, p.offset as u64);
+    let mut cov = Coverage::page(shown, matched, p.offset as u64);
+    let scan_incomplete = cap.truncated || !cap.warnings.is_empty();
+    let incomplete = scan_incomplete || flows.untracked > 0;
+    if incomplete {
+        cov.status = CoverageStatus::Partial;
+        if scan_incomplete || (want_flow.is_some() && flows.untracked > 0) {
+            cov.total = None;
+        }
+    }
     let mut lims = common_limitations();
     if !cap.warnings.is_empty() {
         lims.push(Limitation::new("read_warnings", "Some packets or timestamps may be missing from the listing. See the capture warnings for details."));
     }
+    if cap.truncated || flows.untracked > 0 {
+        lims.push(Limitation::new(
+            "caps_hit",
+            "A packet or flow cap was reached (see truncated and flows_untracked_frames); the listing or its flow identifiers are partial.",
+        ));
+    }
     let filtered = want_proto.is_some() || want_ip.is_some() || p.port.is_some() || want_flow.is_some();
-    let summary =
+    let mut summary =
         format!("{matched} of {total} packets{} ; showing {shown} from #{}.", if filtered { " match the filter" } else { "" }, p.offset).replace(" ;", ";");
+    if incomplete {
+        summary.push_str(" Results are partial; see limitations.");
+    }
     let b = builder(ctx, "packets_fields_show", input.subject.clone(), params_json(&p))
         .result(json!({
             "path": input.path,
@@ -333,6 +361,8 @@ fn packets_fields_show(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, T
             "offset": p.offset,
             "limit": limit,
             "packets": rows,
+            "truncated": cap.truncated,
+            "flows_untracked_frames": flows.untracked,
             "warnings": cap.warnings,
         }))
         .summary(summary)
@@ -418,7 +448,12 @@ struct Inventories {
     dns_answers: Vec<Count>,
     tls_sni: Vec<Count>,
     http_requests: Vec<Count>,
+    capped_inventories: Vec<&'static str>,
+    truncated: bool,
+    warnings: Vec<String>,
 }
+
+const INVENTORY_NAMES: [&str; 6] = ["protocol_stacks", "endpoints", "dns_queries", "dns_answers", "tls_sni", "http_requests"];
 
 fn ranked(map: BTreeMap<String, u64>) -> Vec<Count> {
     let mut v: Vec<Count> = map.into_iter().map(|(value, count)| Count { value, count }).collect();
@@ -447,11 +482,16 @@ const TSHARK_FIELDS: &[&str] = &[
 fn aggregate_tshark(text: &str) -> Inventories {
     let mut inv = Inventories::default();
     let mut maps: [BTreeMap<String, u64>; 6] = Default::default();
+    let mut capped = [false; 6];
     let mut add = |i: usize, k: String| {
-        if let Some(m) = maps.get_mut(i)
-            && (m.len() < pcap::MAX_INVENTORY || m.contains_key(&k))
-        {
-            *m.entry(k).or_insert(0) += 1;
+        if let Some(m) = maps.get_mut(i) {
+            if let Some(count) = m.get_mut(&k) {
+                *count += 1;
+            } else if m.len() < pcap::MAX_INVENTORY {
+                m.insert(k, 1);
+            } else if let Some(hit) = capped.get_mut(i) {
+                *hit = true;
+            }
         }
     };
     for line in text.lines() {
@@ -498,10 +538,11 @@ fn aggregate_tshark(text: &str) -> Inventories {
     inv.dns_answers = ranked(a);
     inv.tls_sni = ranked(sni);
     inv.http_requests = ranked(http);
+    inv.capped_inventories = INVENTORY_NAMES.into_iter().zip(capped).filter_map(|(name, hit)| hit.then_some(name)).collect();
     inv
 }
 
-fn run_tshark(ctx: &Ctx<'_>, exe: &PathBuf, file: &std::path::Path) -> Result<(Inventories, bool), ToolError> {
+fn run_tshark(ctx: &Ctx<'_>, exe: &PathBuf, file: &std::path::Path) -> Result<Inventories, ToolError> {
     let mut args: Vec<String> = vec!["-n".into(), "-r".into(), file.display().to_string(), "-T".into(), "fields".into()];
     for opt in ["separator=/t", "occurrence=a", "aggregator=,", "header=n", "quote=n"] {
         args.extend(["-E".into(), opt.into()]);
@@ -520,7 +561,12 @@ fn run_tshark(ctx: &Ctx<'_>, exe: &PathBuf, file: &std::path::Path) -> Result<(I
         .label("tshark")
         .remediation("Check the capture opens in Wireshark, or use engine=built_in.")
         .run_checked()?;
-    Ok((aggregate_tshark(&out.stdout_text()), out.stdout_truncated))
+    let text = out.stdout_text();
+    // A capped buffer can end inside a field. Only complete records are evidence.
+    let records = if out.stdout_truncated { text.rsplit_once('\n').map_or("", |(complete, _)| complete) } else { &text };
+    let mut inv = aggregate_tshark(records);
+    inv.truncated = out.stdout_truncated;
+    Ok(inv)
 }
 
 fn packets_inventory_show(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolError> {
@@ -536,8 +582,8 @@ fn packets_inventory_show(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput
     let (engine, inv) = match &tshark {
         Some(exe) => {
             ctx.report(None, format!("Running tshark on {}", input.name));
-            let (inv, cut) = run_tshark(ctx, exe, &input.path)?;
-            if cut {
+            let inv = run_tshark(ctx, exe, &input.path)?;
+            if inv.truncated {
                 lims.push(Limitation::new("tshark_output_capped", "tshark printed more than 64 MiB; packets after that point are not counted."));
             }
             ("tshark", inv)
@@ -548,7 +594,16 @@ fn packets_inventory_show(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput
             let s = pcap::summarize(&input.bytes, &|| cancel.is_cancelled()).map_err(|e| format_err(e, "a packet capture"))?;
             lims.extend(common_limitations());
             if !s.warnings.is_empty() {
-                lims.push(Limitation::new("read_warnings", format!("Part of the file could not be read: {}", s.warnings.join("; "))));
+                lims.push(Limitation::new(
+                    "read_warnings",
+                    format!("Some packets or timestamps may be missing from the inventories. See the capture warnings: {}", s.warnings.join("; ")),
+                ));
+            }
+            if s.truncated {
+                lims.push(Limitation::new(
+                    "packet_scan_capped",
+                    format!("The built-in decoder stopped after {} packet records; later packets are not counted.", pcap::MAX_PACKETS),
+                ));
             }
             let http: Vec<Count> = s.http_requests;
             let inv = Inventories {
@@ -559,6 +614,19 @@ fn packets_inventory_show(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput
                 dns_answers: s.dns_addresses,
                 tls_sni: s.tls_sni,
                 http_requests: http,
+                capped_inventories: [
+                    ("stacks", "protocol_stacks"),
+                    ("endpoints", "endpoints"),
+                    ("dns_queries", "dns_queries"),
+                    ("dns_addresses", "dns_answers"),
+                    ("tls_sni", "tls_sni"),
+                    ("http_requests", "http_requests"),
+                ]
+                .into_iter()
+                .filter_map(|(source, result)| s.capped_inventories.contains(&source).then_some(result))
+                .collect(),
+                truncated: s.truncated,
+                warnings: s.warnings,
             };
             ("built-in", inv)
         }
@@ -571,7 +639,7 @@ fn packets_inventory_show(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput
         "dns_answers": inv.dns_answers.len(), "tls_sni": inv.tls_sni.len(), "http_requests": inv.http_requests.len(),
     });
     let shown = |v: &[Count]| top(v, limit).to_vec();
-    let summary = format!(
+    let mut summary = format!(
         "{} packets ({engine}): {} addresses, {} DNS questions, {} TLS server names, {} HTTP requests, {} protocol stacks.",
         inv.packets,
         inv.endpoints.len(),
@@ -580,9 +648,20 @@ fn packets_inventory_show(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput
         inv.http_requests.len(),
         inv.protocol_stacks.len()
     );
-    let truncated =
+    let rows_limited =
         [&inv.protocol_stacks, &inv.endpoints, &inv.dns_queries, &inv.dns_answers, &inv.tls_sni, &inv.http_requests].iter().any(|v| v.len() > limit);
-    let cov = if truncated { static_input::partial(inv.packets) } else { Coverage::complete(inv.packets) };
+    let scan_incomplete = inv.truncated || !inv.warnings.is_empty();
+    let mut cov = Coverage::complete(inv.packets);
+    if rows_limited || scan_incomplete || !inv.capped_inventories.is_empty() {
+        cov.status = CoverageStatus::Partial;
+        if scan_incomplete {
+            cov.total = None;
+        }
+        summary.push_str(" Results are partial; see limitations and rows_limited.");
+    }
+    if !inv.capped_inventories.is_empty() {
+        lims.push(Limitation::new("caps_hit", "Some inventories reached their distinct-value cap (see capped_inventories); later values are omitted."));
+    }
     let ev = builder(ctx, "packets_inventory_show", input.subject.clone(), params_json(&p))
         .result(json!({
             "path": input.path,
@@ -597,6 +676,10 @@ fn packets_inventory_show(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput
             "dns_answers": shown(&inv.dns_answers),
             "tls_sni": shown(&inv.tls_sni),
             "http_requests": shown(&inv.http_requests),
+            "rows_limited": rows_limited,
+            "capped_inventories": inv.capped_inventories,
+            "truncated": inv.truncated,
+            "warnings": inv.warnings,
         }))
         .summary(summary)
         .confidence(Confidence::Observed)

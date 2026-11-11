@@ -1641,7 +1641,7 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Preserve capture, flow and inventory completeness in packet tools, including bounded tshark output; retain readable results and distinguish known totals from partial scans.
+- [x] Preserve capture, flow and inventory completeness in packet tools, including bounded tshark output; retain readable results and distinguish known totals from partial scans.
       — claimed: Afloat16, branch bugfix/r3.12-packet-evidence-completeness-20261111
 - [x] Keep source-to-bundle comparisons uncertain when source-map inventories are truncated, preserving positive matches and reporting partial tool evidence.
       — claimed: Afloat16, branch bugfix/r3.12-source-map-comparison-uncertainty-20261111
