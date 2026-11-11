@@ -732,3 +732,28 @@ NUL terminator inside its declared bytes. Invalid names remain unknown instead o
 false entrypoint or syscall identities. Five synthetic regression tests exercise oversized
 offsets, malformed strides, missing padding, broken string-table links and incomplete names;
 all five fail against the unchanged parser. No Solana program was deployed or executed.
+
+## HAR entry allocation budget (R3.12)
+
+HAR parsing validates the complete capture before retaining at most the requested
+number of entries. Discarded entries are counted without constructing their request
+and response bodies. The existing JSON number, string, nesting and duplicate-key
+semantics remain in force, including malformed values beyond the entry limit.
+Metadata and retained entries remain available through the same public API; no new
+serde_json feature or dependency is enabled.
+
+Nine public-API compatibility groups pass on both the original and changed parser.
+The complete formats and analysis suites pass 1,867 tests with 10 existing ignored;
+formatting, strict all-target Clippy, layers, locks, secrets and all L0-L2 Wasm
+builds also pass. A reserved-key regression additionally rejects an earlier
+raw-value-feature implementation that reinterpreted ordinary capture data.
+
+A release-mode comparison used a synthetic 20,000-entry, 128,448,991-byte capture,
+three fresh processes per version and limits of 0, 50 and 5,000 entries. All 18
+runs produced identical complete typed-output bytes and hashes at each limit.
+At the 5,000-entry limit, median parsing time fell from 351.0 to 162.8 ms and
+whole-process peak RSS from 582.4 to 164.3 MiB on Ubuntu 24.04 with Rust 1.99.0
+and an AMD EPYC 9V45. Input reading and output formatting are outside the parsing
+time; RSS includes the input buffer. The parser still needs space for the input,
+metadata, retained entries and decoding scratch, so this is not a constant-memory
+claim or a guarantee for every capture and platform.
