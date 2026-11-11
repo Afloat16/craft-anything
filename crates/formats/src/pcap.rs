@@ -1199,10 +1199,10 @@ fn tcp_app(p: &[u8], d: &mut Decoded) {
     let version = |v: &str| matches!(v.as_bytes(), [b'H', b'T', b'T', b'P', b'/', b'1', b'.', b'0'..=b'9']);
     let mut parts = line.splitn(3, ' ');
     let fields = (parts.next(), parts.next(), parts.next());
-    if let (Some(v), Some(code), Some(reason)) = fields
+    if let (Some(v), Some(code), reason) = fields
         && version(v)
         && matches!(code.as_bytes(), [b'1'..=b'5', b'0'..=b'9', b'0'..=b'9'])
-        && reason.bytes().all(|b| b == b'\t' || !b.is_ascii_control())
+        && reason.is_none_or(|text| text.bytes().all(|b| b == b'\t' || !b.is_ascii_control()))
     {
         d.protocols.push("http");
         d.http = Some(Http { kind: "response", method: None, target: None, status: code.parse().ok(), version: v.to_string(), host: None });
