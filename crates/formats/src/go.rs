@@ -341,6 +341,8 @@ fn find_buildinfo(m: &Mapped<'_>, reg: &SearchRegion, warnings: &mut Vec<String>
     let len = usize::try_from(reg.size).ok()?;
     let hay = Reader::new(m.data).slice(start, len.min(m.data.len().saturating_sub(start)))?;
     let mut i = 0usize;
+    let mut unreadable_version_pointers = 0usize;
+    let mut found = None;
     while let Some(p) = crate::find_bytes(hay.get(i..)?, MAGIC, usize::MAX) {
         let at = i.checked_add(p)?;
         let file_off = start.checked_add(at)? as u64;
@@ -349,19 +351,30 @@ fn find_buildinfo(m: &Mapped<'_>, reg: &SearchRegion, warnings: &mut Vec<String>
             Some(va) => va.is_multiple_of(16),
             None => file_off.is_multiple_of(16),
         };
-        if aligned && let Some(b) = decode_buildinfo(m, start.checked_add(at)?, warnings) {
-            return Some(b);
+        if aligned && let Some(b) = decode_buildinfo(m, start.checked_add(at)?, &mut unreadable_version_pointers) {
+            found = Some(b);
+            break;
         }
         i = at.checked_add(1)?;
     }
-    None
+    // Count probes in this scan, not unique file offsets: a later whole-file
+    // fallback can revisit a region. Keep scanning without retaining a String
+    // for every failed candidate, including when readable metadata comes later.
+    match unreadable_version_pointers {
+        0 => {}
+        1 => warnings.push("found a pointer-encoded build information header but could not follow its version pointer".into()),
+        count => warnings.push(format!(
+            "found {count} pointer-encoded build information headers but could not follow their version pointers (candidate probes in this scan)"
+        )),
+    }
+    found
 }
 
 fn read_uvarint(r: &Reader<'_>, off: usize) -> Option<(u64, usize)> {
     r.uleb128(off)
 }
 
-fn decode_buildinfo(m: &Mapped<'_>, off: usize, warnings: &mut Vec<String>) -> Option<GoBuildInfo> {
+fn decode_buildinfo(m: &Mapped<'_>, off: usize, unreadable_version_pointers: &mut usize) -> Option<GoBuildInfo> {
     let r = Reader::new(m.data);
     let ptr_size = r.u8(off.checked_add(14)?)?;
     let flags = r.u8(off.checked_add(15)?)?;
@@ -406,7 +419,7 @@ fn decode_buildinfo(m: &Mapped<'_>, off: usize, warnings: &mut Vec<String>) -> O
             m.read(data, len).map(<[u8]>::to_vec)
         };
         let Some(version) = read_go_string(v_ptr) else {
-            warnings.push("found a pointer-encoded build information header but could not follow its version pointer".into());
+            *unreadable_version_pointers = unreadable_version_pointers.saturating_add(1);
             return None;
         };
         let module = read_go_string(m_ptr).unwrap_or_else(|| {
