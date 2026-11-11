@@ -8,7 +8,7 @@
 
 use super::{FsEntry, FsImage, FsKind, Limits, join};
 use crate::bytes::Reader;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const META_MAX: usize = 8192;
 
@@ -50,7 +50,7 @@ fn decompress(comp: u16, block: &[u8], max: u64) -> Option<Vec<u8>> {
     match comp {
         1 => crate::firmware::inflate(block, true, max, true).ok().and_then(|i| i.data),
         2 => crate::decompress::lzma(block, max).ok(),
-        4 => crate::decompress::xz(block, max).ok(),
+        4 => crate::decompress::xz_single(block, max).ok(),
         6 => crate::decompress::zstd(block, max).ok(),
         _ => None,
     }
@@ -145,21 +145,31 @@ pub fn read(data: &[u8], limits: &Limits) -> FsImage {
     let dir_end = [sb.frag_table, sb.id_table].into_iter().filter(|&t| t > sb.dir_table && t != u64::MAX).min().unwrap_or(sb.dir_table);
     let inodes = Meta::read(data, sb.inode_table, sb.dir_table, sb.compression, &mut img);
     let dirs = Meta::read(data, sb.dir_table, dir_end, sb.compression, &mut img);
-    let mut seen: Vec<u64> = Vec::new();
+    let mut seen = BTreeSet::new();
     walk(data, &sb, &inodes, &dirs, sb.root_ref, "", limits, &mut img, 0, &mut seen);
     img
 }
 
 #[allow(clippy::too_many_arguments)]
-fn walk(data: &[u8], sb: &Sb, inodes: &Meta, dirs: &Meta, inode_ref: u64, parent: &str, limits: &Limits, img: &mut FsImage, depth: usize, seen: &mut Vec<u64>) {
+fn walk(
+    data: &[u8],
+    sb: &Sb,
+    inodes: &Meta,
+    dirs: &Meta,
+    inode_ref: u64,
+    parent: &str,
+    limits: &Limits,
+    img: &mut FsImage,
+    depth: usize,
+    seen: &mut BTreeSet<u64>,
+) {
     if depth > limits.max_depth || img.entries.len() >= limits.max_entries {
         img.complete = false;
         return;
     }
-    if seen.contains(&inode_ref) {
+    if !seen.insert(inode_ref) {
         return;
     }
-    seen.push(inode_ref);
     let r = Reader::new(&inodes.data);
     let Some((pos, itype)) = inodes.at(inode_ref).and_then(|pos| Some((pos, r.u16_le(pos)?))) else {
         img.warn("squashfs: directory inode not read");
@@ -198,7 +208,7 @@ fn parse_dir(
     limits: &Limits,
     img: &mut FsImage,
     depth: usize,
-    seen: &mut Vec<u64>,
+    seen: &mut BTreeSet<u64>,
 ) {
     let r = Reader::new(listing);
     let mut pos = 0usize;
@@ -376,6 +386,16 @@ fn fragment_bytes(data: &[u8], sb: &Sb, index: u32, img: &mut FsImage) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn xz_container_blocks_do_not_concatenate_streams() {
+        use craft_anything_testkit::firmware as fx;
+        let concatenated = [fx::XZ_FIXTURE, fx::XZ_FIXTURE].concat();
+        assert_eq!(decompress(4, fx::XZ_FIXTURE, fx::XZ_PLAIN.len() as u64).as_deref(), Some(fx::XZ_PLAIN));
+        assert!(decompress(4, fx::XZ_FIXTURE, fx::XZ_PLAIN.len() as u64 - 1).is_none());
+        assert!(decompress(4, &concatenated, 2 * fx::XZ_PLAIN.len() as u64).is_none());
+        assert_eq!(crate::decompress::xz(&concatenated, 2 * fx::XZ_PLAIN.len() as u64).unwrap(), [fx::XZ_PLAIN, fx::XZ_PLAIN].concat());
+    }
 
     #[test]
     fn truncated_metadata_preserves_only_preceding_blocks() {
