@@ -6,6 +6,7 @@
 
 use super::{FsEntry, FsImage, FsKind, Limits, join};
 use crate::bytes::Reader;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 const DIRENT: u16 = 0xe001;
@@ -18,18 +19,18 @@ struct Dirent {
     name: String,
 }
 
-struct DataNode {
+struct DataNode<'a> {
     version: u32,
     offset: u32,
     dsize: u32,
     compr: u8,
-    data: Vec<u8>,
+    data: &'a [u8],
 }
 
-struct Inode {
+struct Inode<'a> {
     isize: u32,
     isize_version: u32,
-    nodes: Vec<DataNode>,
+    nodes: Vec<DataNode<'a>>,
 }
 
 pub fn read(data: &[u8], limits: &Limits) -> FsImage {
@@ -42,7 +43,7 @@ pub fn read(data: &[u8], limits: &Limits) -> FsImage {
     img.warn("JFFS2 recovery is best-effort: node scan, latest version wins, limited compression");
     // Collect dirents keyed by (parent inode, name) and inode data keyed by inode number.
     let mut dirents: BTreeMap<(u32, String), Dirent> = BTreeMap::new();
-    let mut inodes: BTreeMap<u32, Inode> = BTreeMap::new();
+    let mut inodes: BTreeMap<u32, Inode<'_>> = BTreeMap::new();
     let mut pos = 0usize;
     let mut nodes = 0usize;
     while pos + 12 <= data.len() {
@@ -140,7 +141,7 @@ fn parse_dirent(r: &Reader, limits: &Limits, big_endian: bool) -> Option<(Dirent
 }
 
 /// Returns (inode number, data node, isize at this version).
-fn parse_inode(r: &Reader, big_endian: bool) -> Option<(u32, DataNode, u32)> {
+fn parse_inode<'a>(r: &Reader<'a>, big_endian: bool) -> Option<(u32, DataNode<'a>, u32)> {
     let word = |off| if big_endian { r.u32_be(off) } else { r.u32_le(off) };
     let ino = word(12)?;
     let version = word(16)?;
@@ -149,14 +150,14 @@ fn parse_inode(r: &Reader, big_endian: bool) -> Option<(u32, DataNode, u32)> {
     let csize = word(48)? as usize;
     let dsize = word(52)?;
     let compr = r.u8(56)?;
-    let data = r.slice(68, csize)?.to_vec();
+    let data = r.slice(68, csize)?;
     Some((ino, DataNode { version, offset, dsize, compr, data }, isize))
 }
 
 #[allow(clippy::too_many_arguments)]
 fn build(
     children: &BTreeMap<u32, Vec<&Dirent>>,
-    inodes: &BTreeMap<u32, Inode>,
+    inodes: &BTreeMap<u32, Inode<'_>>,
     dir_ino: u32,
     parent: &str,
     limits: &Limits,
@@ -198,7 +199,7 @@ fn build(
 }
 
 /// Reassemble a file from its data nodes (applied in version order), bounded by `isize`.
-fn reassemble(inode: &Inode, limits: &Limits, img: &mut FsImage) -> Option<Vec<u8>> {
+fn reassemble(inode: &Inode<'_>, limits: &Limits, img: &mut FsImage) -> Option<Vec<u8>> {
     let size = inode.isize as usize;
     if inode.isize as u64 > limits.max_file_bytes || img.bytes.saturating_add(inode.isize as u64) > limits.max_total_bytes {
         img.warn("jffs2: file skipped (size budget)");
@@ -206,7 +207,7 @@ fn reassemble(inode: &Inode, limits: &Limits, img: &mut FsImage) -> Option<Vec<u
         return None;
     }
     let mut out = vec![0u8; size];
-    let mut ordered: Vec<&DataNode> = inode.nodes.iter().collect();
+    let mut ordered: Vec<&DataNode<'_>> = inode.nodes.iter().collect();
     ordered.sort_by_key(|n| n.version);
     // Only damaged extents still present in the final file prevent recovery. A newer valid
     // node can replace them; bytes from older valid nodes cannot stand in for damaged data.
@@ -215,7 +216,7 @@ fn reassemble(inode: &Inode, limits: &Limits, img: &mut FsImage) -> Option<Vec<u
         let start = node.offset as usize;
         let end = start.saturating_add(node.dsize as usize).min(size);
         let chunk = match node.compr {
-            0 => node.data.clone(),
+            0 => Cow::Borrowed(node.data),
             1 => {
                 // An older extent may reach past the file's final size. Only clear its surviving bytes.
                 if let Some(dst) = out.get_mut(start..end) {
@@ -224,8 +225,8 @@ fn reassemble(inode: &Inode, limits: &Limits, img: &mut FsImage) -> Option<Vec<u
                 update_damage(&mut damaged, start, end, false);
                 continue;
             }
-            6 => match crate::firmware::inflate(&node.data, true, u64::from(node.dsize), true) {
-                Ok(i) => i.data.unwrap_or_default(),
+            6 => match crate::firmware::inflate(node.data, true, u64::from(node.dsize), true) {
+                Ok(i) => Cow::Owned(i.data.unwrap_or_default()),
                 Err(_) => {
                     img.warn("jffs2: a zlib data node did not inflate");
                     update_damage(&mut damaged, start, end, true);
