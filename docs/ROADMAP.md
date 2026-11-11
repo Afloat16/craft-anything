@@ -1641,6 +1641,8 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
+- [ ] Preserve readable Java class and Code facts when an attribute table is truncated, stop at untrusted outer table boundaries, and report partial evidence instead of silent completeness.
+      — claimed: Afloat16, branch bugfix/r3.12-java-attribute-framing-20261111
 - [x] Keep source-to-bundle comparisons uncertain when source-map inventories are truncated, preserving positive matches and reporting partial tool evidence.
       — claimed: Afloat16, branch bugfix/r3.12-source-map-comparison-uncertainty-20261111
 - [x] Bound expanded source-map inventories by retained path bytes and entries before allocation, preserving bounded prefixes and reporting truncation.
