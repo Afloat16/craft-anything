@@ -1,4 +1,5 @@
 use craft_anything_analysis::js_app::{AppFile, AppGraph, AppInput, AppOptions, analyze_application};
+use craft_anything_analysis::js_source::{SourceGraph, build_source_graph, diff_source_and_bundle};
 use serde_json::{Value, json};
 
 fn graph_with_maps(maps: Vec<Value>) -> AppGraph {
@@ -9,6 +10,11 @@ fn graph_with_maps(maps: Vec<Value>) -> AppGraph {
     }
     let listing = files.iter().map(|file| (file.path.clone(), file.bytes.len() as u64)).collect();
     analyze_application(&AppInput { files, listing, ..Default::default() }, &AppOptions::default(), &|| false).unwrap()
+}
+
+fn source_graph(paths: &[&str]) -> SourceGraph {
+    let files: Vec<_> = paths.iter().map(|path| ((*path).to_string(), Vec::new())).collect();
+    build_source_graph("reference", &files, 0, false, &Default::default(), &|| false).unwrap()
 }
 
 #[test]
@@ -25,11 +31,16 @@ fn application_inventory_reports_the_entry_limit() {
 
 #[test]
 fn expanded_path_bytes_are_bounded_across_application_maps() {
-    let map = json!({
-        "version": 3, "sourceRoot": "r".repeat(2 * 1024 * 1024),
-        "sources": vec!["/x.js"; 20], "mappings": ""
-    });
-    let graph = graph_with_maps(vec![map.clone(), map]);
+    let maps = ["first", "second"]
+        .into_iter()
+        .map(|prefix| {
+            json!({
+                "version": 3, "sourceRoot": "r".repeat(2 * 1024 * 1024),
+                "sources": (0..20).map(|i| format!("/{prefix}-{i}.js")).collect::<Vec<_>>(), "mappings": ""
+            })
+        })
+        .collect();
+    let graph = graph_with_maps(maps);
     assert_eq!(graph.source_maps.len(), 2);
     assert_eq!(graph.source_maps[0].sources.len(), 20);
     assert!(!graph.source_maps[0].sources_truncated);
@@ -38,6 +49,29 @@ fn expanded_path_bytes_are_bounded_across_application_maps() {
     let bytes: usize = graph.source_maps.iter().flat_map(|map| &map.sources).map(String::len).sum();
     assert!(bytes <= 64 * 1024 * 1024);
     assert!(graph.limitations.iter().any(|(key, message)| key == "source_map_inventory_truncated" && message.contains("script-1.js")));
+
+    let sources = source_graph(&["first-0.js", "second-0.js", "second-19.js", "not-listed.js", "script-1.js"]);
+    let diff = diff_source_and_bundle(&sources, &graph, 100);
+    assert_eq!(diff["unmatched_sources"], json!([]), "omitted sources are not confirmed absent: {diff}");
+    assert_eq!(
+        diff["uncertain_sources"],
+        json!([
+            {"source": "second-19.js", "reason": "source_map_inventory_truncated"},
+            {"source": "not-listed.js", "reason": "source_map_inventory_truncated"}
+        ])
+    );
+    assert_eq!(diff["summary"]["uncertain_sources"], 2);
+    assert_eq!(diff["summary"]["unmatched_sources"], 0);
+    assert_eq!(diff["summary"]["matched"], 3);
+    assert_eq!(diff["matches"][0]["unit"], "script-0.js");
+    assert_eq!(diff["matches"][1]["unit"], "script-1.js");
+    assert_eq!(diff["matches"][2]["quality"], "strong");
+    assert_eq!(diff["source_map_inventory_truncated"], true);
+
+    let first_row = diff_source_and_bundle(&sources, &graph, 1);
+    assert_eq!(first_row["summary"]["matched"], 1);
+    assert_eq!(first_row["uncertain_sources"], json!([]));
+    assert_eq!(first_row["source_map_inventory_truncated"], true, "positive matches do not make the inventory complete");
 }
 
 #[test]
@@ -56,4 +90,24 @@ fn ordinary_inventories_keep_paths_content_counts_and_complete_evidence() {
     let restored: AppGraph = serde_json::from_value(saved).unwrap();
     assert!(!restored.source_maps[0].sources_truncated);
     assert_eq!(restored.source_maps[0].sources, map.sources);
+
+    for app in [graph, restored] {
+        let diff = diff_source_and_bundle(&source_graph(&["src/a.js", "src/missing.js"]), &app, 100);
+        assert_eq!(diff["summary"]["matched"], 1);
+        assert_eq!(diff["unmatched_sources"], json!(["src/missing.js"]));
+        assert_eq!(diff["summary"]["unmatched_sources"], 1);
+        assert_eq!(diff["uncertain_sources"], json!([]));
+        assert_eq!(diff["summary"]["uncertain_sources"], 0);
+        assert_eq!(diff["source_map_inventory_truncated"], false);
+    }
+}
+
+#[test]
+fn missing_sources_without_maps_remain_unmatched() {
+    let diff = diff_source_and_bundle(&source_graph(&["src/missing.js"]), &graph_with_maps(Vec::new()), 100);
+    assert_eq!(diff["unmatched_sources"], json!(["src/missing.js"]));
+    assert_eq!(diff["summary"]["unmatched_sources"], 1);
+    assert_eq!(diff["uncertain_sources"], json!([]));
+    assert_eq!(diff["summary"]["uncertain_sources"], 0);
+    assert_eq!(diff["source_map_inventory_truncated"], false);
 }

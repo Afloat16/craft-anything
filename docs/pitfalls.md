@@ -511,6 +511,10 @@ every source path copied a large `sourceRoot` into every entry first. Count reta
 expanded UTF-8 bytes before allocating each path, share the budget across indexed sections and
 application maps, and report when only a prefix could be kept. A source identity stays complete;
 shortening one to fit the budget would describe a different source.
+The source-to-bundle comparison then treated omitted paths as confirmed missing because it read
+only the retained names. Carry inventory truncation through the diff and its evidence: preserve
+positive matches, report the other sources as uncertain, and keep confirmed unmatched sources
+for complete inventories. Test the consumer with a real exhausted budget, not only the flag.
 
 **A floating-point conversion changed a fingerprint.** Widening a single-precision NaN to a double
 can change its sign, payload or signaling bit. Keep the original encoded bits for identities, and
