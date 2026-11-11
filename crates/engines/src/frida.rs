@@ -347,13 +347,12 @@ pub fn parse_processes(text: &str) -> Vec<FridaProcess> {
         let mut columns = trimmed.split_whitespace();
         let Some(first) = columns.next() else { continue };
         if first.eq_ignore_ascii_case("pid") {
-            identifier_column = if columns.next().is_some_and(|s| s.eq_ignore_ascii_case("name"))
-                && columns.next().is_some_and(|s| s.eq_ignore_ascii_case("identifier"))
-            {
-                process_column_start(line, 2)
-            } else {
-                None
-            };
+            identifier_column =
+                if columns.next().is_some_and(|s| s.eq_ignore_ascii_case("name")) && columns.next().is_some_and(|s| s.eq_ignore_ascii_case("identifier")) {
+                    process_column_start(line, 2)
+                } else {
+                    None
+                };
             expect_separator = identifier_column.is_some();
             continue;
         }

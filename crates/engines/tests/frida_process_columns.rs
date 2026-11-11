@@ -120,10 +120,7 @@ fn headers_and_unicode_body_lines_keep_the_existing_byte_cap() {
 
 #[test]
 fn separator_widths_handle_headers_wider_than_their_data_columns() {
-    for text in [
-        "PID  Name  Identifier\n--  -  -\n12  A  x\n",
-        "PID  Name  Identifier\n-  -  -\n1  A  x\n",
-    ] {
+    for text in ["PID  Name  Identifier\n--  -  -\n12  A  x\n", "PID  Name  Identifier\n-  -  -\n1  A  x\n"] {
         let rows = parse_processes(text);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "A");
