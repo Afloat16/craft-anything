@@ -2087,6 +2087,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-wasm-function-count
 - [x] Retain decoded CLI signatures with trailing data and report the unused bytes as a limitation, while keeping nested function-pointer signatures incremental.
       — claimed: Afloat16, branch bugfix/r3.12-cli-signature-consumption-20261111
+- [ ] Preserve warnings from every view used by the managed application graph, deduplicating diagnostics before the display limit.
+      — claimed: Afloat16, branch bugfix/r3.12-managed-graph-warnings-20261111
 - [x] Reject TypeSpec handles where CLI class/value-type and generic signatures require TypeDef or TypeRef, while retaining standalone TypeSpec and custom-modifier decoding.
       — claimed: Afloat16, branch bugfix/r3.12-dotnet-signature-type-handles-20261110
 - [x] Keep CLI multidimensional array ranks and bounds distinct from vector signatures.
