@@ -87,6 +87,12 @@ names (`git merge-base --is-ancestor <fix> <release tag>`), and check the messag
 
 ## Tests
 
+**A convenience decoder hid corruption in later concatenated members.** Python's
+`bz2.decompress` discarded a later member's checksum error as trailing data, so comparing only
+with it would accept a valid prefix from a damaged archive. Use the native `bzip2 -dc` exit
+status for integrity decisions, compare complete output bytes, and keep corrupt later-member
+cases distinct from non-member trailing bytes. Pin and record the oracle used.
+
 **A heartbeat sampled before shutdown raced a successful stop.** A child could write between
 the baseline read and `stop()`, failing the descendant cleanup test even when cleanup worked.
 Probe for exit instead of timing writes: the child holds a file lock the system releases only

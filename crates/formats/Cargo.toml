@@ -27,7 +27,8 @@ p384 = { version = "0.13", default-features = false, features = ["ecdsa"] }
 sha1 = { version = "0.10", default-features = false, features = ["oid"] }
 # Firmware decompressors (pure Rust, verified wasm32-unknown-unknown-safe).
 lzma-rs = "0.3"
-bzip2-rs = "0.1"
+# Default backend is pure Rust; the optional bzip2-sys C backend stays disabled.
+bzip2 = "0.6.1"
 ruzstd = { version = "0.9.1", default-features = false, features = ["std"] }
 
 [dev-dependencies]

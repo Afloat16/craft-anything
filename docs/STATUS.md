@@ -355,6 +355,16 @@ coverage and secrets passed. The companion CLI was built with locked dependencie
 
 | Plan steps stopped at a run's end | A run that finishes (ready, failed or paused) marks still-open steps `Stopped` on the plan card instead of leaving them "Doing" until the card is folded (#504). The stopped steps stay in the saved conversation (`FEED_VERSION` 5); a later run's checklist updates the list again, and a plan left partly unticked still shows with its stopped steps | Regression tests in `ai::rebuild::feed` (ready, paused and no-checklist finishes, a later run taking the list over) and an engine save/load round trip of a stopped step; the checklist draws a warning circle for stopped steps. Not checked: a live desktop run |
 
+### Complete bzip2 recovery (R3.12)
+
+Recovery reads every concatenated bzip2 member within one total output budget, including
+empty members. It checks later members' block and combined checksums and refuses unfinished
+members instead of returning the earlier prefix. Non-member bytes after a valid stream remain
+usable for firmware carving. The safe decoder API exposes unconsumed input and uses its pure
+Rust backend; no C backend is enabled. Native bzip2 comparisons cover 34 complete-output,
+error, trailing-data and budget cases. Ten regression groups include ZIP method 12; all formats
+and engine tests, strict Clippy, layer/lock/secret checks and L0-L2 Wasm builds pass.
+
 ### Builder retry policy
 
 Builder failures carry a typed reason through `Conversation::last_failure`. Typed authentication,

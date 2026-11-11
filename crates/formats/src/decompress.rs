@@ -3,7 +3,7 @@
 //! bytes (returning `TooLarge` rather than allocating without limit) and never panics on a corrupt
 //! or truncated stream. gzip/zlib/zip live in `firmware`; these complete the set.
 //!
-//! All three backing crates (`lzma-rs`, `bzip2-rs`, `ruzstd`) are pure Rust and build for
+//! All three backing crates (`lzma-rs`, `bzip2`, `ruzstd`) are pure Rust and build for
 //! `wasm32-unknown-unknown`.
 
 use std::io::{self, Read, Write};
@@ -50,26 +50,6 @@ impl Write for CapWrite {
 
 fn cap_of(max_out: u64) -> usize {
     usize::try_from(max_out).unwrap_or(usize::MAX)
-}
-
-/// Read a `Read` source into a `Vec`, capped at `cap` bytes.
-fn read_capped(mut src: impl Read, cap: usize) -> Result<Vec<u8>, DecompressError> {
-    let mut out = Vec::new();
-    let mut chunk = [0u8; 64 * 1024];
-    loop {
-        match src.read(&mut chunk) {
-            Ok(0) => return Ok(out),
-            Ok(n) => {
-                let slice = chunk.get(..n).unwrap_or(&[]);
-                if out.len().saturating_add(slice.len()) > cap {
-                    return Err(DecompressError::TooLarge);
-                }
-                out.extend_from_slice(slice);
-            }
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-            Err(_) => return Err(DecompressError::Corrupt),
-        }
-    }
 }
 
 /// Decompress every xz stream, including standard stream padding, within one output budget.
@@ -279,9 +259,38 @@ pub(crate) fn lzma_zip(input: &[u8], expected_size: u64, has_end_marker: bool, m
     }
 }
 
-/// Decompress a bzip2 stream, producing at most `max_out` bytes.
-pub fn bzip2(input: &[u8], max_out: u64) -> Result<Vec<u8>, DecompressError> {
-    read_capped(bzip2_rs::DecoderReader::new(input), cap_of(max_out))
+/// Decompress concatenated bzip2 members within one output budget.
+/// Tolerate trailing non-member bytes when carving an embedded stream from firmware.
+pub fn bzip2(mut input: &[u8], max_out: u64) -> Result<Vec<u8>, DecompressError> {
+    let mut out = CapWrite::new(cap_of(max_out));
+    let mut first = true;
+    loop {
+        let before = out.buf.len();
+        let mut decoder = bzip2::bufread::BzDecoder::new(input);
+        match io::copy(&mut decoder, &mut out) {
+            Ok(_) => {}
+            Err(_) if out.exceeded => return Err(DecompressError::TooLarge),
+            Err(error)
+                if !first
+                    && out.buf.len() == before
+                    && matches!(error.get_ref().and_then(|error| error.downcast_ref::<bzip2::Error>()), Some(bzip2::Error::DataMagic)) =>
+            {
+                // Like bunzip2, tolerate trailing non-member data after a complete stream.
+                // A damaged or unfinished member is a different error and must not return a prefix.
+                return Ok(out.buf);
+            }
+            Err(_) => return Err(DecompressError::Corrupt),
+        }
+        let remaining = decoder.into_inner();
+        if remaining.len() == input.len() {
+            return Err(DecompressError::Corrupt);
+        }
+        input = remaining;
+        first = false;
+        if input.is_empty() {
+            return Ok(out.buf);
+        }
+    }
 }
 
 /// Decompress a Zstandard stream, producing at most `max_out` bytes.
