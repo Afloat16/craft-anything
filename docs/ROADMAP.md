@@ -2079,6 +2079,8 @@ Owner: open · Status: in progress
 - [x] Exercise signed PAX lengths, empty keys and equals signs inside a path value.
       — claimed: Afloat16, branch bugfix/r3.12-pax-record-framing
 - [x] Apply global PAX archive attributes to later members, honor local overrides and global deletions, and bound inherited name copies before extraction.
+- [ ] Pass recovered filesystem file bytes into firmware extraction without retaining a second full copy.
+      — claimed: Afloat16, branch refactor/r3.12-firmware-owned-payloads-20261110
 - [x] Bound and cancel CRC cpio verification across firmware probes, and reject non-hex checksum
       fields — claimed: Afloat16, branch bugfix/r3.12-bound-cpio-crc-scans-20261103
 - [x] More parsers keep to the bytes they declare and refuse impossible values: signed LEB128 past
