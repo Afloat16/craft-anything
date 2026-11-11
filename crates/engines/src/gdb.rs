@@ -197,14 +197,18 @@ fn absorb(line: &str, s: &mut GdbSession, c: &mut Collected) {
 }
 
 /// Take every pending line; stop early (returning the rest to the queue) once `until` matches.
-fn drain(s: &mut GdbSession, c: &mut Collected, until: &mut dyn FnMut(&str, &mut GdbSession) -> bool) -> bool {
+/// With a result token, collect only that command's result records. Stream and async records
+/// remain unscoped, since MI does not attribute them to individual commands.
+fn drain(s: &mut GdbSession, c: &mut Collected, result_token: Option<u64>, until: &mut dyn FnMut(&str, &mut GdbSession) -> bool) -> bool {
     let lines: Vec<String> = {
         let mut p = s.pending.lock().unwrap_or_else(PoisonError::into_inner);
         p.lines.drain(..).collect()
     };
     let mut it = lines.into_iter();
     while let Some(l) = it.next() {
-        absorb(&l, s, c);
+        if result_token.is_none() || result_record(&l).is_none_or(|(token, _, _)| token == result_token) {
+            absorb(&l, s, c);
+        }
         if until(&l, s) {
             let rest: Vec<String> = it.collect();
             let mut p = s.pending.lock().unwrap_or_else(PoisonError::into_inner);
@@ -301,7 +305,7 @@ impl GdbSession {
         let mut got_result = false;
         let mut waiting_for_stop = false;
         loop {
-            let finished = drain(self, &mut c, &mut |line, sess| {
+            let finished = drain(self, &mut c, Some(token), &mut |line, sess| {
                 if let Some((Some(t), class, _)) = result_record(line)
                     && t == token
                 {
@@ -334,7 +338,7 @@ impl GdbSession {
     /// Everything that arrived since the last command, and how many lines were dropped so far.
     pub fn take_output(&mut self) -> (Collected, u64) {
         let mut c = Collected::default();
-        drain(self, &mut c, &mut |_, _| false);
+        drain(self, &mut c, None, &mut |_, _| false);
         let dropped = self.pending.lock().unwrap_or_else(PoisonError::into_inner).dropped;
         (c, dropped)
     }
