@@ -39,6 +39,14 @@ fn is_ident_part(b: u8) -> bool {
     is_ident_start(b) || b.is_ascii_digit()
 }
 
+fn line_terminator_len(src: &str, offset: usize) -> usize {
+    match src.as_bytes().get(offset) {
+        Some(b'\n' | b'\r') => 1,
+        Some(0xe2) if src.get(offset..).is_some_and(|rest| rest.starts_with('\u{2028}') || rest.starts_with('\u{2029}')) => 3,
+        _ => 0,
+    }
+}
+
 /// Tokenize `src`, stopping after `max_tokens` (the flag says whether it stopped early).
 pub fn tokenize(src: &str, max_tokens: usize) -> (Vec<Token<'_>>, bool) {
     let mut out = Vec::new();
@@ -61,6 +69,11 @@ pub fn scan<'a>(src: &'a str, max_tokens: usize, mut emit: impl FnMut(Token<'a>)
             i += 1;
             continue;
         }
+        let line_end = line_terminator_len(src, i);
+        if line_end != 0 {
+            i += line_end;
+            continue;
+        }
         if count >= max_tokens {
             return true;
         }
@@ -69,7 +82,7 @@ pub fn scan<'a>(src: &'a str, max_tokens: usize, mut emit: impl FnMut(Token<'a>)
         let next = b.get(i + 1).copied().unwrap_or(0);
         // Comments.
         if c == b'/' && next == b'/' {
-            while i < b.len() && b.get(i) != Some(&b'\n') {
+            while i < b.len() && line_terminator_len(src, i) == 0 {
                 i += 1;
             }
             emit(Token { kind: TokKind::Comment, text: slice(start, i), offset: start });
@@ -121,7 +134,7 @@ pub fn scan<'a>(src: &'a str, max_tokens: usize, mut emit: impl FnMut(Token<'a>)
             i = i.min(b.len());
             tok_kind = TokKind::Template;
         } else if is_ident_start(c) {
-            while b.get(i).is_some_and(|&d| is_ident_part(d)) {
+            while b.get(i).is_some_and(|&d| is_ident_part(d) && (d < 0x80 || line_terminator_len(src, i) == 0)) {
                 i += 1;
             }
             tok_kind = TokKind::Ident;
