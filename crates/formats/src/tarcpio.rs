@@ -1,9 +1,10 @@
 //! Member walkers for Unix archives: tar (v7, ustar, GNU long names and base-256 sizes, pax path
-//! overrides) and cpio (newc, crc and portable odc). They list members and where their data
+//! local/global overrides) and cpio (newc, crc and portable odc). They list members and where their data
 //! lies; nothing is extracted here, and no input can make them panic or loop forever.
 
 use crate::bytes::Reader;
 use serde::Serialize;
+use std::collections::BTreeSet;
 
 /// What a member is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -31,6 +32,15 @@ pub struct Member {
     pub mode: u32,
 }
 
+/// Why tar name metadata stopped a walk that still retains earlier members.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopReason {
+    GnuMetadataTooLong,
+    GnuMetadataTruncated,
+    GlobalNameBudget,
+}
+
 /// The members of an archive.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct Listing {
@@ -43,11 +53,15 @@ pub struct Listing {
     pub complete: bool,
     /// True when `max_members` stopped the walk.
     pub truncated: bool,
+    /// Name metadata that prevented reading the remaining member identities.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<StopReason>,
     pub warnings: Vec<String>,
 }
 
 const BLOCK: usize = 512;
 const MAX_NAME: usize = 4096;
+const MAX_GLOBAL_NAME_COPIES: usize = 64 << 20;
 
 fn trim_field(f: &[u8]) -> &[u8] {
     let end = f.iter().position(|&b| b == 0).unwrap_or(f.len());
@@ -107,6 +121,10 @@ fn round_up(v: u64, to: u64) -> Option<u64> {
 
 /// Walk a tar archive. `None` when the first block is not a valid header.
 pub fn tar(data: &[u8], max_members: usize) -> Option<Listing> {
+    tar_with_name_copy_limit(data, max_members, MAX_GLOBAL_NAME_COPIES)
+}
+
+fn tar_with_name_copy_limit(data: &[u8], max_members: usize, mut name_bytes_left: usize) -> Option<Listing> {
     let r = Reader::new(data);
     if !tar_header_ok(r.slice(0, BLOCK)?) {
         return None;
@@ -118,6 +136,12 @@ pub fn tar(data: &[u8], max_members: usize) -> Option<Listing> {
     let mut pax_path: Option<String> = None;
     let mut pax_link: Option<String> = None;
     let mut pax_size: Option<u64> = None;
+    let mut pax_sparse = false;
+    let mut global_path: Option<String> = None;
+    let mut global_link: Option<String> = None;
+    let mut global_size: Option<u64> = None;
+    // Borrow keys from the input: global sparse attributes persist until their own deletion.
+    let mut global_sparse: BTreeSet<&[u8]> = BTreeSet::new();
     // Every iteration advances by at least one block, so the walk is bounded by the input size.
     'headers: loop {
         let Some(h) = r.slice(pos, BLOCK) else {
@@ -144,12 +168,15 @@ pub fn tar(data: &[u8], max_members: usize) -> Option<Listing> {
             break;
         };
         if !matches!(typeflag, b'x' | b'g' | b'L' | b'K')
-            && let Some(s) = pax_size.take()
+            && let Some(s) = pax_size.take().or(global_size)
         {
             size = s;
         }
         let data_off = pos + BLOCK;
         let Some(next) = round_up(size, BLOCK as u64).and_then(|s| u64::try_from(data_off).ok()?.checked_add(s)).and_then(|n| usize::try_from(n).ok()) else {
+            if matches!(typeflag, b'L' | b'K') {
+                out.stop_reason = Some(StopReason::GnuMetadataTruncated);
+            }
             out.warnings.push(format!("size overflows at {pos:#x}"));
             out.length = pos as u64;
             break;
@@ -157,13 +184,15 @@ pub fn tar(data: &[u8], max_members: usize) -> Option<Listing> {
         let body = r.slice(data_off, usize::try_from(size).unwrap_or(usize::MAX));
         match typeflag {
             b'L' | b'K' => {
-                let Some(body) = body else {
-                    out.warnings.push(format!("GNU long-name data ends early at {pos:#x}"));
+                let Some(body) = body.filter(|_| next <= data.len()) else {
+                    out.stop_reason = Some(StopReason::GnuMetadataTruncated);
+                    out.warnings.push(format!("GNU long-name record ends early at {pos:#x}"));
                     out.length = data.len() as u64;
                     break;
                 };
                 let end = body.iter().take(MAX_NAME + 1).position(|&byte| byte == 0).unwrap_or(body.len());
                 if end > MAX_NAME {
+                    out.stop_reason = Some(StopReason::GnuMetadataTooLong);
                     out.warnings.push(format!("GNU long name or link exceeds {MAX_NAME} bytes at {pos:#x}"));
                     out.length = pos as u64;
                     break;
@@ -175,7 +204,8 @@ pub fn tar(data: &[u8], max_members: usize) -> Option<Listing> {
                     long_link = value;
                 }
             }
-            b'x' => {
+            b'x' | b'g' => {
+                let global = typeflag == b'g';
                 if let Some(mut remaining) = body {
                     for _ in 0..256 {
                         if remaining.is_empty() {
@@ -186,17 +216,45 @@ pub fn tar(data: &[u8], max_members: usize) -> Option<Listing> {
                             out.length = pos as u64;
                             break 'headers;
                         };
+                        if key.starts_with(b"GNU.sparse.") {
+                            if global {
+                                if value.is_empty() {
+                                    global_sparse.remove(key);
+                                } else {
+                                    global_sparse.insert(key);
+                                }
+                            } else {
+                                pax_sparse = true;
+                            }
+                        }
                         match key {
-                            b"path" | b"linkpath" => {
+                            b"path" | b"linkpath" | b"GNU.sparse.name" => {
                                 if value.len() > MAX_NAME {
                                     out.warnings.push(format!("pax name exceeds {MAX_NAME} bytes at {pos:#x}"));
                                     out.length = pos as u64;
                                     break 'headers;
                                 }
-                                let slot = if key == b"path" { &mut pax_path } else { &mut pax_link };
-                                *slot = Some(String::from_utf8_lossy(value).into_owned());
+                                let slot = match (global, key == b"linkpath") {
+                                    (true, true) => &mut global_link,
+                                    (true, false) => &mut global_path,
+                                    (false, true) => &mut pax_link,
+                                    (false, false) => &mut pax_path,
+                                };
+                                *slot = if global && value.is_empty() { None } else { Some(String::from_utf8_lossy(value).into_owned()) };
                             }
-                            b"size" => pax_size = std::str::from_utf8(value).ok().and_then(|s| s.parse().ok()),
+                            b"size" => {
+                                let size = std::str::from_utf8(value).ok().and_then(|s| s.parse().ok());
+                                if global {
+                                    if !value.is_empty() && (size.is_none() || !value.iter().all(u8::is_ascii_digit)) {
+                                        out.warnings.push(format!("invalid global pax size at {pos:#x}"));
+                                        out.length = pos as u64;
+                                        break 'headers;
+                                    }
+                                    global_size = size;
+                                } else {
+                                    pax_size = size;
+                                }
+                            }
                             _ => {}
                         }
                         remaining = rest;
@@ -208,16 +266,39 @@ pub fn tar(data: &[u8], max_members: usize) -> Option<Listing> {
                     }
                 }
             }
-            b'g' => {}
             _ => {
+                if out.members.len() >= max_members {
+                    out.truncated = true;
+                    out.length = pos as u64;
+                    break;
+                }
+                let linked = matches!(typeflag, b'1' | b'2');
+                let copied_path = if pax_path.is_none() { global_path.as_ref().map_or(0, String::len) } else { 0 };
+                let copied_link = if linked && pax_link.is_none() { global_link.as_ref().map_or(0, String::len) } else { 0 };
+                let Some(remaining) = name_bytes_left.checked_sub(copied_path.saturating_add(copied_link)) else {
+                    out.stop_reason = Some(StopReason::GlobalNameBudget);
+                    out.warnings.push("the retained global pax name-byte budget was reached; later members were omitted".into());
+                    out.length = pos as u64;
+                    break;
+                };
+                name_bytes_left = remaining;
                 // Old GNU headers use these bytes for timestamps and sparse-file metadata.
                 let ustar = h.get(257..263) == Some(b"ustar\0");
                 let base = text(h.get(0..100).unwrap_or(&[]));
                 let prefix = if ustar { text(h.get(345..500).unwrap_or(&[])) } else { String::new() };
                 let joined = if prefix.is_empty() { base } else { format!("{prefix}/{base}") };
-                let name = pax_path.take().or(long_name.take()).unwrap_or(joined);
-                let link = pax_link.take().or(long_link.take()).or_else(|| Some(text(h.get(157..257).unwrap_or(&[])))).filter(|l| !l.is_empty());
-                let kind = match typeflag {
+                // PAX values override header names, including GNU's long-name replacement.
+                // Consume the one-member GNU records even when a PAX value takes precedence.
+                let gnu_name = long_name.take();
+                let gnu_link = long_link.take();
+                let name = pax_path.take().or_else(|| global_path.clone()).or(gnu_name).unwrap_or(joined);
+                let link = pax_link
+                    .take()
+                    .or_else(|| if linked { global_link.clone() } else { None })
+                    .or(gnu_link)
+                    .or_else(|| Some(text(h.get(157..257).unwrap_or(&[]))))
+                    .filter(|l| !l.is_empty());
+                let mut kind = match typeflag {
                     b'0' | 0 | b'7' => {
                         if name.ends_with('/') {
                             MemberKind::Dir
@@ -232,14 +313,13 @@ pub fn tar(data: &[u8], max_members: usize) -> Option<Listing> {
                     b'6' => MemberKind::Fifo,
                     _ => MemberKind::Other,
                 };
+                if std::mem::take(&mut pax_sparse) || !global_sparse.is_empty() {
+                    kind = MemberKind::Other;
+                    out.warnings.push(format!("{name}: GNU sparse reconstruction is unsupported; stored extents are not the complete file"));
+                }
                 let mode = h.get(100..108).and_then(octal).and_then(|m| u32::try_from(m).ok()).unwrap_or(0);
                 if body.is_none() && kind == MemberKind::File {
                     out.warnings.push(format!("{name}: data runs past the end of the input"));
-                }
-                if out.members.len() >= max_members {
-                    out.truncated = true;
-                    out.length = pos as u64;
-                    break;
                 }
                 out.members.push(Member {
                     name,
@@ -278,11 +358,17 @@ fn pax_record(data: &[u8]) -> Option<(&[u8], &[u8], &[u8])> {
 }
 
 fn hex_field(f: &[u8]) -> Option<u64> {
+    if !f.iter().all(u8::is_ascii_hexdigit) {
+        return None;
+    }
     let s = std::str::from_utf8(f).ok()?;
     u64::from_str_radix(s, 16).ok()
 }
 
 fn oct_field(f: &[u8]) -> Option<u64> {
+    if !f.iter().all(|b| (b'0'..=b'7').contains(b)) {
+        return None;
+    }
     let s = std::str::from_utf8(f).ok()?;
     u64::from_str_radix(s, 8).ok()
 }
@@ -459,6 +545,63 @@ mod tests {
     use craft_anything_testkit::firmware as fx;
 
     #[test]
+    fn plus_sign_in_cpio_fields_is_rejected() {
+        assert_eq!(hex_field(b"+000000A"), None);
+        assert_eq!(oct_field(b"+00012"), None);
+        assert_eq!(hex_field(b"0000000A"), Some(10));
+        assert_eq!(oct_field(b"00012"), Some(10));
+    }
+
+    fn global_record(key: &str, value: &str) -> String {
+        let tail = format!(" {key}={value}\n");
+        let mut len = tail.len() + 1;
+        loop {
+            let record = format!("{len}{tail}");
+            if record.len() == len {
+                return record;
+            }
+            len = record.len();
+        }
+    }
+
+    #[test]
+    fn global_name_copies_stop_before_spending_the_budget() {
+        let global = global_record("path", "shared");
+        let data = fx::tar_entries(&[("global", b'g', global.as_bytes(), ""), ("one", b'0', b"", ""), ("two", b'0', b"", ""), ("three", b'0', b"", "")]);
+        let listing = tar_with_name_copy_limit(&data, 10, 12).unwrap();
+        assert_eq!(listing.members.len(), 2);
+        assert!(listing.members.iter().all(|m| m.name == "shared"));
+        assert_eq!(listing.stop_reason, Some(StopReason::GlobalNameBudget));
+        assert!(!listing.complete && !listing.truncated);
+        assert!(listing.warnings.iter().any(|w| w.contains("name-byte budget")));
+        assert_eq!(listing.length, 2048);
+        assert!(tar_with_name_copy_limit(&data, 10, 18).unwrap().complete);
+    }
+
+    #[test]
+    fn local_names_and_unused_global_links_do_not_spend_copy_bytes() {
+        let global = global_record("path", "name") + &global_record("linkpath", "unused-link");
+        let local = global_record("path", "local-name");
+        let data =
+            fx::tar_entries(&[("global", b'g', global.as_bytes(), ""), ("local", b'x', local.as_bytes(), ""), ("one", b'0', b"", ""), ("two", b'0', b"", "")]);
+        let listing = tar_with_name_copy_limit(&data, 10, 4).unwrap();
+        assert!(listing.complete);
+        assert_eq!(listing.members.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["local-name", "name"]);
+        assert!(listing.members.iter().all(|m| m.link_target.is_none()));
+    }
+
+    #[test]
+    fn global_names_and_links_share_the_decoded_byte_budget() {
+        let global = global_record("path", "é") + &global_record("linkpath", "中");
+        let data = fx::tar_entries(&[("global", b'g', global.as_bytes(), ""), ("one", b'2', b"", "fallback"), ("two", b'1', b"", "fallback")]);
+        let listing = tar_with_name_copy_limit(&data, 10, 5).unwrap();
+        assert_eq!(listing.members.len(), 1);
+        assert_eq!(listing.members[0].link_target.as_deref(), Some("中"));
+        assert_eq!(listing.stop_reason, Some(StopReason::GlobalNameBudget));
+        assert!(tar_with_name_copy_limit(&data, 10, 10).unwrap().complete);
+    }
+
+    #[test]
     fn oversized_gnu_names_do_not_alias_their_truncated_prefix() {
         for kind in *b"LK" {
             let mut long = vec![b'n'; MAX_NAME + 1];
@@ -470,6 +613,7 @@ mod tests {
             ]);
             let listing = tar(&data, 10).unwrap();
             assert!(!listing.complete);
+            assert_eq!(listing.stop_reason, Some(StopReason::GnuMetadataTooLong));
             assert_eq!(listing.members.len(), 1);
             assert_eq!(listing.members[0].name, "before");
             assert_eq!(member_data(&data, &listing.members[0]).unwrap(), b"kept");
@@ -497,6 +641,109 @@ mod tests {
         padded.resize(MAX_NAME + 100, 0);
         let data = fx::tar_entries(&[("././@LongLink", b'L', &padded, ""), ("fallback", b'0', b"payload", "")]);
         assert_eq!(tar(&data, 10).unwrap().members[0].name, "short");
+    }
+
+    fn sparse_pax_record(key: &str, value: &str) -> Vec<u8> {
+        let field = format!(" {key}={value}\n");
+        let mut length = field.len() + 1;
+        loop {
+            let actual = field.len() + length.to_string().len();
+            if actual == length {
+                return format!("{length}{field}").into_bytes();
+            }
+            length = actual;
+        }
+    }
+
+    #[test]
+    fn gnu_sparse_pax_members_are_not_regular_file_bytes() {
+        for fields in [
+            vec![("GNU.sparse.size", "100"), ("GNU.sparse.numblocks", "1"), ("GNU.sparse.offset", "50"), ("GNU.sparse.numbytes", "3")],
+            vec![("GNU.sparse.size", "100"), ("GNU.sparse.map", "50,3"), ("GNU.sparse.name", "original.bin")],
+            vec![("GNU.sparse.major", "1"), ("GNU.sparse.minor", "0"), ("GNU.sparse.realsize", "100"), ("GNU.sparse.name", "original.bin")],
+        ] {
+            let metadata: Vec<u8> = fields.iter().flat_map(|(key, value)| sparse_pax_record(key, value)).collect();
+            let version_one = fields.iter().any(|(key, _)| *key == "GNU.sparse.major");
+            let mut sparse_body = if version_one { b"1\n50\n3\n".to_vec() } else { Vec::new() };
+            if version_one {
+                sparse_body.resize(512, 0);
+            }
+            sparse_body.extend_from_slice(b"abc");
+            let data = fx::tar_entries(&[("metadata", b'x', &metadata, ""), ("stored-name", b'0', &sparse_body, ""), ("normal", b'0', b"ordinary", "")]);
+            let listing = tar(&data, 10).unwrap();
+            assert!(listing.complete, "{:?}", listing.warnings);
+            assert_eq!(listing.members.len(), 2);
+            assert_eq!(listing.members[0].kind, MemberKind::Other);
+            let named = fields.iter().any(|(key, _)| *key == "GNU.sparse.name");
+            assert_eq!(listing.members[0].name, if named { "original.bin" } else { "stored-name" });
+            assert_eq!(listing.members[1].kind, MemberKind::File);
+            assert_eq!(member_data(&data, &listing.members[1]).unwrap(), b"ordinary");
+            assert_eq!(listing.warnings.len(), 1);
+            assert!(listing.warnings[0].contains("sparse reconstruction is unsupported"));
+        }
+    }
+
+    #[test]
+    fn sparse_metadata_survives_other_extension_headers() {
+        let sparse = sparse_pax_record("GNU.sparse.map", "0,3");
+        let path = sparse_pax_record("path", "renamed");
+        let data = fx::tar_entries(&[
+            ("sparse", b'x', &sparse, ""),
+            ("name", b'L', b"long-name\0", ""),
+            ("path", b'x', &path, ""),
+            ("header", b'0', b"abc", ""),
+            ("next", b'0', b"ok", ""),
+        ]);
+        let listing = tar(&data, 10).unwrap();
+        assert_eq!(listing.members[0].name, "renamed");
+        assert_eq!(listing.members[0].kind, MemberKind::Other);
+        assert_eq!(listing.members[1].kind, MemberKind::File);
+    }
+
+    #[test]
+    fn gnu_metadata_stop_reasons_keep_partial_listings_and_marker_compatibility() {
+        for kind in *b"LK" {
+            let mut data = fx::tar_entries(&[("before", b'0', b"kept", ""), ("././@LongLink", kind, b"long\0", ""), ("fallback", b'0', b"later", "")]);
+            data.truncate(3 * BLOCK + 2);
+            let listing = tar(&data, 10).unwrap();
+            assert_eq!(listing.stop_reason, Some(StopReason::GnuMetadataTruncated));
+            assert!(!listing.complete);
+            assert!(!listing.truncated);
+            assert_eq!(listing.members.len(), 1);
+            assert_eq!(member_data(&data, &listing.members[0]).unwrap(), b"kept");
+        }
+        let mut data = fx::tar_entries(&[("file", b'0', b"kept", "")]);
+        data.truncate(2 * BLOCK);
+        let listing = tar(&data, 10).unwrap();
+        assert!(!listing.complete);
+        assert_eq!(listing.stop_reason, None);
+        assert_eq!(member_data(&data, &listing.members[0]).unwrap(), b"kept");
+        let cpio_listing = cpio(&fx::cpio_newc(&[("file", b"kept", 0o100644)]), 10).unwrap();
+        assert_eq!(cpio_listing.stop_reason, None);
+    }
+
+    #[test]
+    fn gnu_metadata_requires_its_complete_padded_record() {
+        let body = b"next\0";
+        for kind in *b"LK" {
+            let data = fx::tar_entries(&[
+                ("before", b'0', b"kept", ""),
+                ("././@LongLink", kind, body, ""),
+                ("fallback", if kind == b'L' { b'0' } else { b'2' }, b"", "fallback"),
+            ]);
+            for padding in [0, 1, BLOCK - body.len() - 1] {
+                let short = &data[..3 * BLOCK + body.len() + padding];
+                let listing = tar(short, 10).unwrap();
+                assert_eq!(listing.stop_reason, Some(StopReason::GnuMetadataTruncated));
+                assert!(!listing.complete);
+                assert_eq!(listing.members.len(), 1);
+                assert_eq!(member_data(short, &listing.members[0]).unwrap(), b"kept");
+            }
+            let listing = tar(&data, 10).unwrap();
+            assert!(listing.complete);
+            assert_eq!(listing.stop_reason, None);
+            assert_eq!(listing.members.len(), 2);
+        }
     }
 
     #[test]
