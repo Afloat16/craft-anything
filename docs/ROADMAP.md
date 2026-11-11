@@ -2437,6 +2437,8 @@ Owner: open · Status: in progress
       — claimed: NicolasBohn, branch bugfix/r3.12-codesign-oid-subidentifiers
 
 
+- [ ] Read 32-bit ARM ELF core registers and expose the crashing program counter in native crash evidence. — claimed: Afloat16, branch `bugfix/r3.12-arm32-core-registers-20261111`
+
 ### R3.13 Web inspection correctness
 Owner: open · Status: in progress
 - [x] Decode character references in HTML page titles before returning their displayed text.
