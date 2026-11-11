@@ -169,6 +169,7 @@ coverage and secrets passed. The companion CLI was built with locked dependencie
 | CIL exception section framing | Method exception handlers come only from the defined exception-table section kind, a complete declared section, and whole clause records. Unknown section kinds are diagnosed and skipped while linked sections remain readable. | Six synthetic small/fat section regressions cover valid handlers, unknown kinds, cut headers, truncated declared extents, partial clauses and a following valid table. Five cases fail against the original parser. No managed program was executed. |
 | ELF dynamic library names | Needed libraries and dynamic path names stay within DT_STRSZ when the executable declares it. | An ELF64 fixture moves the bound to the beginning and to the terminator of a needed library name. |
 | ELF dynamic symbols with partial section tables | PT_DYNAMIC supplies imports and exports when retained section headers omit usable dynamic symbols. Retained ordinary symbols stay available and matching facts are not duplicated. | ELF32 and ELF64 in both byte orders, retained local and duplicate symbols, and a complete dynamic-section control. |
+| sBPF global table limits | Symbol and relocation output stops at the existing 400,000-record limit across repeated ELF tables, preserving earlier records, order and null-symbol handling. | Seven synthetic ELF regressions cover repeated SYMTAB/DYNSYM and REL/RELA tables, exact limits, null/empty tables and smaller inputs. Three over-limit cases report 400,001 records before the fix; all seven pass afterward, together with existing symbol-framing and Solana tests. |
 | Locate ELF core mapping names after the complete declared table | ELF core filenames follow the full declared mapping table. | Synthetic byte fixtures in `elf_core_file_name_count_cap` integration regressions. Cover 65,537 declared mappings with capped output, an impossible declared table, and a small complete mapping table. |
 | ELF core mapping path cursors | NT_FILE mapping paths advance by the original NUL-terminated byte strings, even when the displayed path is lossy or capped. | Invalid UTF-8 and long first paths followed by another mapping; valid UTF-8 and unterminated final-path controls. |
 | Keep DOS relocations inside the declared executable header | DOS relocation records stay inside the declared MZ header. | Synthetic byte fixtures in `dos_relocation_header_boundary` integration regressions. Cover records extending into the load module, a partial final record, and complete records ending exactly at the header boundary. |
@@ -706,17 +707,6 @@ overflowing shapes remain unknown with a diagnostic. Truncation checks include q
 payloads and use nonwrapping offset arithmetic. Synthetic headers cover all 21 supported
 quantized layouts, exact and short files, multiple rows, unknown types and overflowing offsets.
 Tensor data is not decoded, and no model inference was run for this change.
-
-## sBPF global output limits
-
-The sBPF inspector stops traversing further symbol and relocation tables once its
-existing 400,000-record output limit is reached. Repeated SYMTAB/DYNSYM and REL/RELA
-tables can no longer append one extra record each after the first table reaches the
-limit. Earlier records, ordering and null-symbol handling remain unchanged.
-
-Seven ELF regressions cover repeated tables, exact limits, null/empty tables and
-ordinary multi-table inputs. The three over-limit cases reproduced 400,001 records
-before the fix; all seven pass after it.
 
 ## sBPF symbol record boundaries
 
