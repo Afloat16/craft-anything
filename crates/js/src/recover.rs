@@ -4,7 +4,7 @@
 //! Every rewrite is a text edit on exact syntax-tree spans, and the edited text must parse again
 //! or the edit set is dropped. Rewrites at the `standard` level:
 //! - `!0` → `true`, `!1` → `false`;
-//! - `void 0` → `undefined` (only when nothing in the file declares a binding named `undefined`);
+//! - `void 0` → `undefined` (only without an `undefined` binding or dynamic name lookup);
 //! - `a(), b(), c();` statement sequences → separate statements (only in statement lists, and only
 //!   when no later part would change meaning at the start of a statement);
 //! - webpack module parameters `(e, t, n)` → `(module, exports, __webpack_require__)`, using scope
@@ -64,6 +64,7 @@ struct RewriteVisitor<'s> {
     edits: Vec<Edit>,
     voids: Vec<Edit>,
     binds_undefined: bool,
+    dynamic_lookup: bool,
 }
 
 fn starts_statement_safely(text: &str) -> bool {
@@ -89,6 +90,18 @@ impl<'a> Visit<'a> for RewriteVisitor<'_> {
         if it.name == "undefined" {
             self.binds_undefined = true;
         }
+    }
+
+    fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
+        if !it.optional && it.callee.is_specific_id("eval") {
+            self.dynamic_lookup = true;
+        }
+        walk::walk_call_expression(self, it);
+    }
+
+    fn visit_with_statement(&mut self, it: &WithStatement<'a>) {
+        self.dynamic_lookup = true;
+        walk::walk_with_statement(self, it);
     }
 
     fn visit_statements(&mut self, it: &oxc_allocator::ArenaVec<'a, Statement<'a>>) {
@@ -125,10 +138,10 @@ fn rewrite_and_print(src: &str, st: SourceType, level: RewriteLevel) -> Result<(
     }
     let mut edits_applied = 0usize;
     if level == RewriteLevel::Standard {
-        let mut v = RewriteVisitor { src, edits: Vec::new(), voids: Vec::new(), binds_undefined: false };
+        let mut v = RewriteVisitor { src, edits: Vec::new(), voids: Vec::new(), binds_undefined: false, dynamic_lookup: false };
         v.visit_program(&ret.program);
         let mut edits = v.edits;
-        if !v.binds_undefined {
+        if !v.binds_undefined && !v.dynamic_lookup {
             edits.extend(v.voids);
         }
         let n = edits.len();
@@ -172,6 +185,13 @@ fn rename_params(params: &[String], body: &str, targets: &[&str]) -> Option<(Str
     }
     let sem = SemanticBuilder::new().with_build_nodes(true).build(&ret.program).semantic;
     let scoping = sem.scoping();
+    // Eval strings and with objects can use parameter names that static references cannot see.
+    if scoping.scope_descendants_from_root().any(|scope| {
+        let flags = scoping.scope_flags(scope);
+        flags.contains_direct_eval() || flags.is_with()
+    }) {
+        return None;
+    }
     let Some(Statement::ExpressionStatement(es)) = ret.program.body.first() else { return None };
     let Expression::FunctionExpression(f) = es.expression.get_inner_expression() else { return None };
     // Names already used as identifiers anywhere in the body can't be taken.
