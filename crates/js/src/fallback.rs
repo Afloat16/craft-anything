@@ -40,7 +40,15 @@ pub(crate) fn facts_from_tokens(tokens: &[Token<'_>], lines: &LineIndex) -> Modu
             (TokKind::Ident, "fetch") if at(i + 1) == Some((TokKind::Punct, "(")) => {
                 if let Some((TokKind::Str, s)) = at(i + 2) {
                     if f.endpoints.len() < crate::facts::MAX_LIST {
-                        f.endpoints.push(Endpoint { api: "fetch".into(), method: None, url: string_value(s), literal: true, line, offset: off, function: None });
+                        f.endpoints.push(Endpoint {
+                            api: "fetch".into(),
+                            method: None,
+                            url: string_value(s),
+                            literal: true,
+                            line,
+                            offset: off,
+                            function: None,
+                        });
                     } else {
                         mark_truncated(&mut f, "endpoints");
                     }
@@ -75,7 +83,15 @@ pub(crate) fn facts_from_tokens(tokens: &[Token<'_>], lines: &LineIndex) -> Modu
                     let lower = v.get(..8).unwrap_or(&v).to_ascii_lowercase();
                     if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("ws://") || lower.starts_with("wss://") {
                         if f.endpoints.len() < crate::facts::MAX_LIST {
-                            f.endpoints.push(Endpoint { api: "literal".into(), method: None, url: v.clone(), literal: true, line, offset: off, function: None });
+                            f.endpoints.push(Endpoint {
+                                api: "literal".into(),
+                                method: None,
+                                url: v.clone(),
+                                literal: true,
+                                line,
+                                offset: off,
+                                function: None,
+                            });
                         } else {
                             mark_truncated(&mut f, "endpoints");
                         }

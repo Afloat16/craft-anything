@@ -78,11 +78,7 @@ fn a_full_endpoint_list_does_not_stop_other_facts() {
 
 #[test]
 fn endpoint_and_bridge_budgets_are_independent() {
-    let source = format!(
-        "{}{}",
-        "fetch('/same');\n".repeat(FACT_LIMIT + 2),
-        "contextBridge.exposeInMainWorld('bridge', {});\n".repeat(FACT_LIMIT + 2)
-    );
+    let source = format!("{}{}", "fetch('/same');\n".repeat(FACT_LIMIT + 2), "contextBridge.exposeInMainWorld('bridge', {});\n".repeat(FACT_LIMIT + 2));
     let facts = scan(&source);
     assert_eq!(facts.endpoints.len(), FACT_LIMIT);
     assert_eq!(facts.exposed.len(), FACT_LIMIT);
@@ -93,11 +89,7 @@ fn endpoint_and_bridge_budgets_are_independent() {
 
 #[test]
 fn exactly_full_lists_are_not_reported_as_truncated() {
-    let source = format!(
-        "{}{}",
-        "fetch('/same');\n".repeat(FACT_LIMIT),
-        "contextBridge.exposeInMainWorld('bridge', {});\n".repeat(FACT_LIMIT)
-    );
+    let source = format!("{}{}", "fetch('/same');\n".repeat(FACT_LIMIT), "contextBridge.exposeInMainWorld('bridge', {});\n".repeat(FACT_LIMIT));
     let facts = scan(&source);
     assert_eq!(facts.endpoints.len(), FACT_LIMIT);
     assert_eq!(facts.exposed.len(), FACT_LIMIT);
