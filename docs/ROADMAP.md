@@ -1564,7 +1564,7 @@ Owner: open · Status: in progress
 - [x] Verify stand-in session cleanup by the original answerer's lifetime rather than polling a
       released port that another listener may reuse
       — claimed: Afloat16, branch test/r3.11-standin-session-lifetime-20261103
-- [ ] Keep escaped triple quotes inside GraphQL block strings when reading operation headers
+- [x] Keep escaped triple quotes inside GraphQL block strings when reading operation headers
       and selection sets, and reject blocks with no real closing delimiter.
       — claimed: Afloat16, branch bugfix/r3.11-graphql-block-string-escapes-20261111
 - [ ] Stand-in backend: writes that change later reads (recorded answers are replayed as they are)
