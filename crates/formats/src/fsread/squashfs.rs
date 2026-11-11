@@ -8,7 +8,7 @@
 
 use super::{FsEntry, FsImage, FsKind, Limits, join};
 use crate::bytes::Reader;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const META_MAX: usize = 8192;
 
@@ -73,16 +73,24 @@ impl Meta {
         let end = end.min(data.len());
         let r = Reader::new(data.get(..end).unwrap_or_default());
         let mut guard = 0usize;
-        while end.saturating_sub(pos) >= 2 {
+        while pos < end {
             guard += 1;
             if guard > 100_000 || out.len() > 64 << 20 {
                 break;
             }
-            map.insert((pos as u64 - start) as u32, out.len());
-            let Some(hdr) = r.u16_le(pos) else { break };
+            let block_start = out.len();
+            let Some(hdr) = r.u16_le(pos) else {
+                warnings.warn("squashfs: a metadata header exceeds its table");
+                warnings.complete = false;
+                break;
+            };
             let uncompressed = hdr & 0x8000 != 0;
             let len = usize::from(hdr & 0x7fff);
-            let Some(block) = r.slice(pos + 2, len) else { break };
+            let Some(block) = r.slice(pos + 2, len) else {
+                warnings.warn("squashfs: a metadata block exceeds its table");
+                warnings.complete = false;
+                break;
+            };
             if uncompressed {
                 out.extend_from_slice(block);
             } else if let Some(d) = decompress(comp, block, META_MAX as u64) {
@@ -92,6 +100,7 @@ impl Meta {
                 warnings.complete = false;
                 break;
             }
+            map.insert((pos as u64 - start) as u32, block_start);
             pos += 2 + len;
         }
         Meta { data: out, map }
@@ -136,21 +145,31 @@ pub fn read(data: &[u8], limits: &Limits) -> FsImage {
     let dir_end = [sb.frag_table, sb.id_table].into_iter().filter(|&t| t > sb.dir_table && t != u64::MAX).min().unwrap_or(sb.dir_table);
     let inodes = Meta::read(data, sb.inode_table, sb.dir_table, sb.compression, &mut img);
     let dirs = Meta::read(data, sb.dir_table, dir_end, sb.compression, &mut img);
-    let mut seen: Vec<u64> = Vec::new();
+    let mut seen = BTreeSet::new();
     walk(data, &sb, &inodes, &dirs, sb.root_ref, "", limits, &mut img, 0, &mut seen);
     img
 }
 
 #[allow(clippy::too_many_arguments)]
-fn walk(data: &[u8], sb: &Sb, inodes: &Meta, dirs: &Meta, inode_ref: u64, parent: &str, limits: &Limits, img: &mut FsImage, depth: usize, seen: &mut Vec<u64>) {
+fn walk(
+    data: &[u8],
+    sb: &Sb,
+    inodes: &Meta,
+    dirs: &Meta,
+    inode_ref: u64,
+    parent: &str,
+    limits: &Limits,
+    img: &mut FsImage,
+    depth: usize,
+    seen: &mut BTreeSet<u64>,
+) {
     if depth > limits.max_depth || img.entries.len() >= limits.max_entries {
         img.complete = false;
         return;
     }
-    if seen.contains(&inode_ref) {
+    if !seen.insert(inode_ref) {
         return;
     }
-    seen.push(inode_ref);
     let r = Reader::new(&inodes.data);
     let Some((pos, itype)) = inodes.at(inode_ref).and_then(|pos| Some((pos, r.u16_le(pos)?))) else {
         img.warn("squashfs: directory inode not read");
@@ -189,7 +208,7 @@ fn parse_dir(
     limits: &Limits,
     img: &mut FsImage,
     depth: usize,
-    seen: &mut Vec<u64>,
+    seen: &mut BTreeSet<u64>,
 ) {
     let r = Reader::new(listing);
     let mut pos = 0usize;
@@ -367,6 +386,22 @@ fn fragment_bytes(data: &[u8], sb: &Sb, index: u32, img: &mut FsImage) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn truncated_metadata_preserves_only_preceding_blocks() {
+        // Cut the second block inside its two-byte header and inside its payload.
+        let data = [1, 0x80, b'a', 2, 0x80, b'b', b'c'];
+        for (end, warning) in [(3, None), (4, Some("squashfs: a metadata header exceeds its table")), (6, Some("squashfs: a metadata block exceeds its table"))]
+        {
+            let mut img = FsImage::new("squashfs");
+            let meta = Meta::read(&data, 0, end, 1, &mut img);
+            assert_eq!(meta.data, b"a");
+            assert_eq!(meta.at(0), Some(0));
+            assert!(meta.at(3 << 16).is_none());
+            assert_eq!(img.complete, warning.is_none(), "table end {end}");
+            assert_eq!(img.warnings.first().map(String::as_str), warning, "table end {end}");
+        }
+    }
 
     #[test]
     fn reads_a_small_image() {
