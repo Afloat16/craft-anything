@@ -1477,6 +1477,8 @@ Owner: open · Status: todo
 
 ### R3.9 Game assets out
 Owner: open · Status: in progress
+- [ ] Decode Unreal packed 10-bit normalized and 11-bit floating-point textures through the bounded picture exporter.
+      — claimed: Afloat16, branch feature/r3.9-unreal-packed-textures-20261111
 - [ ] Unity: sounds out (the stored stream, usually FSB5; PCM ones as WAV)
 - [ ] Unity: crunched textures (DXT1Crunched, DXT5Crunched; two of the games checked use them)
 - [x] Unity: decode R16 and RG16 texture pixels through the shared bounded PNG export path.
