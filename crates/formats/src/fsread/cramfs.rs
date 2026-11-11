@@ -2,7 +2,8 @@
 //! byte order. Inodes are 12 bytes; a
 //! directory's children sit consecutively in its data span; a regular file's data is a run of
 //! 4 KiB blocks, stored as zlib streams, uncompressed bytes or zero-filled holes, preceded by
-//! end-offset pointers. Bounded against cycles, huge sizes and corrupt offsets.
+//! end-offset pointers or direct start pointers with optional compressed lengths.
+//! Direct blocks may be shared. Bounded against cycles, huge sizes and corrupt offsets.
 
 use super::{FsEntry, FsImage, FsKind, Limits, join};
 use crate::bytes::Reader;
@@ -121,18 +122,33 @@ fn file_data(data: &[u8], ino: &Inode, limits: &Limits, img: &mut FsImage, big_e
     for i in 0..nblocks {
         let pointer_offset = ino.offset.checked_add(i.checked_mul(4)?)?;
         let pointer = if big_endian { r.u32_be(pointer_offset) } else { r.u32_le(pointer_offset) }?;
-        if pointer & DIRECT_PTR != 0 {
-            img.warn("cramfs direct block pointers are not supported");
-            img.complete = false;
-            return None;
-        }
-        let end = (pointer & !UNCOMPRESSED) as usize;
+        let expected = ino.size.saturating_sub(i.saturating_mul(BLK)).min(BLK);
+        let address = pointer & !(UNCOMPRESSED | DIRECT_PTR);
+        let end = if pointer & DIRECT_PTR != 0 {
+            let range = usize::try_from(address).ok().and_then(|start| start.checked_mul(4)).and_then(|start| {
+                if pointer & UNCOMPRESSED != 0 {
+                    Some((start, start.checked_add(expected)?))
+                } else {
+                    let length = if big_endian { r.u16_be(start) } else { r.u16_le(start) }?;
+                    let payload = start.checked_add(2)?;
+                    Some((payload, payload.checked_add(usize::from(length))?))
+                }
+            });
+            let Some((start, end)) = range else {
+                img.warn("cramfs direct block header is unavailable");
+                img.complete = false;
+                return None;
+            };
+            block_start = start;
+            end
+        } else {
+            address as usize
+        };
         if end < block_start || end > data.len() {
             img.warn("corrupt cramfs block pointer");
             img.complete = false;
             return None;
         }
-        let expected = ino.size.saturating_sub(i.saturating_mul(BLK)).min(BLK);
         if end == block_start {
             out.resize(out.len().checked_add(expected)?, 0);
             continue;

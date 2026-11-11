@@ -1137,6 +1137,8 @@ Owner: open · Status: in progress
       — PR #1209; claimed: rmsff, branch feature/r2.7-python-java-launch
 - [ ] Audit relative project placements in build, option-run and Play paths too: runtime window
       capture now normalizes its request paths, but earlier runner paths can still be relative
+- [x] Decline a Godot launch when its project path cannot be represented as UTF-8 instead of silently replacing bytes in the selected path.
+      — claimed: Afloat16, branch bugfix/r2.7-native-runner-project-args
 - [x] Resolve Godot's project argument and the local Electron binary and project argument before
       starting either runner from a relative project folder — claimed: Afloat16, branch bugfix/r2.7-project-launch-paths
 - [x] "player" alone doesn't make a request a game: a video or music player is an app (#953)
@@ -1237,6 +1239,11 @@ Gaps found while using the app for real projects.
       note's hand-over file carries the answers, and the after-turn path puts them before the
       notes; only answers the run's mode may show, marked told when read or sent
       — claimed: AlexJoaquimPereira, branch bugfix/r2.9-note-just-ask; commit 78d3963
+- [x] A note still waiting when the app closes is sent by the next run instead of deleted when it
+      starts (#1620): its hand-over file keeps the person's words (`notes::Left`), and a run started
+      without a message sends them. A file from before this has only the hand-over text, whose
+      Just-ask answers may be from the other mode, so it's still dropped. Unit-tested; not run live
+      — claimed: justinjohn0306, branch `bugfix/r2.9-notes-survive-restart`
 - [x] Record which mode a builder's session ran in: `agent_session` is kept across modes, so a Clean
       room build or question can resume a session from a Deep build and carry what it read, and such
       a question's answer is recorded as asked in Clean room. Don't resume one for Clean room
@@ -1375,6 +1382,8 @@ Gaps found while using the app for real projects.
       — claimed: justinjohn0306, branch bugfix/942-console-input-height
 - [x] A French README (`README.fr.md`) translated from `README.md` and linked from the language
       switcher in every README (#831)
+- [x] A Thai README (`README.th.md`) translated from `README.md` and linked from the language
+      switcher in every README
 - [ ] Vietnamese letters with stacked marks (ạ ả ấ ế ơ ư ữ…) aren't in the bundled DM Sans or egui's
       default fonts: without craft-fonts they show as boxes, and with it each such letter comes from
       Noto Sans CJK while the rest of the word is DM Sans. Bundle a DM Sans build that has the
@@ -1488,11 +1497,15 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch feature/r3.9-rgb9e5-textures-20261110
 - [ ] Unreal 5 and Oodle: IoStore packages, unversioned properties and Oodle-compressed paks
 - [ ] Game files: save pictures from IoStore containers (needs the Unreal 5 support above)
+- [x] Decode Unreal packed 10-bit normalized and 11-bit floating-point textures through the bounded picture exporter.
+      — claimed: Afloat16, branch feature/r3.9-unreal-packed-textures-20261111
 - [x] Unreal: decode cooked half- and full-precision floating-point textures with the shared bounded pixel reader.
       — claimed: Afloat16, branch feature/r3.9-unreal-float-textures-20261109
       Source `75b507c0b96f`; [format checks](https://github.com/Afloat16/claude-mem/actions/runs/42634877637/job/129220281335) and [compatibility gates](https://github.com/Afloat16/claude-mem/actions/runs/42642583301/job/129247271153) passed.
 - [ ] Unreal: sounds and meshes out (so a Deep-mode rebuild needs no outside converter for them)
 
+- [x] Decode Unity EAC single-channel and dual-channel textures through the bounded picture exporter.
+      — claimed: Afloat16, branch feature/r3.9-unity-eac-textures-20261111
 - [x] Decode Unity ETC1 RGB textures through the bounded picture exporter, including both block modes and clipped edges.
       — claimed: Afloat16, branch feature/r3.9-etc1-textures-20261110
 - [x] Decode Unreal DXT3 (BC2) texture blocks, including explicit alpha and clipped edge blocks.
@@ -1659,6 +1672,8 @@ Owner: open · Status: in progress
       The [unchanged-code baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) reproduces the new regression cases.
 - [x] Decode all frames of concatenated Zstandard members and account for their combined output.
       — claimed: Afloat16, branch bugfix/r3.12-zstandard-multiple-frames
+- [x] Read concatenated XZ streams and four-byte stream padding while sharing one output budget.
+      — claimed: Afloat16, branch feature/r3.12-xz-concatenation-20261109
 - [x] SQLite TEXT values cut at the 4 KiB cap can end in a spurious U+FFFD when the cut lands
       inside a character; cut at a UTF-8/UTF-16 boundary and keep the `truncated` flag
       — tests cover a UTF-8 character, a UTF-16 surrogate pair and a UTF-16 continuation-like
@@ -1742,10 +1757,14 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-ec-named-curve-20261110
 - [x] Verify RSASSA-PSS signatures using their declared digest, mask and salt parameters, enforce PSS public-key constraints, and require signed and outer certificate parameters to agree.
       — claimed: Afloat16, branch bugfix/r3.12-rsa-pss-parameters-20261110
+- [x] Retain readable ASN.1 elements with redundant length encodings, mark non-minimal lengths, and report the not-strict-DER limitation in certificate and signature views.
+      — claimed: Afloat16, branch bugfix/r3.12-canonical-der-lengths
 - [x] Validate DER algorithm identifiers, signature and key bit strings, and name fields before using them as certificate verification inputs.
       — claimed: Afloat16, branch bugfix/r3.12-der-verification-fields
 - [x] Reject certificates whose signed signature-algorithm OID conflicts with the outer algorithm before reporting a verified signature.
       — claimed: Afloat16, branch bugfix/r3.12-certificate-signature-oids-20261110
+- [x] Decode complete BMPString and UniversalString values, legacy TeletexString as Latin-1 and the supported ASCII name strings; retain malformed or unknown values as hexadecimal DER instead of lossy text.
+      — claimed: Afloat16, branch bugfix/r3.12-certificate-name-identity
 - [x] Distinguish literal punctuation and multi-valued attributes in the displayed X.509 issuer and subject.
       — claimed: Afloat16, branch bugfix/r3.12-certificate-name-rendering
 - [x] Match CMS signer certificates by issuer and serial number or subject key identifier; leave absent matches unknown instead of selecting an unrelated certificate and chain.
@@ -1765,6 +1784,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-capture-timing-framing
 - [x] Report capped ZIP, tar and cpio member walks as incomplete firmware extraction, even when skipped directory entries hide later files.
       — claimed: Afloat16, branch bugfix/r3.12-firmware-member-scan-completeness-20261110
+- [x] Recognize Unix file modes from macOS ZIP hosts and the DOS directory attribute from VFAT hosts, preserving directory and symlink identity without a trailing slash.
+      — claimed: Afloat16, branch bugfix/r3.12-macos-vfat-directory-attributes
 - [x] Keep ZIP directory entries within the declared directory.
       — claimed: Afloat16, branch bugfix/r3.12-zip-directory-bounds-20261105
 - [x] Refuse split ZIP archives without their other volumes.
@@ -1812,6 +1833,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-evm-cbor
 - [x] Keep EVM bytecode intact when its CBOR trailer repeats a metadata key or uses a non-text map key.
       — claimed: Afloat16, branch bugfix/r3.12-evm-cbor-map-keys-20261110
+- [x] Require the selector division operand order, the Vyper memory load and the four-byte calldata threshold before reporting those dispatch patterns; invalid jump destinations retain unknown payability.
+      — claimed: Afloat16, branch bugfix/r3.12-contract-dispatch-evidence
 - [x] Require evidence of a rejecting payment branch before labelling EVM functions nonpayable; reading CALLVALUE alone accepts payments.
       — claimed: Afloat16, branch bugfix/r3.12-evm-payment-guards
 - [x] Avoid rescanning every retained EVM selector for repeated dispatcher comparisons.
@@ -1839,6 +1862,8 @@ Owner: open · Status: in progress
 - [x] Keep Android resource packages, child chunks and library records inside their enclosing declared ranges.
       — claimed: Afloat16, branch bugfix/r3.12-arsc-parent-chunk-boundaries-20261109
       Source `ea680eeb9e92`; [format checks](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895431) and [compatibility gates](https://github.com/Afloat16/claude-mem/actions/runs/42642583301/job/129247271153) passed.
+- [x] Retain carrier zero, grammatical gender, round-screen and color capabilities, and keyboard/navigation availability in resource configuration names.
+      — claimed: Afloat16, branch bugfix/r3.12-resource-device-variants
 - [x] Keep explicit script and variant subtags when grouping Android resource strings by locale.
       — claimed: Afloat16, branch bugfix/r3.12-android-script-locale
 - [x] Bound decoded Android string-pool bytes and disclose partial pools in binary XML and resource tables, so shared offsets cannot multiply a small chunk into unbounded retained strings.
@@ -2010,6 +2035,12 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-elf-version-section-bounds-20261109
 - [x] Keep PE optional-header reads within the declared header.
       — claimed: Afloat16, branch bugfix/r3.12-pe-optional-header-framing-20261105
+- [x] Bound import descriptor walks by mapped file bytes and report incomplete metadata. Normal imports keep
+      following the terminator when their declared size is short or zero; delay-load and bound metadata
+      also respect their directory sizes. Preserve the shared retained-text budget.
+      — claimed: Afloat16, branch bugfix/r3.12-pe-import-directory-bounds-20261109
+- [x] Require bound PE module and forwarder names to include their NUL terminator inside the declared directory.
+      — claimed: Afloat16, branch bugfix/r3.12-bound-import-terminators-20261111
 - [x] Use the PE image's declared header extent when an RVA is not mapped by a section.
       — claimed: Afloat16, branch bugfix/r3.12-pe-header-rva-span
 - [x] Keep PE entry points, import slots and exception function starts from wrapping image-base arithmetic into unrelated addresses.
@@ -2054,12 +2085,18 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-go-name-bytes-20261110
 - [x] Keep the report's function display limit from marking a valid large WebAssembly module as mismatched.
       — claimed: Afloat16, branch bugfix/r3.12-wasm-function-count
+- [x] Retain decoded CLI signatures with trailing data and report the unused bytes as a limitation, while keeping nested function-pointer signatures incremental.
+      — claimed: Afloat16, branch bugfix/r3.12-cli-signature-consumption-20261111
 - [x] Reject TypeSpec handles where CLI class/value-type and generic signatures require TypeDef or TypeRef, while retaining standalone TypeSpec and custom-modifier decoding.
       — claimed: Afloat16, branch bugfix/r3.12-dotnet-signature-type-handles-20261110
+- [x] Keep CLI multidimensional array ranks and bounds distinct from vector signatures.
+      — claimed: Afloat16, branch bugfix/r3.12-cli-array-shapes-20261111
 - [x] Recognize volatile type notation from required `System.Runtime.CompilerServices.IsVolatile` modifiers across the complete modifier list.
       — claimed: Afloat16, branch bugfix/r3.12-dotnet-volatile-modifiers-20261110
 - [x] Preserve complete Unicode characters in shortened .NET strings.
       — claimed: Afloat16, branch bugfix/r3.12-dotnet-user-string-surrogate-limit-20261105
+- [x] Reject CIL branch and switch destinations outside the method body without wrapping signed displacements.
+      — claimed: Afloat16, branch bugfix/r3.12-cil-branch-target-ranges-20261111
 - [x] Validate CIL method exception-section kinds, extents and complete clause records before reading exception handlers.
       — claimed: Afloat16, branch bugfix/r3.12-cil-exception-framing-20261110
 - [x] Read Dart version hashes and feature strings only from the bytes belonging to that snapshot.
@@ -2103,6 +2140,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-firmware-zip-output-budget-20261110
 - [x] Bound filesystem and archive recovery by the recorded image, node, directory and member limits.
       — claimed: Afloat16, branch bugfix/r3.12-filesystem-archive-bounds
+- [x] Recover cramfs direct block pointers, including shared uncompressed pages and length-prefixed compressed blocks.
+      — claimed: Afloat16, branch feature/r3.12-cramfs-direct-block-pointers-20261111
 - [x] Recover files and symlinks from cramfs blocks marked uncompressed while preserving mixed compressed runs and recovery limits.
       — claimed: Afloat16, branch bugfix/r3.12-cramfs-uncompressed-blocks-20261110
 - [x] Preserve ext device, socket and FIFO inode kinds without exposing their block fields as regular-file contents.
@@ -2127,6 +2166,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch refactor/r3.12-firmware-owned-payloads-20261110
 - [x] Bound and cancel CRC cpio verification across firmware probes, and reject non-hex checksum
       fields — claimed: Afloat16, branch bugfix/r3.12-bound-cpio-crc-scans-20261103
+- [x] Distinguish short block-backed ext symlinks from inline symlinks using inode allocation metadata.
+      — claimed: Afloat16, branch bugfix/r3.12-ext-block-backed-short-symlinks-20261111
 - [x] More parsers keep to the bytes they declare and refuse impossible values: signed LEB128 past
       64 bits, damaged modified UTF-8 (valid text around it survives), widened Java instructions
       and invocation operands, DEX register lists and array widths, SQLite text in the database's
@@ -2160,6 +2201,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-jar-attribute-bytes-20261110
 - [x] Merge digest attributes across repeated JAR manifest sections for the same entry, honoring later attribute values while retaining absent earlier values and checking each file once.
       — claimed: Afloat16, branch bugfix/r3.12-jar-repeated-entry-sections-20261110
+- [x] Connect class literals, method types, method handles and dynamic bootstrap arguments to their actual load or call instruction, with a shared linkage-work limit.
+      — claimed: Afloat16, branch feature/r3.12-jvm-bootstrap-references
 - [x] Find the method parameter terminator outside object type names in JVM descriptors.
       — claimed: Afloat16, branch bugfix/r3.12-java-descriptor-boundary
 - [x] Validate complete JVM switch payloads before reserving pairs, and reject duplicate or descending lookup keys instead of emitting invalid control-flow facts.
@@ -2177,6 +2220,8 @@ Owner: open · Status: in progress
       Shared-budget revision `29c48e03` passed [full Linux CI](https://github.com/storytold/craft-anything/actions/runs/41762780268).
       The merge with main `41d2175e` awaits a new CI run.
 
+- [x] Expose SVCB/HTTPS target and service parameters, SSHFP/TLSA authentication data, and NAPTR/URI/DNAME discovery values through bounded DNS answer decoding.
+      — claimed: Afloat16, branch feature/r3.12-dns-service-bindings
 - [x] Keep DNS answer names inside their declared RDATA, including compressed names and MX
       exchanges, and report malformed records as incomplete instead of inventing answer values,
       while preserving legal empty DNS UPDATE RRset prerequisites
@@ -2291,6 +2336,8 @@ Owner: open · Status: in progress
       and [layers, locks, secret scanning, wasm checks and Cargo.lock stability](https://github.com/Afloat16/claude-mem/actions/runs/42640688213/job/129240669663).
       The [unchanged-code baseline](https://github.com/Afloat16/claude-mem/actions/runs/42636776430/job/129226895582) reproduces the new regression cases.
 
+- [x] Reject duplicate GGUF metadata keys and tensor names before they overwrite metadata or inflate parameter totals.
+      — claimed: Afloat16, branch bugfix/r3.12-gguf-duplicate-identities-20261111
 - [x] Calculate GGUF quantized tensor byte ranges from their block layout and diagnose invalid row widths.
       — claimed: Afloat16, branch bugfix/r3.12-gguf-quantized-extents-20261110
 

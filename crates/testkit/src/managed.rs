@@ -78,6 +78,14 @@ impl Heaps {
         at
     }
 
+    fn signature(&mut self, data: &[u8], padded: bool) -> u32 {
+        let mut bytes = data.to_vec();
+        if padded {
+            bytes.extend_from_slice(&[0xff, 0]);
+        }
+        self.b(&bytes)
+    }
+
     fn u(&mut self, s: &str) -> u32 {
         let at = self.us.len() as u32;
         let units: Vec<u16> = s.encode_utf16().collect();
@@ -129,21 +137,26 @@ fn tiny(code: &[u8]) -> Vec<u8> {
 
 /// Build the sample assembly. `version` 1 or 2 (2 changes `Add`, adds `Multiply`, drops `MissingFn`).
 pub fn managed_assembly(version: u8) -> Vec<u8> {
-    build(version, false, false)
+    build(version, false, false, false)
+}
+
+/// The sample with trailing bytes after each complete signature, as protected assemblies may use.
+pub fn managed_assembly_with_padded_signatures(version: u8) -> Vec<u8> {
+    build(version, false, false, true)
 }
 
 /// The sample with an uncompressed `#-` tables stream whose method lists go through a MethodPtr
 /// table (identity order).
 pub fn managed_assembly_with_ptr_tables(version: u8) -> Vec<u8> {
-    build(version, false, true)
+    build(version, false, true, false)
 }
 
 /// The same sample with 4-byte heap indexes and the extra-data flag (HeapSizes `0x47`).
 pub fn managed_assembly_wide_heaps(version: u8) -> Vec<u8> {
-    build(version, true, false)
+    build(version, true, false, false)
 }
 
-fn build(version: u8, wide: bool, ptr: bool) -> Vec<u8> {
+fn build(version: u8, wide: bool, ptr: bool, padded: bool) -> Vec<u8> {
     let v2 = version >= 2;
     let mut h = Heaps::new();
     let mut tables: BTreeMap<u8, Vec<Vec<u32>>> = BTreeMap::new();
@@ -232,7 +245,7 @@ fn build(version: u8, wide: bool, ptr: bool) -> Vec<u8> {
     let mut method_rows = Vec::new();
     for m in calc_methods.iter().chain(native_methods.iter()) {
         let name = h.s(m.name);
-        let sig = h.b(&m.sig);
+        let sig = h.signature(&m.sig, padded);
         method_rows.push(vec![m.rva, m.impl_flags, m.flags, name, sig, param_row]);
         for (i, p) in m.params.iter().enumerate() {
             let pn = h.s(p);
@@ -260,20 +273,20 @@ fn build(version: u8, wide: bool, ptr: bool) -> Vec<u8> {
 
     // Fields.
     let total = h.s("_total");
-    let fsig = h.b(&[0x06, 0x08]);
+    let fsig = h.signature(&[0x06, 0x08], padded);
     add(0x04, vec![0x1, total, fsig]);
     let verbose = h.s("Verbose");
-    let bsig = h.b(&[0x06, 0x02]);
+    let bsig = h.signature(&[0x06, 0x02], padded);
     add(0x04, vec![0x6, verbose, bsig]);
 
     // Member references.
     let wl = h.s("WriteLine");
-    let wls = h.b(&[0, 1, 0x01, 0x0e]);
+    let wls = h.signature(&[0, 1, 0x01, 0x0e], padded);
     add(0x0a, vec![(2 << 3) | 1, wl, wls]);
     let ctor = h.s(".ctor");
-    let ctor_sig = h.b(&[0x20, 0, 0x01]);
+    let ctor_sig = h.signature(&[0x20, 0, 0x01], padded);
     add(0x0a, vec![(1 << 3) | 1, ctor, ctor_sig]);
-    let tfa_sig = h.b(&[0x20, 1, 0x01, 0x0e]);
+    let tfa_sig = h.signature(&[0x20, 1, 0x01, 0x0e], padded);
     add(0x0a, vec![(3 << 3) | 1, ctor, tfa_sig]);
 
     // [assembly: TargetFramework(".NETCoreApp,Version=v8.0", FrameworkDisplayName = ".NET 8.0")]
@@ -285,7 +298,7 @@ fn build(version: u8, wide: bool, ptr: bool) -> Vec<u8> {
     let cab = h.b(&ca);
     add(0x0c, vec![(1 << 5) | 14, (3 << 3) | 3, cab]);
 
-    let locals = h.b(&[0x07, 1, 0x08]);
+    let locals = h.signature(&[0x07, 1, 0x08], padded);
     add(0x11, vec![locals]);
     let craft = h.s(NATIVE_MODULE);
     add(0x1a, vec![craft]);
