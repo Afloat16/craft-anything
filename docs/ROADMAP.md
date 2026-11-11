@@ -1567,6 +1567,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.11-standin-redacted-budget-20261103b
       Revision `d601bc4e` passed [full Linux CI](https://github.com/storytold/craft-anything/actions/runs/41788735130):
       all four retained-budget regressions and six deduplication regressions passed.
+- [x] Preserve every observation when comparing evidence bundles, including repeated operation/subject records and identical-record multiplicity.
+      — claimed: Afloat16, branch bugfix/r3.11-bundle-record-multiplicity-20261110
 - [x] Read only regular files for binary, text and evidence-bundle inputs, enforce whole-file byte caps while reading, and hash prefixes only after EOF instead of trusting a prior size report.
       — claimed: Afloat16, branch bugfix/r3.11-bounded-file-inputs-20261110
 - [x] A text source (a script, Markdown) had no tool that reads it as text outside a build (#539):
@@ -1592,8 +1594,6 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Refuse JFFS2 data nodes whose decoded length disagrees with their declared extent, keeping corruption out of recovered files.
-      — claimed: Afloat16, branch bugfix/r3.12-jffs2-decoded-node-lengths-20261111
 - [x] Mark Python code inventories as cut short whenever a name or constant is shortened, and count truncation markers in the retained-text budget.
       — claimed: Afloat16, branch bugfix/r3.12-pyc-truncated-text-evidence-20261110
 - [x] Keep worker, service-worker and utility-process entry modules in their own execution role instead of inheriting the parent role through spawn edges.
@@ -2101,6 +2101,8 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.12-cramfs-hole-blocks-20261110
 - [x] Charge firmware ZIP outputs before decoding the next member, so byte and file limits bound retained member data.
       — claimed: Afloat16, branch bugfix/r3.12-firmware-zip-output-budget-20261110
+- [x] Refuse JFFS2 data nodes whose decoded length disagrees with their declared extent, keeping corruption out of recovered files.
+      — claimed: Afloat16, branch bugfix/r3.12-jffs2-decoded-node-lengths-20261111
 - [x] Bound filesystem and archive recovery by the recorded image, node, directory and member limits.
       — claimed: Afloat16, branch bugfix/r3.12-filesystem-archive-bounds
 - [x] Recover files and symlinks from cramfs blocks marked uncompressed while preserving mixed compressed runs and recovery limits.

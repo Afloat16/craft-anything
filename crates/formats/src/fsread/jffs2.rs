@@ -219,7 +219,7 @@ fn reassemble(inode: &Inode, limits: &Limits, img: &mut FsImage) -> Option<Vec<u
                 Err(_) => {
                     img.warn("jffs2: a zlib data node did not inflate");
                     img.complete = false;
-                    continue;
+                    return None;
                 }
             },
             _ => {
@@ -228,6 +228,14 @@ fn reassemble(inode: &Inode, limits: &Limits, img: &mut FsImage) -> Option<Vec<u
                 continue;
             }
         };
+        // dsize describes the decoded node, independently of the file's final size.
+        // A short decode must not leave fabricated zeros or older bytes in its extent;
+        // an overlong raw node must not overwrite the following extent.
+        if chunk.len() as u64 != u64::from(node.dsize) {
+            img.warn("jffs2: a data node's decoded length disagrees with its declared extent");
+            img.complete = false;
+            return None;
+        }
         let off = node.offset as usize;
         let end = off.saturating_add(chunk.len()).min(out.len());
         if off < out.len()
