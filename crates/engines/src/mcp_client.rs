@@ -541,5 +541,5 @@ mod tests {
             lines.push(String::from_utf8(line.clone()).unwrap());
         }
         assert_eq!(lines, ["\u{feff}data: 你好", "", "data: last", "", "end"]);
-  }
+    }
 }
