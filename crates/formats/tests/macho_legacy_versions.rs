@@ -53,12 +53,9 @@ fn legacy_tv_and_watch_versions_reach_the_binary_view() {
 #[test]
 fn legacy_command_labels_agree_in_both_views() {
     for is64 in [false, true] {
-        for (command, name) in [
-            (0x24, "LC_VERSION_MIN_MACOSX"),
-            (0x25, "LC_VERSION_MIN_IPHONEOS"),
-            (0x2f, "LC_VERSION_MIN_TVOS"),
-            (0x30, "LC_VERSION_MIN_WATCHOS"),
-        ] {
+        for (command, name) in
+            [(0x24, "LC_VERSION_MIN_MACOSX"), (0x25, "LC_VERSION_MIN_IPHONEOS"), (0x2f, "LC_VERSION_MIN_TVOS"), (0x30, "LC_VERSION_MIN_WATCHOS")]
+        {
             let data = image(is64, &[version_command(command, 0x0009_0302, 0x000a_0405)]);
             let binary = parse_binary(&data).unwrap();
             let dependencies = macho_deps::parse_thin(&data).unwrap();
