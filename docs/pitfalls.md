@@ -506,6 +506,15 @@ when a header is renamed or blanked.
 
 ## Design
 
+**A floating-point conversion changed a fingerprint.** Widening a single-precision NaN to a double
+can change its sign, payload or signaling bit. Keep the original encoded bits for identities, and
+test signaling/quiet pairs as well as different payloads; retain numeric conversion for display.
+
+**A canonical-length check hid readable signature facts.** Rejecting a redundant ASN.1 length
+made its certificate or signature disappear from the report. Keep a bounded, readable element,
+mark its non-minimal encoding, and carry that limitation into every signature view. Test retained
+metadata and the warning together; encoding conformance and cryptographic verification are separate facts.
+
 **An unknown header bit hid readable code.** Rejecting undefined `.pyc` flag bits made the whole
 file unreadable, dropping its code, names and constants from reports. A reader collecting evidence
 must preserve fields and payload it can still understand: report the unknown bits as a warning,

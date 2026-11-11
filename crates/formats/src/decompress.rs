@@ -298,6 +298,15 @@ pub fn zstd(mut input: &[u8], max_out: u64) -> Result<Vec<u8>, DecompressError> 
 /// Decompress one raw LZ4 block (no frame) that inflates to exactly `out_len` bytes, as Unity
 /// bundles store them.
 pub fn lz4_block(input: &[u8], out_len: usize) -> Result<Vec<u8>, DecompressError> {
+    let out = lz4_block_capped(input, out_len)?;
+    if out.len() != out_len {
+        return Err(DecompressError::Truncated);
+    }
+    Ok(out)
+}
+
+/// Decode one raw LZ4 block when its output size is an upper bound, as in SquashFS metadata.
+pub(crate) fn lz4_block_capped(input: &[u8], out_len: usize) -> Result<Vec<u8>, DecompressError> {
     let mut out = Vec::with_capacity(out_len.min(64 << 20));
     let mut i = 0usize;
     let byte = |i: &mut usize| -> Result<u8, DecompressError> {
@@ -350,9 +359,6 @@ pub fn lz4_block(input: &[u8], out_len: usize) -> Result<Vec<u8>, DecompressErro
             out.extend_from_within(start..start + count);
             remaining -= count;
         }
-    }
-    if out.len() != out_len {
-        return Err(DecompressError::Truncated);
     }
     Ok(out)
 }

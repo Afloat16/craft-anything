@@ -323,6 +323,9 @@ pub struct Instr {
     pub opcode: &'static str,
     pub kind: OperandKind,
     pub operand: Operand,
+    /// Original `ldc.r4` bits, before widening can change a NaN's sign or payload.
+    #[serde(skip)]
+    pub float32_bits: Option<u32>,
 }
 
 /// Why decoding stopped early.
@@ -370,6 +373,7 @@ pub fn decode(code: &[u8], max: usize) -> (Vec<Instr>, Option<DecodeIssue>) {
         };
         let trunc = || Some(DecodeIssue { offset: start as u32, reason: format!("operand of {name} runs past the body") });
         let destination = || Some(DecodeIssue { offset: start as u32, reason: format!("destination of {name} lies outside the method body") });
+        let mut float32_bits = None;
         let operand = match kind {
             K::None => Operand::None,
             K::ShortI => match r.u8(pc) {
@@ -393,7 +397,10 @@ pub fn decode(code: &[u8], max: usize) -> (Vec<Instr>, Option<DecodeIssue>) {
                 None => return (out, trunc()),
             },
             K::ShortR => match r.u32_le(pc) {
-                Some(v) => Operand::Float(f64::from(f32::from_bits(v))),
+                Some(v) => {
+                    float32_bits = Some(v);
+                    Operand::Float(f64::from(f32::from_bits(v)))
+                }
                 None => return (out, trunc()),
             },
             K::R => match r.u64_le(pc) {
@@ -429,7 +436,7 @@ pub fn decode(code: &[u8], max: usize) -> (Vec<Instr>, Option<DecodeIssue>) {
                     targets.push(target);
                 }
                 pc = end;
-                out.push(Instr { offset: start as u32, opcode: name, kind, operand: Operand::Targets(targets) });
+                out.push(Instr { offset: start as u32, opcode: name, kind, operand: Operand::Targets(targets), float32_bits });
                 continue;
             }
             K::Method | K::Field | K::Type | K::Tok | K::String | K::Sig => match r.u32_le(pc) {
@@ -438,14 +445,15 @@ pub fn decode(code: &[u8], max: usize) -> (Vec<Instr>, Option<DecodeIssue>) {
             },
         };
         pc += kind.size();
-        out.push(Instr { offset: start as u32, opcode: name, kind, operand });
+        out.push(Instr { offset: start as u32, opcode: name, kind, operand, float32_bits });
     }
     (out, None)
 }
 
 /// SHA-256 over `[opcode, operand_kind, operand]` tuples (tokens as `0x%08x`, branches as target
 /// offsets), so the identity survives renames and re-layout of the heaps. Nonfinite floats use
-/// their decoded IEEE-754 bits because JSON numbers cannot represent them without losing identity.
+/// IEEE-754 bits because JSON numbers cannot represent them without losing identity. Single-precision
+/// NaNs use their original operand bits, independent of changes made by widening them for display.
 pub fn normalized_hash(instrs: &[Instr]) -> String {
     let mut h = Sha256::new();
     h.update(b"[");
@@ -456,7 +464,10 @@ pub fn normalized_hash(instrs: &[Instr]) -> String {
         let operand = match &ins.operand {
             Operand::None => "null".to_string(),
             Operand::Int(v) => v.to_string(),
-            Operand::Float(f) if !f.is_finite() => format!("\"f64:0x{:016x}\"", f.to_bits()),
+            Operand::Float(f) if !f.is_finite() => match (f.is_nan(), ins.float32_bits) {
+                (true, Some(bits)) => format!("\"f32:0x{bits:08x}\""),
+                _ => format!("\"f64:0x{:016x}\"", f.to_bits()),
+            },
             Operand::Float(f) => serde_json::to_string(f).unwrap_or_else(|_| "null".into()),
             Operand::Targets(t) => format!("[{}]", t.iter().map(u32::to_string).collect::<Vec<_>>().join(",")),
             Operand::Token(t) => format!("\"0x{t:08x}\""),
