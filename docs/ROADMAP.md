@@ -1637,7 +1637,7 @@ Owner: open · Status: in progress
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
-- [ ] Reduce per-byte CRC-32 work in archive-member verification with a fixed lookup while preserving checksums and validation results.
+- [x] Reduce per-byte CRC-32 work in archive-member verification with a fixed lookup while preserving checksums and validation results.
       — claimed: Afloat16, branch bugfix/r3.12-zip-crc32-byte-lookup-20261111
 - [x] Bound expanded source-map inventories by retained path bytes and entries before allocation, preserving bounded prefixes and reporting truncation.
       — claimed: Afloat16, branch bugfix/r3.12-source-inventory-budget-20261111
