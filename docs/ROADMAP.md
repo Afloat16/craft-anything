@@ -1502,6 +1502,8 @@ Owner: open · Status: in progress
 
 ### R3.11 Single-file apps, game files and stand-in backends
 Owner: open · Status: in progress
+- [x] Bound native value-flow decoding and incoming parameter nodes by the requested graph node budget, and mark omitted code as partial.
+      — claimed: Afloat16, branch bugfix/r3.11-value-flow-budget-20261110
 - [x] Preserve AArch64 exclusive-memory status results and paired load definitions without presenting them as unconditional stores.
       — claimed: Afloat16, branch bugfix/r3.11-a64-exclusive-value-flow-20261110
 - [x] Validate the remaining loopback fixture corrections for complete and fragmented request
