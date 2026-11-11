@@ -10,7 +10,6 @@
 //! - webpack module parameters `(e, t, n)` → `(module, exports, __webpack_require__)`, using scope
 //!   analysis so every reference is renamed and nothing is captured.
 
-use crate::lex::{TokKind, tokenize};
 use crate::model::BundleModule;
 use crate::util::slice;
 use crate::{JsError, Limits, admit, guarded, parse_options, source_type_for};
@@ -174,17 +173,16 @@ fn rename_params(params: &[String], body: &str, targets: &[&str]) -> Option<(Str
     let scoping = sem.scoping();
     let Some(Statement::ExpressionStatement(es)) = ret.program.body.first() else { return None };
     let Expression::FunctionExpression(f) = es.expression.get_inner_expression() else { return None };
-    // Names already used as identifiers anywhere in the body can't be taken.
-    let (tokens, _) = tokenize(body, 5_000_000);
-    // Property names after `.`/`?.` are not references and don't count.
-    let mut used: std::collections::HashSet<&str> = std::collections::HashSet::new();
-    let mut prev_dot = false;
-    for t in tokens.iter().filter(|t| t.kind != TokKind::Comment) {
-        if t.kind == TokKind::Ident && !prev_dot {
-            used.insert(t.text);
-        }
-        prev_dot = t.kind == TokKind::Punct && (t.text == "." || t.text == "?.");
-    }
+    // Semantic names include Unicode escapes; static property names are not bindings or references.
+    let used: std::collections::HashSet<&str> = sem
+        .nodes()
+        .iter()
+        .filter_map(|node| match node.kind() {
+            AstKind::BindingIdentifier(id) => Some(id.name.as_str()),
+            AstKind::IdentifierReference(id) => Some(id.name.as_str()),
+            _ => None,
+        })
+        .collect();
     let mut edits = Vec::new();
     let mut renames = Vec::new();
     for (i, item) in f.params.items.iter().enumerate() {
