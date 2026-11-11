@@ -730,7 +730,7 @@ Owner: open · Status: in progress
 - [ ] More pins once their hashes are checked against the publisher: Chromium (no published
       checksums found yet), Rizin for Linux (the tar.xz unpacks to ~800 MB, so it needs streaming
       extraction) and macOS (a .pkg)
-- [ ] Attribute GDB command results only to their matching MI token, so a late reply
+- [x] Attribute GDB command results only to their matching MI token, so a late reply
       after a timeout or cancellation cannot change the next command's result or error.
       — claimed: Afloat16, branch bugfix/r1.5-gdb-result-tokens-20261111
 
