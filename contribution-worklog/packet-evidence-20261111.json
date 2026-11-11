@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "repo": "storytold/craft-anything",
+  "branch": "bugfix/r3.12-packet-evidence-completeness-20261111",
+  "base": "adeddc9149b97c21e595e743c9875d84e805eece",
+  "claim": "2f77a0504a945dee13583e1b893356710189f741",
+  "head": "b171ee291d98b86c137e2e02093fc181bd96db52",
+  "state": "implementation_published_validation_pending",
+  "actual_pr": false,
+  "merged": false,
+  "scope": "Propagate capture, flow and inventory incompleteness through all three packet evidence tools; do not count incomplete tshark TSV records after the existing stdout cap.",
+  "source_files": [
+    "crates/engine/src/tools/packet_tools.rs",
+    "crates/engine/tests/packet_evidence_completeness.rs"
+  ],
+  "dedupe": {
+    "rejected_candidate": "pcapng if_tsoffset already merged in #397; timestamp/record budget corrections already merged in #1091",
+    "checked_related_prs": [
+      397,
+      421,
+      433,
+      514,
+      714,
+      722,
+      884,
+      986,
+      1091,
+      1247
+    ],
+    "searches": [
+      "is:pr \"pcap\" \"coverage\":29 reviewed source-compatible hits",
+      "is:pr \"caps_hit\":0",
+      "is:pr \"tshark_output_capped\":0",
+      "is:issue \"packet\" \"coverage\":0",
+      "is:pr \"inventory\" \"partial\":9 unrelated hits"
+    ]
+  },
+  "planned_validation": {
+    "focused_tests": 13,
+    "native_tests": 5,
+    "actual_limits": {
+      "packets": 5000000,
+      "flows": 100000,
+      "inventory_values": 10000,
+      "tshark_output_bytes": 67108864
+    },
+    "baseline_expected": "10 focused failures / 3 complete-boundary controls; 3 native failures / 2 controls",
+    "gates": [
+      "full engine/formats/testkit",
+      "fmt",
+      "strict all-target Clippy",
+      "layers",
+      "locks",
+      "secrets",
+      "Wasm"
+    ],
+    "native_scope": "Official libpcap file API writes classic pcap, reads it and independently verifies generated pcapng; the real tshark binary was not installed or run."
+  },
+  "publication": "Do not retry the previously rejected craft PR permission action; prepare a complete prefilled compare URL after required validation.",
+  "validation_runs": [
+    {
+      "id": 43054523894,
+      "url": "https://github.com/Afloat16/billion-context/actions/runs/43054523894",
+      "head": "b171ee291d98b86c137e2e02093fc181bd96db52",
+      "conclusion": "failure",
+      "passed": [
+        "Rust1.99 setup",
+        "cargo fmt --all -- --check"
+      ],
+      "blocker": "Official signed Ubuntu package setup could not resolve archive.ubuntu.com; native fixtures, regressions and remaining gates did not run."
+    },
+    {
+      "id": 43055226582,
+      "url": "https://github.com/Afloat16/billion-context/actions/runs/43055226582",
+      "carrier": "17489fac8cc4ee1ec98070f5174efab4e847c88b",
+      "head": "b171ee291d98b86c137e2e02093fc181bd96db52",
+      "conclusion": "in_progress",
+      "passed_steps": [
+        "fmt",
+        "baseline/fixed focused comparison",
+        "full engine/formats/testkit suites"
+      ],
+      "remaining": [
+        "strict Clippy",
+        "contracts",
+        "Wasm",
+        "source identity"
+      ]
+    }
+  ],
+  "native_validation": {
+    "run": 43056191802,
+    "url": "https://github.com/Afloat16/billion-context/actions/runs/43056191802",
+    "carrier": "ee84609503f1dd5f286664bd359c04acb71f7a3e",
+    "head": "b171ee291d98b86c137e2e02093fc181bd96db52",
+    "conclusion": "in_progress",
+    "libpcap_sha": "bbcbc9174df3298a854daee2b3e666a4b6e5383a",
+    "libpcap_tag": "libpcap-1.10.5",
+    "passed_steps": [
+      "fixed libpcap file-only build",
+      "native write/read bytes, lengths, timestamps, link type, endpoints and damaged prefix checks"
+    ],
+    "remaining": [
+      "baseline/fixed native consumer comparison",
+      "source identity"
+    ],
+    "real_tshark_run": false
+  }
+}
