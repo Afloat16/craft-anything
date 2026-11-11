@@ -1508,8 +1508,6 @@ Owner: open · Status: in progress
       — claimed: Afloat16, branch bugfix/r3.11-a64-exclusive-value-flow-20261110
 - [x] Keep the first 100000 byte-search matches in file-offset order across hex, UTF-8 and UTF-16LE queries, including capped pages.
       — claimed: Afloat16, branch bugfix/r3.11-byte-search-match-order-20261110
-- [ ] Keep text-read coverage partial when a line was cut, even when that line is the last one in the file.
-      — claimed: Afloat16, branch bugfix/r3.11-cut-text-coverage-20261110
 - [x] Validate the remaining loopback fixture corrections for complete and fragmented request
       headers, negative probes and stand-in cancellation on the current main
       — claimed: Afloat16, branch test/loopback-fixture-stability-20261103
@@ -1566,6 +1564,8 @@ Owner: open · Status: in progress
       (Deep only) reads it paged by lines with coverage, counts invalid bytes and cuts long lines;
       triage names it for a text file it doesn't otherwise recognise
       — claimed: chordpli, branch feature/r3.11-text-source-read
+- [x] Keep text-read coverage partial when a line was cut, even when that line is the last one in the file.
+      — claimed: Afloat16, branch bugfix/r3.11-cut-text-coverage-20261110
 - [x] Live-check #539 in an agent chat (Codex, as reported, and Claude Code): the agent reaches
       `core_text_read` for a script or Markdown target, instead of searching bytes. On macOS with
       `chat --deep` and a `.md` or `.ps1` target: Claude Code 2.1.322 (`.md`) called triage and
