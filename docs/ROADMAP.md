@@ -1083,7 +1083,7 @@ Owner: open · Status: in progress
       persisted unknowns and an explicit usable-build summary; no builder retries for a missing oracle
 - [ ] Give console run comparisons a numeric-output oracle when needed: word likeness drops
       single-character tokens, so bare `4.5` and `9.0` both compare as empty output
-- [ ] Compare console output's numeric spelling and order at positions stable across two
+- [x] Compare console output's numeric spelling and order at positions stable across two
       original runs, and explain when varying numbers or unavailable repeats limit comparison
       — claimed: Afloat16, branch bugfix/r2.5-console-numeric-results-20261111
 - [ ] Behaviour checks that use the sheet: run the build with scripted input and measure values

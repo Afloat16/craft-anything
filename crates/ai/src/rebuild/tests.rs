@@ -2797,6 +2797,35 @@ fn check_worker(ws: &Workspace, deep: bool) -> Worker {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn console_study_keeps_two_real_observations_for_each_input() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tempfile::tempdir().unwrap();
+    let program = d.path().join("counter-tool");
+    std::fs::write(
+        &program,
+        "#!/bin/sh\nn=0\nif [ -f run-count.txt ]; then read -r n < run-count.txt; fi\nn=$((n + 1))\nprintf '%s\\n' \"$n\" > run-count.txt\nprintf 'Result 42 completed in %s ms\\n' \"$n\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let ws = Workspace::create(d.path(), "Counter", "Rebuild this console tool", TargetRef::Local { path: program.clone() }).unwrap();
+    let worker = check_worker(&ws, true);
+    worker.capture_runs(&program, &ws.capture_dir()).unwrap();
+    let records = kinds::runs::captured(&ws);
+    assert_eq!(records.len(), kinds::runs::CASES.len());
+    assert_eq!(std::fs::read_to_string(d.path().join("run-count.txt")).unwrap().trim(), "6");
+    for record in records {
+        assert_eq!(record["reason"], "exited");
+        assert_eq!(record["repeat"]["reason"], "exited");
+        assert_ne!(record["lines"], record["repeat"]["lines"]);
+        let built = json!({"reason":"exited", "exit_code":0, "lines":["Result 42 completed in 999 ms"]});
+        assert!(kinds::runs::run_claims(&record, &built, &[]).iter().all(|c| c.passed));
+        let wrong = json!({"reason":"exited", "exit_code":0, "lines":["Result -42 completed in 999 ms"]});
+        assert!(!kinds::runs::run_claims(&record, &wrong, &[])[1].passed);
+    }
+}
+
 #[test]
 fn a_check_that_worked_stands_while_nothing_it_looks_at_changes() {
     use craft_anything_engine::workspace::progress::CheckedBuild;
