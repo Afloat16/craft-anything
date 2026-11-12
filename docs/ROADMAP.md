@@ -1554,6 +1554,7 @@ Gaps found while using the app for real projects.
 - [ ] A config.toml that can't be read for a moment at startup (a virus scan or another program
       holding it) isn't tried again, so the whole session runs on defaults and refuses every save:
       try the read again for a short while before giving up
+      — claimed: Afloat16, branch bugfix/r2.9-config-read-retry-20261112
 
 ### R2.10 Pinned builds
 Owner: maintainers · Status: in progress
