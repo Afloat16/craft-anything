@@ -1730,6 +1730,7 @@ Owner: open · Status: in progress
       — claimed: hichang4u, branch bugfix/r3.11-walk-limits
 - [ ] `walk_dir` still reads each `.gitignore` whole, whatever its size: cap it like other input
       reads and say when one was skipped
+      — claimed: Afloat16, branch bugfix/r3.11-bounded-gitignore-reads-20261112
 - [ ] The walk's limits are chosen, not measured (4,000,000 entries at most, 256 path bytes an
       entry): time a walk at the ceiling on a real disk and measure what it holds
 
