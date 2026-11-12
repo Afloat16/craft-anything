@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Blocks above this are listed linearly with labels instead of being structured.
 const MAX_STRUCTURED_BLOCKS: usize = 1500;
 const MAX_DEPTH: usize = 64;
+const MAX_DOMINATOR_ROUNDS: usize = 200;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Pseudo {
@@ -712,8 +713,8 @@ fn cond_negate_text(c: &str) -> String {
     format!("!({c})")
 }
 
-/// Bitset-backed dominator sets.
-fn dominators(n: usize, entry: usize, preds: &[Vec<usize>]) -> Vec<Vec<u64>> {
+/// Bitset-backed dominator sets. Unfinished sets cannot prove loops or joins.
+fn dominators(n: usize, entry: usize, preds: &[Vec<usize>]) -> Option<Vec<Vec<u64>>> {
     let words = n.div_ceil(64);
     let full = vec![u64::MAX; words];
     let mut dom: Vec<Vec<u64>> = vec![full; n];
@@ -723,7 +724,7 @@ fn dominators(n: usize, entry: usize, preds: &[Vec<usize>]) -> Vec<Vec<u64>> {
     }
     let mut changed = true;
     let mut rounds = 0;
-    while changed && rounds < 200 {
+    while changed && rounds < MAX_DOMINATOR_ROUNDS {
         changed = false;
         rounds += 1;
         for b in 0..n {
@@ -752,7 +753,7 @@ fn dominators(n: usize, entry: usize, preds: &[Vec<usize>]) -> Vec<Vec<u64>> {
             }
         }
     }
-    dom
+    (!changed).then_some(dom)
 }
 
 fn set(v: &mut [u64], i: usize) {
@@ -788,7 +789,7 @@ struct Graph {
     loops: BTreeMap<usize, (BTreeSet<usize>, Option<usize>)>,
 }
 
-fn build_graph(f: &Function) -> Graph {
+fn build_graph(f: &Function) -> Option<Graph> {
     let n = f.blocks.len();
     let starts: Vec<u64> = f.blocks.iter().map(|b| b.start).collect();
     let index: BTreeMap<u64, usize> = starts.iter().enumerate().map(|(i, s)| (*s, i)).collect();
@@ -802,7 +803,7 @@ fn build_graph(f: &Function) -> Graph {
         }
     }
     let entry = index.get(&f.entry).copied().unwrap_or(0);
-    let dom = dominators(n, entry, &preds);
+    let dom = dominators(n, entry, &preds)?;
     // Post-dominators: reverse graph with a virtual exit (index n).
     let mut rpreds: Vec<Vec<usize>> = succs.clone();
     for (i, ss) in succs.iter().enumerate() {
@@ -813,7 +814,7 @@ fn build_graph(f: &Function) -> Graph {
         }
     }
     rpreds.push(Vec::new());
-    let pdom = dominators(n + 1, n, &rpreds);
+    let pdom = dominators(n + 1, n, &rpreds)?;
     let idom = (0..n).map(|b| immediate(&dom, n, b)).collect();
     let ipdom = (0..n).map(|b| immediate(&pdom, n + 1, b).filter(|&d| d < n)).collect();
     // Natural loops from back edges u → h where h dominates u.
@@ -843,7 +844,7 @@ fn build_graph(f: &Function) -> Graph {
             .filter(|p| !body.contains(p))
             .or_else(|| exits.iter().min_by_key(|&&e| starts.get(e).copied().unwrap_or(0)).copied());
     }
-    Graph { starts, succs, idom, ipdom, dom, loops }
+    Some(Graph { starts, succs, idom, ipdom, dom, loops })
 }
 
 enum Edge {
@@ -883,6 +884,10 @@ impl Emitter<'_> {
 
     fn goto(&mut self, indent: usize, b: usize) {
         let s = self.g.starts.get(b).copied().unwrap_or(0);
+        self.goto_address(indent, s);
+    }
+
+    fn goto_address(&mut self, indent: usize, s: u64) {
         self.labels.insert(s);
         self.gotos += 1;
         self.push(indent, format!("goto label_{s:x};"));
@@ -1222,12 +1227,46 @@ pub fn lift(img: &Image, prog: &Program, f: &Function, names: &dyn Fn(u64) -> Op
             lifter.block(v, edge)
         })
         .collect();
-    let structured_ok = n <= MAX_STRUCTURED_BLOCKS;
-    let graph = if structured_ok {
-        build_graph(f)
+    let starts: BTreeSet<u64> = f.blocks.iter().map(|b| b.start).collect();
+    let noreturn_sites: BTreeSet<u64> = f.calls.iter().filter(|call| prog.call_is_noreturn(call)).map(|call| call.site).collect();
+    let stops_at_call = |i: &Insn| i.cond.is_none() && noreturn_sites.contains(&i.addr);
+    let partial_blocks = per_block.iter().zip(&f.blocks).filter(|(insns, block)| insns.last().is_none_or(|i| i.end() != block.end)).count();
+    // Function analysis only retains successors it decoded. A missing conditional arm is
+    // still an edge: omitting it would turn a branch into fallthrough or an infinite loop.
+    let missing_edges = per_block.iter().filter_map(|insns| insns.last()).any(|i| match i.flow {
+        Flow::Cond { target } => !starts.contains(&target) || !starts.contains(&i.end()),
+        Flow::Jump { target } => !f.tail_calls.contains(&target) && !starts.contains(&target),
+        Flow::Next | Flow::Call { .. } | Flow::IndirectCall { .. } => !stops_at_call(i) && !starts.contains(&i.end()),
+        _ => false,
+    });
+    let mut fallback_reason = if n > MAX_STRUCTURED_BLOCKS {
+        Some(format!("{n} blocks is above the structuring limit"))
+    } else if partial_blocks > 0 {
+        Some("some block instructions could not be lifted".into())
+    } else if f.truncated || missing_edges {
+        Some("control flow leaves the available decoded block graph".into())
     } else {
-        Graph { starts: f.blocks.iter().map(|b| b.start).collect(), succs: vec![], idom: vec![], ipdom: vec![], dom: vec![], loops: BTreeMap::new() }
+        None
     };
+    let graph = if fallback_reason.is_none() { build_graph(f) } else { None };
+    let structured_ok = graph.is_some();
+    if !structured_ok && fallback_reason.is_none() {
+        fallback_reason = Some(format!("dominator or post-dominator sets did not converge within {MAX_DOMINATOR_ROUNDS} rounds"));
+    }
+    if partial_blocks > 0 {
+        limitations.push((
+            "instructions_not_lifted".into(),
+            format!("{partial_blocks} blocks reached a decoding/lifting limit; unlifted instructions remain unknown"),
+        ));
+    }
+    let graph = graph.unwrap_or_else(|| Graph {
+        starts: f.blocks.iter().map(|b| b.start).collect(),
+        succs: vec![],
+        idom: vec![],
+        ipdom: vec![],
+        dom: vec![],
+        loops: BTreeMap::new(),
+    });
     let mut emitter = Emitter {
         g: &graph,
         code: &codes,
@@ -1248,18 +1287,32 @@ pub fn lift(img: &Image, prog: &Program, f: &Function, names: &dyn Fn(u64) -> Op
             }
         }
     } else {
-        limitations.push(("not_structured".into(), format!("{n} blocks is above the structuring limit; shown as labelled blocks with gotos")));
+        limitations.push((
+            "not_structured".into(),
+            format!("{}; shown as labelled blocks with gotos", fallback_reason.as_deref().unwrap_or("control-flow structure is unavailable")),
+        ));
         for (i, b) in f.blocks.iter().enumerate() {
             let first = emitter.lines.len();
             for s in codes.get(i).map(|c| c.stmts.clone()).unwrap_or_default() {
                 emitter.push(1, s);
             }
-            if let Some(c) = codes.get(i)
-                && let (Some(cond), Some(t)) = (&c.cond, c.taken)
-            {
-                emitter.labels.insert(t);
-                emitter.gotos += 1;
-                emitter.push(1, format!("if ({cond}) goto label_{t:x};"));
+            if let Some(last) = per_block.get(i).and_then(|insns| insns.last()) {
+                match last.flow {
+                    Flow::Cond { target } => {
+                        let cond = codes.get(i).and_then(|c| c.cond.as_deref()).unwrap_or("/* condition */ flags");
+                        emitter.labels.insert(target);
+                        emitter.gotos += 1;
+                        emitter.push(1, format!("if ({cond}) goto label_{target:x};"));
+                        emitter.goto_address(1, last.end());
+                    }
+                    Flow::Jump { target } if !f.tail_calls.contains(&target) => emitter.goto_address(1, target),
+                    Flow::Next | Flow::Call { .. } | Flow::IndirectCall { .. } if !stops_at_call(last) => {
+                        emitter.goto_address(1, last.end());
+                    }
+                    _ => {}
+                }
+            } else {
+                emitter.push(1, format!("/* instructions at {:#x} could not be decoded */", b.start));
             }
             if emitter.lines.len() == first {
                 emitter.push(1, ";");
@@ -1273,6 +1326,13 @@ pub fn lift(img: &Image, prog: &Program, f: &Function, names: &dyn Fn(u64) -> Op
     let _ = (&graph.idom, &graph.dom);
     if emitter.pending_label.is_some() {
         emitter.push(1, ";");
+    }
+    let unresolved = emitter.labels.iter().filter(|address| !starts.contains(address)).count();
+    if unresolved > 0 {
+        limitations.push((
+            "unresolved_blocks".into(),
+            format!("{unresolved} branch or continuation targets are not present in this lifted function; their labelled jumps are retained"),
+        ));
     }
     let mut lines = std::mem::take(&mut emitter.lines);
     simplify(&mut lines);

@@ -1702,7 +1702,7 @@ Owner: open · Status: in progress
 - [x] Fold an AArch64 MOVZ/MOVK sequence into one constant in pseudo-C: `mov w9, #0x2493` then
       `movk w9, #0x9249, lsl #16` reads as two statements, not `w9 = 0x92492493;`
       — claimed: Jensen-Yao, branch bugfix/r3.11-a64-movz-movk-constants
-- [ ] Keep pseudo-C control flow explicit when structuring is unavailable: require complete,
+- [x] Keep pseudo-C control flow explicit when structuring is unavailable: require complete,
       converged graph proofs and preserve taken, fallthrough and unconditional edges in
       labelled output, including analysis limits.
       — claimed: Afloat16, branch bugfix/r3.11-honest-linear-control-flow-20261112
