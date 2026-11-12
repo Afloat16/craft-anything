@@ -1728,8 +1728,10 @@ Owner: open · Status: in progress
       `source_paths` folders say when their listing was cut. The tree-of-links test skipped itself
       on the Windows account used (it can't create links); it needs a run on Linux or macOS
       — claimed: hichang4u, branch bugfix/r3.11-walk-limits
-- [ ] `walk_dir` still reads each `.gitignore` whole, whatever its size: cap it like other input
-      reads and say when one was skipped
+- [x] Bound `walk_dir` ignore-file reads to 1 MiB per file and 8 MiB per walk, skipping an
+      oversized or unreadable file whole so no partial rules are applied. Report skipped rule
+      files in source-import evidence, saved or direct source-to-bundle comparisons, and managed
+      reconstruction checks; source import and comparison report partial coverage.
       — claimed: Afloat16, branch bugfix/r3.11-bounded-gitignore-reads-20261112
 - [ ] The walk's limits are chosen, not measured (4,000,000 entries at most, 256 path bytes an
       entry): time a walk at the ceiling on a real disk and measure what it holds

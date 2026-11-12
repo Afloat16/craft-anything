@@ -98,6 +98,29 @@ pub(crate) struct Walked {
     pub truncated: bool,
     /// Folders below the root that couldn't be listed, as (relative path, reason) (#294).
     pub unlisted: Vec<(String, String)>,
+    /// Ignore files whose rules could not be read whole, as (relative path, reason).
+    pub skipped_gitignores: Vec<(String, String)>,
+}
+
+// Bound each read and all retained ignore input in one walk. A file that does not fit is
+// skipped whole: applying a prefix could drop a later negation and hide the wrong files.
+const MAX_GITIGNORE_BYTES: u64 = 1024 * 1024;
+const MAX_WALK_GITIGNORE_BYTES: u64 = 8 * MAX_GITIGNORE_BYTES;
+
+pub(crate) fn skipped_gitignore_limitation(skipped: &[(String, String)]) -> Option<Limitation> {
+    if skipped.is_empty() {
+        return None;
+    }
+    let first = skipped.iter().take(5).map(|(rel, reason)| format!("{rel} ({reason})")).collect::<Vec<_>>().join(", ");
+    let more = skipped.len().saturating_sub(5);
+    Some(Limitation::new(
+        "skipped_gitignore",
+        format!(
+            "{} .gitignore file(s) were skipped; their rules were not applied. Reads allow 1 MiB per file and 8 MiB per walk: {first}{}",
+            skipped.len(),
+            if more > 0 { format!(" and {more} more") } else { String::new() }
+        ),
+    ))
 }
 
 /// A limitation naming the folders that couldn't be listed, as (path, reason), if any (#294).
@@ -254,6 +277,7 @@ pub(crate) fn walk_dir(root: &Path, opts: &WalkOptions<'_>, cancel: &CancelToken
 pub(crate) fn walk_dir_within(root: &Path, opts: &WalkOptions<'_>, limits: WalkLimits, cancel: &CancelToken) -> Result<Walked, ToolError> {
     let mut out = Walked::default();
     let mut ignore = craft_anything_analysis::js_source::Ignore::default();
+    let mut ignore_bytes_left = MAX_WALK_GITIGNORE_BYTES;
     let mut stack: Vec<(PathBuf, String, usize)> = vec![(root.to_path_buf(), String::new(), 0)];
     let mut visited = 0usize;
     let (mut entries_left, mut path_bytes_left) = (limits.max_entries, limits.max_path_bytes);
@@ -265,10 +289,24 @@ pub(crate) fn walk_dir_within(root: &Path, opts: &WalkOptions<'_>, limits: WalkL
             out.truncated = true;
             break;
         }
-        if opts.gitignore
-            && let Ok(text) = std::fs::read_to_string(dir.join(".gitignore"))
-        {
-            ignore.add_file(&rel, &text);
+        if opts.gitignore {
+            let ignore_path = dir.join(".gitignore");
+            // An absent ignore file is ordinary. Other failures, including a dangling link,
+            // must stay visible, and regular-file reads enforce the cap even if a file grows.
+            if !matches!(std::fs::symlink_metadata(&ignore_path), Err(e) if e.kind() == std::io::ErrorKind::NotFound) {
+                let text = read_capped(&ignore_path, MAX_GITIGNORE_BYTES.min(ignore_bytes_left))
+                    .and_then(|bytes| String::from_utf8(bytes).map_err(|e| ToolError::invalid(format!("not UTF-8: {e}"))));
+                match text {
+                    Ok(text) => {
+                        ignore_bytes_left -= text.len() as u64;
+                        ignore.add_file(&rel, &text);
+                    }
+                    Err(e) => {
+                        let name = if rel.is_empty() { ".gitignore".to_string() } else { format!("{rel}/.gitignore") };
+                        out.skipped_gitignores.push((name, e.message));
+                    }
+                }
+            }
         }
         let entries = match std::fs::read_dir(&dir) {
             Ok(e) => e,

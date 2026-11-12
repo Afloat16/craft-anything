@@ -3,7 +3,9 @@
 //! and coverage, and platform projections of artifact inventories. Pure computation over
 //! evidence (or over a path, analysed on the spot).
 
-use super::artifact_tools::{WalkOptions, abs_path, env, inventory_path, is_path_input, recorded_inventory, resolve_evidence_input, walk_dir};
+use super::artifact_tools::{
+    WalkOptions, abs_path, env, inventory_path, is_path_input, recorded_inventory, resolve_evidence_input, skipped_gitignore_limitation, walk_dir,
+};
 use super::js_tools::load_graph;
 use crate::tool::{Ctx, Effects, Requires, ToolOutput, ToolSpec, Toolset, parse_params, schema_of};
 use craft_anything_analysis::js_inventory::{InvLimits, Inventory};
@@ -407,7 +409,7 @@ fn default_src_total() -> u64 {
     512 * 1024 * 1024
 }
 
-fn source_graph_from_path(ctx: &Ctx<'_>, p: &ImportSourceParams) -> Result<SourceGraph, ToolError> {
+fn source_graph_from_path(ctx: &Ctx<'_>, p: &ImportSourceParams) -> Result<(SourceGraph, Vec<Limitation>), ToolError> {
     let root = abs_path(&p.path, "path")?;
     if !root.is_dir() {
         return Err(ToolError::invalid(format!("{} is not a folder", root.display())));
@@ -436,13 +438,15 @@ fn source_graph_from_path(ctx: &Ctx<'_>, p: &ImportSourceParams) -> Result<Sourc
     }
     let label = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let cancel = ctx.cancel.clone();
-    build_source_graph(&label, &files, w.ignored, w.truncated || over, &craft_anything_js::Limits::default(), &move || cancel.is_cancelled())
-        .map_err(|_| ToolError::cancelled())
+    let limitations: Vec<_> = skipped_gitignore_limitation(&w.skipped_gitignores).into_iter().collect();
+    let graph = build_source_graph(&label, &files, w.ignored, w.truncated || over, &craft_anything_js::Limits::default(), &move || cancel.is_cancelled())
+        .map_err(|_| ToolError::cancelled())?;
+    Ok((graph, limitations))
 }
 
 fn app_source_import(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolError> {
     let p: ImportSourceParams = parse_params(params)?;
-    let g = source_graph_from_path(ctx, &p)?;
+    let (g, limitations) = source_graph_from_path(ctx, &p)?;
     let scripts = g.files.iter().filter(|f| f.parse_mode.is_some()).count();
     let summary = format!("{}: {} file(s), {} script(s) analysed, {} ignored.", g.label, g.files.len(), scripts, g.ignored);
     let mut b = EvidenceBuilder::new(
@@ -456,12 +460,13 @@ fn app_source_import(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, Too
     .confidence(Confidence::Observed)
     .authority(craft_anything_evidence::Authority::Reasoning)
     .coverage(Coverage {
-        status: if g.truncated { CoverageStatus::Partial } else { CoverageStatus::Complete },
+        status: if g.truncated || !limitations.is_empty() { CoverageStatus::Partial } else { CoverageStatus::Complete },
         examined: Some(g.files.len() as u64),
         total: None,
         next_offset: None,
     })
-    .location(Location::new("path", p.path.clone()));
+    .location(Location::new("path", p.path.clone()))
+    .limitations(limitations);
     if g.truncated {
         b = b.limitation(Limitation::new("truncated", "Some files were skipped by the size or count limits."));
     }
@@ -489,7 +494,7 @@ fn default_rows() -> usize {
 
 fn compare_source_to_bundle_tool(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolError> {
     let p: SourceBundleParams = parse_params(params)?;
-    let (src, sid) = if let Some(path) = is_path_input(&p.source) {
+    let (src, sid, source_limitations) = if let Some(path) = is_path_input(&p.source) {
         let ip = ImportSourceParams {
             path: path.into(),
             respect_gitignore: true,
@@ -498,12 +503,14 @@ fn compare_source_to_bundle_tool(ctx: &mut Ctx<'_>, params: Value) -> Result<Too
             max_file_bytes: default_src_file_bytes(),
             max_total_bytes: default_src_total(),
         };
-        (source_graph_from_path(ctx, &ip)?, None)
+        let (graph, limitations) = source_graph_from_path(ctx, &ip)?;
+        (graph, None, limitations)
     } else {
         let ev = resolve_evidence_input(ctx, &p.source, &["app_source_import"])?;
         let g: SourceGraph =
             serde_json::from_value(ev.result.clone()).map_err(|e| ToolError::invalid(format!("evidence {} has no source graph: {e}", ev.id)))?;
-        (g, Some(ev.id))
+        let limitations = ev.limitations.into_iter().filter(|l| l.code == "skipped_gitignore").collect();
+        (g, Some(ev.id), limitations)
     };
     let (app, aid) = load_graph(ctx, &p.application)?;
     let d = diff_source_and_bundle(&src, &app, p.max_rows.clamp(1, 100_000));
@@ -542,6 +549,9 @@ fn compare_source_to_bundle_tool(ctx: &mut Ctx<'_>, params: Value) -> Result<Too
                 "A source map was malformed or not loaded; sources without an observed match are uncertain, not confirmed absent.",
             ))
             .coverage(Coverage { status: CoverageStatus::Partial, ..Default::default() });
+    }
+    if !source_limitations.is_empty() {
+        b = b.limitations(source_limitations).coverage(Coverage { status: CoverageStatus::Partial, ..Default::default() });
     }
     Ok(ToolOutput::evidence(with_links(b, [sid, aid]).build()?))
 }
@@ -854,6 +864,85 @@ mod tests {
                 .is_err()
         );
         assert!(call(&e, "app_coverage_evaluate", json!({"ledger": retained(&a)})).is_err(), "wrong evidence kind");
+    }
+
+    #[test]
+    fn bounded_gitignore_oversize_rules_are_skipped_and_reported_through_comparison() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("source");
+        std::fs::create_dir(&src).unwrap();
+        std::fs::write(src.join("hidden.js"), "export const value = 1;").unwrap();
+        let mut ignore = "hidden.js\n#".to_string();
+        ignore.extend(std::iter::repeat_n('x', 1024 * 1024 + 1 - ignore.len()));
+        std::fs::write(src.join(".gitignore"), ignore).unwrap();
+        let dist = fx::write_files(&dir.path().join("dist"), &[("hidden.js", "export const value = 1;".to_string())]).unwrap();
+        let e = Engine::new(crate::testing::session());
+        let imported = call(&e, "app_source_import", json!({"path": src})).unwrap();
+        assert!(imported["result"]["files"].as_array().unwrap().iter().any(|f| f["path"] == "hidden.js"), "a cut rule prefix must not be applied: {imported}");
+        assert_eq!(imported["coverage"]["status"], "partial");
+        let limitation = imported["limitations"].as_array().unwrap().iter().find(|l| l["code"] == "skipped_gitignore").unwrap();
+        assert!(limitation["message"].as_str().unwrap().contains(".gitignore"));
+        for source in [retained(&imported), json!(src)] {
+            let compared = call(&e, "js_source_bundle_compare", json!({"source": source, "application": dist})).unwrap();
+            assert_eq!(compared["coverage"]["status"], "partial");
+            assert!(compared["limitations"].as_array().unwrap().iter().any(|l| l["code"] == "skipped_gitignore"));
+            assert_eq!(compared["result"]["summary"]["matched"], 1);
+        }
+    }
+
+    #[test]
+    fn bounded_gitignore_exact_limit_and_disabled_rules_stay_complete() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ignore = "hidden.js\n#".to_string();
+        ignore.extend(std::iter::repeat_n('x', 1024 * 1024 - ignore.len()));
+        std::fs::write(dir.path().join(".gitignore"), ignore).unwrap();
+        std::fs::write(dir.path().join("hidden.js"), "export const hidden = 1;").unwrap();
+        std::fs::write(dir.path().join("keep.js"), "export const keep = 2;").unwrap();
+        let e = Engine::new(crate::testing::session());
+        for respect in [true, false] {
+            let result = call(&e, "app_source_import", json!({"path": dir.path(), "respect_gitignore": respect})).unwrap();
+            assert_eq!(result["result"]["files"].as_array().unwrap().len(), if respect { 1 } else { 2 });
+            assert_eq!(result["coverage"]["status"], "complete");
+            assert!(!result["limitations"].as_array().unwrap().iter().any(|l| l["code"] == "skipped_gitignore"));
+        }
+    }
+
+    #[test]
+    fn bounded_gitignore_unreadable_text_is_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".gitignore"), b"hidden.js\n\xff").unwrap();
+        std::fs::write(dir.path().join("hidden.js"), "export const hidden = 1;").unwrap();
+        let e = Engine::new(crate::testing::session());
+        let result = call(&e, "app_source_import", json!({"path": dir.path()})).unwrap();
+        assert_eq!(result["result"]["files"].as_array().unwrap().len(), 1);
+        assert_eq!(result["coverage"]["status"], "partial");
+        assert!(result["limitations"].as_array().unwrap().iter().any(|l| l["code"] == "skipped_gitignore"));
+    }
+
+    #[test]
+    fn bounded_gitignore_files_share_one_walk_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ignore = "hidden.js\n#".to_string();
+        ignore.extend(std::iter::repeat_n('x', 1024 * 1024 - ignore.len()));
+        for n in 0..9 {
+            let sub = dir.path().join(format!("d{n}"));
+            std::fs::create_dir(&sub).unwrap();
+            std::fs::write(sub.join(".gitignore"), &ignore).unwrap();
+            std::fs::write(sub.join("hidden.js"), "export const hidden = 1;").unwrap();
+        }
+        let e = Engine::new(crate::testing::session());
+        let result = call(&e, "app_source_import", json!({"path": dir.path()})).unwrap();
+        let files = result["result"]["files"].as_array().unwrap();
+        assert_eq!(files.len(), 1, "eight complete ignore files fit, and the ninth is skipped: {result}");
+        assert_eq!(files[0]["path"], "d0/hidden.js");
+        assert_eq!(result["coverage"]["status"], "partial");
+        assert!(
+            result["limitations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|l| l["code"] == "skipped_gitignore" && l["message"].as_str().unwrap().contains("d0/.gitignore"))
+        );
     }
 
     #[test]

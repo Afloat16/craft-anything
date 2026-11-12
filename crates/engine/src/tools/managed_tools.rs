@@ -809,6 +809,9 @@ fn read_sources(p: &ImportParams, ctx: &Ctx<'_>) -> Result<Sources, ToolError> {
             if walked.truncated {
                 notes.push("the folder walk stopped at a limit".into());
             }
+            if let Some(limitation) = super::artifact_tools::skipped_gitignore_limitation(&walked.skipped_gitignores) {
+                notes.push(limitation.message);
+            }
             if out.is_empty() {
                 return Err(ToolError::invalid(format!("no .cs files under {sp}")));
             }
@@ -1124,6 +1127,20 @@ mod tests {
         assert_eq!(super::norm_module("libcraft.so.1"), "craft");
         assert_eq!(super::norm_module("C:\\x\\Craft.DLL"), "craft");
         assert_eq!(super::norm_module("lib"), "lib");
+    }
+
+    #[test]
+    fn bounded_gitignore_reconstruction_reports_skipped_rules() {
+        let e = Engine::new(crate::testing::session());
+        let asm = craft_anything_testkit::temp_file("Sample.dll", &fx::managed_assembly(1));
+        let dir = tempfile::tempdir().unwrap();
+        let mut ignore = "Calc.cs\n#".to_string();
+        ignore.extend(std::iter::repeat_n('x', 1024 * 1024 + 1 - ignore.len()));
+        std::fs::write(dir.path().join(".gitignore"), ignore).unwrap();
+        std::fs::write(dir.path().join("Calc.cs"), fx::RECONSTRUCTION_CS).unwrap();
+        let result = call(&e, "managed_reconstruction_check", json!({"members": asm, "source_path": dir.path()}));
+        assert!(result["limitations"].as_array().unwrap().iter().any(|l| l["code"] == "source_read" && l["message"].as_str().unwrap().contains(".gitignore")));
+        assert_eq!(result["result"]["counts"]["missing"], 0);
     }
 
     #[test]
