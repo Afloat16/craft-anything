@@ -539,7 +539,7 @@ fn compare_source_to_bundle_tool(ctx: &mut Ctx<'_>, params: Value) -> Result<Too
         b = b
             .limitation(Limitation::new(
                 "source_map_unreadable",
-                "A source map was malformed or not loaded; sources without an observed match are uncertain, not confirmed absent.",
+                "A source map or one of its sections was malformed or not loaded; sources without an observed match are uncertain, not confirmed absent.",
             ))
             .coverage(Coverage { status: CoverageStatus::Partial, ..Default::default() });
     }
@@ -894,6 +894,27 @@ mod tests {
         assert_eq!(comparison["result"]["source_map_unreadable"], true);
         assert_eq!(comparison["result"]["unmatched_sources"], json!([]));
         assert_eq!(comparison["result"]["uncertain_sources"], json!([{"source": "src/kept.js", "reason": "source_map_unreadable"}]));
+        assert!(comparison["limitations"].as_array().unwrap().iter().any(|l| l["code"] == "source_map_unreadable"));
+        assert_eq!(comparison["coverage"]["status"], "partial");
+    }
+
+    #[test]
+    fn source_comparison_discloses_unloaded_external_sections() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("reference");
+        fx::write_files(&src, &[("src/kept.js", String::new()), ("src/unknown.js", String::new())]).unwrap();
+        let dist = dir.path().join("dist");
+        let map = json!({"version": 3, "sections": [
+            {"offset": {"line": 0, "column": 0}, "map": {"version": 3, "sources": ["src/kept.js"], "mappings": "AAAA"}},
+            {"offset": {"line": 1, "column": 0}, "url": "https://maps.example.test/unloaded.map"}
+        ]});
+        fx::write_files(&dist, &[("main.js", "//# sourceMappingURL=main.js.map\n".to_string()), ("main.js.map", map.to_string())]).unwrap();
+        let e = Engine::new(crate::testing::session());
+        let source = call(&e, "app_source_import", json!({"path": src})).unwrap();
+        let comparison = call(&e, "js_source_bundle_compare", json!({"source": retained(&source), "application": dist})).unwrap();
+        assert_eq!(comparison["result"]["summary"]["matched"], 1);
+        assert_eq!(comparison["result"]["unmatched_sources"], json!([]));
+        assert_eq!(comparison["result"]["uncertain_sources"], json!([{"source": "src/unknown.js", "reason": "source_map_unreadable"}]));
         assert!(comparison["limitations"].as_array().unwrap().iter().any(|l| l["code"] == "source_map_unreadable"));
         assert_eq!(comparison["coverage"]["status"], "partial");
     }

@@ -113,6 +113,68 @@ fn missing_sources_without_maps_remain_unmatched() {
 }
 
 #[test]
+fn external_sections_keep_inline_matches_and_leave_other_sources_uncertain() {
+    let inline = json!({"version": 3, "sources": ["src/kept.js"], "mappings": "AAAA"});
+    let external = json!({"offset": {"line": 1, "column": 0}, "url": "unloaded.map"});
+    for (name, sections) in [
+        ("following", json!([{"offset": {"line": 0, "column": 0}, "map": inline}, external])),
+        (
+            "preceding",
+            json!([
+                {"offset": {"line": 0, "column": 0}, "url": "https://maps.example.test/unloaded.map"},
+                {"offset": {"line": 1, "column": 0}, "map": inline}
+            ]),
+        ),
+        (
+            "nested",
+            json!([{"offset": {"line": 0, "column": 0}, "map": {
+                "version": 3, "sections": [{"offset": {"line": 0, "column": 0}, "map": inline}, external]
+            }}]),
+        ),
+    ] {
+        let graph = graph_with_maps(vec![json!({"version": 3, "sections": sections})]);
+        let diff = diff_source_and_bundle(&source_graph(&["src/kept.js", "src/unknown.js"]), &graph, 100);
+        assert_eq!(diff["unmatched_sources"], json!([]), "{name}: an unread section confirms nothing absent: {diff}");
+        assert_eq!(diff["summary"]["matched"], 1, "{name}");
+        assert_eq!(diff["matches"][0]["quality"], "source-map", "{name}");
+        assert_eq!(diff["uncertain_sources"], json!([{"source": "src/unknown.js", "reason": "source_map_unreadable"}]), "{name}");
+        assert_eq!(graph.source_maps[0].sources, ["src/kept.js"], "{name}");
+        assert!(graph.source_maps[0].unreadable, "{name}");
+        assert!(!graph.source_maps[0].sources_truncated, "{name}: no inventory budget was exhausted");
+        assert!(graph.limitations.iter().any(|(key, message)| key == "source_map_unreadable" && message.contains("external")), "{name}");
+        let restored: AppGraph = serde_json::from_value(serde_json::to_value(&graph).unwrap()).unwrap();
+        assert_eq!(diff_source_and_bundle(&source_graph(&["src/kept.js", "src/unknown.js"]), &restored, 100), diff);
+    }
+}
+
+#[test]
+fn external_sections_stay_uncertain_when_only_the_source_list_can_be_read() {
+    let graph = graph_with_maps(vec![json!({"version": 3, "sections": [
+        {"offset": {"line": 0, "column": 0}, "map": {"version": 3, "sources": ["src/kept.js"], "mappings": "!"}},
+        {"offset": {"line": 1, "column": 0}, "url": "unloaded.map"}
+    ]})]);
+    let diff = diff_source_and_bundle(&source_graph(&["src/kept.js", "src/unknown.js"]), &graph, 100);
+    assert_eq!(diff["unmatched_sources"], json!([]));
+    assert_eq!(diff["summary"]["matched"], 1);
+    assert_eq!(diff["uncertain_sources"], json!([{"source": "src/unknown.js", "reason": "source_map_unreadable"}]));
+    assert!(graph.limitations.iter().any(|(key, _)| key == "source_map_mappings_unreadable"));
+    assert!(graph.limitations.iter().any(|(key, _)| key == "source_map_unreadable"));
+}
+
+#[test]
+fn an_empty_inline_section_does_not_make_the_source_list_uncertain() {
+    let graph = graph_with_maps(vec![json!({"version": 3, "sections": [
+        {"offset": {"line": 0, "column": 0}, "map": {"version": 3, "sources": [], "mappings": ""}},
+        {"offset": {"line": 1, "column": 0}, "map": {"version": 3, "sources": ["src/kept.js"], "mappings": "AAAA"}}
+    ]})]);
+    let diff = diff_source_and_bundle(&source_graph(&["src/kept.js", "src/missing.js"]), &graph, 100);
+    assert_eq!(diff["summary"]["matched"], 1);
+    assert_eq!(diff["unmatched_sources"], json!(["src/missing.js"]));
+    assert_eq!(diff["uncertain_sources"], json!([]));
+    assert!(!graph.source_maps[0].unreadable);
+}
+
+#[test]
 fn a_map_refused_for_too_many_entries_leaves_its_sources_uncertain() {
     // More names than the parser keeps by default: the map is refused, not read as empty.
     let names = vec!["\"\""; craft_anything_formats::sourcemap::Limits::default().max_entries + 1].join(",");

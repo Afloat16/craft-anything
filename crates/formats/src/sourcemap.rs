@@ -98,6 +98,8 @@ pub struct SourceMap {
     pub segments: usize,
     /// Indexed maps: (line offset, column offset, map).
     pub sections: Vec<(u32, u32, SourceMap)>,
+    /// This map or a nested section references an external map that was not loaded.
+    pub has_external_sections: bool,
 }
 
 /// A position in an original source.
@@ -288,10 +290,11 @@ fn from_raw(
                 (Some(m), None) => from_raw(m.map(|m| *m), depth + 1, limits, budget, line_budget, mappings)?,
                 // External maps are never fetched here. Retain their start so a lookup
                 // cannot leak through to the previous inline map.
-                (None, Some(true)) => SourceMap::default(),
+                (None, Some(true)) => SourceMap { has_external_sections: true, ..Default::default() },
                 _ => return Err(SourceMapError::BadSections),
             };
             map.segments = map.segments.saturating_add(sub.segments);
+            map.has_external_sections |= sub.has_external_sections;
             map.sections.push((line, col, sub));
         }
         return Ok(map);

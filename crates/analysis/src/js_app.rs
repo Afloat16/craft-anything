@@ -167,8 +167,8 @@ pub struct SourceMapRef {
     pub sources_truncated: bool,
     #[serde(default)]
     pub sources_with_content: usize,
-    /// The map is referenced by a script, or sits beside one, but couldn't be read (malformed, an
-    /// undecodable data URL, or listed but not loaded), so its sources are unknown.
+    /// The map, or one of its external sections, couldn't be read (malformed, an undecodable
+    /// data URL, or not loaded). Retained sources still match; otherwise its sources are unknown.
     #[serde(default)]
     pub unreadable: bool,
 }
@@ -1150,6 +1150,13 @@ fn read_source_map(
     };
     match map {
         Ok(map) => {
+            if map.has_external_sections {
+                r.unreadable = true;
+                limitations.push((
+                    "source_map_unreadable".into(),
+                    format!("The source map for {script} has external sections that were not loaded; inline sources are listed, but external sources remain unknown."),
+                ));
+            }
             let inventory = map.source_inventory(craft_anything_formats::sourcemap::InventoryLimits {
                 max_sources: budget.max_sources.min(5000),
                 max_bytes: budget.max_bytes,
