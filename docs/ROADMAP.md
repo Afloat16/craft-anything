@@ -1702,6 +1702,9 @@ Owner: open · Status: in progress
 - [x] Fold an AArch64 MOVZ/MOVK sequence into one constant in pseudo-C: `mov w9, #0x2493` then
       `movk w9, #0x9249, lsl #16` reads as two statements, not `w9 = 0x92492493;`
       — claimed: Jensen-Yao, branch bugfix/r3.11-a64-movz-movk-constants
+- [ ] A MOVK following a hidden AArch64 ADRP uses the page address as its current value,
+      including W/X aliases, instead of retaining the immediate overwritten before the page load.
+      — claimed: Afloat16, branch bugfix/r3.11-fold-move-wide-20261112
 - [x] Enforce stand-in per-body and total byte budgets on the text that is actually retained after redaction;
       deduplicate consecutive samples before charging the capture budget.
       — claimed: Afloat16, branch bugfix/r3.11-standin-redacted-budget-20261103b
