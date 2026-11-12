@@ -6,6 +6,19 @@ workspace clippy, layers, fmt and the secret scan of all history were clean. Chi
 
 ## What works, and how it was checked
 
+### Settings read retries (R2.9)
+
+Settings that are briefly busy at startup are read again before the session falls back to
+defaults. Interrupted and would-block errors, plus Windows sharing/lock violations, get up to
+five retries with 310 ms of scheduled waiting in total. A permanent error stops immediately;
+exhausted reads retain the reason and still refuse normal or deferred saves over the unread
+file. Existing missing-file and malformed-file recovery is unchanged.
+
+Controlled read failures with real temporary config files checked recovery, bounded retries,
+the last error, save protection, and missing/malformed files on Linux. The Windows test opens
+a real file without sharing and releases the handle between attempts, but was not run here;
+no live antivirus, Windows desktop, or network-filesystem run is claimed.
+
 ### Local Codex discovery and sign-in (R2.2)
 
 macOS Dock launches can find an executable Codex CLI bundled with ChatGPT.app or
