@@ -1708,10 +1708,13 @@ Owner: open · Status: in progress
 - [x] Fold an AArch64 MOVZ/MOVK sequence into one constant in pseudo-C: `mov w9, #0x2493` then
       `movk w9, #0x9249, lsl #16` reads as two statements, not `w9 = 0x92492493;`
       — claimed: Jensen-Yao, branch bugfix/r3.11-a64-movz-movk-constants
-- [ ] Retain scalar AArch64 memory access widths in decoded operands and pseudo-C,
+- [x] Retain scalar AArch64 memory access widths in decoded operands and pseudo-C,
       including byte/halfword accesses and pair elements, without guessing widths for
       unsupported memory operations.
       — claimed: Afloat16, branch bugfix/r3.11-a64-memory-widths-20261112
+- [ ] Preserve signed-load extension and writeback effects when lifting AArch64 memory
+      instructions; scalar access widths alone do not express all instruction semantics.
+
 - [x] Enforce stand-in per-body and total byte budgets on the text that is actually retained after redaction;
       deduplicate consecutive samples before charging the capture budget.
       — claimed: Afloat16, branch bugfix/r3.11-standin-redacted-budget-20261103b

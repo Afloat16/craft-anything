@@ -670,12 +670,84 @@ fn a64_shift(style: A64Shift) -> Shift {
     }
 }
 
+/// Bytes in one scalar memory element, not the destination register or pair total.
+/// Leave unsupported/vector operations unknown instead of inferring from address registers.
+fn a64_memory_size(inst: &yaxpeax_arm::armv8::a64::Instruction) -> u8 {
+    use yaxpeax_arm::armv8::a64::{Opcode as O, Operand};
+    let value_operand = if matches!(inst.opcode, O::STXR | O::STXRB | O::STXRH | O::STLXR | O::STLXRB | O::STLXRH | O::STXP | O::STLXP) { 1 } else { 0 };
+    let Some(Operand::Register(register_size, _)) = inst.operands.get(value_operand) else { return 0 };
+    match inst.opcode {
+        O::LDRB
+        | O::LDRSB
+        | O::LDURB
+        | O::LDURSB
+        | O::LDTRB
+        | O::LDTRSB
+        | O::LDARB
+        | O::LDLARB
+        | O::LDAXRB
+        | O::LDXRB
+        | O::STRB
+        | O::STURB
+        | O::STTRB
+        | O::STLRB
+        | O::STLLRB
+        | O::STXRB
+        | O::STLXRB => 1,
+        O::LDRH
+        | O::LDRSH
+        | O::LDURH
+        | O::LDURSH
+        | O::LDTRH
+        | O::LDTRSH
+        | O::LDARH
+        | O::LDLARH
+        | O::LDAXRH
+        | O::LDXRH
+        | O::STRH
+        | O::STURH
+        | O::STTRH
+        | O::STLRH
+        | O::STLLRH
+        | O::STXRH
+        | O::STLXRH => 2,
+        O::LDRSW | O::LDURSW | O::LDTRSW | O::LDPSW | O::STRW => 4,
+        O::LDR
+        | O::LDUR
+        | O::LDTR
+        | O::LDAR
+        | O::LDLAR
+        | O::LDXR
+        | O::LDAXR
+        | O::LDP
+        | O::LDNP
+        | O::LDXP
+        | O::LDAXP
+        | O::STR
+        | O::STUR
+        | O::STTR
+        | O::STLR
+        | O::STLLR
+        | O::STXR
+        | O::STLXR
+        | O::STP
+        | O::STNP
+        | O::STXP
+        | O::STLXP => match register_size {
+            A64Size::W => 4,
+            A64Size::X => 8,
+        },
+        _ => 0,
+    }
+}
+
 fn decode_a64(bytes: &[u8], addr: u64, fmt: bool) -> Option<Insn> {
     use yaxpeax_arm::armv8::a64::{InstDecoder, Opcode, Operand, ShiftStyle};
     let word = bytes.get(..4)?;
     let mut reader = U8Reader::new(word);
     let inst = InstDecoder::default().decode(&mut reader).ok()?;
     let op_name = format!("{:?}", inst.opcode);
+    let memory_size = a64_memory_size(&inst);
     let mut ops = Vec::new();
     let mut refs = Vec::new();
     let mut reads: Vec<String> = Vec::new();
@@ -731,7 +803,11 @@ fn decode_a64(bytes: &[u8], addr: u64, fmt: bool) -> Option<Insn> {
             Operand::PCOffset(off) => {
                 let t = if inst.opcode == Opcode::ADRP { (addr & !0xfff).wrapping_add(off as u64) } else { addr.wrapping_add(off as u64) };
                 target = Some(t);
-                ops.push(Op::Addr(t));
+                if memory_size != 0 && matches!(inst.opcode, Opcode::LDR | Opcode::LDRSW) {
+                    ops.push(Op::Mem(MemOp { base: None, index: None, index_shift: None, scale: 1, disp: 0, size: memory_size, addr: Some(t), seg: None }));
+                } else {
+                    ops.push(Op::Addr(t));
+                }
             }
             Operand::Immediate(v) => ops.push(Op::Imm(i64::from(v))),
             Operand::Imm64(v) => ops.push(Op::Imm(v as i64)),
@@ -744,7 +820,7 @@ fn decode_a64(bytes: &[u8], addr: u64, fmt: bool) -> Option<Insn> {
                     index_shift: None,
                     scale: 1,
                     disp: i64::from(off),
-                    size: 0,
+                    size: memory_size,
                     addr: None,
                     seg: None,
                 }));
@@ -756,7 +832,16 @@ fn decode_a64(bytes: &[u8], addr: u64, fmt: bool) -> Option<Insn> {
                 }
             }
             Operand::RegPostIndex(n, off) => {
-                ops.push(Op::Mem(MemOp { base: a64_canon(n, true), index: None, index_shift: None, scale: 1, disp: 0, size: 0, addr: None, seg: None }));
+                ops.push(Op::Mem(MemOp {
+                    base: a64_canon(n, true),
+                    index: None,
+                    index_shift: None,
+                    scale: 1,
+                    disp: 0,
+                    size: memory_size,
+                    addr: None,
+                    seg: None,
+                }));
                 let _ = off;
                 if let Some(c) = a64_canon(n, true) {
                     push_unique(&mut reads, c.clone());
@@ -779,7 +864,7 @@ fn decode_a64(bytes: &[u8], addr: u64, fmt: bool) -> Option<Insn> {
                     index_shift: (!unchanged).then_some(IndexShift { shift, amount: sh }),
                     scale: 1,
                     disp: 0,
-                    size: 0,
+                    size: memory_size,
                     addr: None,
                     seg: None,
                 }));
@@ -788,7 +873,16 @@ fn decode_a64(bytes: &[u8], addr: u64, fmt: bool) -> Option<Insn> {
                 }
             }
             Operand::RegPostIndexReg(n, m) => {
-                ops.push(Op::Mem(MemOp { base: a64_canon(n, true), index: None, index_shift: None, scale: 1, disp: 0, size: 0, addr: None, seg: None }));
+                ops.push(Op::Mem(MemOp {
+                    base: a64_canon(n, true),
+                    index: None,
+                    index_shift: None,
+                    scale: 1,
+                    disp: 0,
+                    size: memory_size,
+                    addr: None,
+                    seg: None,
+                }));
                 for c in [a64_canon(n, true), a64_canon(m, false)].into_iter().flatten() {
                     push_unique(&mut reads, c);
                 }
@@ -1462,14 +1556,14 @@ mod tests {
     #[test]
     fn a64_memory_index_extensions_are_kept() {
         let reg = |r: &str| Op::Reg(r.into());
-        let mem = |base: &str, index: Option<&str>, shift: Option<(Shift, u8)>| {
+        let mem = |size: u8, base: &str, index: Option<&str>, shift: Option<(Shift, u8)>| {
             Op::Mem(MemOp {
                 base: Some(base.into()),
                 index: index.map(|i| i.into()),
                 index_shift: shift.map(|(shift, amount)| IndexShift { shift, amount }),
                 scale: 1,
                 disp: 0,
-                size: 0,
+                size,
                 addr: None,
                 seg: None,
             })
@@ -1477,13 +1571,13 @@ mod tests {
         // Words assembled from the encoding the ARM architecture gives register-offset loads and
         // stores, checked against LLVM's disassembler; S=1 fixes the amount to the access size.
         let cases: &[(u32, &str, Vec<Op>)] = &[
-            (0xb862_d820, "ldr w0, [x1, w2, sxtw #2]", vec![reg("w0"), mem("x1", Some("w2"), Some((Shift::Sxtw, 2)))]),
-            (0xb865_5883, "ldr w3, [x4, w5, uxtw #2]", vec![reg("w3"), mem("x4", Some("w5"), Some((Shift::Uxtw, 2)))]),
-            (0xf868_78e6, "ldr x6, [x7, x8, lsl #3]", vec![reg("x6"), mem("x7", Some("x8"), Some((Shift::Lsl, 3)))]),
-            (0xf871_6a0f, "ldr x15, [x16, x17]", vec![reg("x15"), mem("x16", Some("x17"), None)]),
-            (0xb8b7_dad5, "ldrsw x21, [x22, w23, sxtw #2]", vec![reg("x21"), mem("x22", Some("w23"), Some((Shift::Sxtw, 2)))]),
-            (0xf87a_4b38, "ldr x24, [x25, w26, uxtw]", vec![reg("x24"), mem("x25", Some("w26"), Some((Shift::Uxtw, 0)))]),
-            (0xf87d_fb9b, "ldr x27, [x28, x29, sxtx #3]", vec![reg("x27"), mem("x28", Some("x29"), Some((Shift::Sxtx, 3)))]),
+            (0xb862_d820, "ldr w0, [x1, w2, sxtw #2]", vec![reg("w0"), mem(4, "x1", Some("w2"), Some((Shift::Sxtw, 2)))]),
+            (0xb865_5883, "ldr w3, [x4, w5, uxtw #2]", vec![reg("w3"), mem(4, "x4", Some("w5"), Some((Shift::Uxtw, 2)))]),
+            (0xf868_78e6, "ldr x6, [x7, x8, lsl #3]", vec![reg("x6"), mem(8, "x7", Some("x8"), Some((Shift::Lsl, 3)))]),
+            (0xf871_6a0f, "ldr x15, [x16, x17]", vec![reg("x15"), mem(8, "x16", Some("x17"), None)]),
+            (0xb8b7_dad5, "ldrsw x21, [x22, w23, sxtw #2]", vec![reg("x21"), mem(4, "x22", Some("w23"), Some((Shift::Sxtw, 2)))]),
+            (0xf87a_4b38, "ldr x24, [x25, w26, uxtw]", vec![reg("x24"), mem(8, "x25", Some("w26"), Some((Shift::Uxtw, 0)))]),
+            (0xf87d_fb9b, "ldr x27, [x28, x29, sxtx #3]", vec![reg("x27"), mem(8, "x28", Some("x29"), Some((Shift::Sxtx, 3)))]),
         ];
         for (word, name, ops) in cases {
             let i = decode(Mode::A64, &word.to_le_bytes(), 0x1000, true).unwrap();
@@ -1491,15 +1585,15 @@ mod tests {
         }
         // A store keeps its extended target address too.
         let i = decode(Mode::A64, &0xb82b_d949u32.to_le_bytes(), 0x1000, true).unwrap();
-        assert_eq!(i.ops, vec![reg("w9"), mem("x10", Some("w11"), Some((Shift::Sxtw, 2)))], "{}", i.operands);
+        assert_eq!(i.ops, vec![reg("w9"), mem(4, "x10", Some("w11"), Some((Shift::Sxtw, 2)))], "{}", i.operands);
         let i = decode(Mode::A64, &0x7834_da72u32.to_le_bytes(), 0x1000, true).unwrap();
-        assert_eq!(i.ops, vec![reg("w18"), mem("x19", Some("w20"), Some((Shift::Sxtw, 1)))], "{}", i.operands);
+        assert_eq!(i.ops, vec![reg("w18"), mem(2, "x19", Some("w20"), Some((Shift::Sxtw, 1)))], "{}", i.operands);
         // The extended index is still read, by its full-width name.
         let i = decode(Mode::A64, &0xb862_d820u32.to_le_bytes(), 0x1000, true).unwrap();
         assert!(i.reads.contains(&"x1".to_string()) && i.reads.contains(&"x2".to_string()), "{i:?}");
         // The zero register offsets by zero: it is no index, not a `wzr`/`xzr` one.
         let i = decode(Mode::A64, &0xf87f_6830u32.to_le_bytes(), 0x1000, true).unwrap();
-        assert_eq!(i.ops, vec![reg("x16"), mem("x1", None, None)], "{}", i.operands);
+        assert_eq!(i.ops, vec![reg("x16"), mem(8, "x1", None, None)], "{}", i.operands);
     }
 
     #[test]

@@ -234,6 +234,23 @@ impl Lifter<'_> {
         }
     }
 
+    fn referenced_memory(&self, i: &Insn, address: u64) -> String {
+        self.addr_name(address).unwrap_or_else(|| {
+            let size = if self.mode == Mode::A64 {
+                i.ops
+                    .iter()
+                    .find_map(|op| match op {
+                        Op::Mem(memory) => Some(memory.size),
+                        _ => None,
+                    })
+                    .unwrap_or(0)
+            } else {
+                8
+            };
+            format!("*({}*){address:#x}", ty(size))
+        })
+    }
+
     fn call_name(&self, i: &Insn) -> String {
         match i.flow {
             Flow::Call { target } => self.addr_name(target).unwrap_or_else(|| format!("sub_{target:x}")),
@@ -566,7 +583,7 @@ impl Lifter<'_> {
                 (Kind::Neg, _) => stmt = Some(format!("{0} = -{0};", d.clone().unwrap_or_default())),
                 (Kind::Load, _) if i.ops.len() >= 2 => {
                     let e = match i.refs.first() {
-                        Some(&r) => self.addr_name(r).unwrap_or_else(|| format!("*(uint64_t*){r:#x}")),
+                        Some(&r) => self.referenced_memory(i, r),
                         None => s.clone().unwrap_or_default(),
                     };
                     let e = if e.starts_with("&") && i.refs.is_empty() { e.trim_start_matches('&').to_string() } else { e };
@@ -574,7 +591,7 @@ impl Lifter<'_> {
                 }
                 (Kind::Store, _) if i.ops.len() >= 2 => {
                     let target = match i.refs.first() {
-                        Some(&r) => self.addr_name(r).unwrap_or_else(|| format!("*(uint64_t*){r:#x}")),
+                        Some(&r) => self.referenced_memory(i, r),
                         None => s.clone().unwrap_or_default(),
                     };
                     stmt = Some(format!("{} = {};", target.trim_start_matches('&'), d.clone().unwrap_or_default()));
@@ -1470,16 +1487,16 @@ mod tests {
         let words = [0xb862_d820u32, 0xf868_78e6, 0xf87a_4b38, 0xf871_6a0f, 0xb82b_d949, 0xd65f_03c0];
         let p = lift_a64(&words);
         for want in [
-            "w0 = *(void*)(x1 + ((int64_t)(int32_t)w2 << 2));",
-            "x6 = *(void*)(x7 + (x8 << 3));",
-            "x24 = *(void*)(x25 + (uint32_t)w26);",
-            "x15 = *(void*)(x16 + x17);",
-            "*(void*)(x10 + ((int64_t)(int32_t)w11 << 2)) = w9;",
+            "w0 = *(uint32_t*)(x1 + ((int64_t)(int32_t)w2 << 2));",
+            "x6 = *(uint64_t*)(x7 + (x8 << 3));",
+            "x24 = *(uint64_t*)(x25 + (uint32_t)w26);",
+            "x15 = *(uint64_t*)(x16 + x17);",
+            "*(uint32_t*)(x10 + ((int64_t)(int32_t)w11 << 2)) = w9;",
         ] {
             assert!(p.text.contains(want), "{want}\n{}", p.text);
         }
-        assert!(!p.text.contains("*(void*)(x1 + x2)"), "{}", p.text);
-        assert!(!p.text.contains("*(void*)(x10 + x11)"), "{}", p.text);
+        assert!(!p.text.contains("*(uint32_t*)(x1 + x2)"), "{}", p.text);
+        assert!(!p.text.contains("*(uint32_t*)(x10 + x11)"), "{}", p.text);
     }
 
     /// `mov x19, x0` came out as `x19 = xzr;`: the zero register of its ORR form was taken as the value.
