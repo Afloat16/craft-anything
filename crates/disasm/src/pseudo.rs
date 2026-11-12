@@ -46,6 +46,23 @@ struct BlockCode {
     taken: Option<u64>,
 }
 
+struct ArgumentDef {
+    /// None keeps the original assignment and passes the destination register itself.
+    statement: Option<usize>,
+    expression: String,
+    inputs: Vec<String>,
+    reads_memory: bool,
+}
+
+impl ArgumentDef {
+    fn keep_register(&mut self, register: &str) {
+        self.statement = None;
+        self.expression = register.to_string();
+        self.inputs.clear();
+        self.reads_memory = false;
+    }
+}
+
 struct Lifter<'a> {
     img: &'a Image,
     prog: &'a Program,
@@ -132,6 +149,32 @@ fn imm(v: i64) -> String {
         format!("-{:#x}", v.unsigned_abs())
     } else {
         format!("{v:#x}")
+    }
+}
+
+/// Unknown instructions may have implicit stores even without a memory operand.
+fn may_write_memory(i: &Insn) -> bool {
+    match i.kind {
+        Kind::Nop | Kind::Lea | Kind::Adr | Kind::Adrp | Kind::Cmp | Kind::Test | Kind::Load | Kind::LoadPair | Kind::Branch => false,
+        Kind::Mov
+        | Kind::MovSx
+        | Kind::MovZx
+        | Kind::Insert
+        | Kind::Add
+        | Kind::Sub
+        | Kind::Mul
+        | Kind::Div
+        | Kind::And
+        | Kind::Or
+        | Kind::Xor
+        | Kind::Shl
+        | Kind::Shr
+        | Kind::Sar
+        | Kind::Not
+        | Kind::Neg
+        | Kind::Inc
+        | Kind::Dec => matches!(i.ops.first(), Some(Op::Mem(_))),
+        _ => true,
     }
 }
 
@@ -265,16 +308,18 @@ impl Lifter<'_> {
     }
 
     /// Register arguments of a call: up to the last argument register assigned in this block (at
-    /// least `min`). Their assignments are folded into the call.
-    fn reg_args(&self, defs: &BTreeMap<String, (usize, String)>, dead: &mut BTreeSet<usize>, min: usize) -> Vec<String> {
+    /// least `min`). Only assignments whose expressions remain available are folded into it.
+    fn reg_args(&self, defs: &BTreeMap<String, ArgumentDef>, dead: &mut BTreeSet<usize>, min: usize) -> Vec<String> {
         let n = self.arg_regs.iter().rposition(|r| defs.contains_key(*r)).map(|p| p + 1).unwrap_or(0).max(min).min(self.arg_regs.len());
         self.arg_regs
             .iter()
             .take(n)
             .map(|r| match defs.get(*r) {
-                Some((idx, e)) => {
-                    dead.insert(*idx);
-                    e.clone()
+                Some(def) => {
+                    if let Some(idx) = def.statement {
+                        dead.insert(idx);
+                    }
+                    def.expression.clone()
                 }
                 None => (*r).to_string(),
             })
@@ -284,8 +329,8 @@ impl Lifter<'_> {
     /// Statements for one block plus its branch condition.
     fn block(&mut self, insns: &[Insn], entry_or_exit: bool) -> BlockCode {
         let mut stmts: Vec<String> = Vec::new();
-        // canonical reg → (statement index, expression) of its latest assignment in this block
-        let mut defs: BTreeMap<String, (usize, String)> = BTreeMap::new();
+        // canonical register → its candidate argument definition and expression dependencies
+        let mut defs: BTreeMap<String, ArgumentDef> = BTreeMap::new();
         // canonical reg → (statement index, value) while that assignment is a plain constant,
         // so a following MOVK can fold with it
         let mut consts: BTreeMap<String, (usize, u64)> = BTreeMap::new();
@@ -297,6 +342,22 @@ impl Lifter<'_> {
         // Win64 outgoing stack arguments stored in this block: rsp offset → (statement, value).
         let mut stack_args: BTreeMap<i64, (usize, String)> = BTreeMap::new();
         for (k, i) in insns.iter().enumerate() {
+            let is_call = matches!(i.flow, Flow::Call { .. } | Flow::IndirectCall { .. });
+            let memory_changed = !is_call && may_write_memory(i);
+            let stack_changed = matches!(i.kind, Kind::Push | Kind::Pop | Kind::Leave);
+            // An expression describes the value at its original assignment, not a reload at
+            // the call. Keep that assignment when an input changes, including hidden loads.
+            for (register, def) in &mut defs {
+                if def.statement.is_some()
+                    && (i.writes.iter().any(|w| def.inputs.contains(w))
+                        || (stack_changed && def.inputs.iter().any(|r| matches!(r.as_str(), "rsp" | "sp" | "r13")))
+                        || (memory_changed && def.reads_memory)
+                        // Argument registers can also hold an indirect callee or its address.
+                        || (is_call && i.reads.contains(register)))
+                {
+                    def.keep_register(register);
+                }
+            }
             let exclusive_memory = self.mode == Mode::A64
                 && matches!(
                     i.mnemonic.as_str(),
@@ -611,8 +672,19 @@ impl Lifter<'_> {
                 if let Some(r) = &dest_reg {
                     let expr = stmts.last().and_then(|l| l.split_once(" = ").map(|(_, e)| e.trim_end_matches(';').to_string()));
                     match expr {
-                        Some(e) if !e.contains(';') && !matches!(i.flow, Flow::Call { .. } | Flow::IndirectCall { .. }) => {
-                            defs.insert(r.clone(), (stmts.len() - 1, e));
+                        Some(e) if !e.contains(';') && !is_call && i.writes.contains(r) => {
+                            let mut def = ArgumentDef {
+                                statement: Some(stmts.len() - 1),
+                                expression: e,
+                                inputs: i.reads.clone(),
+                                reads_memory: i.kind == Kind::Load || (i.kind != Kind::Lea && i.ops.iter().any(|o| matches!(o, Op::Mem(_)))),
+                            };
+                            // A pop or a multi-register write has effects beyond this value.
+                            // Preserve its position even when the destination is an argument.
+                            if i.kind == Kind::Pop || i.writes.iter().any(|w| w != r) {
+                                def.keep_register(r);
+                            }
+                            defs.insert(r.clone(), def);
                         }
                         _ => {
                             defs.remove(r);

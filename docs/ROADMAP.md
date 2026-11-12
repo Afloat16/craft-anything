@@ -1707,10 +1707,12 @@ Owner: open · Status: in progress
 - [x] Fold an AArch64 MOVZ/MOVK sequence into one constant in pseudo-C: `mov w9, #0x2493` then
       `movk w9, #0x9249, lsl #16` reads as two statements, not `w9 = 0x92492493;`
       — claimed: Jensen-Yao, branch bugfix/r3.11-a64-movz-movk-constants
-- [ ] Preserve argument values and instruction effects when folding register assignments
+- [x] Preserve argument values and instruction effects when folding register assignments
       into calls: only remove genuine, side-effect-free assignments whose expression inputs
       are still available and whose destination is not also the indirect call target.
       — claimed: Afloat16, branch bugfix/r3.11-call-argument-values-20261112
+- [ ] Audit saved x86 push and Win64 stack-argument expressions for the same value-lifetime
+      guarantees as register arguments; preserve effects when their inputs change.
 - [x] Enforce stand-in per-body and total byte budgets on the text that is actually retained after redaction;
       deduplicate consecutive samples before charging the capture budget.
       — claimed: Afloat16, branch bugfix/r3.11-standin-redacted-budget-20261103b
