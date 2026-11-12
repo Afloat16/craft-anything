@@ -770,20 +770,19 @@ fn count(v: &[u64]) -> u32 {
 }
 
 /// Immediate (post-)dominator: the strict dominator with the largest dominator set.
-fn immediate(sets: &[Vec<u64>], n: usize, b: usize) -> Option<usize> {
+fn immediate(sets: &[Vec<u64>], sizes: &[u32], b: usize) -> Option<usize> {
+    let n = sets.len();
     let s = sets.get(b)?;
-    if count(s) as usize >= n && n > 1 {
+    if *sizes.get(b)? as usize >= n && n > 1 {
         return None; // unreachable / never reaches exit: set stayed full
     }
-    (0..n).filter(|&d| d != b && has(s, d)).max_by_key(|&d| sets.get(d).map(|x| count(x)).unwrap_or(0))
+    (0..n).filter(|&d| d != b && has(s, d)).max_by_key(|&d| sizes.get(d).copied().unwrap_or(0))
 }
 
 struct Graph {
     starts: Vec<u64>,
     succs: Vec<Vec<usize>>,
-    idom: Vec<Option<usize>>,
     ipdom: Vec<Option<usize>>,
-    dom: Vec<Vec<u64>>,
     /// header → (loop body, follow)
     loops: BTreeMap<usize, (BTreeSet<usize>, Option<usize>)>,
 }
@@ -814,8 +813,8 @@ fn build_graph(f: &Function) -> Graph {
     }
     rpreds.push(Vec::new());
     let pdom = dominators(n + 1, n, &rpreds);
-    let idom = (0..n).map(|b| immediate(&dom, n, b)).collect();
-    let ipdom = (0..n).map(|b| immediate(&pdom, n + 1, b).filter(|&d| d < n)).collect();
+    let pdom_sizes: Vec<u32> = pdom.iter().map(|set| count(set)).collect();
+    let ipdom: Vec<Option<usize>> = (0..n).map(|b| immediate(&pdom, &pdom_sizes, b).filter(|&d| d < n)).collect();
     // Natural loops from back edges u → h where h dominates u.
     let mut loops: BTreeMap<usize, (BTreeSet<usize>, Option<usize>)> = BTreeMap::new();
     for (u, ss) in succs.iter().enumerate() {
@@ -833,17 +832,16 @@ fn build_graph(f: &Function) -> Graph {
             }
         }
     }
-    let ipd: Vec<Option<usize>> = (0..n).map(|b| immediate(&pdom, n + 1, b).filter(|&d| d < n)).collect();
     for (h, (body, follow)) in loops.iter_mut() {
         let exits: BTreeSet<usize> = body.iter().flat_map(|&b| succs.get(b).cloned().unwrap_or_default()).filter(|s| !body.contains(s)).collect();
-        *follow = ipd
+        *follow = ipdom
             .get(*h)
             .copied()
             .flatten()
             .filter(|p| !body.contains(p))
             .or_else(|| exits.iter().min_by_key(|&&e| starts.get(e).copied().unwrap_or(0)).copied());
     }
-    Graph { starts, succs, idom, ipdom, dom, loops }
+    Graph { starts, succs, ipdom, loops }
 }
 
 enum Edge {
@@ -1226,7 +1224,7 @@ pub fn lift(img: &Image, prog: &Program, f: &Function, names: &dyn Fn(u64) -> Op
     let graph = if structured_ok {
         build_graph(f)
     } else {
-        Graph { starts: f.blocks.iter().map(|b| b.start).collect(), succs: vec![], idom: vec![], ipdom: vec![], dom: vec![], loops: BTreeMap::new() }
+        Graph { starts: f.blocks.iter().map(|b| b.start).collect(), succs: vec![], ipdom: vec![], loops: BTreeMap::new() }
     };
     let mut emitter = Emitter {
         g: &graph,
@@ -1270,7 +1268,6 @@ pub fn lift(img: &Image, prog: &Program, f: &Function, names: &dyn Fn(u64) -> Op
             emitter.labels.insert(b.start);
         }
     }
-    let _ = (&graph.idom, &graph.dom);
     if emitter.pending_label.is_some() {
         emitter.push(1, ";");
     }

@@ -1,0 +1,294 @@
+{
+  "base_sha": "9574a2f72843663313c968c268374eb0a08d4784",
+  "profile": "release, thin LTO, one codegen unit",
+  "repetitions": 5,
+  "samples_per_run": 9,
+  "iterations_per_sample": 5,
+  "cpu_pinned": true,
+  "cpu": 0,
+  "rows": [
+    {
+      "case": "chain_16",
+      "blocks": 16,
+      "baseline_median_ns": 11667.6,
+      "fixed_median_ns": 10928.6,
+      "speedup": 1.067620738246436,
+      "output_sha256": "2cec46412b765dc4915aedabb58225e801703716e468e068cdc94eda824069e8",
+      "samples_per_variant": 45,
+      "run_medians_ns": {
+        "baseline": [
+          11625,
+          11924,
+          11623,
+          11737,
+          11521
+        ],
+        "fixed": [
+          10980,
+          10812,
+          10928,
+          10910,
+          10928
+        ]
+      }
+    },
+    {
+      "case": "chain_256",
+      "blocks": 256,
+      "baseline_median_ns": 1196009.2,
+      "fixed_median_ns": 969902.0,
+      "speedup": 1.2331237588952286,
+      "output_sha256": "2cec46412b765dc4915aedabb58225e801703716e468e068cdc94eda824069e8",
+      "samples_per_variant": 45,
+      "run_medians_ns": {
+        "baseline": [
+          1196002,
+          1229838,
+          1189145,
+          1217188,
+          1189768
+        ],
+        "fixed": [
+          972177,
+          974268,
+          975380,
+          963796,
+          959627
+        ]
+      }
+    },
+    {
+      "case": "chain_1000",
+      "blocks": 1000,
+      "baseline_median_ns": 8688329.0,
+      "fixed_median_ns": 3749561.8,
+      "speedup": 2.3171585010280404,
+      "output_sha256": "2cec46412b765dc4915aedabb58225e801703716e468e068cdc94eda824069e8",
+      "samples_per_variant": 45,
+      "run_medians_ns": {
+        "baseline": [
+          8747589,
+          8835608,
+          8592453,
+          8707143,
+          8720316
+        ],
+        "fixed": [
+          3733537,
+          3730783,
+          3997806,
+          3747507,
+          3790485
+        ]
+      }
+    },
+    {
+      "case": "chain_1500",
+      "blocks": 1500,
+      "baseline_median_ns": 21997614.2,
+      "fixed_median_ns": 6190985.0,
+      "speedup": 3.5531687122485356,
+      "output_sha256": "2cec46412b765dc4915aedabb58225e801703716e468e068cdc94eda824069e8",
+      "samples_per_variant": 45,
+      "run_medians_ns": {
+        "baseline": [
+          21878498,
+          21927669,
+          22135910,
+          22595180,
+          23518280
+        ],
+        "fixed": [
+          6270528,
+          6130508,
+          6150565,
+          6167529,
+          6325705
+        ]
+      }
+    },
+    {
+      "case": "linear_fallback_1501",
+      "blocks": 1501,
+      "baseline_median_ns": 561565.0,
+      "fixed_median_ns": 554051.4,
+      "speedup": 1.0135611966687568,
+      "output_sha256": "5f535955d4fa53f3fecf7b8c9b7f042f8bbc537c2c59558a1349ffe05ca617e7",
+      "samples_per_variant": 45,
+      "run_medians_ns": {
+        "baseline": [
+          545145,
+          549004,
+          963163,
+          553283,
+          958105
+        ],
+        "fixed": [
+          560770,
+          549613,
+          553901,
+          555349,
+          554449
+        ]
+      }
+    },
+    {
+      "case": "reverse_chain_1000",
+      "blocks": 1000,
+      "baseline_median_ns": 26527401.2,
+      "fixed_median_ns": 21948040.2,
+      "speedup": 1.208645553692762,
+      "output_sha256": "7a330e9ce027263133afd633d5197d53d76e7a9ffd73642ea9d1f2cec9b2b130",
+      "samples_per_variant": 45,
+      "run_medians_ns": {
+        "baseline": [
+          26113856,
+          26893300,
+          25528481,
+          27034385,
+          27287622
+        ],
+        "fixed": [
+          21751287,
+          23238162,
+          21479787,
+          21888553,
+          23461363
+        ]
+      }
+    },
+    {
+      "case": "diamonds_64",
+      "blocks": 193,
+      "baseline_median_ns": 732563.0,
+      "fixed_median_ns": 660091.2,
+      "speedup": 1.109790586512894,
+      "output_sha256": "0fbf890212967334cc22168c7cf0d98d61902795243a3e6f0e89b1c1c4566f0b",
+      "samples_per_variant": 45,
+      "run_medians_ns": {
+        "baseline": [
+          730832,
+          732120,
+          732224,
+          737121,
+          739410
+        ],
+        "fixed": [
+          657725,
+          657867,
+          661262,
+          672676,
+          661271
+        ]
+      }
+    },
+    {
+      "case": "diamonds_400",
+      "blocks": 1201,
+      "baseline_median_ns": 8688400.8,
+      "fixed_median_ns": 5708802.8,
+      "speedup": 1.5219304474836652,
+      "output_sha256": "9749eff159fa36912bb4eee941b3c637e7fd9ccc19c29f4791d12d92a30f1c7c",
+      "samples_per_variant": 45,
+      "run_medians_ns": {
+        "baseline": [
+          8755825,
+          8687243,
+          8512542,
+          8753252,
+          8716506
+        ],
+        "fixed": [
+          5592950,
+          6410871,
+          5616037,
+          5654676,
+          5799581
+        ]
+      }
+    },
+    {
+      "case": "loops_64",
+      "blocks": 192,
+      "baseline_median_ns": 826336.2,
+      "fixed_median_ns": 691267.0,
+      "speedup": 1.1953936756709056,
+      "output_sha256": "325a04c51a0c00cee6bbde4d19b0e4846d89e08c58f4046177f2734db4f55e69",
+      "samples_per_variant": 45,
+      "run_medians_ns": {
+        "baseline": [
+          827764,
+          828936,
+          820795,
+          819951,
+          830300
+        ],
+        "fixed": [
+          688768,
+          690771,
+          690507,
+          691267,
+          719656
+        ]
+      }
+    },
+    {
+      "case": "loops_400",
+      "blocks": 1200,
+      "baseline_median_ns": 10940388.6,
+      "fixed_median_ns": 5827645.4,
+      "speedup": 1.877325720607503,
+      "output_sha256": "89e94ff57966754de9c5339c8c22255efa3e1e1394181e0c9cac40b8bf5d51d6",
+      "samples_per_variant": 45,
+      "run_medians_ns": {
+        "baseline": [
+          10975893,
+          11239551,
+          10725326,
+          10894424,
+          11124501
+        ],
+        "fixed": [
+          5718143,
+          5723857,
+          7272252,
+          7125185,
+          5771640
+        ]
+      }
+    },
+    {
+      "case": "many_exits_400",
+      "blocks": 1201,
+      "baseline_median_ns": 7916679.8,
+      "fixed_median_ns": 2128202.6,
+      "speedup": 3.719890108206803,
+      "output_sha256": "01f391889e1b0e929822c33fed7ab6b94a207a531e4bcab3a994658b995b00a4",
+      "samples_per_variant": 45,
+      "run_medians_ns": {
+        "baseline": [
+          9532967,
+          7765496,
+          7882038,
+          9048872,
+          8065187
+        ],
+        "fixed": [
+          2093669,
+          2142762,
+          2106303,
+          2135806,
+          2131451
+        ]
+      }
+    }
+  ],
+  "outputs_equal": true,
+  "timing_scope": "Own test compilation completed before this run; other shared-environment activity is not controlled.",
+  "environment": {
+    "os": "Linux",
+    "machine": "x86_64",
+    "rust": "1.99.0",
+    "hardware_model": "unavailable in this environment"
+  }
+}

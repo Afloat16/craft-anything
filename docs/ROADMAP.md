@@ -1702,9 +1702,11 @@ Owner: open · Status: in progress
 - [x] Fold an AArch64 MOVZ/MOVK sequence into one constant in pseudo-C: `mov w9, #0x2493` then
       `movk w9, #0x9249, lsl #16` reads as two statements, not `w9 = 0x92492493;`
       — claimed: Jensen-Yao, branch bugfix/r3.11-a64-movz-movk-constants
-- [ ] Avoid unused immediate-dominator work and repeated population counts while structuring
+- [x] Avoid unused immediate-dominator work and repeated population counts while structuring
       pseudo-C; measure complete lifting on encoded control-flow fixtures and preserve its output.
       — claimed: Afloat16, branch refactor/r3.11-pseudo-dominator-scans-20261112
+- [ ] A reverse-ordered acyclic control-flow chain can acquire fabricated loops when dominator
+      iteration stops before convergence; do not structure control flow from unfinished sets.
 - [x] Enforce stand-in per-body and total byte budgets on the text that is actually retained after redaction;
       deduplicate consecutive samples before charging the capture budget.
       — claimed: Afloat16, branch bugfix/r3.11-standin-redacted-budget-20261103b

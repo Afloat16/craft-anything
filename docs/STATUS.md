@@ -6,6 +6,16 @@ workspace clippy, layers, fmt and the secret scan of all history were clean. Chi
 
 ## What works, and how it was checked
 
+### Pseudo-C graph structuring cost (R3.11)
+
+Large functions avoid repeated dominator-bitset scans and unused immediate-dominator work.
+The complete lifter on eleven encoded control-flow fixture families preserves every serialized
+output. Five alternating release-build rounds measured 1500-block chains at 21.998 → 6.191 ms
+and 1201-block graphs with many exits at 7.917 → 2.128 ms; the unchanged linear fallback is a
+timing control. All 109 disasm tests pass. See [method, every result and limits](pseudo-graph-benchmark.md).
+No live application or machine code was executed, and dominator convergence limits remain
+a separate pending correctness item.
+
 ### Local Codex discovery and sign-in (R2.2)
 
 macOS Dock launches can find an executable Codex CLI bundled with ChatGPT.app or
