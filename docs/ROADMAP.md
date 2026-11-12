@@ -1702,7 +1702,7 @@ Owner: open · Status: in progress
 - [x] Fold an AArch64 MOVZ/MOVK sequence into one constant in pseudo-C: `mov w9, #0x2493` then
       `movk w9, #0x9249, lsl #16` reads as two statements, not `w9 = 0x92492493;`
       — claimed: Jensen-Yao, branch bugfix/r3.11-a64-movz-movk-constants
-- [ ] Stop reusing a pseudo-C comparison after a call, an overwritten expression input, or
+- [x] Stop reusing a pseudo-C comparison after a call, an overwritten expression input, or
       an uncertain memory/flag change; retain explicit register branches and valid comparisons.
       — claimed: Afloat16, branch bugfix/r3.11-stale-condition-sources-20261112
 - [x] Enforce stand-in per-body and total byte budgets on the text that is actually retained after redaction;

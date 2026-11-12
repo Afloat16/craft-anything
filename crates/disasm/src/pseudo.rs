@@ -135,6 +135,42 @@ fn imm(v: i64) -> String {
     }
 }
 
+fn operand_uses_register(op: &Op, reg: &str) -> bool {
+    let same = |r: &str| canonical_reg(r) == canonical_reg(reg);
+    match op {
+        Op::Reg(r) | Op::Shifted { reg: r, .. } => same(r),
+        Op::Mem(m) => m.base.as_deref().is_some_and(same) || m.index.as_deref().is_some_and(same) || m.seg.as_deref().is_some_and(same),
+        _ => false,
+    }
+}
+
+/// A memory operand in an old condition cannot be reread across a possible write. Unknown
+/// instructions are deliberately conservative; implicit stores need not have a memory operand.
+fn may_write_memory(i: &Insn) -> bool {
+    match i.kind {
+        Kind::Nop | Kind::Lea | Kind::Adr | Kind::Adrp | Kind::Cmp | Kind::Test | Kind::Load | Kind::LoadPair | Kind::Branch => false,
+        Kind::Mov
+        | Kind::MovSx
+        | Kind::MovZx
+        | Kind::Insert
+        | Kind::Add
+        | Kind::Sub
+        | Kind::Mul
+        | Kind::Div
+        | Kind::And
+        | Kind::Or
+        | Kind::Xor
+        | Kind::Shl
+        | Kind::Shr
+        | Kind::Sar
+        | Kind::Not
+        | Kind::Neg
+        | Kind::Inc
+        | Kind::Dec => matches!(i.ops.first(), Some(Op::Mem(_))),
+        _ => true,
+    }
+}
+
 impl Lifter<'_> {
     fn addr_name(&self, a: u64) -> Option<String> {
         (self.names)(a).or_else(|| self.prog.name_at(a))
@@ -281,6 +317,26 @@ impl Lifter<'_> {
             .collect()
     }
 
+    fn condition_source_invalidated(&self, source: &Insn, next: &Insn) -> bool {
+        if next.sets_flags || matches!(next.flow, Flow::Call { .. } | Flow::IndirectCall { .. }) {
+            return true;
+        }
+        // Match the operands that condition() actually prints. For arithmetic this is the
+        // result, not every old input; zeroing idioms can have an empty decoded read set.
+        let compare = matches!(source.kind, Kind::Cmp | Kind::Test);
+        let skip = usize::from(compare && self.mode == Mode::A64);
+        let mut operands = source.ops.get(skip..).unwrap_or_default().iter().take(if compare { 2 } else { 1 });
+        operands.any(|op| {
+            next.writes.iter().any(|reg| operand_uses_register(op, reg))
+                // The decoder omits implicit x86 stack-pointer writes for push/pop. ARM
+                // push/pop can likewise update sp (r13) without an explicit operand.
+                || (matches!(next.kind, Kind::Push | Kind::Pop | Kind::Leave)
+                    && (operand_uses_register(op, "sp")
+                        || (matches!(self.mode, Mode::A32 | Mode::T32) && operand_uses_register(op, "r13"))))
+                || (matches!(op, Op::Mem(_)) && may_write_memory(next))
+        })
+    }
+
     /// Statements for one block plus its branch condition.
     fn block(&mut self, insns: &[Insn], entry_or_exit: bool) -> BlockCode {
         let mut stmts: Vec<String> = Vec::new();
@@ -297,6 +353,11 @@ impl Lifter<'_> {
         // Win64 outgoing stack arguments stored in this block: rsp offset → (statement, value).
         let mut stack_args: BTreeMap<i64, (usize, String)> = BTreeMap::new();
         for (k, i) in insns.iter().enumerate() {
+            // Check before hidden ADRP/import loads can skip the rest of this instruction.
+            // A modeled flag writer below may establish a new source after this invalidation.
+            if flag_src.is_some_and(|source| self.condition_source_invalidated(source, i)) {
+                flag_src = None;
+            }
             let exclusive_memory = self.mode == Mode::A64
                 && matches!(
                     i.mnemonic.as_str(),
@@ -588,9 +649,6 @@ impl Lifter<'_> {
                     }
                 }
                 _ => {
-                    if i.sets_flags {
-                        flag_src = Some(i);
-                    }
                     self.asm_fallbacks += 1;
                     stmt = Some(format!("__asm(\"{}\");", escape(&i.text())));
                 }
