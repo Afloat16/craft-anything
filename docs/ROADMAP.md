@@ -1702,7 +1702,7 @@ Owner: open · Status: in progress
 - [x] Fold an AArch64 MOVZ/MOVK sequence into one constant in pseudo-C: `mov w9, #0x2493` then
       `movk w9, #0x9249, lsl #16` reads as two statements, not `w9 = 0x92492493;`
       — claimed: Jensen-Yao, branch bugfix/r3.11-a64-movz-movk-constants
-- [ ] Pseudo-C string references use their byte offsets and encoding: preserve UTF-16LE
+- [x] Pseudo-C string references use their byte offsets and encoding: preserve UTF-16LE
       suffixes and leave addresses inside encoded characters or beyond retained text explicit.
       — claimed: Afloat16, branch bugfix/r3.11-string-byte-suffixes-20261112
 - [x] Enforce stand-in per-body and total byte budgets on the text that is actually retained after redaction;

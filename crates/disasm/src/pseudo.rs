@@ -7,7 +7,7 @@
 use crate::decode::{ArmConsts, Cond, Flow, Insn, Kind, MemOp, Mode, Op, Shift, canonical_reg};
 use crate::image::Image;
 use crate::program::{Function, Program};
-use craft_anything_formats::Format;
+use craft_anything_formats::{Format, strings::Encoding};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -142,8 +142,23 @@ impl Lifter<'_> {
 
     fn string_lit(&mut self, a: u64) -> Option<String> {
         let s = self.prog.string_at(a)?;
-        let off = a.checked_sub(s.addr)?;
-        let text: String = if off == 0 { s.text.clone() } else { s.text.chars().skip(off as usize).collect() };
+        let off = usize::try_from(a.checked_sub(s.addr)?).ok()?;
+        let start = match s.encoding {
+            Encoding::Ascii | Encoding::Utf8 => off,
+            Encoding::Utf16le => {
+                if !off.is_multiple_of(2) {
+                    return None;
+                }
+                let mut encoded_offset = 0usize;
+                s.text.char_indices().find_map(|(at, ch)| {
+                    let matches = encoded_offset == off;
+                    encoded_offset += ch.len_utf16() * 2;
+                    matches.then_some(at)
+                })?
+            }
+        };
+        // The extractor may retain only a prefix; an address beyond it is not an empty literal.
+        let text = s.text.get(start..).filter(|text| !text.is_empty())?.to_string();
         if !self.strings.contains(&text) && self.strings.len() < 256 {
             self.strings.push(text.clone());
         }
