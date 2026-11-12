@@ -93,6 +93,33 @@ fn ty(size: u8) -> &'static str {
     }
 }
 
+/// Integer operand width before canonical register aliases erase it.
+fn x86_scalar_size(op: &Op) -> Option<u8> {
+    match op {
+        Op::Mem(memory) => matches!(memory.size, 1 | 2 | 4 | 8).then_some(memory.size),
+        Op::Reg(register) => match register.as_str() {
+            "al" | "ah" | "bl" | "bh" | "cl" | "ch" | "dl" | "dh" | "sil" | "dil" | "bpl" | "spl" => Some(1),
+            "ax" | "bx" | "cx" | "dx" | "si" | "di" | "bp" | "sp" => Some(2),
+            "eax" | "ebx" | "ecx" | "edx" | "esi" | "edi" | "ebp" | "esp" => Some(4),
+            "rax" | "rbx" | "rcx" | "rdx" | "rsi" | "rdi" | "rbp" | "rsp" => Some(8),
+            other => {
+                let name = other.strip_prefix('r')?;
+                let (digits, size) = if let Some(digits) = name.strip_suffix('l').or_else(|| name.strip_suffix('b')) {
+                    (digits, 1)
+                } else if let Some(digits) = name.strip_suffix('w') {
+                    (digits, 2)
+                } else if let Some(digits) = name.strip_suffix('d') {
+                    (digits, 4)
+                } else {
+                    (name, 8)
+                };
+                (8..=15).contains(&digits.parse::<u8>().ok()?).then_some(size)
+            }
+        },
+        _ => None,
+    }
+}
+
 /// A shifted or extended register as C: the shift's signedness and width are spelled out, since
 /// registers have no types here.
 fn shifted(reg: &str, shift: Shift, n: u8) -> String {
@@ -463,7 +490,24 @@ impl Lifter<'_> {
                     }
                 }
                 (Kind::Cmp | Kind::Test, _) => flag_src = Some(i),
-                (Kind::Mov | Kind::MovSx | Kind::MovZx, _) if i.ops.len() >= 2 => {
+                (Kind::MovSx | Kind::MovZx, _) => {
+                    let widths = i.ops.first().and_then(x86_scalar_size).zip(i.ops.get(1).and_then(x86_scalar_size));
+                    if let Some((destination, source)) = widths.filter(|(destination, source)| source <= destination) {
+                        let signed = i.kind == Kind::MovSx;
+                        let type_name = |size| if signed { ty(size).trim_start_matches('u') } else { ty(size) };
+                        stmt = Some(format!(
+                            "{} = ({})({}){};",
+                            d.clone().unwrap_or_default(),
+                            type_name(destination),
+                            type_name(source),
+                            s.clone().unwrap_or_default()
+                        ));
+                    } else {
+                        self.asm_fallbacks += 1;
+                        stmt = Some(format!("__asm(\"{}\");", escape(&i.text())));
+                    }
+                }
+                (Kind::Mov, _) if i.ops.len() >= 2 => {
                     let (dd, ss) = (d.clone().unwrap_or_default(), s.clone().unwrap_or_default());
                     if (frame_reg(&dd) && dest_reg.is_some()) || dd == ss {
                         // frame setup (mov rbp, rsp / mov x29, sp)
