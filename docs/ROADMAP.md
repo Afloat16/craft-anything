@@ -917,7 +917,7 @@ Owner: open · Status: in progress
       not HOME, which MSYS2 and Cygwin shells point at their own folder.
       — claimed: Plastic-time, branch bugfix/r2.2-windows-home-is-the-user-profile
 - [x] Run the platform tests, including Windows search paths, consoles and Job Objects, on a
-      Windows runner. [Windows Server 2022 passed the locked platform suite](https://github.com/storytold/craft-anything/actions/runs/42400153548/job/128485970678)
+      Windows runner. [Windows Server 2022 passed the locked platform suite](https://github.com/storytold/craft-anything/actions/runs/42618050121/job/129162771299)
       — claimed: Afloat16, branch test/r2.2-windows-platform-ci
 - [ ] "Claude Code on <ssh host>" is offered for any SSH host, whether or not it has Claude Code
       (#62)
