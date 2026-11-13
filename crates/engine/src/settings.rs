@@ -308,6 +308,23 @@ pub fn config_dir() -> PathBuf {
     dirs::config_dir().map(|d| d.join("craft-anything")).unwrap_or_else(|| PathBuf::from(".craft-anything"))
 }
 
+fn temporary_config_read(error: &std::io::Error) -> bool {
+    const SHARING_VIOLATION: i32 = 32;
+    const LOCK_VIOLATION: i32 = 33;
+    matches!(error.kind(), std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock)
+        || (cfg!(windows) && matches!(error.raw_os_error(), Some(SHARING_VIOLATION | LOCK_VIOLATION)))
+}
+
+fn read_config_retry<T>(mut read: impl FnMut() -> std::io::Result<T>, mut wait: impl FnMut(std::time::Duration)) -> std::io::Result<T> {
+    for millis in [10, 20, 40, 80, 160] {
+        match read() {
+            Err(error) if temporary_config_read(&error) => wait(std::time::Duration::from_millis(millis)),
+            result => return result,
+        }
+    }
+    read()
+}
+
 impl Settings {
     /// The folder new projects go in.
     pub fn projects_dir(&self) -> PathBuf {
@@ -360,8 +377,13 @@ impl Settings {
     /// understood (not TOML, not UTF-8 text) is set aside under a new name and replaced with
     /// defaults; one that can't be read at all, or can't be set aside, stays where it is, and the
     /// defaults returned refuse to be saved over it ([`Settings::not_loaded`]).
+    /// Temporary read errors get at most five retries, with 310 ms of waiting in total.
     pub fn load_from(path: &Path) -> Settings {
-        let bytes = match std::fs::read(path) {
+        Self::load_read_result(path, read_config_retry(|| std::fs::read(path), std::thread::sleep))
+    }
+
+    fn load_read_result(path: &Path, result: std::io::Result<Vec<u8>>) -> Settings {
+        let bytes = match result {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Settings::default(),
             Err(e) => {
@@ -725,6 +747,137 @@ default = "Claude Code"
         assert!(!toml::to_string_pretty(&s).unwrap().contains("not_loaded"));
         assert_eq!(Settings::load_from(&dir.path().join("none.toml")), Settings::default());
         assert_eq!(Settings::load_from(&dir.path().join("no-folder").join("config.toml")).not_loaded, None);
+    }
+
+    #[test]
+    fn a_temporary_config_read_failure_keeps_the_saved_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        Settings { language: "de".into(), first_run_done: true, ..Settings::default() }.save_to(&path).unwrap();
+        let original = std::fs::read(&path).unwrap();
+        let mut attempts = 0;
+        let mut waits = Vec::new();
+        let result = read_config_retry(
+            || {
+                attempts += 1;
+                if attempts <= 2 { Err(std::io::ErrorKind::WouldBlock.into()) } else { std::fs::read(&path) }
+            },
+            |wait| waits.push(wait),
+        );
+        let settings = Settings::load_read_result(&path, result);
+        assert_eq!(settings.language, "de");
+        assert!(settings.first_run_done && settings.not_loaded.is_none());
+        assert_eq!(attempts, 3);
+        assert_eq!(waits.len(), 2);
+        settings.save_to(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn a_config_that_stays_busy_stops_retrying_and_cannot_be_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = b"language = 'de'\n";
+        std::fs::write(&path, original).unwrap();
+        let mut attempts = 0;
+        let mut waited = std::time::Duration::ZERO;
+        let result = read_config_retry(
+            || {
+                attempts += 1;
+                Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, format!("busy attempt {attempts}")))
+            },
+            |wait| waited += wait,
+        );
+        let settings = Settings::load_read_result(&path, result);
+        assert!(attempts > 1 && attempts <= 10);
+        assert!(waited > std::time::Duration::ZERO && waited <= std::time::Duration::from_millis(500));
+        assert!(settings.not_loaded.as_deref().unwrap().contains(&format!("busy attempt {attempts}")));
+        assert!(settings.save_to(&path).is_err());
+        assert!(settings.defer_save_to(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert!(!path.with_extension("toml.broken").exists());
+    }
+
+    #[test]
+    fn a_permanent_error_after_a_temporary_one_ends_the_config_read() {
+        let mut attempts = 0;
+        let mut waits = 0;
+        let result: std::io::Result<Vec<u8>> = read_config_retry(
+            || {
+                attempts += 1;
+                Err(if attempts == 1 { std::io::ErrorKind::Interrupted } else { std::io::ErrorKind::PermissionDenied }.into())
+            },
+            |_| waits += 1,
+        );
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(attempts, 2);
+        assert_eq!(waits, 1);
+    }
+
+    #[test]
+    fn config_retries_keep_missing_and_malformed_file_handling() {
+        let dir = tempfile::tempdir().unwrap();
+        for malformed in [false, true] {
+            let path = dir.path().join(if malformed { "bad.toml" } else { "missing.toml" });
+            if malformed {
+                std::fs::write(&path, b"language = [\xff").unwrap();
+            }
+            let mut attempts = 0;
+            let result = read_config_retry(
+                || {
+                    attempts += 1;
+                    if attempts == 1 { Err(std::io::ErrorKind::WouldBlock.into()) } else { std::fs::read(&path) }
+                },
+                |_| {},
+            );
+            assert_eq!(Settings::load_read_result(&path, result), Settings::default());
+            if malformed {
+                assert_eq!(std::fs::read(path.with_extension("toml.broken")).unwrap(), b"language = [\xff");
+            }
+            assert!(!path.exists());
+        }
+    }
+
+    #[test]
+    fn config_reads_do_not_wait_after_success_or_permanent_errors() {
+        assert_eq!(read_config_retry(|| Ok(7), |_| panic!("successful reads must not wait")).unwrap(), 7);
+        for kind in [std::io::ErrorKind::NotFound, std::io::ErrorKind::PermissionDenied, std::io::ErrorKind::InvalidInput] {
+            let result: std::io::Result<Vec<u8>> = read_config_retry(|| Err(kind.into()), |_| panic!("permanent errors must not wait"));
+            assert_eq!(result.unwrap_err().kind(), kind);
+        }
+    }
+
+    #[test]
+    fn config_read_system_codes_follow_the_running_platform() {
+        for code in [32, 33] {
+            assert_eq!(temporary_config_read(&std::io::Error::from_raw_os_error(code)), cfg!(windows));
+        }
+        assert!(!temporary_config_read(&std::io::Error::from(std::io::ErrorKind::PermissionDenied)));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_config_released_between_reads_loads_without_defaults() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        Settings { language: "de".into(), first_run_done: true, ..Settings::default() }.save_to(&path).unwrap();
+        let original = std::fs::read(&path).unwrap();
+        let mut held = Some(std::fs::OpenOptions::new().read(true).share_mode(0).open(&path).unwrap());
+        let mut waits = 0;
+        let result = read_config_retry(
+            || std::fs::read(&path),
+            |_| {
+                waits += 1;
+                drop(held.take());
+            },
+        );
+        let settings = Settings::load_read_result(&path, result);
+        assert_eq!(waits, 1);
+        assert_eq!(settings.language, "de");
+        assert!(settings.first_run_done && settings.not_loaded.is_none());
+        settings.save_to(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), original);
     }
 
     /// The file a person has, unreadable only for a moment (another program holds it): the

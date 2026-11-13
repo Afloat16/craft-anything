@@ -1565,9 +1565,11 @@ Gaps found while using the app for real projects.
       — claimed: hichang4u, branch bugfix/r2.9-config-not-loaded
 - [ ] When config.toml wasn't loaded (`Settings::not_loaded`), the app says so only in the log and
       when a save fails: say it at startup where the person is looking, with the file's name
-- [ ] A config.toml that can't be read for a moment at startup (a virus scan or another program
-      holding it) isn't tried again, so the whole session runs on defaults and refuses every save:
-      try the read again for a short while before giving up
+- [x] A config.toml that is briefly busy at startup gets up to five more reads before defaults
+      stand in for it: interrupted/would-block reads and Windows sharing/lock violations wait
+      310 ms in total at most. Permanent errors stop immediately; exhausted reads still refuse
+      saves over the unread file. Deterministic read-error tests checked on Linux; the native
+      Windows sharing-handle regression is included but was not run here
       — claimed: Afloat16, branch bugfix/r2.9-config-read-retry-20261112-submission
 
 ### R2.10 Pinned builds
