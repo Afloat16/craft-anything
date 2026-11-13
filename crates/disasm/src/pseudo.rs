@@ -286,9 +286,9 @@ impl Lifter<'_> {
         let mut stmts: Vec<String> = Vec::new();
         // canonical reg → (statement index, expression) of its latest assignment in this block
         let mut defs: BTreeMap<String, (usize, String)> = BTreeMap::new();
-        // canonical reg → (statement index, value) while that assignment is a plain constant,
-        // so a following MOVK can fold with it
-        let mut consts: BTreeMap<String, (usize, u64)> = BTreeMap::new();
+        // canonical reg → (optional statement index, value) for a following MOVK.
+        // A hidden page load supplies a value without an emitted assignment to remove.
+        let mut consts: BTreeMap<String, (Option<usize>, u64)> = BTreeMap::new();
         let mut pushes: Vec<String> = Vec::new();
         let mut flag_src: Option<&Insn> = None;
         let mut cond = None;
@@ -337,6 +337,14 @@ impl Lifter<'_> {
                 for w in &i.writes {
                     defs.remove(w);
                     consts.remove(w);
+                }
+                if i.kind == Kind::Adrp
+                    && let (Some(Op::Reg(r)), Some(Op::Addr(page))) = (i.ops.first(), i.ops.get(1))
+                {
+                    let r = canonical_reg(r);
+                    if i.writes.contains(&r) {
+                        consts.insert(r, (None, *page));
+                    }
                 }
                 continue;
             }
@@ -480,13 +488,14 @@ impl Lifter<'_> {
                 (Kind::Insert, _) => match (i.ops.get(1), i.ops.get(2)) {
                     (Some(Op::Imm(v)), Some(Op::Imm(keep))) => {
                         let dd = d.clone().unwrap_or_default();
-                        // A MOVZ (or an earlier folded MOVK) beside this MOVK is one constant:
-                        // fold the pair into a single assignment.
+                        // The current immediate or page address and this MOVK form one value.
                         if let (Some((idx, base)), Some(dr)) = (insert_src, dest_reg.as_ref())
-                            && !dead.contains(&idx)
+                            && idx.is_none_or(|idx| !dead.contains(&idx))
                         {
                             let combined = (base & (*keep as u64)) | (*v as u64);
-                            dead.insert(idx);
+                            if let Some(idx) = idx {
+                                dead.insert(idx);
+                            }
                             stmt = Some(format!("{dd} = {};", imm(combined as i64)));
                             const_def = Some((dr.clone(), combined));
                         } else {
@@ -620,7 +629,7 @@ impl Lifter<'_> {
                     }
                     match const_def {
                         Some((cr, v)) if cr == *r => {
-                            consts.insert(r.clone(), (stmts.len() - 1, v));
+                            consts.insert(r.clone(), (Some(stmts.len() - 1), v));
                         }
                         _ => {
                             consts.remove(r);
@@ -1454,10 +1463,10 @@ mod tests {
         assert!(p.text.contains("x14 = 0x2493;"), "{}", p.text);
         assert!(p.text.contains("x15 = x14 + x14;"), "{}", p.text);
         assert!(p.text.contains("x14 = (x14 & 0xffffffff0000ffff) | 0x92490000;"), "{}", p.text);
-        // A page load between the pair overwrites the register: the MOVK folds with nothing
+        // A page load replaces the immediate; the following MOVK uses that page value.
         let p = lift_a64(&[0xd284_9269, 0x9000_0009, 0xf2b2_4929, 0xd65f_03c0]);
         assert!(p.text.contains("x9 = 0x2493;"), "{}", p.text);
-        assert!(p.text.contains("x9 = (x9 & 0xffffffff0000ffff) | 0x92490000;"), "{}", p.text);
+        assert!(p.text.contains("x9 = 0x92491000;"), "{}", p.text);
         assert!(!p.text.contains("x9 = 0x92492493;"), "{}", p.text);
     }
 
