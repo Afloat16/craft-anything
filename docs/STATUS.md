@@ -6,6 +6,19 @@ workspace clippy, layers, fmt and the secret scan of all history were clean. Chi
 
 ## What works, and how it was checked
 
+### String reference byte offsets (R3.11)
+
+Pseudo-C resolves string suffixes by their source byte address. UTF-16LE offsets account for
+code-unit width, UTF-8 offsets must fall on character boundaries, and odd wide-string offsets
+remain explicit addresses. References beyond the retained text no longer become empty literals;
+the existing bounded-prefix behavior within retained text is unchanged.
+
+Fifteen public-lifter fixtures contain real encoded string bytes referenced by x86-64 LEA
+instructions. Eleven fail on unchanged production code and four controls pass; all fifteen
+and the complete 124-test disasm suite pass after the correction. Fixtures cover wide suffixes,
+inside-character references, extraction limits, and ordinary narrow/wide references. Decoding
+and lifting ran on Linux; no executable, Windows desktop, or macOS application was run.
+
 ### Local Codex discovery and sign-in (R2.2)
 
 macOS Dock launches can find an executable Codex CLI bundled with ChatGPT.app or
