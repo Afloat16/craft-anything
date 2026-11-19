@@ -275,7 +275,7 @@ struct Listing {
     examined: usize,
     /// A limit ended the listing before the folder did: the folder holds at least one entry more.
     cut: bool,
-    /// The entries the system couldn't return.
+    /// The entries the system couldn't return, or whose names couldn't be represented without loss.
     unread: Unread,
 }
 
@@ -304,9 +304,11 @@ fn list_within(
             out.cut = true;
             break;
         }
-        match entry {
-            Ok(raw) => {
-                let name = raw.to_string_lossy().into_owned();
+        match entry.and_then(|raw| {
+            let name = raw.to_str().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "entry name is not valid UTF-8"))?.to_owned();
+            Ok((name, raw))
+        }) {
+            Ok((name, raw)) => {
                 let path_bytes = out.path_bytes.saturating_add(prefix_len).saturating_add(name.len());
                 if path_bytes > max_path_bytes {
                     out.cut = true;
@@ -2066,5 +2068,110 @@ mod tests {
         assert!(entry["note"].as_str().is_some_and(|n| n.contains("couldn't be listed")), "{v}");
         assert!(root.is_err(), "a root folder that can't be listed is an error, not an empty inventory");
         assert_eq!(call(&e, "core_archive_show", json!({"path": bundle})).unwrap()["result"], readable["result"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_entry_names_are_disclosed_without_aliasing_visible_paths() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        for byte in [0x80, 0x81] {
+            let hidden = dir.path().join(std::ffi::OsString::from_vec(vec![b'a', byte]));
+            std::fs::create_dir(&hidden).unwrap();
+            std::fs::write(hidden.join("earlier.js"), b"hidden").unwrap();
+        }
+        std::fs::create_dir_all(dir.path().join("a�")).unwrap();
+        std::fs::create_dir_all(dir.path().join("nested")).unwrap();
+        for name in ["a�/kept.js", "nested/visible.js", "z.js"] {
+            std::fs::write(dir.path().join(name), name).unwrap();
+        }
+        let bad_file = std::ffi::OsString::from_vec(vec![b'x', 0xff]);
+        std::fs::write(dir.path().join(&bad_file), b"hidden").unwrap();
+        std::fs::write(dir.path().join("nested").join(&bad_file), b"hidden").unwrap();
+        let bad_link = std::ffi::OsString::from_vec(vec![b'l', 0xff]);
+        std::os::unix::fs::symlink("z.js", dir.path().join(bad_link)).unwrap();
+
+        let whole = walk(dir.path(), 100, ROOMY);
+        assert_eq!(rels(&whole), ["a�/kept.js", "nested/visible.js", "z.js"]);
+        assert_eq!(whole.dirs, ["a�", "nested"]);
+        assert!(whole.links.is_empty() && whole.truncated);
+        let mut unlisted = whole.unlisted.clone();
+        unlisted.sort();
+        assert_eq!(
+            unlisted,
+            [
+                (".".to_string(), "4 of its entries couldn't be read: entry name is not valid UTF-8".to_string()),
+                ("nested".to_string(), "1 of its entries couldn't be read: entry name is not valid UTF-8".to_string()),
+            ]
+        );
+        for max_files in 0..=whole.files.len() {
+            let cut = walk(dir.path(), max_files, ROOMY);
+            assert_eq!(rels(&cut), rels(&whole).into_iter().take(max_files).collect::<Vec<_>>());
+            assert!(cut.truncated);
+            assert!(cut.unlisted.iter().any(|(path, why)| path == "." && why.starts_with("4 of its entries")));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_entry_names_obey_read_and_failure_limits() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let cancel = CancelToken::default();
+        for max_entries in [2, 10, 100] {
+            let read = std::cell::Cell::new(0usize);
+            let invalid = std::iter::repeat_with(|| {
+                read.set(read.get() + 1);
+                Ok(std::ffi::OsString::from_vec(vec![b'a', 0x80]))
+            });
+            let listing = list_within(invalid, 2, max_entries, 1000, &cancel).unwrap();
+            let failures = max_entries.min(FAILED_IN_A_ROW);
+            let gave_up = max_entries >= FAILED_IN_A_ROW;
+            assert!(listing.names.is_empty());
+            assert_eq!((listing.examined, listing.unread.count, listing.path_bytes), (failures, failures, 0));
+            assert_eq!((listing.unread.gave_up, listing.cut, read.get()), (gave_up, !gave_up, failures + usize::from(!gave_up)));
+            assert!(listing.unread.reason().unwrap().contains("entry name is not valid UTF-8"));
+        }
+
+        let patchy = (0..127).map(|i| {
+            if i == 63 { named("�") } else { Ok(std::ffi::OsString::from_vec(vec![b'a', 0x81])) }
+        });
+        let listing = list_within(patchy, 2, 200, 1000, &cancel).unwrap();
+        assert_eq!(listing.names.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), ["�"]);
+        assert_eq!((listing.examined, listing.unread.count, listing.path_bytes), (127, 126, 5));
+        assert!(!listing.cut && !listing.unread.gave_up);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_entry_names_leave_inventory_coverage_partial() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let bundle = dir.path().join("bundle");
+        std::fs::create_dir_all(bundle.join("nested")).unwrap();
+        std::fs::write(bundle.join("a�.txt"), b"visible").unwrap();
+        std::fs::write(bundle.join("nested/ok.txt"), b"visible").unwrap();
+        for byte in [0x80, 0x81] {
+            let name = std::ffi::OsString::from_vec(vec![b'a', byte, b'.', b't', b'x', b't']);
+            std::fs::write(bundle.join(name), b"hidden").unwrap();
+        }
+        let hidden = bundle.join("nested").join(std::ffi::OsString::from_vec(vec![b'x', 0x80]));
+        std::fs::create_dir(&hidden).unwrap();
+        std::fs::write(hidden.join("hidden.txt"), b"hidden").unwrap();
+
+        let engine = Engine::new(crate::testing::session());
+        let evidence = call(&engine, "core_archive_show", json!({"path": bundle})).unwrap();
+        let entries = evidence["result"]["entries"].as_array().unwrap();
+        let paths: Vec<_> = entries.iter().map(|entry| entry["path"].as_str().unwrap()).collect();
+        assert_eq!(paths, ["a�.txt", "nested", "nested/ok.txt"]);
+        assert_eq!(evidence["result"]["truncated"], true);
+        assert_eq!(evidence["coverage"]["status"], "partial");
+        let message = walk_testing::unlisted_message(&evidence).unwrap();
+        assert!(message.contains(". (2 of its entries") && message.contains("nested (1 of its entries"), "{message}");
+        assert!(message.contains("entry name is not valid UTF-8"), "{message}");
+        let nested = entries.iter().find(|entry| entry["path"] == "nested").unwrap();
+        assert!(nested["note"].as_str().unwrap().contains("couldn't be listed in full"));
     }
 }

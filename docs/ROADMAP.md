@@ -2322,11 +2322,11 @@ Owner: open · Status: in progress
       folder's own listing is cut by the entry or path-byte limit, the names kept are the ones the
       system returned first, which only NTFS returns in name order
       — claimed: hichang4u, branch bugfix/r3.11-walk-path-order
-- [ ] A walk names entries by `to_string_lossy`, so on Unix two folders whose raw names differ only
-      in bytes that aren't UTF-8 (`a\x80`, `a\x81`) both read as `a�`: they are walked as two
-      folders but sorted as one path, so a cut walk can keep a later file and drop an earlier one
-      (CodeRabbit on #2101). Order by the raw name, or report a name that can't be shown
-      unambiguously as unlisted
+- [x] Folder walks report names that cannot be represented as UTF-8 as unreadable entries
+      in their parent, instead of replacing bytes and merging distinct file identities. Valid
+      names, including the replacement character itself, keep their exact spelling and order;
+      skipped names count against the walk's entry and consecutive-failure limits. Inventories
+      retain readable siblings and disclose partial coverage (CodeRabbit on #2101).
       — claimed: Afloat16, branch bugfix/r3.11-unreadable-entry-names-20261119
 
 ### R3.12 Format parser correctness
