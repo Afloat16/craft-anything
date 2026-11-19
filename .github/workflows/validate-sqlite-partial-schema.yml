@@ -1,0 +1,76 @@
+name: Validate SQLite partial schema patch
+
+on:
+  create:
+  push:
+    branches:
+      - validation-sqlite-partial-schema-20261119
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validation-sqlite-partial-schema-20261119
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    if: github.repository == 'Afloat16/craft-anything' && github.ref == 'refs/heads/validation-sqlite-partial-schema-20261119'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        gate: [formats, wasm]
+    env:
+      CODE_SHA: e65771d7fe28f02cd9f46009f23b9150a330ca19
+      CARGO_INCREMENTAL: "0"
+      CARGO_BUILD_JOBS: "2"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_PROFILE_TEST_STRIP: symbols
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Afloat16/craft-anything
+          ref: e65771d7fe28f02cd9f46009f23b9150a330ca19
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Prepare Rust and record exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p validation-results
+          test "$(git rev-parse HEAD)" = "$CODE_SHA"
+          rustup toolchain install stable --profile minimal --no-self-update --target wasm32-unknown-unknown
+          rustup default stable
+          {
+            git rev-parse HEAD
+            rustc --version
+            cargo --version
+            df -h .
+          } | tee validation-results/environment.log
+      - name: Run the complete formats package tests
+        if: matrix.gate == 'formats'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked -p craft-anything-formats 2>&1 | tee validation-results/formats.log
+          git diff --exit-code -- Cargo.lock
+      - name: Run the repository L0-L2 wasm gate
+        if: matrix.gate == 'wasm'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo xtask wasm 2>&1 | tee validation-results/wasm.log
+          git diff --exit-code -- Cargo.lock
+      - name: Save verification logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: sqlite-partial-schema-${{ matrix.gate }}-e65771d
+          path: validation-results/
+          if-no-files-found: warn
+          retention-days: 14
