@@ -1,0 +1,68 @@
+name: Validate unreadable folder entry names
+on:
+  push:
+    branches: [validation/craft-entry-names-20261119]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Afloat16/craft-anything
+          ref: 87a4e3c916ff4505f47c46d55a252bddc9de365c
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update --component clippy --component rustfmt
+          rustup default stable
+          rustc --version
+      - name: Format check
+        shell: bash
+        run: |
+          if ! cargo fmt --all --check; then
+            cargo fmt --all
+            git diff
+            exit 1
+          fi
+      - name: Prove regressions on unchanged production code
+        shell: bash
+        run: |
+          node <<'JS'
+          const fs = require("node:fs");
+          const path = "crates/engine/src/tools/artifact_tools.rs";
+          const before = "        match entry {\n            Ok(raw) => {\n                let name = raw.to_string_lossy().into_owned();";
+          const after = "        match entry.and_then(|raw| {\n            let name = raw.to_str().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, \"entry name is not valid UTF-8\"))?.to_owned();\n            Ok((name, raw))\n        }) {\n            Ok((name, raw)) => {";
+          const source = fs.readFileSync(path, "utf8");
+          if (source.split(after).length !== 2) throw new Error("production anchor changed");
+          fs.writeFileSync(path, source.replace(after, before));
+          JS
+          set +e
+          cargo test --locked -j 2 -p craft-anything-engine --lib non_utf8_entry_names_ -- --nocapture 2>&1 | tee /tmp/entry-name-baseline.log
+          result=${PIPESTATUS[0]}
+          set -e
+          git checkout -- crates/engine/src/tools/artifact_tools.rs
+          test "$result" -eq 101
+          node -e 'const s=require("node:fs").readFileSync("/tmp/entry-name-baseline.log","utf8"); if(!s.includes("test result: FAILED. 0 passed; 3 failed;")) throw new Error("expected three regression failures");'
+      - name: Engine tests
+        run: cargo test --locked -j 2 -p craft-anything-engine --no-fail-fast -- --test-threads=2
+      - name: Engine clippy
+        run: cargo clippy --locked -j 2 -p craft-anything-engine --all-targets -- -D warnings
+      - name: Architecture and source gates
+        run: |
+          cargo xtask layers
+          cargo xtask locks
+          cargo xtask secrets
+      - name: Verify clean source
+        run: |
+          cargo fmt --all --check
+          git diff --exit-code
+          git diff --check
