@@ -2327,6 +2327,7 @@ Owner: open · Status: in progress
       folders but sorted as one path, so a cut walk can keep a later file and drop an earlier one
       (CodeRabbit on #2101). Order by the raw name, or report a name that can't be shown
       unambiguously as unlisted
+      — claimed: Afloat16, branch bugfix/r3.11-walk-non-utf8-names-20261119
 
 ### R3.12 Format parser correctness
 Owner: open · Status: in progress
