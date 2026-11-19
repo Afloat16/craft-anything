@@ -732,6 +732,12 @@ Rebuild runs save the project's conversation in the versioned `feed.json`, inclu
 the CLI. `project_show` reads it with `offset`/`limit` paging, and `project_inbox_answer` answers
 waiting questions and approvals. These tools are available through the engine, CLI and MCP.
 
+Saving a conversation first reads its existing `feed.json` to check the format version. A filesystem
+read failure leaves the saved bytes or link unchanged and returns the read error; only a path confirmed
+absent can be initialized without that check. Readable malformed JSON still recovers as before.
+Regression tests use write-only current and newer feeds, answer retries, dangling and looping links,
+and controls for absent files and readable malformed JSON. No live desktop or remote filesystem was run.
+
 `engines_list` reports external and game-engine readiness; `engines_install` installs Ghidra,
 Godot and pinned engines. Unity and Unreal still need their vendor's installer and account:
 the tool opens an installer where supported, or reports the download page and requirements.
