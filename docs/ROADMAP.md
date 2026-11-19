@@ -2524,9 +2524,9 @@ Owner: open · Status: in progress
       `db_sqlite_show` adds a `schema_incomplete` limitation, partial coverage, and an unknown-table
       error that says only the listed part was searched
       — claimed: mansur-akhmadi, branch bugfix/r3.12-sqlite-schema-incomplete
-- [ ] A schema row whose CREATE statement was read only in part (a cut or looping overflow
-      chain, or text cut once the schema text budget is spent) leaves `schema_truncated` false,
-      so its table's column list can be short with no flag on it
+- [x] Schema rows read only in part (cut or looping overflow chains, unread values, or text cut
+      at a per-value or aggregate schema budget) set `schema_truncated` and report how many
+      records have incomplete metadata or column lists. Display-only SQL shortening stays separate
       — claimed: Afloat16, branch bugfix/r3.12-sqlite-partial-schema-20261119
 - [x] Require a complete DNS question's type and class fields before retaining it, and keep
       truncated questions out of packet inventories while reporting the incomplete message

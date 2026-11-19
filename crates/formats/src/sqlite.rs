@@ -455,8 +455,8 @@ impl<'a> SqliteDb<'a> {
 
     /// Walk the `sqlite_schema` b-tree (rooted at page 1) and return its objects. Columns are
     /// parsed from the whole CREATE statement; the text shown is cut at [`MAX_TEXT`] bytes. The
-    /// flag is true when the list may be incomplete (the object cap was hit, or part of the b-tree
-    /// couldn't be read), and the notes say what the walk skipped or cut.
+    /// flag is true when the list or an object's metadata may be incomplete (an object or text
+    /// cap was hit, or part of the b-tree or a record couldn't be read). Notes say what was cut.
     pub fn schema(&self) -> (Vec<SchemaObject>, bool, Vec<String>) {
         let (mut objects, truncated, notes) = self.whole_schema();
         for object in &mut objects {
@@ -475,7 +475,21 @@ impl<'a> SqliteDb<'a> {
         w.text_cap = MAX_SCHEMA_TEXT;
         w.text_budget = MAX_SCHEMA_TEXT_TOTAL;
         self.collect_table_rows(&mut w, 1, 0);
-        let truncated = w.incomplete || w.out.len() >= MAX_SCHEMA_OBJECTS;
+        let partial = w
+            .out
+            .iter()
+            .filter(|row| {
+                row.values.len() < 5
+                    || row
+                        .values
+                        .iter()
+                        .any(|value| matches!(value, CellValue::NotRead | CellValue::Text { truncated: true, .. } | CellValue::PartialBlob { .. }))
+            })
+            .count();
+        let truncated = w.incomplete || w.out.len() >= MAX_SCHEMA_OBJECTS || partial > 0;
+        if partial > 0 {
+            w.notes.push(format!("{partial} schema record(s) were read only partially; object metadata or column lists may be incomplete."));
+        }
         for row in w.out {
             // sqlite_schema columns: type, name, tbl_name, rootpage, sql.
             let get_text = |i: usize| match row.values.get(i) {
@@ -2409,6 +2423,63 @@ mod tests {
             assert_eq!(shown, bad.min(MAX_SCHEMA_NOTES), "{:?}", ov.integrity_notes);
             assert_eq!(ov.integrity_notes.iter().any(|n| n.ends_with("5 more note(s) not shown.")), bad > MAX_SCHEMA_NOTES);
         }
+    }
+
+    #[test]
+    fn partial_schema_overflow_is_disclosed_without_dropping_the_object() {
+        use craft_anything_testkit::sqlite::{PAGE_SIZE, table_db};
+        let sql = format!("CREATE TABLE t(first TEXT /*{}*/, last TEXT)", "x".repeat(12_000));
+        let intact = table_db(&sql, &[]);
+        let complete = SqliteDb::parse(&intact).unwrap().overview();
+        assert!(!complete.schema_truncated);
+        assert_eq!(complete.schema[0].columns.len(), 2);
+        assert!(complete.schema[0].sql.len() < sql.len(), "display-only shortening is not incomplete parsing");
+
+        for next in [0, 3, u32::MAX] {
+            let mut data = intact.clone();
+            // Page 3 is the first schema overflow page: end early, loop, or leave the file.
+            data[2 * PAGE_SIZE..2 * PAGE_SIZE + 4].copy_from_slice(&next.to_be_bytes());
+            let parsed = SqliteDb::parse(&data).unwrap();
+            let overview = parsed.overview();
+            assert_eq!(overview.schema.len(), 1);
+            assert_eq!(overview.schema[0].name, "t");
+            assert!(overview.schema[0].columns.len() < complete.schema[0].columns.len());
+            assert!(overview.schema_truncated, "overflow next page {next}");
+            assert!(parsed.schema().1);
+            assert!(overview.integrity_notes.iter().any(|note| note.contains("schema record")));
+        }
+    }
+
+    #[test]
+    fn schema_text_caps_are_reported_before_display_shortening() {
+        use craft_anything_testkit::sqlite::table_db;
+        let sql = format!("CREATE TABLE t(first TEXT /*{}*/, last TEXT)", "x".repeat(MAX_SCHEMA_TEXT));
+        let data = table_db(&sql, &[]);
+        let overview = SqliteDb::parse(&data).unwrap().overview();
+        assert_eq!(overview.schema.len(), 1);
+        assert!(overview.schema_truncated);
+        assert!(overview.integrity_notes.iter().any(|note| note.contains("schema record")));
+    }
+
+    #[test]
+    fn exhausted_schema_text_budget_marks_later_objects_partial() {
+        use craft_anything_testkit::sqlite::table_db;
+        let sql = format!("CREATE TABLE t(first TEXT /*{}*/, last TEXT)", "x".repeat(MAX_SCHEMA_TEXT - 100));
+        let mut data = table_db(&sql, &[]);
+        let copies = MAX_SCHEMA_TEXT_TOTAL / sql.len() + 2;
+        let pointer = [data[108], data[109]];
+        assert!(108 + 2 * copies < usize::from(u16::from_be_bytes(pointer)));
+        data[103..105].copy_from_slice(&(copies as u16).to_be_bytes());
+        // Repeated cells sharing one overflow chain exercise the real aggregate text budget.
+        for index in 0..copies {
+            data[108 + 2 * index..110 + 2 * index].copy_from_slice(&pointer);
+        }
+        let overview = SqliteDb::parse(&data).unwrap().overview();
+        assert_eq!(overview.schema.len(), copies);
+        assert_eq!(overview.schema[0].columns.len(), 2);
+        assert!(overview.schema.last().unwrap().columns.len() < 2);
+        assert!(overview.schema_truncated);
+        assert!(overview.integrity_notes.iter().any(|note| note.contains("schema record")));
     }
 
     #[test]
