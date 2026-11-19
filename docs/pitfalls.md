@@ -87,6 +87,10 @@ names (`git merge-base --is-ancestor <fix> <release tag>`), and check the messag
 
 ## Tests
 
+**Invalid-byte filename fixtures gated only on Unix.** `cfg(unix)` includes Apple targets,
+where APFS rejects the fixture names before their assertions run. Keep filesystem tests that
+require invalid UTF-8 names off Apple targets, while retaining iterator-only coverage on Unix.
+
 **A TLS fixture closed before the handshake.** Accepted sockets inherited the listener's
 nonblocking mode on Windows, so the fixture read `WouldBlock` and closed a valid connection.
 Set the accepted socket to blocking mode before applying bounded I/O timeouts; consume the

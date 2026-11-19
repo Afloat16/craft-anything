@@ -2070,7 +2070,8 @@ mod tests {
         assert_eq!(call(&e, "core_archive_show", json!({"path": bundle})).unwrap()["result"], readable["result"]);
     }
 
-    #[cfg(unix)]
+    // APFS rejects the invalid UTF-8 names used by these fixtures.
+    #[cfg(all(unix, not(target_vendor = "apple")))]
     #[test]
     fn non_utf8_entry_names_are_disclosed_without_aliasing_visible_paths() {
         use std::os::unix::ffi::OsStringExt;
@@ -2141,7 +2142,8 @@ mod tests {
         assert!(!listing.cut && !listing.unread.gave_up);
     }
 
-    #[cfg(unix)]
+    // APFS rejects the invalid UTF-8 names used by these fixtures.
+    #[cfg(all(unix, not(target_vendor = "apple")))]
     #[test]
     fn non_utf8_entry_names_leave_inventory_coverage_partial() {
         use std::os::unix::ffi::OsStringExt;
