@@ -87,6 +87,11 @@ names (`git merge-base --is-ancestor <fix> <release tag>`), and check the messag
 
 ## Tests
 
+**Unix paths did not imply arbitrary filename bytes.** Two folder-walk regressions created
+non-UTF-8 names under `cfg(unix)`, which also enabled them on macOS, where APFS rejects
+those names before the walk runs. Keep these disk fixtures off macOS; retain the Unix
+iterator-only coverage there so the invalid-name handling and limits are still tested.
+
 **A TLS fixture closed before the handshake.** Accepted sockets inherited the listener's
 nonblocking mode on Windows, so the fixture read `WouldBlock` and closed a valid connection.
 Set the accepted socket to blocking mode before applying bounded I/O timeouts; consume the
