@@ -2134,9 +2134,7 @@ mod tests {
             assert!(listing.unread.reason().unwrap().contains("entry name is not valid UTF-8"));
         }
 
-        let patchy = (0..127).map(|i| {
-            if i == 63 { named("�") } else { Ok(std::ffi::OsString::from_vec(vec![b'a', 0x81])) }
-        });
+        let patchy = (0..127).map(|i| if i == 63 { named("�") } else { Ok(std::ffi::OsString::from_vec(vec![b'a', 0x81])) });
         let listing = list_within(patchy, 2, 200, 1000, &cancel).unwrap();
         assert_eq!(listing.names.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), ["�"]);
         assert_eq!((listing.examined, listing.unread.count, listing.path_bytes), (127, 126, 5));
