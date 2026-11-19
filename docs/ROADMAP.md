@@ -2527,6 +2527,7 @@ Owner: open · Status: in progress
 - [ ] A schema row whose CREATE statement was read only in part (a cut or looping overflow
       chain, or text cut once the schema text budget is spent) leaves `schema_truncated` false,
       so its table's column list can be short with no flag on it
+      — claimed: Afloat16, branch bugfix/r3.12-sqlite-partial-schema-20261119
 - [x] Require a complete DNS question's type and class fields before retaining it, and keep
       truncated questions out of packet inventories while reporting the incomplete message
       — claimed: Afloat16, branch bugfix/r3.12-dns-question-class-review-20261104
