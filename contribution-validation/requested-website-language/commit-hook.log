@@ -1,0 +1,28 @@
+warning: unused workspace dependency `proptest`
+  --> Cargo.toml:72:1
+   |
+72 | proptest = "1"
+   | ^^^^^^^^
+   |
+   = note: `cargo::unused_workspace_dependencies` is set to `warn` by default
+help: consider removing the workspace dependency `proptest`
+warning: unused workspace dependency `rayon`
+  --> Cargo.toml:71:1
+   |
+71 | rayon = "1"
+   | ^^^^^
+   |
+help: consider removing the workspace dependency `rayon`
+warning: unused field `rust-version` in `workspace.package`
+ --> Cargo.toml:9:1
+  |
+9 | rust-version = "1.97"
+  | ^^^^^^^^^^^^
+  |
+  = note: `cargo::unused_workspace_package_fields` is set to `warn` by default
+help: consider removing the field `workspace.package.rust-version`
+secrets: ok
+[feature/r2.7-requested-website-language-20261120 4e322c4] Respect requested website language in rebuild checks
+ 15 files changed, 591 insertions(+), 26 deletions(-)
+ create mode 100644 crates/ai/src/rebuild/kinds/website_language.rs
+ create mode 100644 crates/ai/src/rebuild/website_language_tests.rs

@@ -1,0 +1,27 @@
+warning: unused workspace dependency `proptest`
+  --> Cargo.toml:72:1
+   |
+72 | proptest = "1"
+   | ^^^^^^^^
+   |
+   = note: `cargo::unused_workspace_dependencies` is set to `warn` by default
+help: consider removing the workspace dependency `proptest`
+warning: unused workspace dependency `rayon`
+  --> Cargo.toml:71:1
+   |
+71 | rayon = "1"
+   | ^^^^^
+   |
+help: consider removing the workspace dependency `rayon`
+warning: unused field `rust-version` in `workspace.package`
+ --> Cargo.toml:9:1
+  |
+9 | rust-version = "1.97"
+  | ^^^^^^^^^^^^
+  |
+  = note: `cargo::unused_workspace_package_fields` is set to `warn` by default
+help: consider removing the field `workspace.package.rust-version`
+warning: workspace (manifest) generated 3 warnings
+    Checking craft-anything-ai v0.6.1 (<workspace>/craft-mcp-interrupted/crates/ai)
+    Checking craft-anything-engine v0.6.1 (<workspace>/craft-mcp-interrupted/crates/engine)
+    Finished `dev` profile [optimized + debuginfo] target(s) in 44.29s

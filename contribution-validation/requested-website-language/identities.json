@@ -1,0 +1,27 @@
+{
+  "upstream_base": "73771bfacf520a159764ea9f8dd85d9bdf09c86b",
+  "tested_production_base": "b8d7d79090871af648c55b4b57641b7d6be5fe20",
+  "local_commit": "3f8d6f97d136377ad00447fb7fdeb0d280153ecf",
+  "published_commit": "09af824249f49b3a5a79b07b3873bf447c10325f",
+  "tree": "298ff2b496ce6b7eb252cdeac7a564d1ffaac0fc",
+  "claim_commit": "32ed4f95802e9a36228928cb44571f847ecd108e",
+  "rebase_feature_files_byte_identical": true,
+  "files": {
+    "ATTRIBUTION.md": "276cac674596c2299fd1d69696d55231430adf5d",
+    "Cargo.lock": "f27c31f3f9d5e81a67fcb393eca90108b6e201ca",
+    "NOTICE": "17364f9105aabd7f5a1c7e15b2d887debb0f47b8",
+    "crates/ai/Cargo.toml": "1ff35f5b5a29e45fe8d3e8d40202cc95e2586dfd",
+    "crates/ai/src/rebuild/kinds/mod.rs": "a6b6bf00231f3297d8191210c08461cbb95420c6",
+    "crates/ai/src/rebuild/kinds/website.rs": "8dd66abe398b81834dd64488c2886e09dffe752b",
+    "crates/ai/src/rebuild/kinds/website_language.rs": "2a4fff3ce120221b42f6183c7c7416c94c7fc81d",
+    "crates/ai/src/rebuild/mod.rs": "e8d573a26ecd9c799fb9ac5cb0bac4cb933cf262",
+    "crates/ai/src/rebuild/tests.rs": "4c65dcab105b656dfe39e10fb46bb5551c559d14",
+    "crates/ai/src/rebuild/website_language_tests.rs": "1ff6361ebe5e3513894cd1c45fd6c3b47b7dd225",
+    "crates/engine/src/workspace.rs": "0d9c386bb47dd9640de93fe5861e9ad2c6da90cc",
+    "docs/ROADMAP.md": "433d4dbbd7e197f7a4f1c2460de4dae43895f593",
+    "docs/STATUS.md": "50a900a0a0e1be8472ba6c4726cb5e79be8d3776",
+    "docs/file-formats.md": "1cec7b0d54fd994822236a440f3b9c6f32e9dd46",
+    "docs/schemas/craft.schema.json": "caaded87d86e4bf45261eba556e0b7d354421e00"
+  },
+  "unchanged_main_socket_test_blob": "6c5952a8113d78e22f0c47df4a284802da544551"
+}

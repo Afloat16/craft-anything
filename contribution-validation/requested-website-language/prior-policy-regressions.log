@@ -1,0 +1,52 @@
+warning: unused workspace dependency `proptest`
+  --> Cargo.toml:72:1
+   |
+72 | proptest = "1"
+   | ^^^^^^^^
+   |
+   = note: `cargo::unused_workspace_dependencies` is set to `warn` by default
+help: consider removing the workspace dependency `proptest`
+warning: unused workspace dependency `rayon`
+  --> Cargo.toml:71:1
+   |
+71 | rayon = "1"
+   | ^^^^^
+   |
+help: consider removing the workspace dependency `rayon`
+warning: unused field `rust-version` in `workspace.package`
+ --> Cargo.toml:9:1
+  |
+9 | rust-version = "1.97"
+  | ^^^^^^^^^^^^
+  |
+  = note: `cargo::unused_workspace_package_fields` is set to `warn` by default
+help: consider removing the field `workspace.package.rust-version`
+warning: workspace (manifest) generated 3 warnings
+   Compiling craft-anything-engine v0.6.1 (<workspace>/craft-mcp-interrupted/crates/engine)
+   Compiling craft-anything-ai v0.6.1 (<workspace>/craft-mcp-interrupted/crates/ai)
+    Finished `test` profile [optimized + debuginfo] target(s) in 2m 47s
+     Running unittests src/lib.rs (target/website-inventories/debug/build/craft-anything-ai/e7a59fa97586611a/out/craft_anything_ai-e7a59fa97586611a)
+
+running 5 tests
+
+thread 'rebuild::kinds::website_language::tests::requested_website_language_missing_or_wrong_declaration_does_not_pass' (145) panicked at crates/ai/src/rebuild/kinds/website_language.rs:193:13:
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test rebuild::kinds::website_language::tests::ordinary_and_restored_website_language_keep_text_checks ... ok
+test rebuild::kinds::website_language::tests::requested_website_language_missing_or_wrong_declaration_does_not_pass ... FAILED
+
+thread 'rebuild::kinds::website_language::tests::requested_website_language_replaces_original_word_and_heading_feedback' (146) panicked at crates/ai/src/rebuild/kinds/website_language.rs:179:9:
+Some("text 0% alike; missing headings: \"Welcome\"; missing words: home, welcome")
+test rebuild::kinds::website_language::tests::requested_website_language_replaces_original_word_and_heading_feedback ... FAILED
+test rebuild::kinds::website_language::tests::explicit_website_language_requests_and_controls ... ok
+test rebuild::kinds::website_language::tests::website_language_survives_followups_old_writers_and_original_reset ... ok
+
+failures:
+
+failures:
+    rebuild::kinds::website_language::tests::requested_website_language_missing_or_wrong_declaration_does_not_pass
+    rebuild::kinds::website_language::tests::requested_website_language_replaces_original_word_and_heading_feedback
+
+test result: FAILED. 3 passed; 2 failed; 0 ignored; 0 measured; 708 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `-p craft-anything-ai --lib`

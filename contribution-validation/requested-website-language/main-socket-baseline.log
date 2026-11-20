@@ -1,0 +1,46 @@
+warning: unused workspace dependency `proptest`
+  --> Cargo.toml:72:1
+   |
+72 | proptest = "1"
+   | ^^^^^^^^
+   |
+   = note: `cargo::unused_workspace_dependencies` is set to `warn` by default
+help: consider removing the workspace dependency `proptest`
+warning: unused workspace dependency `rayon`
+  --> Cargo.toml:71:1
+   |
+71 | rayon = "1"
+   | ^^^^^
+   |
+help: consider removing the workspace dependency `rayon`
+warning: unused field `rust-version` in `workspace.package`
+ --> Cargo.toml:9:1
+  |
+9 | rust-version = "1.97"
+  | ^^^^^^^^^^^^
+  |
+  = note: `cargo::unused_workspace_package_fields` is set to `warn` by default
+help: consider removing the field `workspace.package.rust-version`
+warning: workspace (manifest) generated 3 warnings
+   Compiling craft-anything-engine v0.6.1 (<workspace>/craft-mcp-interrupted/crates/engine)
+    Finished `test` profile [optimized + debuginfo] target(s) in 58.94s
+     Running unittests src/lib.rs (target/website-inventories/debug/build/craft-anything-engine/dadbd0e5eaab16d3/out/craft_anything_engine-dadbd0e5eaab16d3)
+
+running 1 test
+test workspace::progress::tests::special_files_contribute_their_name_and_type_without_reading_them ... FAILED
+
+failures:
+
+---- workspace::progress::tests::special_files_contribute_their_name_and_type_without_reading_them stdout ----
+
+thread 'workspace::progress::tests::special_files_contribute_their_name_and_type_without_reading_them' (53) panicked at crates/engine/src/workspace/progress.rs:824:50:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    workspace::progress::tests::special_files_contribute_their_name_and_type_without_reading_them
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 775 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p craft-anything-engine --lib`
