@@ -1651,6 +1651,7 @@ Owner: open · Status: in progress
       original's words: the check lists missing words and the refine message tells the builder
       to add them (`kinds/website.rs`), so a translated rebuild is told to put them back. A
       matching declared language doesn't show the words were translated
+      — claimed: Afloat16, branch feature/r2.7-requested-website-language-20261120
 
 ### R2.8 Clean room means clean room
 Owner: maintainers · Status: in progress
