@@ -360,7 +360,7 @@ fn project_build_finish(_ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput,
     ws.set_status(Status::Ready, CALLED_DONE)?;
     let mut items = feed::load(&ws);
     items.push(feed::FeedItem::Step { step: Step::Done, text: CALLED_DONE.into() });
-    feed::save(&ws.root, &items)?;
+    feed::save(&ws.root, &mut items)?;
     Ok(ToolOutput::Value(json!({"project": ws.root, "status": ws.manifest.status})))
 }
 
@@ -578,7 +578,7 @@ fn project_list(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolErro
 fn project_show(_ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolError> {
     let p: ShowParams = parse_params(params)?;
     let ws = open(&p.project)?;
-    let items = feed::load(&ws);
+    let items = feed::for_display(&ws);
     let limit = p.limit.unwrap_or(MAX_ITEMS).clamp(1, MAX_ITEMS);
     let offset = p.offset.unwrap_or_else(|| items.len().saturating_sub(limit)).min(items.len());
     let page: Vec<&feed::FeedItem> = items.iter().skip(offset).take(limit).collect();
@@ -608,11 +608,10 @@ fn project_inbox_answer(_ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput,
         Some(false) => "Not allowed".to_string(),
         None => answer.as_text(),
     };
+    // Keep the answer before publishing it: the asking process can consume both inbox files
+    // immediately. A failed feed save leaves the question pending so this call can be retried.
+    feed::record_answer(&ws, &question, &shown)?;
     inbox.answer(&p.id, &answer)?;
-    // Into the saved conversation; a running build keeps answers it finds there when it saves.
-    if let Err(e) = feed::record_answer(&ws, &question, &shown) {
-        log::warn!("answer not added to the conversation: {}", e.message);
-    }
     Ok(ToolOutput::Value(json!({"answered": p.id, "shown": shown})))
 }
 
@@ -763,6 +762,31 @@ mod tests {
     }
 
     #[test]
+    fn an_answer_stays_pending_when_the_conversation_cannot_be_saved() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "Snake", "A snake game", TargetRef::None).unwrap();
+        let inbox = Inbox::new(ws.inbox_dir());
+        let id = inbox.post(RequestKind::Question, "Blue or red?", "", vec![], true, None).unwrap();
+        let path = ws.root.join(feed::FEED_FILE);
+        std::fs::create_dir(&path).unwrap();
+        let engine = Engine::new(crate::testing::session());
+        let answer = || engine.call("project_inbox_answer", json!({"project": ws.root, "id": id, "choice": "Blue"}), CallOptions::new(Caller::Cli));
+        assert!(answer().is_err(), "a failed conversation save must reach the caller");
+        assert_eq!(inbox.pending().len(), 1, "the person can retry the same request");
+        assert!(!inbox.dir().join(format!("{id}.answer.json")).exists());
+        std::fs::remove_dir(&path).unwrap();
+        std::fs::write(&path, br#"{"version":5,"items":[{"User":"Keep the earlier conversation"}]}"#).unwrap();
+        answer().unwrap();
+        assert!(inbox.pending().is_empty());
+        let saved = feed::load(&ws);
+        assert!(matches!(&saved[0], feed::FeedItem::User(user) if user.text() == "Keep the earlier conversation"));
+        assert_eq!(
+            saved.iter().filter(|item| matches!(item, feed::FeedItem::Ask { request, answer: Some(value) } if request.id == id && value == "Blue")).count(),
+            1
+        );
+    }
+
+    #[test]
     fn a_projects_asset_budget_is_read_and_set() {
         let d = tempfile::tempdir().unwrap();
         let ws = Workspace::create(d.path(), "Game", "A game", TargetRef::None).unwrap();
@@ -778,11 +802,13 @@ mod tests {
     /// it folded anything.
     #[test]
     fn a_plan_is_folded_by_its_tool_and_says_whether_it_did() {
-        use crate::feed::{FeedItem, PlanStep, UserItem, save, visible_plan};
+        use crate::feed::{FeedItem, PlanStep, save, visible_plan};
         let d = tempfile::tempdir().unwrap();
         let ws = Workspace::create(d.path(), "Game", "A game", TargetRef::None).unwrap();
         let steps = vec![PlanStep { text: "Lay out".into(), doing: "Laying out".into(), status: crate::feed::PlanStatus::Todo }];
-        save(&ws.root, &[FeedItem::User(UserItem::Text("A game".into())), FeedItem::Plan(steps)]).unwrap();
+        let mut initial = feed::load(&ws);
+        initial.push(FeedItem::Plan(steps));
+        save(&ws.root, &mut initial).unwrap();
         let e = Engine::new(crate::testing::session());
         let fold = || e.call("project_plan_fold", json!({"project": ws.root}), CallOptions::new(Caller::Cli)).map(|o| o.to_json()["result"]["folded"].clone());
         assert_eq!(fold().unwrap(), true);

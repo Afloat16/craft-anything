@@ -48,7 +48,15 @@ see.
 
 Before saving `feed.json`, a filesystem read failure also stops the save and keeps the existing path.
 Only a path confirmed absent without following symlinks can be created without inspecting an old
-version. A readable feed with malformed JSON retains its existing recovery behavior.
+version. A fallback remembers that the original wasn't loaded, even if the file becomes readable
+later; reopen the project to load it before saving. Readable bytes that cannot be parsed are copied
+exactly to an unused `feed.json.broken` (then `.broken.1` through `.broken.15`) before replacement.
+Existing backups are never replaced. A failed backup stops the save and leaves the source intact;
+the recovered conversation names the backup. A newer format is left in place without recovery.
+
+Answers are saved in the conversation before they are delivered through the inbox. A save failure
+returns an error and leaves the question pending. A delivery failure also leaves it available for
+retry; display views show the pending question while writers retain its recorded answer.
 
 A file that can't be parsed is not "newer": `config.toml` is set aside as `config.toml.broken` and
 defaults are used; an unreadable `craft.json` gives a plain-English error when opened and is left
