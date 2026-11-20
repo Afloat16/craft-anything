@@ -3,6 +3,8 @@ name: PR 2183 candidate validation
 # Fork-only validation. Keep this workflow off the pull-request branch.
 # Setup pins and Linux packages come from the repository's existing CI and
 # craft-common-actions/gate.yml at ab4f4278458c4daa3912211f448b3233929d9638.
+# The candidate's four-commit review series is based on upstream main
+# 9e9be90a70bb0e4a500af4211edcd5114dc2d642; the validation commit is separate.
 on:
   push:
     branches:
