@@ -744,11 +744,16 @@ file readable later cannot let an earlier fallback replace it. Damaged readable 
 an unused `feed.json.broken` backup before replacement; backup failure stops the save, and the
 conversation names the recovery copy. Questions are saved before inbox delivery in the tool and
 app paths. Failed saves leave them pending; failed delivery remains retryable without discarding
-the recorded answer when another writer saves. A live writer can safely reload an actually decoded
-repair without losing either client's events. Recovery provenance survives later manifest updates.
-Expired undelivered replies remain visibly undelivered, with their saved words available; delivered
-receipts survive inbox cleanup. Recovery-copy ownership is verified before project deletion, and
-newer read-only manifests are rejected before build-finish touches their conversations.
+the recorded answer when another writer saves. Recovery replay checks the decoded repair's digest
+against the save's disk read; a changed replacement keeps the journal for another load. Recovery
+provenance survives later manifest updates, and only this run's own errors suppress its failure note.
+Expired staged replies remain visibly undelivered; unreadable delivery evidence is shown as unknown
+without advising another submission. Existing answer I/O errors stop a new persistence attempt.
+Delivered receipts survive request cleanup. Project deletion atomically claims each selected
+recovery copy before checking its ownership; changed entries survive in their original or reported
+quarantine location. Duplication keeps personal backup-shaped files and directories, and creation
+rejects dangling reserved links or propagates metadata errors. Newer read-only manifests are rejected
+before build-finish touches their conversations.
 Regression coverage includes sticky read failures, exact recovery copies and occupied backup names,
 tool/live-run answer delivery, intervening writers, dangling/looping links and normal saves.
 A Windows no-sharing regression is included but has not been run locally. No live desktop or remote

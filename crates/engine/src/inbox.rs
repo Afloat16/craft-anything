@@ -108,11 +108,33 @@ fn no_longer_waiting() -> ToolError {
     ToolError::new(ErrorCode::NotFound, "This question is no longer waiting.").with_remediation("Keep your reply and answer a new request from the builder.")
 }
 
-fn read_answer(path: &Path) -> Option<Answer> {
-    if !path.is_file() {
-        return None;
+fn read_answer(path: &Path) -> Result<Option<Answer>, ToolError> {
+    let unreadable = |mut error: ToolError| {
+        // The entry exists even when its link target disappeared. NotFound is reserved for
+        // withdrawal at the submission boundary, so callers must not swallow this failure.
+        if error.code == ErrorCode::NotFound {
+            error.code = ErrorCode::FileError;
+        }
+        error.with_remediation("Make the saved answer readable before retrying. This submission has not changed it.")
+    };
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(unreadable(ToolError::io(path.display(), error))),
+    };
+    // A directory contains no decoded answer; the existing atomic delivery will reject it.
+    if metadata.is_dir() {
+        return Ok(None);
     }
-    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+    let (file, metadata) = craft_anything_platform::fs::open_regular_file(path).map_err(unreadable)?;
+    let length = metadata.len();
+    let limit = length.checked_add(1).ok_or_else(|| unreadable(ToolError::new(ErrorCode::OverLimit, "The saved answer is too large to read safely.")))?;
+    let mut bytes = Vec::new();
+    file.take(limit).read_to_end(&mut bytes).map_err(|error| unreadable(ToolError::io(path.display(), error)))?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > length {
+        return Err(unreadable(ToolError::new(ErrorCode::FileChanged, "The saved answer grew while it was being read.")));
+    }
+    Ok(serde_json::from_slice(&bytes).ok())
 }
 
 // A second submitter should report a busy request instead of waiting indefinitely for the
@@ -139,7 +161,7 @@ impl Inbox {
     /// A durable answer file is also evidence of delivery when its receipt could not be
     /// updated. Recorded submissions retain the receipt after the waiter consumes the file.
     pub(crate) fn delivery_state(&self, id: &str) -> Result<DeliveryState, ToolError> {
-        if read_answer(&self.path(id, "answer")?).is_some() {
+        if read_answer(&self.path(id, "answer")?)?.is_some() {
             return Ok(DeliveryState::Delivered);
         }
         delivery::state(&self.dir, id)
@@ -257,7 +279,7 @@ impl Inbox {
             let request_file = std::fs::OpenOptions::new().read(true).write(true).open(&req).ok()?;
             let delay = match request_file.try_lock() {
                 Ok(()) => {
-                    if let Some(answer) = read_answer(&ans) {
+                    if let Ok(Some(answer)) = read_answer(&ans) {
                         // Never discard the last proof of delivery. If the receipt cannot be
                         // committed, keep the answer file while returning the actual answer.
                         match delivery::mark_delivered(&self.dir, id) {
@@ -399,6 +421,86 @@ mod tests {
         let a = asker.wait(&id, Duration::from_secs(2), &|| false).unwrap();
         assert_eq!(a.as_text(), "Red — darker");
         assert_eq!(std::fs::read_dir(dir.path().join("inbox")).unwrap().count(), 0, "both files are cleaned up");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_answer_links_stop_before_persistence() {
+        use std::os::unix::fs::symlink;
+        for kind in ["loop", "missing", "directory"] {
+            let directory = tempfile::tempdir().unwrap();
+            let inbox = Inbox::new(directory.path());
+            let id = inbox.post(RequestKind::Approval, "Run the check?", "", vec![], false, None).unwrap();
+            let request_path = inbox.path(&id, "request").unwrap();
+            let request_bytes = std::fs::read(&request_path).unwrap();
+            let answer_path = inbox.path(&id, "answer").unwrap();
+            let target = if kind == "loop" { answer_path.clone() } else { directory.path().join(kind) };
+            if kind == "directory" {
+                std::fs::create_dir(&target).unwrap();
+            }
+            symlink(&target, &answer_path).unwrap();
+            let mut persisted = false;
+            let result = inbox.answer_with(&id, &Answer { allow: Some(true), ..Default::default() }, |_| {
+                persisted = true;
+                Ok(())
+            });
+            assert!(!persisted, "an unreadable {kind} answer must stop before saving another reply");
+            let error = result.unwrap_err();
+            assert_ne!(error.code, ErrorCode::NotFound, "an existing unreadable answer is not a withdrawn request");
+            assert!(error.remediation.is_some());
+            assert_eq!(std::fs::read_link(&answer_path).unwrap(), target, "the original entry is retained");
+            assert_eq!(std::fs::read(&request_path).unwrap(), request_bytes);
+            assert!(!inbox.dir().join(format!("{id}.delivery.json")).exists(), "no new submission was staged");
+        }
+    }
+
+    #[test]
+    fn missing_and_malformed_answers_can_still_be_retried() {
+        for previous in [None, Some(b"not an answer".as_slice())] {
+            let directory = tempfile::tempdir().unwrap();
+            let inbox = Inbox::new(directory.path());
+            let id = inbox.post(RequestKind::Question, "Which colour?", "", vec![], true, None).unwrap();
+            if let Some(bytes) = previous {
+                std::fs::write(inbox.path(&id, "answer").unwrap(), bytes).unwrap();
+            }
+            let answer = Answer { text: Some("Blue".into()), ..Default::default() };
+            let mut persisted = 0;
+            inbox
+                .answer_with(&id, &answer, |_| {
+                    persisted += 1;
+                    Ok(())
+                })
+                .unwrap();
+            assert_eq!(persisted, 1);
+            assert_eq!(inbox.wait(&id, Duration::ZERO, &|| false), Some(answer));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn readable_answer_symlinks_keep_the_existing_decision() {
+        use std::os::unix::fs::symlink;
+        let directory = tempfile::tempdir().unwrap();
+        let inbox = Inbox::new(directory.path());
+        let id = inbox.post(RequestKind::Approval, "Run the check?", "", vec![], false, None).unwrap();
+        let target = directory.path().join("saved-decision.json");
+        let answer = Answer { allow: Some(false), ..Default::default() };
+        let bytes = serde_json::to_vec(&answer).unwrap();
+        std::fs::write(&target, &bytes).unwrap();
+        let path = inbox.path(&id, "answer").unwrap();
+        symlink(&target, &path).unwrap();
+        let mut persisted = false;
+        let error = inbox
+            .answer_with(&id, &Answer { allow: Some(true), ..Default::default() }, |_| {
+                persisted = true;
+                Ok(())
+            })
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::NotFound);
+        assert!(!persisted);
+        assert_eq!(std::fs::read_link(&path).unwrap(), target);
+        assert_eq!(inbox.wait(&id, Duration::ZERO, &|| false), Some(answer));
+        assert_eq!(std::fs::read(&target).unwrap(), bytes, "consuming the link leaves the saved target intact");
     }
 
     #[test]

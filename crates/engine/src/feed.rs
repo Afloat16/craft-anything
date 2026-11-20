@@ -13,14 +13,14 @@ use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 
 mod backups;
-pub(crate) use backups::owned_backups;
+pub(crate) use backups::{owned_backups, remove_owned_backups};
 
 /// Where the conversation is kept in the project folder.
 pub const FEED_FILE: &str = "feed.json";
 
-/// Recovery copies are project records too: the writer and workspace ownership rules share
-/// this finite set so copies are protected and kept out of the app. Deletion also requires a
-/// matching ownership receipt; a legacy personal file with the same name is left alone.
+/// These names are reserved for recovery during creation and builder writes. Only copies
+/// with matching ownership receipts are excluded from duplication or selected for deletion;
+/// a legacy personal file or directory with the same name remains the person's content.
 pub(crate) const DAMAGED_BACKUP_NAMES: &[&str] = &[
     "feed.json.broken",
     "feed.json.broken.1",
@@ -227,7 +227,7 @@ pub struct LoadedFeed {
     items: Vec<FeedItem>,
     not_loaded: Option<ToolError>,
     damaged: Option<Vec<u8>>,
-    decoded: bool,
+    decoded_source: Option<String>,
     recovery: Option<RecoveryProjection>,
 }
 
@@ -240,7 +240,7 @@ impl LoadedFeed {
 
     /// True only when this load actually decoded saved bytes, never for an absent-file fallback.
     pub fn was_decoded(&self) -> bool {
-        self.decoded
+        self.decoded_source.is_some()
     }
 
     /// A live writer may try a fresh load after a repair. The original fallback remains
@@ -327,7 +327,7 @@ pub fn load(ws: &Workspace) -> LoadedFeed {
         bytes => Ok(bytes),
     });
     let saved = match saved {
-        Ok(None) => return LoadedFeed { items: history(ws), not_loaded: None, damaged: None, decoded: false, recovery: None },
+        Ok(None) => return LoadedFeed { items: history(ws), not_loaded: None, damaged: None, decoded_source: None, recovery: None },
         Err(error) => {
             let error = if error.remediation.is_some() {
                 error
@@ -340,10 +340,10 @@ pub fn load(ws: &Workspace) -> LoadedFeed {
                 remediation: error.remediation.clone(),
                 log: None,
             });
-            return LoadedFeed { items, not_loaded: Some(error), damaged: None, decoded: false, recovery: None };
+            return LoadedFeed { items, not_loaded: Some(error), damaged: None, decoded_source: None, recovery: None };
         }
         Ok(Some(bytes)) => match decode(&bytes) {
-            Some(saved) => saved,
+            Some(saved) => (saved, craft_anything_evidence::sha256_hex(&bytes)),
             None => {
                 let mut items = history(ws);
                 items.push(FeedItem::Error {
@@ -352,10 +352,11 @@ pub fn load(ws: &Workspace) -> LoadedFeed {
                     log: None,
                 });
                 let recovery = Some(RecoveryProjection::from_workspace(ws, &bytes));
-                return LoadedFeed { items, not_loaded: None, damaged: Some(bytes), decoded: false, recovery };
+                return LoadedFeed { items, not_loaded: None, damaged: Some(bytes), decoded_source: None, recovery };
             }
         },
     };
+    let (saved, decoded_source) = saved;
     let mut feed = saved.items;
     // Nothing is streaming any more after a restart.
     for item in &mut feed {
@@ -365,7 +366,7 @@ pub fn load(ws: &Workspace) -> LoadedFeed {
     }
     let shown: HashSet<String> = feed.iter().filter_map(|i| if let FeedItem::Ask { request, .. } = i { Some(request.id.clone()) } else { None }).collect();
     feed.extend(Inbox::new(ws.inbox_dir()).pending().into_iter().filter(|r| !shown.contains(&r.id)).map(|request| FeedItem::Ask { request, answer: None }));
-    LoadedFeed { items: feed, not_loaded: None, damaged: None, decoded: true, recovery: saved.recovery }
+    LoadedFeed { items: feed, not_loaded: None, damaged: None, decoded_source: Some(decoded_source), recovery: saved.recovery }
 }
 
 /// A read-only conversation view, including retryable questions whose answer was saved but
@@ -387,6 +388,19 @@ pub fn show_pending(items: &mut [FeedItem], inbox: &Inbox) {
             if matches!(delivery, Ok(DeliveryState::Delivered)) {
                 continue;
             }
+            if let Err(error) = &delivery {
+                if let Some(shown) = answer {
+                    *item = FeedItem::Error {
+                        message: format!("Delivery of your saved reply to \"{}\" could not be confirmed.\n\nSaved reply:\n{shown}", request.title),
+                        remediation: Some(format!(
+                            "{} Keep these words and restore access to the project's inbox to confirm delivery before sending another reply.",
+                            error.message
+                        )),
+                        log: None,
+                    };
+                }
+                continue;
+            }
             if waiting.contains(&request.id) {
                 if let Some(shown) = answer.take() {
                     request.detail.push_str("\n\nYour saved reply has not been delivered. You can retry it:\n");
@@ -395,13 +409,9 @@ pub fn show_pending(items: &mut [FeedItem], inbox: &Inbox) {
             } else if let Some(shown) = answer
                 && !matches!(delivery, Ok(DeliveryState::Untracked))
             {
-                let reason = match delivery {
-                    Err(error) => format!("The delivery record could not be read: {}", error.message),
-                    _ => "This question is no longer waiting.".into(),
-                };
                 *item = FeedItem::Error {
                     message: format!("Your reply to \"{}\" was saved but has not been delivered.\n\nSaved reply:\n{shown}", request.title),
-                    remediation: Some(format!("{reason} Keep these words and copy them into a new request from the builder.")),
+                    remediation: Some("This question is no longer waiting. Keep these words and copy them into a new request from the builder.".into()),
                     log: None,
                 };
             }
@@ -430,6 +440,16 @@ pub fn history(ws: &Workspace) -> Vec<FeedItem> {
 /// also leaves the path unchanged; only a missing path can be created. A readable damaged
 /// conversation is copied byte-for-byte to an unused backup before it can be replaced.
 pub fn save(root: &Path, feed: &mut LoadedFeed) -> Result<(), ToolError> {
+    save_inner(root, feed, false)
+}
+
+/// Save replayed events only if the replacement still matches the bytes that were decoded.
+/// This checks the existing read immediately before saving; it is not a filesystem lock.
+pub fn save_if_unchanged(root: &Path, feed: &mut LoadedFeed) -> Result<(), ToolError> {
+    save_inner(root, feed, true)
+}
+
+fn save_inner(root: &Path, feed: &mut LoadedFeed, require_decoded_source: bool) -> Result<(), ToolError> {
     if let Some(error) = &feed.not_loaded {
         return Err(error.clone());
     }
@@ -441,6 +461,12 @@ pub fn save(root: &Path, feed: &mut LoadedFeed) -> Result<(), ToolError> {
     let previous = read_previous(&path)?;
     if previous.as_deref().is_some_and(newer_version) {
         return Err(newer_error());
+    }
+    if require_decoded_source
+        && (feed.decoded_source.is_none() || previous.as_deref().map(craft_anything_evidence::sha256_hex).as_ref() != feed.decoded_source.as_ref())
+    {
+        return Err(ToolError::new(ErrorCode::FileChanged, "The saved conversation changed before its pending events could be saved.")
+            .with_remediation("Load the current conversation again before replaying the pending events. Nothing was written."));
     }
     if let Some(original) = &feed.damaged
         && previous.as_deref() != Some(original.as_slice())
@@ -470,6 +496,9 @@ pub fn save(root: &Path, feed: &mut LoadedFeed) -> Result<(), ToolError> {
     crate::project::write_atomic(&path, &json)?;
     feed.items = saved.items;
     feed.damaged = None;
+    if feed.decoded_source.is_some() {
+        feed.decoded_source = Some(craft_anything_evidence::sha256_hex(&json));
+    }
     Ok(())
 }
 
@@ -511,7 +540,9 @@ fn keep_damaged(root: &Path, bytes: &[u8]) -> Result<PathBuf, ToolError> {
         ErrorCode::FileError,
         format!("The conversation wasn't saved: all {} backup names beside feed.json are already in use.", DAMAGED_BACKUP_NAMES.len()),
     )
-    .with_remediation("Move an earlier .broken backup to another safe location, then retry. The original conversation is unchanged."))
+    .with_remediation(
+        "Move an earlier .broken backup and, if present, its matching inbox/feed-backups/<backup-name>.json ownership record to another safe location, then retry. The original conversation is unchanged.",
+    ))
 }
 
 /// Record an answer given while no run is going (straight into the saved feed). `request` is the
@@ -541,7 +572,7 @@ mod tests {
 
     /// Seed a fixture directly; production writers can only save a value returned by `load`.
     fn save(root: &Path, items: &[FeedItem]) -> Result<(), ToolError> {
-        super::save(root, &mut LoadedFeed { items: items.to_vec(), not_loaded: None, damaged: None, decoded: true, recovery: None })
+        super::save(root, &mut LoadedFeed { items: items.to_vec(), not_loaded: None, damaged: None, decoded_source: None, recovery: None })
     }
 
     #[test]
@@ -570,6 +601,97 @@ mod tests {
         let future = load(&ws);
         assert!(!future.was_decoded());
         assert!(future.had_read_error());
+    }
+
+    #[test]
+    fn recovery_save_rejects_a_replacement_changed_after_loading() {
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "x", "Fallback", TargetRef::None).unwrap();
+        let path = ws.root.join(FEED_FILE);
+        let decoded = br#"{"version":5,"items":[{"User":"Decoded replacement"}]}"#;
+        let changed = br#"{"version":5,"items":[{"User":"Another client's saved answer"}]}"#;
+        for replacement in [Some(changed.as_slice()), Some(b"damaged again".as_slice()), None] {
+            std::fs::write(&path, decoded).unwrap();
+            let mut feed = load(&ws);
+            feed.push(FeedItem::Paused);
+            let pending = feed.items.clone();
+            match replacement {
+                Some(bytes) => std::fs::write(&path, bytes).unwrap(),
+                None => std::fs::remove_file(&path).unwrap(),
+            }
+            assert_eq!(save_if_unchanged(&ws.root, &mut feed).unwrap_err().code, ErrorCode::FileChanged);
+            assert_eq!(read_previous(&path).unwrap().as_deref(), replacement);
+            assert_eq!(feed.items, pending, "the replayed events remain available for another load");
+            assert!(!ws.root.join("feed.json.broken").exists());
+        }
+    }
+
+    #[test]
+    fn recovery_save_requires_decoded_bytes_and_keeps_its_updated_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "x", "Fallback", TargetRef::None).unwrap();
+        let path = ws.root.join(FEED_FILE);
+        let mut absent = load(&ws);
+        assert_eq!(save_if_unchanged(&ws.root, &mut absent).unwrap_err().code, ErrorCode::FileChanged);
+        assert!(!path.exists());
+        std::fs::write(&path, b"damaged").unwrap();
+        let mut damaged = load(&ws);
+        assert_eq!(save_if_unchanged(&ws.root, &mut damaged).unwrap_err().code, ErrorCode::FileChanged);
+        assert_eq!(std::fs::read(&path).unwrap(), b"damaged");
+        save(&ws.root, &[FeedItem::User("Saved replacement".to_owned().into())]).unwrap();
+        let mut feed = load(&ws);
+        feed.push(FeedItem::Paused);
+        save_if_unchanged(&ws.root, &mut feed).unwrap();
+        feed.push(FeedItem::Agent { text: "Another pending event".into(), streaming: false });
+        save_if_unchanged(&ws.root, &mut feed).unwrap();
+        assert_eq!(load(&ws).items, feed.items);
+    }
+
+    #[test]
+    fn unknown_delivery_keeps_saved_words_without_suggesting_a_duplicate_reply() {
+        use crate::inbox::Answer;
+        for consumed in [false, true] {
+            for unreadable in [false, true] {
+                let directory = tempfile::tempdir().unwrap();
+                let ws = Workspace::create(directory.path(), "x", "A game", TargetRef::None).unwrap();
+                let inbox = Inbox::new(ws.inbox_dir());
+                let id = inbox.post(RequestKind::Question, "Blue or red?", "", vec![], true, None).unwrap();
+                let answer_path = inbox.dir().join(format!("{id}.answer.json"));
+                let answer = Answer { text: Some("Keep these saved words".into()), ..Default::default() };
+                if consumed {
+                    inbox.answer_recorded(&ws, &id, &answer, "Keep these saved words").unwrap();
+                    assert!(inbox.wait(&id, std::time::Duration::ZERO, &|| false).is_some());
+                } else {
+                    std::fs::create_dir(&answer_path).unwrap();
+                    assert!(inbox.answer_recorded(&ws, &id, &answer, "Keep these saved words").is_err());
+                    std::fs::remove_dir(&answer_path).unwrap();
+                }
+                let receipt = inbox.dir().join(format!("{id}.delivery.json"));
+                std::fs::remove_file(&receipt).unwrap();
+                if unreadable {
+                    std::fs::create_dir(&receipt).unwrap();
+                } else {
+                    std::fs::write(&receipt, b"unrecognized receipt").unwrap();
+                }
+                let before = std::fs::read(ws.root.join(FEED_FILE)).unwrap();
+                let shown = for_display(&ws);
+                assert!(!shown.iter().any(|item| matches!(item, FeedItem::Ask { request, .. } if request.id == id)));
+                let (message, remediation) = shown
+                    .iter()
+                    .find_map(|item| match item {
+                        FeedItem::Error { message, remediation, .. } if message.contains("Keep these saved words") => {
+                            Some((message, remediation.as_deref().unwrap_or("")))
+                        }
+                        _ => None,
+                    })
+                    .expect("the saved words remain visible");
+                assert!(message.contains("could not be confirmed"));
+                assert!(!message.contains("not been delivered"));
+                assert!(!remediation.contains("copy them into a new request"));
+                assert_eq!(std::fs::read(ws.root.join(FEED_FILE)).unwrap(), before);
+                assert!(load(&ws).iter().any(|item| matches!(item, FeedItem::Ask { answer: Some(text), .. } if text == "Keep these saved words")));
+            }
+        }
     }
 
     #[test]
@@ -655,7 +777,8 @@ mod tests {
         }
         let mut feed = load(&ws);
         let before = feed.items.clone();
-        assert!(super::save(&ws.root, &mut feed).is_err());
+        let error = super::save(&ws.root, &mut feed).unwrap_err();
+        assert!(error.remediation.as_deref().unwrap().contains("inbox/feed-backups/<backup-name>.json"));
         assert_eq!(std::fs::read(&path).unwrap(), original);
         assert_eq!(feed.items, before, "a failed save must not claim that a backup was kept");
         let free = path.with_extension("json.broken.15");

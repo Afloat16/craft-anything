@@ -782,8 +782,18 @@ impl Workspace {
         let mut copy = Workspace::create(parent, name, &m.request, m.target.clone())?;
         let in_place = m.app_in_root;
         let app = self.app_dir();
+        let generated_backups = if in_place { crate::feed::owned_backups(&self.root)? } else { Vec::new() };
         if app.is_dir() {
-            copy_tree(&app, &copy.app_dir(), &|p| rebuilt(p) || (in_place && self.is_own_record(p)), 0)?;
+            copy_tree(
+                &app,
+                &copy.app_dir(),
+                &|p| {
+                    let backup_name = crate::feed::DAMAGED_BACKUP_NAMES.iter().any(|name| inside(&self.root.join(name), p));
+                    let generated = generated_backups.iter().any(|backup| inside(backup, p));
+                    rebuilt(p) || (in_place && self.is_own_record(p) && (!backup_name || generated))
+                },
+                0,
+            )?;
         }
         for dir in ["reference", "capture"] {
             let from = self.root.join(dir);
@@ -814,6 +824,10 @@ impl Workspace {
     /// what was built in app/). The person's own files stay: an app edited in place, and the
     /// files a project started from. A folder left empty is removed. This can't be undone.
     pub fn delete(self) -> Result<(), ToolError> {
+        self.delete_after_discovery(|_| {})
+    }
+
+    fn delete_after_discovery(self, after_discovery: impl FnOnce(&[PathBuf])) -> Result<(), ToolError> {
         if !self.root.join(MANIFEST).is_file() {
             return Err(ToolError::invalid(format!("{} isn't a project folder.", self.root.display())));
         }
@@ -826,12 +840,9 @@ impl Workspace {
         };
         // A legacy project can have personal files at a name reserved by a later version.
         // Read the receipts before removing the inbox, and never recursively remove backups.
-        for backup in crate::feed::owned_backups(&self.root)? {
-            match std::fs::remove_file(&backup) {
-                Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(ToolError::io(backup.display(), error)),
-                _ => {}
-            }
-        }
+        let backups = crate::feed::owned_backups(&self.root)?;
+        after_discovery(&backups);
+        crate::feed::remove_owned_backups(&self.root, &backups)?;
         if !self.manifest.app_in_root {
             gone(&self.app_dir())?;
         }
@@ -868,7 +879,7 @@ impl Workspace {
                         "Say what they are: the app itself, to edit in place (existing: edit), or material to start from, with the app built in app/ beside them (existing: start_from).",
                     ));
                 };
-                let clash = clashes(folder, existing);
+                let clash = checked_clashes(folder, existing)?;
                 if !clash.is_empty() {
                     return Err(ToolError::invalid(format!(
                         "{} already has {}, which Craft Anything would keep its own files in.",
@@ -1333,9 +1344,28 @@ pub enum ExistingFiles {
 }
 
 /// What's already in `folder` under a name Craft Anything would keep its own files in (app/ too
-/// when the app goes beside the person's files). A project can start there only when it's empty.
+/// when the app goes beside the person's files). An unverifiable entry is also a conflict in
+/// the folder chooser; creation uses `checked_clashes` to report the actual I/O error.
 pub fn clashes(folder: &Path, existing: ExistingFiles) -> Vec<&'static str> {
-    OWN_NAMES.iter().copied().chain((existing == ExistingFiles::StartFrom).then_some("app")).filter(|n| folder.join(n).exists()).collect()
+    OWN_NAMES
+        .iter()
+        .copied()
+        .chain((existing == ExistingFiles::StartFrom).then_some("app"))
+        .filter(|name| !matches!(std::fs::symlink_metadata(folder.join(name)), Err(error) if error.kind() == std::io::ErrorKind::NotFound))
+        .collect()
+}
+
+fn checked_clashes(folder: &Path, existing: ExistingFiles) -> Result<Vec<&'static str>, ToolError> {
+    let mut found = Vec::new();
+    for name in OWN_NAMES.iter().copied().chain((existing == ExistingFiles::StartFrom).then_some("app")) {
+        let path = folder.join(name);
+        match std::fs::symlink_metadata(&path) {
+            Ok(_) => found.push(name),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(ToolError::io(path.display(), error)),
+        }
+    }
+    Ok(found)
 }
 
 /// What `folder` holds, for starting a project there.
@@ -1348,7 +1378,9 @@ pub fn folder_state(folder: &Path) -> Result<FolderState, ToolError> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(FolderState::Empty),
         Err(e) => return Err(ToolError::io(folder.display(), e)),
     };
-    let mut names: Vec<String> = rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    let mut names: Vec<String> = rd
+        .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()).map_err(|error| ToolError::io(folder.display(), error)))
+        .collect::<Result<_, _>>()?;
     if names.is_empty() {
         return Ok(FolderState::Empty);
     }
@@ -2284,6 +2316,88 @@ mod tests {
             assert!(!generated.exists(), "a backup known to have been generated by this project is removed");
             assert!(!root.join(MANIFEST).exists());
         }
+    }
+
+    #[test]
+    fn deleting_a_project_preserves_a_replacement_after_backup_discovery() {
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Site", "A website", TargetRef::None).unwrap();
+        let root = ws.root.clone();
+        std::fs::write(root.join(crate::feed::FEED_FILE), b"damaged conversation").unwrap();
+        crate::feed::save(&root, &mut crate::feed::load(&ws)).unwrap();
+        let backup = root.join("feed.json.broken");
+        let replacement = root.join("personal-copy");
+        std::fs::write(&replacement, b"Keep the personal replacement").unwrap();
+
+        let result = ws.delete_after_discovery(|selected| {
+            assert_eq!(selected, std::slice::from_ref(&backup));
+            std::fs::rename(&replacement, &backup).unwrap();
+        });
+
+        assert!(result.is_err(), "deletion must stop after discovering that the selected entry was replaced");
+        assert_eq!(std::fs::read(&backup).unwrap(), b"Keep the personal replacement");
+        assert!(root.join(MANIFEST).is_file(), "a failed deletion leaves the project available for recovery");
+    }
+
+    #[test]
+    fn duplicating_a_legacy_project_keeps_personal_backup_named_entries() {
+        for recover in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let original = directory.path().join("original");
+            std::fs::create_dir(&original).unwrap();
+            std::fs::write(original.join("index.html"), "Keep my app").unwrap();
+            let ws = Workspace::create_at(&original, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+            std::fs::create_dir(original.join("feed.json.broken.1")).unwrap();
+            std::fs::write(original.join("feed.json.broken.1/notes.txt"), "Keep these notes").unwrap();
+            std::fs::write(original.join("feed.json.broken.2"), "Keep this file").unwrap();
+            if recover {
+                std::fs::write(original.join(crate::feed::FEED_FILE), b"damaged conversation").unwrap();
+                crate::feed::save(&original, &mut crate::feed::load(&ws)).unwrap();
+            }
+
+            let copy = ws.duplicate("Copy").unwrap();
+
+            assert_eq!(std::fs::read(copy.app_dir().join("feed.json.broken.1/notes.txt")).unwrap(), b"Keep these notes");
+            assert_eq!(std::fs::read(copy.app_dir().join("feed.json.broken.2")).unwrap(), b"Keep this file");
+            assert_eq!(std::fs::read(copy.app_dir().join("index.html")).unwrap(), b"Keep my app");
+            assert!(!copy.app_dir().join("feed.json.broken").exists(), "a verified generated backup is not part of the copied app");
+            assert!(!copy.app_dir().join("inbox").exists());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_reserved_link_is_a_clash_before_project_creation() {
+        for name in crate::feed::DAMAGED_BACKUP_NAMES.iter().copied().chain([MANIFEST, crate::feed::FEED_FILE]) {
+            for existing in [ExistingFiles::Edit, ExistingFiles::StartFrom] {
+                let directory = tempfile::tempdir().unwrap();
+                let link = directory.path().join(name);
+                let target = Path::new("not-created");
+                std::os::unix::fs::symlink(target, &link).unwrap();
+
+                let result = Workspace::create_at(directory.path(), "Site", "A website", TargetRef::None, Some(existing));
+
+                assert!(result.is_err(), "{name} is an existing directory entry even when its target is absent");
+                assert_eq!(clashes(directory.path(), existing), [name]);
+                assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+                assert_eq!(std::fs::read_link(&link).unwrap(), target);
+                assert!(!directory.path().join(target).exists());
+                assert!(!directory.path().join(MANIFEST).is_file());
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unverifiable_reserved_entry_does_not_look_absent() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("not-a-folder");
+        std::fs::write(&file, b"Keep this file").unwrap();
+
+        assert!(checked_clashes(&file, ExistingFiles::Edit).is_err(), "metadata errors other than NotFound must propagate");
+        assert!(!clashes(&file, ExistingFiles::Edit).is_empty(), "the folder chooser must not treat an error as an empty location");
+        assert!(Workspace::create_at(&file, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).is_err());
+        assert_eq!(std::fs::read(&file).unwrap(), b"Keep this file");
     }
 
     #[test]

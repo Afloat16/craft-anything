@@ -77,8 +77,11 @@ fn read_receipt(path: &Path, name: &str) -> Result<Option<Receipt>, ToolError> {
 }
 
 fn matches_backup(root: &Path, receipt: &Receipt) -> Result<bool, ToolError> {
-    let path = root.join(&receipt.backup);
-    let before = match std::fs::symlink_metadata(&path) {
+    matches_file(&root.join(&receipt.backup), receipt)
+}
+
+fn matches_file(path: &Path, receipt: &Receipt) -> Result<bool, ToolError> {
+    let before = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(ToolError::io(path.display(), error)),
@@ -86,7 +89,7 @@ fn matches_backup(root: &Path, receipt: &Receipt) -> Result<bool, ToolError> {
     if !before.is_file() || before.file_type().is_symlink() || before.len() != receipt.length {
         return Ok(false);
     }
-    let (mut file, opened) = craft_anything_platform::fs::open_regular_file(&path)?;
+    let (mut file, opened) = craft_anything_platform::fs::open_regular_file(path)?;
     if opened.len() != receipt.length {
         return Ok(false);
     }
@@ -103,7 +106,7 @@ fn matches_backup(root: &Path, receipt: &Receipt) -> Result<bool, ToolError> {
         length = length.saturating_add(count as u64);
         hash.update(buffer.get(..count).ok_or_else(|| ToolError::internal("A recovery-copy read exceeded its buffer."))?);
     }
-    let after = match std::fs::symlink_metadata(&path) {
+    let after = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(ToolError::io(path.display(), error)),
@@ -180,9 +183,230 @@ pub(crate) fn owned_backups(root: &Path) -> Result<Vec<PathBuf>, ToolError> {
     Ok(owned)
 }
 
+// This directory is deliberately outside inbox and OWN_NAMES. A changed entry kept here is
+// the person's data, so neither a destructor nor a later workspace deletion may recurse into it.
+const QUARANTINE_PREFIX: &str = ".craft-backup-quarantine-";
+
+fn quarantine(root: &Path) -> Result<PathBuf, ToolError> {
+    use std::hash::BuildHasher as _;
+    for _ in 0..16 {
+        let nonce = std::collections::hash_map::RandomState::new().hash_one((std::process::id(), crate::inbox::now_ms(), crate::inbox::next_counter()));
+        let path = root.join(format!("{QUARANTINE_PREFIX}{nonce:016x}"));
+        #[cfg(unix)]
+        let builder = {
+            use std::os::unix::fs::DirBuilderExt as _;
+            let mut builder = std::fs::DirBuilder::new();
+            builder.mode(0o700);
+            builder
+        };
+        #[cfg(not(unix))]
+        let builder = std::fs::DirBuilder::new();
+        match builder.create(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(ToolError::io(path.display(), error)),
+        }
+    }
+    Err(ToolError::new(ErrorCode::FileError, "A private folder for checking recovery copies could not be created.")
+        .with_remediation("This entry was not moved. Restore access to the project folder and retry deletion."))
+}
+
+fn remove_empty_quarantine(path: &Path) -> Result<(), ToolError> {
+    match std::fs::remove_dir(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(ToolError::io(path.display(), error)
+            .with_remediation(format!("Deletion stopped. Keep the contents of {} and inspect them before retrying.", path.display()))),
+    }
+}
+
+/// Restore only by creating a new hard link: rename would replace an entry created while the
+/// claimed file was checked. Other types and failed restorations stay in the private folder.
+fn preserve_claimed(original: &Path, claimed: &Path, directory: &Path, error: ToolError) -> ToolError {
+    let regular = std::fs::symlink_metadata(claimed).is_ok_and(|metadata| metadata.is_file() && !metadata.file_type().is_symlink());
+    if regular && std::fs::hard_link(claimed, original).is_ok() {
+        if std::fs::remove_file(claimed).is_ok() && remove_empty_quarantine(directory).is_ok() {
+            return error.with_remediation(format!(
+                "The changed file was restored at {} without replacing another entry. Inspect it before retrying deletion; the project records remain.",
+                original.display()
+            ));
+        }
+        return error.with_remediation(format!(
+            "The file was restored at {}. Also inspect {} before retrying; cleanup stopped and no directory contents were removed recursively.",
+            original.display(),
+            directory.display()
+        ));
+    }
+    error.with_remediation(format!(
+        "The changed entry is preserved at {}. The original location {} was not overwritten. Keep both locations and move the preserved entry to a safe place before retrying deletion.",
+        claimed.display(),
+        original.display()
+    ))
+}
+
+/// Candidates are only a discovery snapshot. Atomically claim each entry into a new private
+/// directory, then verify and unlink that claimed file instead of reusing its public pathname.
+pub(crate) fn remove_owned_backups(root: &Path, candidates: &[PathBuf]) -> Result<(), ToolError> {
+    remove_after_claim(root, candidates, |_, _| {})
+}
+
+fn remove_after_claim(root: &Path, candidates: &[PathBuf], mut after_claim: impl FnMut(&Path, &Path)) -> Result<(), ToolError> {
+    let Some(receipts) = directory(root, false)? else { return Ok(()) };
+    for original in candidates {
+        let Some(name) = original.file_name().and_then(|name| name.to_str()).filter(|name| valid_name(name)) else {
+            return Err(ToolError::invalid("Unknown recovery-copy name."));
+        };
+        if original.as_path() != root.join(name).as_path() {
+            return Err(ToolError::invalid("A recovery copy must be beside the project's conversation."));
+        }
+        let Some(receipt) = read_receipt(&receipts.join(format!("{name}.json")), name)? else { continue };
+        let private = quarantine(root)?;
+        let claimed = private.join(name);
+        match std::fs::rename(original, &claimed) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                remove_empty_quarantine(&private)?;
+                continue;
+            }
+            Err(error) => {
+                remove_empty_quarantine(&private)?;
+                return Err(ToolError::io(original.display(), error));
+            }
+        }
+        after_claim(original, &claimed);
+        match matches_file(&claimed, &receipt) {
+            Ok(true) => {
+                std::fs::remove_file(&claimed).map_err(|error| {
+                    ToolError::io(claimed.display(), error)
+                        .with_remediation(format!("The recovery copy remains at {}. Keep it before retrying deletion.", claimed.display()))
+                })?;
+                remove_empty_quarantine(&private)?;
+            }
+            Ok(false) => {
+                let error =
+                    ToolError::new(ErrorCode::FileChanged, format!("{} changed after its recovery copy was selected; it was not deleted.", original.display()));
+                return Err(preserve_claimed(original, &claimed, &private, error));
+            }
+            Err(error) => return Err(preserve_claimed(original, &claimed, &private, error)),
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deleting_a_claimed_backup_leaves_a_new_public_entry() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let backup = root.join("feed.json.broken");
+        std::fs::write(&backup, b"original").unwrap();
+        record(root, &backup, b"original").unwrap();
+        let selected = owned_backups(root).unwrap();
+        let mut private = None;
+
+        remove_after_claim(root, &selected, |original, claimed| {
+            private = Some(claimed.parent().unwrap().to_path_buf());
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                assert_eq!(std::fs::metadata(claimed.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
+            }
+            std::fs::write(original, b"Keep the new public entry").unwrap();
+        })
+        .unwrap();
+
+        assert_eq!(std::fs::read(&backup).unwrap(), b"Keep the new public entry");
+        assert!(!private.unwrap().exists(), "only the verified claimed file and its empty directory are removed");
+    }
+
+    #[test]
+    fn changed_claims_are_restored_without_overwriting_another_entry() {
+        for conflict in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let root = directory.path();
+            let backup = root.join("feed.json.broken");
+            std::fs::write(&backup, b"original").unwrap();
+            record(root, &backup, b"original").unwrap();
+            let selected = owned_backups(root).unwrap();
+            let replacement = root.join("replacement");
+            std::fs::write(&replacement, b"First personal replacement").unwrap();
+            std::fs::rename(&replacement, &backup).unwrap();
+            let mut preserved = None;
+
+            let error = remove_after_claim(root, &selected, |original, claimed| {
+                preserved = Some(claimed.to_path_buf());
+                if conflict {
+                    std::fs::write(original, b"Second personal replacement").unwrap();
+                }
+            })
+            .unwrap_err();
+
+            assert_eq!(error.code, ErrorCode::FileChanged);
+            let preserved = preserved.unwrap();
+            if conflict {
+                assert_eq!(std::fs::read(&backup).unwrap(), b"Second personal replacement");
+                assert_eq!(std::fs::read(&preserved).unwrap(), b"First personal replacement");
+                assert!(error.remediation.unwrap().contains(preserved.to_string_lossy().as_ref()));
+            } else {
+                assert_eq!(std::fs::read(&backup).unwrap(), b"First personal replacement");
+                assert!(!preserved.parent().unwrap().exists());
+                assert!(error.remediation.unwrap().contains("restored"));
+            }
+        }
+    }
+
+    #[test]
+    fn a_changed_directory_survives_this_and_later_project_deletion() {
+        use crate::workspace::{TargetRef, Workspace};
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Site", "A website", TargetRef::None).unwrap();
+        let root = ws.root.clone();
+        let backup = root.join("feed.json.broken");
+        std::fs::write(&backup, b"original").unwrap();
+        record(&root, &backup, b"original").unwrap();
+        let selected = owned_backups(&root).unwrap();
+        std::fs::remove_file(&backup).unwrap();
+        std::fs::create_dir(&backup).unwrap();
+        std::fs::write(backup.join("notes.txt"), b"Keep the personal directory").unwrap();
+        let mut preserved = None;
+
+        let error = remove_after_claim(&root, &selected, |_, claimed| preserved = Some(claimed.to_path_buf())).unwrap_err();
+
+        assert_eq!(error.code, ErrorCode::FileChanged);
+        let preserved = preserved.unwrap();
+        assert_eq!(std::fs::read(preserved.join("notes.txt")).unwrap(), b"Keep the personal directory");
+        assert!(error.remediation.unwrap().contains(preserved.to_string_lossy().as_ref()));
+        ws.delete().unwrap();
+        assert!(!root.join(crate::workspace::MANIFEST).exists());
+        assert_eq!(std::fs::read(preserved.join("notes.txt")).unwrap(), b"Keep the personal directory");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_changed_link_is_preserved_without_following_its_target() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("project");
+        std::fs::create_dir(&root).unwrap();
+        let backup = root.join("feed.json.broken");
+        std::fs::write(&backup, b"original").unwrap();
+        record(&root, &backup, b"original").unwrap();
+        let selected = owned_backups(&root).unwrap();
+        let personal = directory.path().join("personal");
+        std::fs::write(&personal, b"Keep the target").unwrap();
+        std::fs::remove_file(&backup).unwrap();
+        std::os::unix::fs::symlink(&personal, &backup).unwrap();
+        let mut preserved = None;
+
+        remove_after_claim(&root, &selected, |_, claimed| preserved = Some(claimed.to_path_buf())).unwrap_err();
+
+        let preserved = preserved.unwrap();
+        assert!(std::fs::symlink_metadata(&preserved).unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read_link(&preserved).unwrap(), personal);
+        assert_eq!(std::fs::read(&personal).unwrap(), b"Keep the target");
+    }
 
     #[test]
     fn receipts_belong_to_one_unchanged_regular_backup() {
