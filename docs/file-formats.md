@@ -18,13 +18,15 @@ version up to the current one, then turn the document into Rust types. The step 
 | `<project>/questions.json` | `engine::questions` (`AskedQuestion`, written by `rebuild_question_ask`) | `QUESTIONS_VERSION` = 1 (`{version, items}`) | read as before | read as far as its fields are known |
 | `<project>/pinned/<n>/pin.json` | `engine::pins` (`Pin`) | `PIN_VERSION` = 2 (`version`; missing = 1; 2 records the selected program for a copied direct launch) | brought forward | read as far as its fields are known |
 | `<folder>/standin.json` | `engine::tools::standin_tools` (`analysis::standin::StandIn`; written only by `web_standin_build`) | `STANDIN_VERSION` = 1 (`version`, required) | brought forward | refused, with "update Craft Anything", and never written over |
-| `<project>/feed.json` | `ai::rebuild::feed` (written by the run) | `FEED_VERSION` = 5 (`{version, items}`; a bare list = 0; 4 adds `PlanDismissed`, a folded plan card; 5 marks open steps stopped at a run's end) | read as before, saved as current | never written over; the conversation is rebuilt from the project for display |
+| `<project>/feed.json` | `ai::rebuild::feed` (written by the run) | `FEED_VERSION` = 6 (`{version, items, recovery?}`; a bare list = 0; 4 adds `PlanDismissed`; 5 marks open steps stopped at a run's end; 6 retains the manifest projection used during recovery) | read as before, saved as current | never written over; the conversation is rebuilt from the project for display |
+| `<project>/inbox/<id>.delivery.json` | `engine::inbox::delivery` | 1 (`format`, `version`, `id`, `state`; staged or delivered) | absent records leave existing feed answers compatible | unrecognized records are preserved and block a new recorded submission |
+| `<project>/inbox/feed-backups/<backup-name>.json` | `engine::feed::backups` | 1 (`format`, `version`, `backup`, `length`, `sha256`) | no receipt means no ownership of a backup-shaped path | unrecognized records are preserved and never authorize deletion |
 
 A saved `User` message with pictures is `{text, pictures: [paths]}`, where the pictures are the
 copies in the project's `attachments/`; one without pictures stays the plain string earlier
 versions wrote.
 
-Other JSON in a project (`assets.json`, `inbox/` except `inbox/build-progress.json`, `checks/`,
+Other JSON in a project (`assets.json`, `inbox/` except the versioned records listed above, `checks/`,
 evidence records) has no version yet; add one the first time its shape changes.
 
 ## Stand-in cached responses
@@ -49,14 +51,14 @@ see.
 Before saving `feed.json`, a filesystem read failure also stops the save and keeps the existing path.
 Only a path confirmed absent without following symlinks can be created without inspecting an old
 version. A fallback remembers that the original wasn't loaded, even if the file becomes readable
-later; reopen the project to load it before saving. Readable bytes that cannot be parsed are copied
+later. A live writer may load an actually decoded replacement and replay its unsaved events; a missing, unreadable, damaged or newer replacement cannot clear the original guard. Version 6 records the damaged source's SHA-256 and the exact manifest request, checks, reply and failure note that produced a recovery prefix. Only a writer that observed that same damaged source can consume its projection; a temporary read failure cannot authorize removing old history. Later manifest updates cannot change the recorded origin. Older feeds have no recovery provenance; matching text alone never establishes it. Readable bytes that cannot be parsed are copied
 exactly to an unused `feed.json.broken` (then `.broken.1` through `.broken.15`) before replacement.
-Existing backups are never replaced. A failed backup stops the save and leaves the source intact;
+Existing backups are never replaced. A private ownership receipt records each generated copy's name, length and digest. Project deletion removes a backup only when that receipt and the current regular file match; legacy personal files or directories with the same names survive. A failed backup or receipt stops the save and leaves the source intact;
 the recovered conversation names the backup. A newer format is left in place without recovery.
 
 Answers are saved in the conversation before they are delivered through the inbox. A save failure
 returns an error and leaves the question pending. A delivery failure also leaves it available for
-retry; display views show the pending question while writers retain its recorded answer.
+retry; display views show the pending question and saved reply while writers retain the recorded answer. A versioned delivery receipt is staged before persistence and marked delivered before the waiter removes an answer. If receipt persistence fails at consumption, the answer file remains as durable delivery evidence. If the request expires before delivery, the display explicitly says the saved reply was not delivered and keeps its text available for a new request. Ordinary temporary inbox answers without feed persistence do not create receipts.
 
 A file that can't be parsed is not "newer": `config.toml` is set aside as `config.toml.broken` and
 defaults are used; an unreadable `craft.json` gives a plain-English error when opened and is left

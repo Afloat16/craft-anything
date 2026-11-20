@@ -744,7 +744,11 @@ file readable later cannot let an earlier fallback replace it. Damaged readable 
 an unused `feed.json.broken` backup before replacement; backup failure stops the save, and the
 conversation names the recovery copy. Questions are saved before inbox delivery in the tool and
 app paths. Failed saves leave them pending; failed delivery remains retryable without discarding
-the recorded answer when another writer saves.
+the recorded answer when another writer saves. A live writer can safely reload an actually decoded
+repair without losing either client's events. Recovery provenance survives later manifest updates.
+Expired undelivered replies remain visibly undelivered, with their saved words available; delivered
+receipts survive inbox cleanup. Recovery-copy ownership is verified before project deletion, and
+newer read-only manifests are rejected before build-finish touches their conversations.
 Regression coverage includes sticky read failures, exact recovery copies and occupied backup names,
 tool/live-run answer delivery, intervening writers, dangling/looping links and normal saves.
 A Windows no-sharing regression is included but has not been run locally. No live desktop or remote

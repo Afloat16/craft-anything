@@ -907,19 +907,33 @@ the inbox can deliver it and let the asker remove the request. An undelivered an
 as pending only in a display copy: clearing it in the writer lets a save between recording and
 delivery erase the answer. A live writer also keeps the recovery state after a successful save,
 even when delivery fails, and merges a later answer saved by another client before saving again.
-If that client recovered damaged bytes first, the live writer must reload the valid recovery and
-replay only its unsaved events; keeping the old damaged-file guard prevents every later save.
+After another client repairs a read failure or recovers damaged bytes, the live writer must load
+actually decoded contents and replay only its unsaved events. A path-existence precheck followed
+by an absent-file fallback is not proof of a decoded conversation; retain the original guard
+until the replacement is successfully saved.
 The manifest may already project a pending check, completed reply or failure into that history.
-Reconcile only confirmed new occurrences in its history prefix, preserving older and external
-equal content and replaying every pending event, including the plan's finish transition.
+Save that projection and its damaged source digest with the recovery rather than guessing from a
+manifest that may have advanced. A temporary read failure or a different damaged source does not
+identify that recovery, so an old projection cannot authorize removing historical same-text events.
+Reconcile only confirmed new occurrences in that exact history prefix against all completed pending
+turns, preserving older and external equal content and replaying every pending event, including
+the plan's finish transition. Older files without provenance must not lose matching text.
 Saving a reply and withdrawing its request also share the request's file lock: a withdrawn
 request cannot stage a reply, while an accepted submission finishes before timeout or cancellation.
+Open lock-owning request handles for reading and writing: a network filesystem can emulate an
+exclusive file lock with a write lock. A staged/delivered receipt survives request withdrawal;
+absence of a request does not prove the saved reply was delivered. Keep a failed delivery's words
+visible for retry or copying to a new request. Before removing a consumed answer, retain its
+delivered receipt; if that write fails, keep the answer file as the remaining evidence.
 An expired self-check reply is withdrawn; it does not fail the build that completed the check.
 Both the desktop and tools use the engine's same answer transaction and show its remediation.
 A persistence notice is separate from a builder error, so it cannot hide why a build failed.
-Calling a build done saves its conversation entry before changing the manifest, and a retry after
-a failed status write recognizes that entry. Recovery backups use one reserved-name list for
-writing, deletion, new-project conflicts, source scanning and coding-agent protection.
+Calling a build done checks manifest writability before any feed mutation, then saves its
+conversation entry before changing the manifest; a retry after a failed status write recognizes
+that entry. Recovery backups share a reserved-name list for writing, new-project conflicts,
+source scanning and coding-agent protection. Deletion also verifies a generated ownership
+receipt and the current regular file's bytes; a matching name never owns a legacy personal file
+or directory, and recovery paths are never removed recursively.
 And "not found" wasn't that either: reading a link whose target is missing answers "not found"
 too, so such a config.toml was a first start and the next save put a file where the link was. A
 read's error describes the end of the path it followed, not the path: before treating "not

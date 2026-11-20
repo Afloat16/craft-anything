@@ -357,6 +357,7 @@ fn project_build_finish(_ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput,
     use crate::workspace::{Status, Step};
     let p: FinishParams = parse_params(params)?;
     let mut ws = open(&p.project)?;
+    ws.ensure_writable()?;
     let mut items = feed::load(&ws);
     // A previous attempt may have saved the conversation before the status write failed.
     if !matches!(items.last(), Some(feed::FeedItem::Step { step: Step::Done, text }) if text == CALLED_DONE) {
@@ -729,6 +730,43 @@ mod tests {
         let items = feed::load(&ws);
         assert!(matches!(&items[0], feed::FeedItem::User(user) if user.text() == "A website"));
         assert_eq!(items.iter().filter(|item| matches!(item, feed::FeedItem::Step { step: Step::Done, text } if text == CALLED_DONE)).count(), 1);
+    }
+
+    #[test]
+    fn a_read_only_project_cannot_change_its_conversation_when_called_done() {
+        use crate::workspace::{MANIFEST, MANIFEST_VERSION, Status};
+        let valid = serde_json::to_vec(&json!({"version": feed::FEED_VERSION, "items": [{"User": "Keep this conversation"}]})).unwrap();
+        for (case, original) in [("missing", None), ("valid", Some(valid.as_slice())), ("damaged", Some(b"damaged conversation".as_slice()))] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut ws = Workspace::create(directory.path(), "Site", "A website", TargetRef::None).unwrap();
+            ws.set_status(Status::Stopped, "Paused.").unwrap();
+            let manifest_path = ws.root.join(MANIFEST);
+            let mut document: Value = serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+            document["version"] = json!(MANIFEST_VERSION + 1);
+            document["future_setting"] = json!({"keep": true});
+            let manifest = serde_json::to_vec_pretty(&document).unwrap();
+            std::fs::write(&manifest_path, &manifest).unwrap();
+            let feed_path = ws.root.join(feed::FEED_FILE);
+            if let Some(bytes) = original {
+                std::fs::write(&feed_path, bytes).unwrap();
+            }
+            assert!(Workspace::open(&ws.root).unwrap().is_read_only());
+            let entries = || {
+                let mut entries: Vec<_> = std::fs::read_dir(&ws.root).unwrap().map(|entry| entry.unwrap().file_name()).collect();
+                entries.sort();
+                entries
+            };
+            let before = entries();
+            let engine = Engine::new(crate::testing::session());
+
+            let error = engine.call("project_build_finish", json!({"project": ws.root}), CallOptions::new(Caller::Cli)).unwrap_err();
+
+            assert_eq!(error.code, craft_anything_evidence::ErrorCode::NotSupported, "{case}: {error:?}");
+            assert!(error.remediation.is_some(), "{case}: the person is told how to open this project for editing");
+            assert_eq!(std::fs::read(&manifest_path).unwrap(), manifest, "{case}: the newer manifest remains byte-for-byte unchanged");
+            assert_eq!(std::fs::read(&feed_path).ok().as_deref(), original, "{case}: no Done entry was saved");
+            assert_eq!(entries(), before, "{case}: no recovery backup or other record was created");
+        }
     }
 
     #[test]

@@ -2,7 +2,7 @@
 //! checklist, questions and checks. It's kept in the project folder (`feed.json`); a rebuild run
 //! appends to it as it goes (`ai::rebuild::feed`), and every client reads the same file.
 
-use crate::inbox::{Inbox, Request};
+use crate::inbox::{DeliveryState, Inbox, Request};
 use crate::workspace::{CheckResult, Status, Step, Workspace};
 use craft_anything_evidence::{ErrorCode, ToolError};
 use serde::{Deserialize, Serialize};
@@ -12,11 +12,15 @@ use std::io::Write as _;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 
+mod backups;
+pub(crate) use backups::owned_backups;
+
 /// Where the conversation is kept in the project folder.
 pub const FEED_FILE: &str = "feed.json";
 
 /// Recovery copies are project records too: the writer and workspace ownership rules share
-/// this finite set so copies are protected, kept out of the app, and deleted with the project.
+/// this finite set so copies are protected and kept out of the app. Deletion also requires a
+/// matching ownership receipt; a legacy personal file with the same name is left alone.
 pub(crate) const DAMAGED_BACKUP_NAMES: &[&str] = &[
     "feed.json.broken",
     "feed.json.broken.1",
@@ -36,10 +40,11 @@ pub(crate) const DAMAGED_BACKUP_NAMES: &[&str] = &[
     "feed.json.broken.15",
 ];
 
-/// The format written today (5 marks open plan steps stopped at a run's end; 4 saves a dismissed
+/// The format written today (6 retains the history projected during recovery; 5 marks open plan
+/// steps stopped at a run's end; 4 saves a dismissed
 /// plan card with it; 3 saved a prompt's pictures); files without a version are the earlier bare
 /// list. An older Craft Anything won't rewrite a file it can't read (`save` refuses a newer version).
-pub const FEED_VERSION: u32 = 5;
+pub const FEED_VERSION: u32 = 6;
 
 /// What the person sent: as the feed shows it, and the pictures attached to it (their copies in
 /// the project's `attachments/`).
@@ -180,11 +185,38 @@ pub fn answered(feed: &mut [FeedItem], id: &str, shown: &str) {
     }
 }
 
-/// The saved file: `{version, items}`. Earlier files were the bare list.
+/// The manifest fields that produced a recovery's history prefix. Later manifest updates must
+/// not change the identity of that projected occurrence when a live writer replays its events.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecoveryProjection {
+    source_sha256: String,
+    pub request: String,
+    pub checks: Vec<CheckResult>,
+    pub last_reply: String,
+    pub failure_note: Option<String>,
+}
+
+impl RecoveryProjection {
+    fn from_workspace(ws: &Workspace, damaged: &[u8]) -> Self {
+        let m = &ws.manifest;
+        Self {
+            source_sha256: craft_anything_evidence::sha256_hex(damaged),
+            request: m.request.clone(),
+            checks: m.checks.clone(),
+            last_reply: m.last_reply.clone(),
+            failure_note: (m.status == Status::NeedsYou && !m.note.is_empty()).then(|| m.note.clone()),
+        }
+    }
+}
+
+/// The saved file. Version 6 records a recovery's projected history; older files and the
+/// original bare list have no such provenance and are read without inventing it.
 #[derive(Serialize, Deserialize)]
 struct Saved {
     version: u32,
     items: Vec<FeedItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recovery: Option<RecoveryProjection>,
 }
 
 /// A conversation together with whether its saved contents were actually read. A display
@@ -195,13 +227,44 @@ pub struct LoadedFeed {
     items: Vec<FeedItem>,
     not_loaded: Option<ToolError>,
     damaged: Option<Vec<u8>>,
+    decoded: bool,
+    recovery: Option<RecoveryProjection>,
 }
 
 impl LoadedFeed {
     /// Whether loading found no read or decoding error. A confirmed absent file also starts
-    /// a new conversation; callers looking for a repaired file must check that it exists.
+    /// a new conversation; recovery callers use `was_decoded` to require saved contents.
     pub fn is_readable(&self) -> bool {
         self.not_loaded.is_none() && self.damaged.is_none()
+    }
+
+    /// True only when this load actually decoded saved bytes, never for an absent-file fallback.
+    pub fn was_decoded(&self) -> bool {
+        self.decoded
+    }
+
+    /// A live writer may try a fresh load after a repair. The original fallback remains
+    /// protected: this does not clear the error or make it directly writable.
+    pub fn had_read_error(&self) -> bool {
+        self.not_loaded.is_some()
+    }
+
+    pub fn recovery_projection(&self) -> Option<&RecoveryProjection> {
+        self.recovery.as_ref()
+    }
+
+    /// Only the damaged bytes this writer actually loaded can identify its recovery. A plain
+    /// read failure, or an unrelated old recovery, cannot authorize deleting saved history.
+    pub fn was_recovered_from(&self, earlier: &LoadedFeed) -> bool {
+        match (&self.recovery, &earlier.damaged) {
+            (Some(projection), Some(damaged)) => projection.source_sha256 == craft_anything_evidence::sha256_hex(damaged),
+            _ => false,
+        }
+    }
+
+    /// A writer that has reconciled the projected occurrences keeps its replayed history.
+    pub fn clear_recovery_projection(&mut self) {
+        self.recovery = None;
     }
 
     /// Take the items for a read-only view. Writers keep the `LoadedFeed` and pass it to `save`.
@@ -235,12 +298,11 @@ fn newer_error() -> ToolError {
         .with_remediation("Update Craft Anything and reopen the project to keep its conversation up to date.")
 }
 
-fn decode(bytes: &[u8]) -> Option<Vec<FeedItem>> {
+fn decode(bytes: &[u8]) -> Option<Saved> {
     serde_json::from_slice::<Saved>(bytes)
         .ok()
         .filter(|saved| saved.version <= FEED_VERSION)
-        .map(|saved| saved.items)
-        .or_else(|| serde_json::from_slice::<Vec<FeedItem>>(bytes).ok())
+        .or_else(|| serde_json::from_slice::<Vec<FeedItem>>(bytes).ok().map(|items| Saved { version: 0, items, recovery: None }))
 }
 
 /// Only a path with nothing at it is a new conversation. In particular, a dangling link is
@@ -264,8 +326,8 @@ pub fn load(ws: &Workspace) -> LoadedFeed {
         Some(bytes) if newer_version(&bytes) => Err(newer_error()),
         bytes => Ok(bytes),
     });
-    let mut feed = match saved {
-        Ok(None) => return LoadedFeed { items: history(ws), not_loaded: None, damaged: None },
+    let saved = match saved {
+        Ok(None) => return LoadedFeed { items: history(ws), not_loaded: None, damaged: None, decoded: false, recovery: None },
         Err(error) => {
             let error = if error.remediation.is_some() {
                 error
@@ -278,10 +340,10 @@ pub fn load(ws: &Workspace) -> LoadedFeed {
                 remediation: error.remediation.clone(),
                 log: None,
             });
-            return LoadedFeed { items, not_loaded: Some(error), damaged: None };
+            return LoadedFeed { items, not_loaded: Some(error), damaged: None, decoded: false, recovery: None };
         }
         Ok(Some(bytes)) => match decode(&bytes) {
-            Some(items) => items,
+            Some(saved) => saved,
             None => {
                 let mut items = history(ws);
                 items.push(FeedItem::Error {
@@ -289,10 +351,12 @@ pub fn load(ws: &Workspace) -> LoadedFeed {
                     remediation: Some("The original is unchanged. A complete copy will be kept beside feed.json before saving a new conversation.".into()),
                     log: None,
                 });
-                return LoadedFeed { items, not_loaded: None, damaged: Some(bytes) };
+                let recovery = Some(RecoveryProjection::from_workspace(ws, &bytes));
+                return LoadedFeed { items, not_loaded: None, damaged: Some(bytes), decoded: false, recovery };
             }
         },
     };
+    let mut feed = saved.items;
     // Nothing is streaming any more after a restart.
     for item in &mut feed {
         if let FeedItem::Agent { streaming, .. } = item {
@@ -301,7 +365,7 @@ pub fn load(ws: &Workspace) -> LoadedFeed {
     }
     let shown: HashSet<String> = feed.iter().filter_map(|i| if let FeedItem::Ask { request, .. } = i { Some(request.id.clone()) } else { None }).collect();
     feed.extend(Inbox::new(ws.inbox_dir()).pending().into_iter().filter(|r| !shown.contains(&r.id)).map(|request| FeedItem::Ask { request, answer: None }));
-    LoadedFeed { items: feed, not_loaded: None, damaged: None }
+    LoadedFeed { items: feed, not_loaded: None, damaged: None, decoded: true, recovery: saved.recovery }
 }
 
 /// A read-only conversation view, including retryable questions whose answer was saved but
@@ -314,13 +378,33 @@ pub fn for_display(ws: &Workspace) -> Vec<FeedItem> {
 }
 
 /// Offer undelivered answers for retry in a cloned display list, never in a writer's feed.
+/// If the request expired, keep its saved words visible without claiming they were delivered.
 pub fn show_pending(items: &mut [FeedItem], inbox: &Inbox) {
     let waiting: HashSet<String> = inbox.pending().into_iter().map(|request| request.id).collect();
     for item in items {
-        if let FeedItem::Ask { request, answer } = item
-            && waiting.contains(&request.id)
-        {
-            *answer = None;
+        if let FeedItem::Ask { request, answer } = item {
+            let delivery = inbox.delivery_state(&request.id);
+            if matches!(delivery, Ok(DeliveryState::Delivered)) {
+                continue;
+            }
+            if waiting.contains(&request.id) {
+                if let Some(shown) = answer.take() {
+                    request.detail.push_str("\n\nYour saved reply has not been delivered. You can retry it:\n");
+                    request.detail.push_str(&shown);
+                }
+            } else if let Some(shown) = answer
+                && !matches!(delivery, Ok(DeliveryState::Untracked))
+            {
+                let reason = match delivery {
+                    Err(error) => format!("The delivery record could not be read: {}", error.message),
+                    _ => "This question is no longer waiting.".into(),
+                };
+                *item = FeedItem::Error {
+                    message: format!("Your reply to \"{}\" was saved but has not been delivered.\n\nSaved reply:\n{shown}", request.title),
+                    remediation: Some(format!("{reason} Keep these words and copy them into a new request from the builder.")),
+                    log: None,
+                };
+            }
         }
     }
 }
@@ -381,7 +465,7 @@ pub fn save(root: &Path, feed: &mut LoadedFeed) -> Result<(), ToolError> {
             items.insert(0, notice);
         }
     }
-    let saved = Saved { version: FEED_VERSION, items };
+    let saved = Saved { version: FEED_VERSION, items, recovery: feed.recovery.clone() };
     let json = serde_json::to_vec(&saved).map_err(|e| ToolError::internal(e.to_string()))?;
     crate::project::write_atomic(&path, &json)?;
     feed.items = saved.items;
@@ -389,8 +473,8 @@ pub fn save(root: &Path, feed: &mut LoadedFeed) -> Result<(), ToolError> {
     Ok(())
 }
 
-/// Every backup recovery can create. Project deletion uses the same paths so no saved
-/// conversation is left behind when the project's own files are removed.
+/// Every backup recovery can create. Deletion additionally verifies a generated receipt and
+/// the current regular file's bytes, rather than taking ownership from its name alone.
 fn damaged_backups(root: &Path) -> impl Iterator<Item = PathBuf> + '_ {
     DAMAGED_BACKUP_NAMES.iter().map(move |name| root.join(name))
 }
@@ -416,6 +500,10 @@ fn keep_damaged(root: &Path, bytes: &[u8]) -> Result<PathBuf, ToolError> {
         if let Err(error) = result {
             let _ = std::fs::remove_file(&backup);
             return Err(ToolError::io(backup.display(), error));
+        }
+        if let Err(error) = backups::record(root, &backup, bytes) {
+            let _ = std::fs::remove_file(&backup);
+            return Err(error);
         }
         return Ok(backup);
     }
@@ -453,7 +541,70 @@ mod tests {
 
     /// Seed a fixture directly; production writers can only save a value returned by `load`.
     fn save(root: &Path, items: &[FeedItem]) -> Result<(), ToolError> {
-        super::save(root, &mut LoadedFeed { items: items.to_vec(), not_loaded: None, damaged: None })
+        super::save(root, &mut LoadedFeed { items: items.to_vec(), not_loaded: None, damaged: None, decoded: true, recovery: None })
+    }
+
+    #[test]
+    fn only_decoded_saved_bytes_establish_a_recovery_base() {
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "x", "Fallback", TargetRef::None).unwrap();
+        let path = ws.root.join(FEED_FILE);
+        let missing = load(&ws);
+        assert!(missing.is_readable());
+        assert!(!missing.was_decoded());
+        std::fs::create_dir(&path).unwrap();
+        let unreadable = load(&ws);
+        assert!(!unreadable.was_decoded());
+        assert!(unreadable.had_read_error());
+        std::fs::remove_dir(&path).unwrap();
+        std::fs::write(&path, b"damaged").unwrap();
+        let damaged = load(&ws);
+        assert!(!damaged.was_decoded());
+        assert!(!damaged.is_readable());
+        std::fs::write(&path, br#"{"version":5,"items":[{"User":"Actual saved words"}]}"#).unwrap();
+        let decoded = load(&ws);
+        assert!(decoded.was_decoded());
+        assert!(decoded.is_readable());
+        assert!(decoded.recovery_projection().is_none());
+        std::fs::write(&path, br#"{"version":999,"items":[]}"#).unwrap();
+        let future = load(&ws);
+        assert!(!future.was_decoded());
+        assert!(future.had_read_error());
+    }
+
+    #[test]
+    fn recovery_projection_survives_a_later_manifest_update() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(directory.path(), "x", "Original request", TargetRef::None).unwrap();
+        ws.manifest.last_reply = "Turn A".into();
+        std::fs::write(ws.root.join(FEED_FILE), b"damaged").unwrap();
+        let mut recovered = load(&ws);
+        ws.manifest.last_reply = "Turn B".into();
+        super::save(&ws.root, &mut recovered).unwrap();
+        let saved = load(&ws);
+        assert!(saved.was_decoded());
+        assert_eq!(saved.recovery_projection().unwrap().last_reply, "Turn A");
+        assert!(saved.iter().any(|item| matches!(item, FeedItem::Agent { text, .. } if text == "Turn A")));
+    }
+
+    #[test]
+    fn old_feed_formats_keep_their_items_without_inventing_recovery_provenance() {
+        for original in [br#"[{"User":"Saved before recovery metadata"}]"#.as_slice(), br#"{"version":5,"items":[{"User":"Saved before recovery metadata"}]}"#]
+        {
+            let directory = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(directory.path(), "x", "Fallback", TargetRef::None).unwrap();
+            let path = ws.root.join(FEED_FILE);
+            std::fs::write(&path, original).unwrap();
+            let mut feed = load(&ws);
+            let before = feed.items.clone();
+            assert!(feed.was_decoded());
+            assert!(feed.recovery_projection().is_none());
+            super::save(&ws.root, &mut feed).unwrap();
+            let updated: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(updated["version"], FEED_VERSION);
+            assert!(updated.get("recovery").is_none());
+            assert_eq!(load(&ws).items, before);
+        }
     }
 
     #[test]

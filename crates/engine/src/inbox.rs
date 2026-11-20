@@ -16,6 +16,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod delivery;
+pub(crate) use delivery::DeliveryState;
+
 /// The session's inbox folder (kept in `Session::ext`). Set by `mcp --inbox <dir>` or by the
 /// workflow that runs the in-process agent.
 #[derive(Debug, Clone)]
@@ -133,6 +136,15 @@ impl Inbox {
         Ok(self.dir.join(format!("{id}.{suffix}.json")))
     }
 
+    /// A durable answer file is also evidence of delivery when its receipt could not be
+    /// updated. Recorded submissions retain the receipt after the waiter consumes the file.
+    pub(crate) fn delivery_state(&self, id: &str) -> Result<DeliveryState, ToolError> {
+        if read_answer(&self.path(id, "answer")?).is_some() {
+            return Ok(DeliveryState::Delivered);
+        }
+        delivery::state(&self.dir, id)
+    }
+
     /// Post a request; returns its id.
     pub fn post(
         &self,
@@ -158,7 +170,7 @@ impl Inbox {
         let mut out: Vec<Request> = rd
             .flatten()
             .filter_map(|e| e.file_name().to_str().and_then(|n| n.strip_suffix(".request.json")).map(str::to_string))
-            .filter(|id| valid_id(id) && read_answer(&self.dir.join(format!("{id}.answer.json"))).is_none())
+            .filter(|id| valid_id(id) && !matches!(self.delivery_state(id), Ok(DeliveryState::Delivered)))
             .filter_map(|id| std::fs::read(self.dir.join(format!("{id}.request.json"))).ok())
             .filter_map(|b| serde_json::from_slice::<Request>(&b).ok())
             .collect();
@@ -168,7 +180,7 @@ impl Inbox {
 
     /// Write the person's answer.
     pub fn answer(&self, id: &str, answer: &Answer) -> Result<(), ToolError> {
-        self.answer_with(id, answer, |_| Ok(()))
+        self.answer_inner(id, answer, false, |_| Ok(()))
     }
 
     /// Save an offline answer in the project's conversation before delivering it. Desktop,
@@ -182,13 +194,21 @@ impl Inbox {
     /// after accepting a still-pending request; it must not submit to this inbox again.
     /// A persistence failure releases the reservation and leaves the request available to retry.
     pub fn answer_with(&self, id: &str, answer: &Answer, persist: impl FnOnce(&Request) -> Result<(), ToolError>) -> Result<(), ToolError> {
+        self.answer_inner(id, answer, true, persist)
+    }
+
+    fn answer_inner(&self, id: &str, answer: &Answer, recorded: bool, persist: impl FnOnce(&Request) -> Result<(), ToolError>) -> Result<(), ToolError> {
         let request_path = self.path(id, "request")?;
         let answer_path = self.path(id, "answer")?;
         let bytes = serde_json::to_vec(answer).map_err(|e| ToolError::internal(e.to_string()))?;
         // Requests are created once with unique ids; neither submitters nor waiters recreate
         // them. Keep this handle open until delivery, and recheck the path after taking its
         // lock: a waiter may have unlinked the request while this handle was waiting for it.
-        let mut request_file = std::fs::File::open(&request_path)
+        // Exclusive locks are emulated as write locks on some network filesystems.
+        let mut request_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&request_path)
             .map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { no_longer_waiting() } else { ToolError::io(request_path.display(), e) })?;
         let started = Instant::now();
         loop {
@@ -209,7 +229,7 @@ impl Inbox {
         // Read through the handle that owns this reservation, after rejecting an unlinked one.
         let mut request_bytes = Vec::new();
         request_file.read_to_end(&mut request_bytes).map_err(|e| ToolError::io(request_path.display(), e))?;
-        if read_answer(&answer_path).is_some() {
+        if self.delivery_state(id)? == DeliveryState::Delivered {
             return Err(no_longer_waiting());
         }
         let request: Request = serde_json::from_slice(&request_bytes).map_err(|_| {
@@ -217,6 +237,9 @@ impl Inbox {
         })?;
         if request.id != id {
             return Err(ToolError::invalid("The saved question does not match its inbox id."));
+        }
+        if recorded {
+            delivery::stage(&self.dir, id)?;
         }
         persist(&request)?;
         craft_anything_platform::fs::write_atomic_private(&answer_path, &bytes)
@@ -231,11 +254,18 @@ impl Inbox {
         let (req, ans) = (self.path(id, "request").ok()?, self.path(id, "answer").ok()?);
         let start = Instant::now();
         loop {
-            let request_file = std::fs::File::open(&req).ok()?;
+            let request_file = std::fs::OpenOptions::new().read(true).write(true).open(&req).ok()?;
             let delay = match request_file.try_lock() {
                 Ok(()) => {
                     if let Some(answer) = read_answer(&ans) {
-                        let _ = std::fs::remove_file(&ans);
+                        // Never discard the last proof of delivery. If the receipt cannot be
+                        // committed, keep the answer file while returning the actual answer.
+                        match delivery::mark_delivered(&self.dir, id) {
+                            Ok(()) => {
+                                let _ = std::fs::remove_file(&ans);
+                            }
+                            Err(error) => log::warn!("Couldn't retain this answer's delivery receipt: {}", error.message),
+                        }
                         let _ = std::fs::remove_file(&req);
                         return Some(answer);
                     }
@@ -507,7 +537,7 @@ mod tests {
                 assert!(matches!(premature, Err(std::sync::mpsc::RecvTimeoutError::Timeout)), "an accepted save finishes before withdrawal");
                 assert_eq!(waiting.recv_timeout(Duration::from_secs(5)).unwrap().unwrap().as_text(), "Blue");
             });
-            assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+            assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1, "the delivered receipt survives request cleanup");
         }
     }
 
@@ -531,6 +561,101 @@ mod tests {
             crate::feed::for_display(&ws)
                 .iter()
                 .any(|item| matches!(item, crate::feed::FeedItem::Ask { request, answer: Some(answer) } if request.id == id && answer == "Blue"))
+        );
+    }
+
+    #[test]
+    fn a_saved_reply_is_not_shown_as_delivered_after_its_request_expires() {
+        use crate::feed::{self, FeedItem};
+        use crate::workspace::{TargetRef, Workspace};
+        for cancelled in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(directory.path(), "Colour", "Pick a colour", TargetRef::None).unwrap();
+            let inbox = Inbox::new(ws.inbox_dir());
+            let id = inbox.post(RequestKind::Question, "Which colour?", "Choose carefully", vec![], true, None).unwrap();
+            let answer_path = inbox.path(&id, "answer").unwrap();
+            std::fs::create_dir(&answer_path).unwrap();
+            let answer = Answer { text: Some("Blue".into()), ..Default::default() };
+            assert!(inbox.answer_recorded(&ws, &id, &answer, "Blue").is_err());
+            assert!(feed::load(&ws).iter().any(|item| matches!(item, FeedItem::Ask { answer: Some(shown), .. } if shown == "Blue")));
+            assert!(feed::for_display(&ws).iter().any(|item| matches!(item, FeedItem::Ask { request, answer: None } if request.id == id)));
+            assert!(inbox.wait(&id, Duration::ZERO, &|| cancelled).is_none());
+            let reopened = Workspace::open(&ws.root).unwrap();
+            let display = feed::for_display(&reopened);
+            assert!(
+                !display.iter().any(|item| matches!(item, FeedItem::Ask { answer: Some(_), .. })),
+                "an expired request cannot turn a staged reply into a delivered one"
+            );
+            assert!(display.iter().any(|item| matches!(item, FeedItem::Error { message, remediation: Some(help), .. } if message.contains("has not been delivered") && message.contains("Blue") && help.contains("new request"))), "keep the saved reply visible with an honest delivery state");
+            assert!(
+                feed::load(&reopened).iter().any(|item| matches!(item, FeedItem::Ask { answer: Some(shown), .. } if shown == "Blue")),
+                "displaying the warning does not erase saved words"
+            );
+        }
+    }
+
+    #[test]
+    fn a_retried_reply_stays_delivered_after_consumption_and_reopening() {
+        use crate::feed::{self, FeedItem};
+        use crate::workspace::{TargetRef, Workspace};
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Colour", "Pick a colour", TargetRef::None).unwrap();
+        let inbox = Inbox::new(ws.inbox_dir());
+        let id = inbox.post(RequestKind::Question, "Which colour?", "", vec![], true, None).unwrap();
+        let request_path = inbox.path(&id, "request").unwrap();
+        let request_bytes = std::fs::read(&request_path).unwrap();
+        let answer_path = inbox.path(&id, "answer").unwrap();
+        std::fs::create_dir(&answer_path).unwrap();
+        let answer = Answer { text: Some("Blue".into()), ..Default::default() };
+        assert!(inbox.answer_recorded(&ws, &id, &answer, "Blue").is_err());
+        assert!(feed::for_display(&ws).iter().any(|item| matches!(item, FeedItem::Ask { request, answer: None } if request.detail.contains("Blue"))));
+        std::fs::remove_dir(&answer_path).unwrap();
+        inbox.answer_recorded(&ws, &id, &answer, "Blue").unwrap();
+        assert_eq!(inbox.wait(&id, Duration::ZERO, &|| false).unwrap().as_text(), "Blue");
+        assert!(!answer_path.exists());
+        // A stale request left by failed cleanup must not offer an already delivered answer.
+        std::fs::write(&request_path, request_bytes).unwrap();
+        assert!(Inbox::new(ws.inbox_dir()).pending().is_empty());
+        let reopened = Workspace::open(&ws.root).unwrap();
+        assert!(
+            feed::for_display(&reopened)
+                .iter()
+                .any(|item| matches!(item, FeedItem::Ask { request, answer: Some(shown) } if request.id == id && shown == "Blue"))
+        );
+        let mut persisted = false;
+        assert_eq!(
+            inbox
+                .answer_with(&id, &answer, |_| {
+                    persisted = true;
+                    Ok(())
+                })
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound
+        );
+        assert!(!persisted);
+    }
+
+    #[test]
+    fn a_failed_delivery_receipt_keeps_the_answer_as_durable_proof() {
+        use crate::feed::{self, FeedItem};
+        use crate::workspace::{TargetRef, Workspace};
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Colour", "Pick a colour", TargetRef::None).unwrap();
+        let inbox = Inbox::new(ws.inbox_dir());
+        let id = inbox.post(RequestKind::Question, "Which colour?", "", vec![], true, None).unwrap();
+        let answer = Answer { text: Some("Blue".into()), ..Default::default() };
+        inbox.answer_recorded(&ws, &id, &answer, "Blue").unwrap();
+        let receipt = inbox.dir().join(format!("{id}.delivery.json"));
+        std::fs::remove_file(&receipt).unwrap();
+        std::fs::create_dir(&receipt).unwrap();
+        assert_eq!(inbox.wait(&id, Duration::ZERO, &|| false).unwrap().as_text(), "Blue");
+        assert!(inbox.path(&id, "answer").unwrap().is_file(), "the consumed answer is the remaining proof of delivery");
+        assert!(inbox.pending().is_empty());
+        assert!(
+            feed::for_display(&Workspace::open(&ws.root).unwrap())
+                .iter()
+                .any(|item| matches!(item, FeedItem::Ask { answer: Some(shown), .. } if shown == "Blue"))
         );
     }
 

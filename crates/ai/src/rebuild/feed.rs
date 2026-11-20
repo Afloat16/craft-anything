@@ -250,48 +250,63 @@ fn save_with_recovery(
         Ok(()) => return Ok(()),
         Err(error) => error,
     };
-    if error.code != ErrorCode::FileChanged || !root.join(FEED_FILE).is_file() {
+    if error.code != ErrorCode::FileChanged && !feed.had_read_error() {
         return Err(error);
     }
     let Ok(ws) = Workspace::open(root) else {
         return Err(error);
     };
     let mut repaired = load(&ws);
-    if !repaired.is_readable() {
+    if !repaired.was_decoded() {
         return Err(error);
     }
     // Another client recovered the file after this run opened it. Its conversation is the new
     // base; replay only this run's unsaved changes, never its fallback history.
-    reconcile_history(&mut repaired, &ws, opened, pending);
+    // An older recovery may remain in an otherwise healthy conversation. Only a projection
+    // of this writer's actual damaged bytes can overlap its pending events; a read error or
+    // repair from another source provides no such identity, even when the words match.
+    let consumed_projection = repaired.was_recovered_from(feed) && reconcile_history(&mut repaired, opened, pending);
     for change in pending {
         change.apply(&mut repaired);
     }
     if let Some((request, shown)) = answer {
         record_pending_answer(&mut repaired, request, shown);
     }
+    if consumed_projection {
+        repaired.clear_recovery_projection();
+    }
     save(root, &mut repaired)?;
     *feed = repaired;
     Ok(())
 }
 
-/// A recovery starts with `history(ws)`. Checks, the completed reply and a failure note may reach craft.json
-/// before their feed events can be saved. Remove only those newly projected occurrences from
-/// that exact prefix, then replay every event: equal older records, later external additions,
-/// and genuinely repeated events must all survive.
-fn reconcile_history(repaired: &mut Vec<FeedItem>, ws: &Workspace, opened: &HistoryAtOpen, pending: &[FeedChange]) {
-    if !matches!(repaired.first(), Some(FeedItem::User(UserItem::Text(request))) if request == &ws.manifest.request) {
-        return;
+/// A recovered file records the manifest projection used to create it. The current manifest
+/// may have advanced to another turn before this writer retries, so only that recorded prefix
+/// identifies projected occurrences. Replay every pending event after removing its overlap;
+/// equal older records, later external additions and genuinely repeated events all survive.
+fn reconcile_history(repaired: &mut LoadedFeed, opened: &HistoryAtOpen, pending: &[FeedChange]) -> bool {
+    let Some(projection) = repaired.recovery_projection() else { return false };
+    if !matches!(repaired.first(), Some(FeedItem::User(UserItem::Text(request))) if request == &projection.request)
+        || !projection.checks.starts_with(&opened.checks)
+        || !projection
+            .checks
+            .iter()
+            .enumerate()
+            .all(|(index, check)| matches!(repaired.get(index.saturating_add(1)), Some(FeedItem::Check(value)) if value == check))
+    {
+        return false;
     }
-    let mut checks = 0usize;
-    for item in repaired.iter().skip(1) {
-        let FeedItem::Check(check) = item else { break };
-        if ws.manifest.checks.get(checks) != Some(check) || (checks < opened.checks.len() && opened.checks.get(checks) != Some(check)) {
-            return;
-        }
-        checks = checks.saturating_add(1);
+    let checks = projection.checks.len();
+    let reply_index = checks.saturating_add(1);
+    let has_reply = !projection.last_reply.is_empty();
+    if has_reply && !matches!(repaired.get(reply_index), Some(FeedItem::Agent { text, streaming: false }) if text == &projection.last_reply) {
+        return false;
     }
-    if checks < opened.checks.len() {
-        return;
+    let failure_index = reply_index.saturating_add(usize::from(has_reply));
+    if let Some(note) = &projection.failure_note
+        && !matches!(repaired.get(failure_index), Some(FeedItem::Error { message, remediation: None, log: None }) if message == note)
+    {
+        return false;
     }
     let mut removed = std::collections::BTreeSet::new();
     for change in pending {
@@ -306,37 +321,23 @@ fn reconcile_history(repaired: &mut Vec<FeedItem>, ws: &Workspace, opened: &Hist
             removed.insert(index);
         }
     }
-    let reply_index = checks.saturating_add(1);
-    if let Some(FeedItem::Agent { text, streaming: false }) = repaired.get(reply_index)
-        && !text.is_empty()
-        && text == &ws.manifest.last_reply
-        && text.trim() != opened.last_reply.trim()
-        && latest_completed_reply(pending).as_deref() == Some(text.trim())
-    {
+    if has_reply && projection.last_reply.trim() != opened.last_reply.trim() && has_completed_reply(pending, projection.last_reply.trim()) {
         removed.insert(reply_index);
     }
-    let failure_index = if ws.manifest.last_reply.is_empty() {
-        Some(reply_index)
-    } else if matches!(repaired.get(reply_index), Some(FeedItem::Agent { text, streaming: false }) if text == &ws.manifest.last_reply) {
-        Some(reply_index.saturating_add(1))
-    } else {
-        None
-    };
-    if let Some(index) = failure_index
-        && ws.manifest.status == Status::NeedsYou
-        && !ws.manifest.note.is_empty()
-        && opened.failure_note.as_deref() != Some(ws.manifest.note.as_str())
-        && matches!(repaired.get(index), Some(FeedItem::Error { message, remediation: None, log: None }) if message == &ws.manifest.note)
-        && replay_recreates_error(repaired, &removed, index, pending)
+    if let Some(note) = &projection.failure_note
+        && opened.failure_note.as_deref() != Some(note.as_str())
+        && replay_recreates_error(repaired, &removed, failure_index, pending)
     {
-        removed.insert(index);
+        removed.insert(failure_index);
     }
+    let consumed = !removed.is_empty();
     let mut index = 0usize;
     repaired.retain(|_| {
         let keep = !removed.contains(&index);
         index = index.saturating_add(1);
         keep
     });
+    consumed
 }
 
 /// Finished can suppress its message when a builder error already explains it. Preview the
@@ -356,17 +357,16 @@ fn replay_recreates_error(repaired: &[FeedItem], removed: &std::collections::BTr
 
 /// Mirror converse_turn: tool/status events do not split its accumulated reply. A partial or
 /// failed turn is not evidence that a same-text manifest summary belongs to this run.
-fn latest_completed_reply(pending: &[FeedChange]) -> Option<String> {
+fn has_completed_reply(pending: &[FeedChange], reply: &str) -> bool {
     let mut text = String::new();
     let mut failed = false;
-    let mut latest = None;
     for change in pending {
         match change {
             FeedChange::Event(RunEvent::Agent(AgentEvent::TextDelta { text: delta })) => text.push_str(delta),
             FeedChange::Event(RunEvent::Agent(AgentEvent::Error { .. })) => failed = true,
             FeedChange::Event(RunEvent::Agent(AgentEvent::TurnDone { .. })) => {
-                if !failed && !text.trim().is_empty() {
-                    latest = Some(text.trim().to_owned());
+                if !failed && !text.trim().is_empty() && text.trim() == reply {
+                    return true;
                 }
                 text.clear();
                 failed = false;
@@ -374,7 +374,7 @@ fn latest_completed_reply(pending: &[FeedChange]) -> Option<String> {
             _ => {}
         }
     }
-    latest
+    false
 }
 
 fn merge_saved_answers(root: &Path, feed: &mut LoadedFeed) {
@@ -426,6 +426,244 @@ mod tests {
             cost_usd: None,
             cost_is_estimate: false,
         })
+    }
+
+    fn record_before_next_save(log: &mut FeedLog, event: RunEvent) {
+        // Exercise the normal event path while the two-second save gate keeps this writer
+        // behind the CLI and manifest updates. Finished below performs the eventual flush.
+        log.saved_at = Some(std::time::Instant::now());
+        log.record(&event);
+    }
+
+    fn record_complete_pending_reply(log: &mut FeedLog, reply: &str) {
+        record_before_next_save(log, RunEvent::Step { step: Step::Build, text: "Building".into() });
+        record_before_next_save(log, RunEvent::Agent(AgentEvent::TextDelta { text: reply.into() }));
+        record_before_next_save(log, finished_turn());
+    }
+
+    fn a_recovered_feed_after_a_later_turn(ws: &mut Workspace) -> Vec<u8> {
+        ws.manifest.last_reply = "Turn A.".into();
+        ws.save().unwrap();
+        let path = ws.root.join(FEED_FILE);
+        std::fs::write(&path, b"damaged conversation from an earlier recovery").unwrap();
+        save(&ws.root, &mut load(ws)).unwrap();
+
+        // A subsequent normal run keeps the earlier recovered A and records a real B. The
+        // unconsumed projection is still on disk, but it does not belong to a future run.
+        let mut previous = FeedLog::open(ws);
+        record_complete_pending_reply(&mut previous, "Turn B.");
+        ws.manifest.last_reply = "Turn B.".into();
+        ws.save().unwrap();
+        previous.record(&RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false });
+        std::fs::read(path).unwrap()
+    }
+
+    #[test]
+    fn a_read_error_repair_does_not_consume_an_older_projection() {
+        let d = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let saved = a_recovered_feed_after_a_later_turn(&mut ws);
+        let path = ws.root.join(FEED_FILE);
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        let mut log = FeedLog::open(&ws);
+        record_complete_pending_reply(&mut log, "Turn A.");
+        ws.manifest.last_reply = "Turn A.".into();
+        ws.save().unwrap();
+        std::fs::remove_dir(&path).unwrap();
+        std::fs::write(&path, saved).unwrap();
+
+        log.record(&RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false });
+
+        let feed = load(&ws);
+        assert_eq!(
+            feed.iter().filter(|item| matches!(item, FeedItem::Agent { text, .. } if text == "Turn A.")).count(),
+            2,
+            "the older projected reply and this run's genuinely repeated reply are distinct"
+        );
+        assert_eq!(feed.iter().filter(|item| matches!(item, FeedItem::Agent { text, .. } if text == "Turn B.")).count(), 1);
+        assert!(log.save_error.is_none());
+        assert!(log.pending.is_empty());
+    }
+
+    #[test]
+    fn a_different_damaged_source_does_not_consume_an_older_projection() {
+        let d = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let saved = a_recovered_feed_after_a_later_turn(&mut ws);
+        let path = ws.root.join(FEED_FILE);
+        std::fs::write(&path, b"a different damaged conversation").unwrap();
+        let mut log = FeedLog::open(&ws);
+        record_complete_pending_reply(&mut log, "Turn A.");
+        ws.manifest.last_reply = "Turn A.".into();
+        ws.save().unwrap();
+        std::fs::write(&path, saved).unwrap();
+
+        log.record(&RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false });
+
+        let feed = load(&ws);
+        assert_eq!(
+            feed.iter().filter(|item| matches!(item, FeedItem::Agent { text, .. } if text == "Turn A.")).count(),
+            2,
+            "recovery of different bytes cannot identify this run's new reply as an old projected occurrence"
+        );
+        assert_eq!(feed.iter().filter(|item| matches!(item, FeedItem::Agent { text, .. } if text == "Turn B.")).count(), 1);
+        assert!(log.save_error.is_none());
+        assert!(log.pending.is_empty());
+    }
+
+    #[test]
+    fn a_recovered_reply_uses_its_saved_projection_after_the_manifest_advances() {
+        let d = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        ws.manifest.last_reply = "An earlier reply.".into();
+        ws.save().unwrap();
+        let mut log = a_live_feed_with_busy_recovery_names(&ws);
+        for _ in 0..2 {
+            record_complete_pending_reply(&mut log, "Turn A.");
+            ws.manifest.last_reply = "Turn A.".into();
+            ws.save().unwrap();
+        }
+        recover_the_conversation_through_the_cli(&ws);
+        let mut repaired = load(&ws);
+        repaired.push(FeedItem::Agent { text: "Turn A.".into(), streaming: false });
+        repaired.push(FeedItem::Agent { text: "Turn B.".into(), streaming: false });
+        repaired.push(FeedItem::User(UserItem::Text("Keep the external note".into())));
+        save(&ws.root, &mut repaired).unwrap();
+
+        // The CLI recovered A, but this writer's first retry is after the manifest records B.
+        // Both completed A turns are real; only the one recovered summary overlaps them.
+        record_complete_pending_reply(&mut log, "Turn B.");
+        ws.manifest.last_reply = "Turn B.".into();
+        ws.save().unwrap();
+        log.record(&RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false });
+        log.record(&RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false });
+
+        let saved = load(&ws);
+        let count = |reply: &str| saved.iter().filter(|item| matches!(item, FeedItem::Agent { text, streaming: false } if text == reply)).count();
+        assert_eq!(count("Turn A."), 3, "two live turns and the external reply survive, without the projected duplicate");
+        assert_eq!(count("Turn B."), 2, "the later live turn and same-text external reply are separate occurrences");
+        assert_eq!(saved.iter().filter(|item| matches!(item, FeedItem::User(note) if note.text() == "Keep the external note")).count(), 1);
+        assert!(saved.iter().any(|item| matches!(item, FeedItem::Ask { answer: Some(value), .. } if value == "Blue")));
+        let disk: Value = serde_json::from_slice(&std::fs::read(ws.root.join(FEED_FILE)).unwrap()).unwrap();
+        assert!(disk.get("recovery").is_none_or(Value::is_null), "the consumed projection is not reused after its prefix changes");
+    }
+
+    #[test]
+    fn a_recovery_prefix_changed_by_another_client_is_not_consumed() {
+        let d = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let mut log = a_live_feed_with_busy_recovery_names(&ws);
+        record_complete_pending_reply(&mut log, "Turn A.");
+        ws.manifest.last_reply = "Turn A.".into();
+        ws.save().unwrap();
+        recover_the_conversation_through_the_cli(&ws);
+        let mut repaired = load(&ws);
+        let projected = repaired.iter_mut().find(|item| matches!(item, FeedItem::Agent { text, .. } if text == "Turn A.")).unwrap();
+        *projected = FeedItem::Agent { text: "Turn B.".into(), streaming: false };
+        repaired.push(FeedItem::Agent { text: "Turn B.".into(), streaming: false });
+        save(&ws.root, &mut repaired).unwrap();
+        record_complete_pending_reply(&mut log, "Turn B.");
+        ws.manifest.last_reply = "Turn B.".into();
+        ws.save().unwrap();
+
+        log.record(&RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false });
+
+        let saved = load(&ws);
+        assert_eq!(saved.iter().filter(|item| matches!(item, FeedItem::Agent { text, .. } if text == "Turn A.")).count(), 1);
+        assert_eq!(
+            saved.iter().filter(|item| matches!(item, FeedItem::Agent { text, .. } if text == "Turn B.")).count(),
+            3,
+            "the edited prefix, external matching reply and pending turn are all retained"
+        );
+    }
+
+    #[test]
+    fn a_replacement_without_recovery_provenance_keeps_a_matching_prefix() {
+        let d = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let mut log = a_live_feed_with_busy_recovery_names(&ws);
+        record_complete_pending_reply(&mut log, "Turn A.");
+        ws.manifest.last_reply = "Turn A.".into();
+        ws.save().unwrap();
+        std::fs::write(ws.root.join(FEED_FILE), br#"{"version":5,"items":[{"User":"A game"},{"Agent":{"text":"Turn A.","streaming":false}}]}"#).unwrap();
+
+        log.record(&RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false });
+
+        assert_eq!(
+            load(&ws).iter().filter(|item| matches!(item, FeedItem::Agent { text, .. } if text == "Turn A.")).count(),
+            2,
+            "a matching legacy prefix is not evidence that this writer's turn was projected"
+        );
+    }
+
+    #[test]
+    fn a_live_read_error_recovers_on_the_same_writer_and_keeps_both_clients_changes() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let inbox = Inbox::new(ws.inbox_dir());
+        let id = inbox.post(craft_anything_engine::inbox::RequestKind::Question, "Blue?", "", vec![], true, None).unwrap();
+        let question = inbox.pending().pop().unwrap();
+        let path = ws.root.join(FEED_FILE);
+        std::fs::create_dir(&path).unwrap();
+        let mut log = FeedLog::open(&ws);
+        log.push(FeedItem::User(UserItem::Text("Keep the live run's note".into())));
+        assert!(log.save_error.is_some());
+        std::fs::remove_dir(&path).unwrap();
+        std::fs::write(&path, br#"{"version":5,"items":[{"User":"Keep the external conversation"}]}"#).unwrap();
+
+        log.answered(&question, "Blue", || inbox.answer(&id, &craft_anything_engine::inbox::Answer { choice: Some("Blue".into()), ..Default::default() }))
+            .unwrap();
+        log.record(&RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false });
+
+        let saved = load(&ws);
+        for text in ["Keep the external conversation", "Keep the live run's note"] {
+            assert_eq!(saved.iter().filter(|item| matches!(item, FeedItem::User(note) if note.text() == text)).count(), 1, "{text}");
+        }
+        assert!(!saved.iter().any(|item| matches!(item, FeedItem::User(note) if note.text() == "A game")), "the old fallback is never replayed");
+        assert!(saved.iter().any(|item| matches!(item, FeedItem::Ask { request, answer: Some(answer) } if request.id == id && answer == "Blue")));
+        assert!(inbox.pending().is_empty());
+        assert!(log.pending.is_empty());
+        assert!(log.save_error.is_none());
+        assert_eq!(log.items(), saved.into_items());
+        assert!(!ws.root.join("feed.json.broken").exists(), "a decoded replacement needs no damaged-file recovery");
+    }
+
+    #[test]
+    fn a_live_read_error_does_not_accept_a_missing_damaged_or_newer_replacement() {
+        let replacements: [Option<&[u8]>; 3] = [None, Some(b"damaged conversation"), Some(br#"{"version":999,"items":[]}"#)];
+        for replacement in replacements {
+            let d = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+            let inbox = Inbox::new(ws.inbox_dir());
+            inbox.post(craft_anything_engine::inbox::RequestKind::Question, "Blue?", "", vec![], true, None).unwrap();
+            let question = inbox.pending().pop().unwrap();
+            let path = ws.root.join(FEED_FILE);
+            std::fs::create_dir(&path).unwrap();
+            let mut log = FeedLog::open(&ws);
+            log.push(FeedItem::User(UserItem::Text("Keep the unsaved note".into())));
+            std::fs::remove_dir(&path).unwrap();
+            if let Some(bytes) = replacement {
+                std::fs::write(&path, bytes).unwrap();
+            }
+            let mut delivered = false;
+            assert!(
+                log.answered(&question, "Blue", || {
+                    delivered = true;
+                    Ok(())
+                })
+                .is_err()
+            );
+            assert!(!delivered);
+            assert_eq!(inbox.pending().len(), 1);
+            assert!(!log.pending.is_empty());
+            if let Some(bytes) = replacement {
+                assert_eq!(std::fs::read(&path).unwrap(), bytes);
+            } else {
+                assert!(!path.exists(), "manifest fallback is not a decoded replacement");
+            }
+            assert!(!ws.root.join("feed.json.broken").exists());
+        }
     }
 
     #[test]
@@ -744,20 +982,14 @@ mod tests {
         assert_eq!(inbox.pending().len(), 1);
         std::fs::remove_dir(&path).unwrap();
         std::fs::write(&path, br#"{"version":5,"items":[{"User":"Keep the actual conversation"}]}"#).unwrap();
-        assert!(
-            log.answered(&question, "Blue", || {
-                delivered = true;
-                Ok(())
-            })
-            .is_err(),
-            "the old fallback still isn't a loaded conversation"
-        );
-        assert!(!delivered);
-        let mut reopened = FeedLog::open(&ws);
-        reopened
-            .answered(&question, "Blue", || inbox.answer(&id, &craft_anything_engine::inbox::Answer { choice: Some("Blue".into()), ..Default::default() }))
-            .unwrap();
+        log.answered(&question, "Blue", || {
+            delivered = true;
+            inbox.answer(&id, &craft_anything_engine::inbox::Answer { choice: Some("Blue".into()), ..Default::default() })
+        })
+        .unwrap();
+        assert!(delivered, "the same writer reloads the repaired file before recording and delivering the answer");
         assert!(inbox.pending().is_empty());
+        assert!(load(&ws).iter().any(|item| matches!(item, FeedItem::User(note) if note.text() == "Keep the actual conversation")));
     }
 
     #[test]
