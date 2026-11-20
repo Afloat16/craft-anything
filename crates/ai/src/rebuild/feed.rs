@@ -71,7 +71,11 @@ pub fn apply(feed: &mut Vec<FeedItem>, e: &RunEvent) {
             end_stream(feed);
             feed.push(FeedItem::User(UserItem::new(shown.clone(), pictures.clone())));
         }
-        RunEvent::Ask(r) => feed.push(FeedItem::Ask { request: r.clone(), answer: None }),
+        RunEvent::Ask(request) => {
+            if !feed.iter().any(|item| matches!(item, FeedItem::Ask { request: saved, .. } if saved.id == request.id)) {
+                feed.push(FeedItem::Ask { request: request.clone(), answer: None });
+            }
+        }
         RunEvent::Checked(c) => feed.push(FeedItem::Check(c.clone())),
         RunEvent::Preview(_) => {}
         RunEvent::Finished { ok, message, paused } => {
@@ -119,7 +123,7 @@ pub fn plan_from(input: &Value) -> Option<Vec<PlanStep>> {
 /// changes and at once when the run ends.
 pub(super) struct FeedLog {
     root: PathBuf,
-    feed: Vec<FeedItem>,
+    feed: LoadedFeed,
     saved_at: Option<std::time::Instant>,
     activity: Arc<Activity>,
     log: ActivityFile,
@@ -151,9 +155,16 @@ impl FeedLog {
         self.save(true);
     }
 
-    pub(super) fn answered(&mut self, id: &str, shown: &str) {
-        answered(&mut self.feed, id, shown);
-        self.save(true);
+    pub(super) fn answered(&mut self, request: &Request, shown: &str, deliver: impl FnOnce() -> Result<(), ToolError>) -> Result<(), ToolError> {
+        let mut candidate = self.feed.clone();
+        merge_saved_answers(&self.root, &mut candidate);
+        record_pending_answer(&mut candidate, request, shown);
+        save(&self.root, &mut candidate)?;
+        self.feed = candidate;
+        self.saved_at = Some(std::time::Instant::now());
+        // The raw saved state (including recovery from damaged bytes) is now committed. The
+        // display still offers this request while its inbox delivery is pending or fails.
+        deliver()
     }
 
     fn save(&mut self, now: bool) {
@@ -162,23 +173,126 @@ impl FeedLog {
         }
         // Answers given elsewhere while it runs (the CLI, an agent's project_inbox_answer) went
         // into the file; keep them.
-        if let Ok(ws) = Workspace::open(&self.root) {
-            for item in load(&ws) {
-                if let FeedItem::Ask { request, answer: Some(a) } = item {
-                    answered(&mut self.feed, &request.id, &a);
-                }
+        merge_saved_answers(&self.root, &mut self.feed);
+        if let Err(e) = save(&self.root, &mut self.feed) {
+            log::warn!("couldn't save the project's feed: {}", e.message);
+            let notice = FeedItem::Error { message: format!("Couldn't save the project's conversation: {}", e.message), remediation: e.remediation, log: None };
+            if !self.feed.contains(&notice) {
+                self.feed.push(notice);
             }
         }
-        if let Err(e) = save(&self.root, &self.feed) {
-            log::warn!("couldn't save the project's feed: {}", e.message);
-        }
         self.saved_at = Some(std::time::Instant::now());
+    }
+}
+
+fn merge_saved_answers(root: &Path, feed: &mut LoadedFeed) {
+    if let Ok(ws) = Workspace::open(root) {
+        for item in load(&ws).into_items() {
+            if let FeedItem::Ask { request, answer: Some(answer) } = item {
+                record_pending_answer(feed, &request, &answer);
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_live_answer_does_not_recreate_a_moved_project_without_its_conversation() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let inbox = Inbox::new(ws.inbox_dir());
+        let id = inbox.post(craft_anything_engine::inbox::RequestKind::Question, "Blue?", "", vec![], true, None).unwrap();
+        let question = inbox.pending().pop().unwrap();
+        let mut log = FeedLog::open(&ws);
+        let moved = d.path().join("moved-project");
+        std::fs::rename(&ws.root, &moved).unwrap();
+        let mut delivered = false;
+        assert!(
+            log.answered(&question, "Blue", || {
+                delivered = true;
+                Ok(())
+            })
+            .is_err()
+        );
+        assert!(!delivered);
+        assert!(!ws.root.exists(), "a failed save must not recreate a moved project");
+        std::fs::rename(&moved, &ws.root).unwrap();
+        assert_eq!(inbox.pending().len(), 1);
+        log.answered(&question, "Blue", || inbox.answer(&id, &craft_anything_engine::inbox::Answer { choice: Some("Blue".into()), ..Default::default() }))
+            .unwrap();
+        assert!(inbox.pending().is_empty());
+        assert!(load(&ws).iter().any(|item| matches!(item, FeedItem::Ask { request, answer: Some(answer) } if request.id == id && answer == "Blue")));
+    }
+
+    #[test]
+    fn a_failed_delivery_after_feed_recovery_can_retry_and_keep_an_external_answer() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let inbox = Inbox::new(ws.inbox_dir());
+        let id = inbox.post(craft_anything_engine::inbox::RequestKind::Question, "Blue or red?", "", vec![], true, None).unwrap();
+        let question = inbox.pending().pop().unwrap();
+        std::fs::write(ws.root.join(FEED_FILE), b"damaged conversation").unwrap();
+        let mut log = FeedLog::open(&ws);
+        let failed = || Err(ToolError::new(craft_anything_evidence::ErrorCode::FileError, "delivery failed"));
+        assert_eq!(log.answered(&question, "Blue", failed).unwrap_err().message, "delivery failed");
+        assert!(for_display(&ws).iter().any(|item| matches!(item, FeedItem::Ask { answer: None, .. })));
+        assert_eq!(std::fs::read(ws.root.join("feed.json.broken")).unwrap(), b"damaged conversation");
+        // The same live writer has kept the successful recovery state and can save again.
+        assert_eq!(log.answered(&question, "Blue", failed).unwrap_err().message, "delivery failed");
+        // The person retries through another client. A later live save keeps that new answer.
+        record_answer(&ws, &question, "Red").unwrap();
+        inbox.answer(&id, &craft_anything_engine::inbox::Answer { choice: Some("Red".into()), ..Default::default() }).unwrap();
+        log.record(&RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false });
+        assert!(load(&ws).iter().any(|item| matches!(item, FeedItem::Ask { request, answer: Some(answer) } if request.id == id && answer == "Red")));
+        log.record(&RunEvent::Ask(question.clone()));
+        assert_eq!(
+            log.items().iter().filter(|item| matches!(item, FeedItem::Ask { request, .. } if request.id == id)).count(),
+            1,
+            "a delayed relay keeps the recorded answer"
+        );
+        assert!(!ws.root.join("feed.json.broken.1").exists(), "a delivery retry needs no second recovery copy");
+    }
+
+    #[test]
+    fn a_live_answer_is_not_delivered_when_its_feed_save_fails() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let inbox = Inbox::new(ws.inbox_dir());
+        let id = inbox.post(craft_anything_engine::inbox::RequestKind::Question, "Blue?", "", vec![], true, None).unwrap();
+        let question = inbox.pending().pop().unwrap();
+        let path = ws.root.join(FEED_FILE);
+        std::fs::create_dir(&path).unwrap();
+        let mut log = FeedLog::open(&ws);
+        let mut delivered = false;
+        assert!(
+            log.answered(&question, "Blue", || {
+                delivered = true;
+                Ok(())
+            })
+            .is_err()
+        );
+        assert!(!delivered);
+        assert_eq!(inbox.pending().len(), 1);
+        std::fs::remove_dir(&path).unwrap();
+        std::fs::write(&path, br#"{"version":5,"items":[{"User":"Keep the actual conversation"}]}"#).unwrap();
+        assert!(
+            log.answered(&question, "Blue", || {
+                delivered = true;
+                Ok(())
+            })
+            .is_err(),
+            "the old fallback still isn't a loaded conversation"
+        );
+        assert!(!delivered);
+        let mut reopened = FeedLog::open(&ws);
+        reopened
+            .answered(&question, "Blue", || inbox.answer(&id, &craft_anything_engine::inbox::Answer { choice: Some("Blue".into()), ..Default::default() }))
+            .unwrap();
+        assert!(inbox.pending().is_empty());
+    }
 
     #[test]
     fn every_event_counts_as_activity() {
@@ -287,6 +401,7 @@ mod tests {
         let q = inbox.pending().into_iter().find(|r| r.id == id).unwrap();
         log.record(&RunEvent::Ask(q.clone()));
         record_answer(&ws, &q, "Yes").unwrap();
+        inbox.answer(&id, &craft_anything_engine::inbox::Answer { text: Some("Yes".into()), ..Default::default() }).unwrap();
         log.record(&RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false });
         assert!(load(&ws).iter().any(|i| matches!(i, FeedItem::Ask { answer: Some(a), .. } if a == "Yes")));
     }

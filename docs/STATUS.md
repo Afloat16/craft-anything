@@ -739,9 +739,16 @@ waiting questions and approvals. These tools are available through the engine, C
 
 Saving a conversation first reads its existing `feed.json` to check the format version. A filesystem
 read failure leaves the saved bytes or link unchanged and returns the read error; only a path confirmed
-absent can be initialized without that check. Readable malformed JSON still recovers as before.
-Regression tests use write-only current and newer feeds, answer retries, dangling and looping links,
-and controls for absent files and readable malformed JSON. No live desktop or remote filesystem was run.
+absent can be initialized without that check. The loaded value retains a read failure, so making the
+file readable later cannot let an earlier fallback replace it. Damaged readable bytes are copied to
+an unused `feed.json.broken` backup before replacement; backup failure stops the save, and the
+conversation names the recovery copy. Questions are saved before inbox delivery in the tool and
+app paths. Failed saves leave them pending; failed delivery remains retryable without discarding
+the recorded answer when another writer saves.
+Regression coverage includes sticky read failures, exact recovery copies and occupied backup names,
+tool/live-run answer delivery, intervening writers, dangling/looping links and normal saves.
+A Windows no-sharing regression is included but has not been run locally. No live desktop or remote
+filesystem run is claimed.
 
 `engines_list` reports external and game-engine readiness; `engines_install` installs Ghidra,
 Godot and pinned engines. Unity and Unreal still need their vendor's installer and account:

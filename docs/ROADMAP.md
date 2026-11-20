@@ -1663,8 +1663,12 @@ Owner: maintainers · Status: in progress
 Gaps found while using the app for real projects.
 - [x] Keep an existing project conversation unchanged when its format-version read fails;
       only a confirmed absent `feed.json` is created without inspecting its previous version.
-      Readable malformed JSON still recovers as before; permission and symlink regressions cover
-      the save path and a saved answer's retry.
+      A fallback retains its failed-load state; damaged bytes are backed up under an unused name
+      before replacement, and the conversation explains the read failure and recovery copy.
+      CLI, MCP and app answers are saved before inbox delivery, with failed saves and deliveries
+      remaining retryable. Regressions cover sticky read errors, backup collisions/failure,
+      intervening writers, answer retries and symlinks; a Windows no-sharing case is included
+      but has not been run locally.
       — claimed: Afloat16, branch bugfix/r2.9-feed-read-errors-20261120
 - [x] `i18n::trf` filled placeholders with repeated replacements, so a value containing a later
       placeholder was rewritten. It now fills them in one pass over the template: inserted names

@@ -408,7 +408,10 @@ fn a_projects_conversation_and_place_come_back_after_a_restart() {
     first.state.feed.push(FeedItem::Agent { text: "Done: the snake moves faster now.".into(), streaming: true });
     // A run keeps the feed in the project folder (here, as one would have).
     let root = first.workspace.as_ref().unwrap().root.clone();
-    craft_anything_ai::rebuild::feed::save(&root, &first.state.feed).unwrap();
+    let mut saved_feed = craft_anything_ai::rebuild::feed::load(first.workspace.as_ref().unwrap());
+    saved_feed.clear();
+    saved_feed.extend(first.state.feed.iter().cloned());
+    craft_anything_ai::rebuild::feed::save(&root, &mut saved_feed).unwrap();
     let mut storage = Mem(Default::default());
     eframe::App::save(&mut first, &mut storage);
 

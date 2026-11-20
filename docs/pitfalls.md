@@ -902,6 +902,11 @@ result ignored. Only "not found" means there's nothing to lose. Defaults that st
 that is there carry that fact (`Settings::not_loaded`) and refuse to be saved, also through a
 serde round trip that would drop it (`with_setting`); a backup keeps every byte under a name
 nothing else has, and one that fails stops the save.
+The project's conversation needs the same retained load state. Its answer must be saved before
+the inbox can deliver it and let the asker remove the request. An undelivered answer is shown
+as pending only in a display copy: clearing it in the writer lets a save between recording and
+delivery erase the answer. A live writer also keeps the recovery state after a successful save,
+even when delivery fails, and merges a later answer saved by another client before saving again.
 And "not found" wasn't that either: reading a link whose target is missing answers "not found"
 too, so such a config.toml was a first start and the next save put a file where the link was. A
 read's error describes the end of the path it followed, not the path: before treating "not
