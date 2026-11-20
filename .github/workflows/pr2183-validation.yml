@@ -1,0 +1,289 @@
+name: PR 2183 candidate validation
+
+# Fork-only validation. Keep this workflow off the pull-request branch.
+# Setup pins and Linux packages come from the repository's existing CI and
+# craft-common-actions/gate.yml at ab4f4278458c4daa3912211f448b3233929d9638.
+on:
+  push:
+    branches:
+      - test/r2.9-feed-validation-20261120-707061dd
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr2183-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PR2183_CANDIDATE_SHA: 0c9ab4d3a45dbead13deda6aec7b995c2d32f111
+  PR2183_CANDIDATE_TREE: a624eeabcd227475d412daba333c739860974b51
+  RUSTUP_TOOLCHAIN: 1.100.0
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  CARGO_BUILD_JOBS: 1
+  # Functional validation with lower compiler memory use. This does not measure
+  # performance or replace the repository's normal optimized/release checks.
+  CARGO_PROFILE_TEST_OPT_LEVEL: 0
+  CARGO_PROFILE_DEV_OPT_LEVEL: 0
+  RUST_TEST_THREADS: 1
+  RUST_BACKTRACE: 1
+
+jobs:
+  linux:
+    name: Linux affected crates and source gates
+    if: github.repository == 'Afloat16/craft-anything'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/pr2183-linux-target
+      PR2183_LOG_DIR: ${{ runner.temp }}/pr2183-linux-results
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, same as shared gate
+        with:
+          repository: Afloat16/craft-anything
+          ref: ${{ env.PR2183_CANDIDATE_SHA }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify candidate identity
+        id: identity
+        run: |
+          set -euo pipefail
+          mkdir -p "$PR2183_LOG_DIR"
+          test "$(git rev-parse HEAD)" = "$PR2183_CANDIDATE_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$PR2183_CANDIDATE_TREE"
+          git diff --exit-code
+          {
+            git rev-parse HEAD
+            git rev-parse 'HEAD^{tree}'
+            echo 'Rust 1.100.0; build jobs 1; test/dev opt-level 0; default crate features.'
+          } | tee "$PR2183_LOG_DIR/candidate.txt"
+
+      - name: Use the existing CI dependency setup
+        id: setup
+        uses: storytold/craft-common-actions/actions/gate-setup@ab35cb2622a77d004a8344095888bfcfbef10323
+        with:
+          craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+          require-craft-fonts: 'true'
+          packages: >-
+            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev
+            libgtk-3-dev
+          toolchain: 1.100.0
+          targets: ''
+          tools: ''
+          cache-job: pr2183-functional-opt0
+          rust-cache: 'false'
+          sccache: 'false'
+          free-disk-space: 'true'
+
+      - name: Record the toolchain
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          rustc --version --verbose | tee "$PR2183_LOG_DIR/rustc.txt"
+          cargo --version | tee "$PR2183_LOG_DIR/cargo.txt"
+
+      - name: Engine tests
+        id: engine
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          cargo test --locked -p craft-anything-engine -- --test-threads=1 2>&1 | tee "$PR2183_LOG_DIR/engine-tests.txt"
+
+      # AGENTS.md requires this helper before testing the AI crate.
+      - name: Build the CLI helper
+        id: cli
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          cargo build --locked -p craft-anything-cli 2>&1 | tee "$PR2183_LOG_DIR/cli-build.txt"
+
+      - name: AI tests
+        id: ai
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' && steps.cli.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          cargo test --locked -p craft-anything-ai -- --test-threads=1 2>&1 | tee "$PR2183_LOG_DIR/ai-tests.txt"
+
+      - name: UI tests, including project answer and restart controls
+        id: ui
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' && steps.cli.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          cargo test --locked -p craft-anything-ui-egui -- --test-threads=1 2>&1 | tee "$PR2183_LOG_DIR/ui-tests.txt"
+
+      - name: Clippy for affected crates and all their targets
+        id: clippy
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          cargo clippy --locked -p craft-anything-engine -p craft-anything-ai -p craft-anything-ui-egui --all-targets -- -D warnings 2>&1 | tee "$PR2183_LOG_DIR/clippy.txt"
+
+      - name: Formatting and source gates
+        id: gates
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          set -uo pipefail
+          pr2183_status=0
+          if ! cargo xtask fmt --check 2>&1 | tee "$PR2183_LOG_DIR/xtask-fmt.txt"; then pr2183_status=1; fi
+          for pr2183_gate in layers locks secrets status i18n-coverage; do
+            if ! cargo xtask "$pr2183_gate" 2>&1 | tee "$PR2183_LOG_DIR/xtask-$pr2183_gate.txt"; then pr2183_status=1; fi
+          done
+          exit "$pr2183_status"
+
+      - name: Verify tracked source and lockfile stayed unchanged
+        if: ${{ !cancelled() && steps.identity.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          git diff --cached --exit-code
+          test "$(git rev-parse 'HEAD^{tree}')" = "$PR2183_CANDIDATE_TREE"
+
+      - name: Summarize the validation scope
+        if: always()
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'SUMMARY'
+          ## PR 2183 Linux validation
+
+          Candidate: `0c9ab4d3a45dbead13deda6aec7b995c2d32f111`
+          Tree: `a624eeabcd227475d412daba333c739860974b51`
+
+          Rust 1.100.0, one build job and one test thread, test/dev opt-level 0.
+          Default crate features. This is functional validation, not a performance measurement.
+
+          | Check | Outcome |
+          | --- | --- |
+          | Engine tests | ${{ steps.engine.outcome }} |
+          | CLI helper build | ${{ steps.cli.outcome }} |
+          | AI tests | ${{ steps.ai.outcome }} |
+          | UI tests | ${{ steps.ui.outcome }} |
+          | Affected-crate Clippy | ${{ steps.clippy.outcome }} |
+          | Formatting and source gates | ${{ steps.gates.outcome }} |
+
+          The logs retain actual counts and existing skips. This run does not claim the full
+          workspace, optional wasm-plugin, release, macOS, FreeBSD, or Windows UI gates.
+          SUMMARY
+
+      - name: Keep validation logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2, same as shared gate
+        with:
+          name: pr2183-linux-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.PR2183_LOG_DIR }}
+          if-no-files-found: warn
+          retention-days: 7
+
+  windows:
+    name: Windows feed sharing regression
+    if: github.repository == 'Afloat16/craft-anything'
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/pr2183-windows-target
+      PR2183_LOG_DIR: ${{ runner.temp }}/pr2183-windows-results
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Afloat16/craft-anything
+          ref: ${{ env.PR2183_CANDIDATE_SHA }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify candidate identity
+        id: identity
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path $env:PR2183_LOG_DIR -Force | Out-Null
+          $pr2183_head = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $pr2183_head -ne $env:PR2183_CANDIDATE_SHA) { throw 'Candidate commit mismatch' }
+          $pr2183_tree = git rev-parse 'HEAD^{tree}'
+          if ($LASTEXITCODE -ne 0 -or $pr2183_tree -ne $env:PR2183_CANDIDATE_TREE) { throw 'Candidate tree mismatch' }
+          git diff --exit-code
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @($pr2183_head, $pr2183_tree, 'Rust 1.100.0; build jobs 1; test/dev opt-level 0; native Windows engine tests.') | Set-Content (Join-Path $env:PR2183_LOG_DIR 'candidate.txt')
+
+      # The existing shared gate uses the hosted MSVC toolchain on Windows.
+      # Engine-only checks require neither the Linux packages nor UI/font setup.
+      - name: Use the existing CI toolchain setup
+        id: setup
+        uses: storytold/craft-common-actions/actions/gate-setup@ab35cb2622a77d004a8344095888bfcfbef10323
+        with:
+          craft-fonts-ref: ''
+          packages: ''
+          toolchain: 1.100.0
+          targets: ''
+          tools: ''
+          cache-job: pr2183-functional-opt0
+          rust-cache: 'false'
+          sccache: 'false'
+          free-disk-space: 'false'
+
+      - name: Run the actual Windows no-sharing regression
+        id: sharing
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          rustc --version --verbose | Tee-Object -FilePath (Join-Path $env:PR2183_LOG_DIR 'rustc.txt')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $pr2183_log = Join-Path $env:PR2183_LOG_DIR 'windows-no-sharing.txt'
+          cargo test --locked -p craft-anything-engine --lib feed::tests::a_feed_open_without_sharing_is_preserved_after_the_handle_closes -- --exact --nocapture --test-threads=1 --color never 2>&1 | Tee-Object -FilePath $pr2183_log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ((Get-Content -Raw -LiteralPath $pr2183_log) -notmatch 'test result: ok\. 1 passed; 0 failed; 0 ignored;') {
+            throw 'The exact Windows sharing regression did not execute and pass once.'
+          }
+
+      - name: Run the Windows feed controls
+        id: feed
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo test --locked -p craft-anything-engine --lib feed::tests:: -- --test-threads=1 --color never 2>&1 | Tee-Object -FilePath (Join-Path $env:PR2183_LOG_DIR 'windows-feed-tests.txt')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify tracked source and lockfile stayed unchanged
+        if: ${{ !cancelled() && steps.identity.outcome == 'success' }}
+        run: |
+          git diff --exit-code
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --cached --exit-code
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Summarize the validation scope
+        if: always()
+        run: |
+          @'
+          ## PR 2183 native Windows validation
+
+          Candidate: `0c9ab4d3a45dbead13deda6aec7b995c2d32f111`
+          Tree: `a624eeabcd227475d412daba333c739860974b51`
+
+          Rust 1.100.0, one build job and one test thread, test/dev opt-level 0.
+
+          | Check | Outcome |
+          | --- | --- |
+          | Exact no-sharing regression (one required pass) | ${{ steps.sharing.outcome }} |
+          | Engine feed controls | ${{ steps.feed.outcome }} |
+
+          The exact regression opens feed.json with share_mode(0), checks that reading fails,
+          keeps the fallback blocked after the handle closes, and checks recovery after reloading.
+          This is not a Windows UI, full-engine, or full-workspace test run.
+          '@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Keep validation logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pr2183-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.PR2183_LOG_DIR }}
+          if-no-files-found: warn
+          retention-days: 7
