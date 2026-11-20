@@ -203,13 +203,24 @@ pub fn history(ws: &Workspace) -> Vec<FeedItem> {
 }
 
 /// Write the feed into the project folder (only one that exists; never creates one). A feed
-/// saved by a newer Craft Anything is never written over (docs/file-formats.md).
+/// saved by a newer Craft Anything is never written over (docs/file-formats.md). A read failure
+/// also leaves the path unchanged; only a missing path can be created.
 pub fn save(root: &Path, feed: &[FeedItem]) -> Result<(), ToolError> {
     if !root.is_dir() {
         return Ok(());
     }
-    let newer = std::fs::read(root.join(FEED_FILE))
-        .ok()
+    let path = root.join(FEED_FILE);
+    let previous = match std::fs::read(&path) {
+        Ok(bytes) => Some(bytes),
+        Err(read_error) if read_error.kind() == std::io::ErrorKind::NotFound => match std::fs::symlink_metadata(&path) {
+            // A missing symlink target is not a missing feed: keep the link rather than replace it.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(ToolError::io(path.display(), e)),
+            Ok(_) => return Err(ToolError::io(path.display(), read_error)),
+        },
+        Err(e) => return Err(ToolError::io(path.display(), e)),
+    };
+    let newer = previous
         .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
         .and_then(|v| v.get("version").and_then(Value::as_u64))
         .is_some_and(|v| v > u64::from(FEED_VERSION));
@@ -218,7 +229,7 @@ pub fn save(root: &Path, feed: &[FeedItem]) -> Result<(), ToolError> {
             .with_remediation("Update Craft Anything to keep its conversation up to date."));
     }
     let json = serde_json::to_vec(&Saved { version: FEED_VERSION, items: feed.to_vec() }).map_err(|e| ToolError::internal(e.to_string()))?;
-    crate::project::write_atomic(&root.join(FEED_FILE), &json)
+    crate::project::write_atomic(&path, &json)
 }
 
 /// Record an answer given while no run is going (straight into the saved feed). `request` is the
@@ -349,5 +360,143 @@ mod tests {
         std::fs::write(ws.root.join(FEED_FILE), newer).unwrap();
         assert!(save(&ws.root, &[FeedItem::User(UserItem::Text("x".into()))]).is_err());
         assert_eq!(std::fs::read(ws.root.join(FEED_FILE)).unwrap(), newer);
+    }
+
+    /// A writable parent lets the atomic writer replace even a write-only feed. The read must
+    /// actually fail before these tests exercise the save, rather than mocking the filesystem.
+    #[cfg(unix)]
+    fn deny_feed_read(path: &Path) -> bool {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o200)).unwrap();
+        match std::fs::read(path) {
+            Err(e) => {
+                assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied);
+                true
+            }
+            Ok(_) => {
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+                eprintln!("permission test skipped: this process can read a write-only file");
+                false // Run as root: nothing is unreadable.
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn assert_unreadable_feed_is_preserved(version: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FEED_FILE);
+        let original = serde_json::to_vec(&serde_json::json!({
+            "version": version,
+            "items": [{"User": "Keep the saved conversation"}],
+            "extra": {"keep": true}
+        }))
+        .unwrap();
+        std::fs::write(&path, &original).unwrap();
+        if !deny_feed_read(&path) {
+            return;
+        }
+        let replacement = [FeedItem::User(UserItem::Text("New message".into()))];
+        let saved = save(dir.path(), &replacement);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), original, "save must not replace a feed it could not read");
+        assert_eq!(saved.unwrap_err().code, ErrorCode::NoPermission);
+        // Restoring access allows a normal save, but never a downgrade from a newer version.
+        if version > FEED_VERSION {
+            assert_eq!(save(dir.path(), &replacement).unwrap_err().code, ErrorCode::NotSupported);
+            assert_eq!(std::fs::read(&path).unwrap(), original);
+        } else {
+            save(dir.path(), &replacement).unwrap();
+            let saved: Saved = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(saved.items, replacement);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_keeps_an_unreadable_feed() {
+        assert_unreadable_feed_is_preserved(FEED_VERSION);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_keeps_an_unreadable_newer_feed() {
+        assert_unreadable_feed_is_preserved(FEED_VERSION + 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn record_answer_keeps_an_unreadable_feed_and_can_retry() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(dir.path(), "x", "Original request", TargetRef::None).unwrap();
+        let conversation = vec![
+            FeedItem::User(UserItem::Text("Original request".into())),
+            FeedItem::Agent { text: "Keep this completed work.".into(), streaming: false },
+        ];
+        save(&ws.root, &conversation).unwrap();
+        let path = ws.root.join(FEED_FILE);
+        let original = std::fs::read(&path).unwrap();
+        let inbox = Inbox::new(ws.inbox_dir());
+        let id = inbox.post(RequestKind::Question, "Blue or red?", "", vec![], true, None).unwrap();
+        let question = inbox.pending().into_iter().find(|r| r.id == id).unwrap();
+        inbox.answer(&id, &crate::inbox::Answer { choice: Some("Blue".into()), ..Default::default() }).unwrap();
+        if !deny_feed_read(&path) {
+            return;
+        }
+        let saved = record_answer(&ws, &question, "Blue");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), original, "the display fallback must not replace the saved conversation");
+        assert_eq!(saved.unwrap_err().code, ErrorCode::NoPermission);
+        record_answer(&ws, &question, "Blue").unwrap();
+        let loaded = load(&ws);
+        assert_eq!(&loaded[..conversation.len()], conversation.as_slice());
+        assert_eq!(loaded.len(), conversation.len() + 1);
+        assert!(matches!(loaded.last(), Some(FeedItem::Ask { request, answer: Some(answer) }) if request.id == id && answer == "Blue"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_leaves_a_dangling_feed_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FEED_FILE);
+        let target = Path::new("missing-feed.json");
+        std::os::unix::fs::symlink(target, &path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap_err().kind(), std::io::ErrorKind::NotFound);
+        let saved = save(dir.path(), &[FeedItem::Paused]);
+        assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink(), "save replaced the dangling link");
+        assert_eq!(std::fs::read_link(&path).unwrap(), target);
+        assert!(!dir.path().join(target).exists());
+        assert_eq!(saved.unwrap_err().code, ErrorCode::NotFound);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_leaves_a_looping_feed_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FEED_FILE);
+        std::os::unix::fs::symlink(FEED_FILE, &path).unwrap();
+        assert!(std::fs::read(&path).is_err());
+        let saved = save(dir.path(), &[FeedItem::Paused]);
+        assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink(), "save replaced the looping link");
+        assert_eq!(std::fs::read_link(&path).unwrap(), Path::new(FEED_FILE));
+        assert_eq!(saved.unwrap_err().code, ErrorCode::FileError);
+    }
+
+    #[test]
+    fn save_creates_absent_feeds_and_recovers_readable_malformed_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FEED_FILE);
+        let conversation = [FeedItem::User(UserItem::Text("Keep building".into()))];
+        assert_eq!(std::fs::symlink_metadata(&path).unwrap_err().kind(), std::io::ErrorKind::NotFound);
+        save(dir.path(), &conversation).unwrap();
+        let saved: Saved = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved.items, conversation);
+        // A readable parse failure still recovers as before; it is not a filesystem read error.
+        std::fs::write(&path, b"{\"version\":").unwrap();
+        save(dir.path(), &conversation).unwrap();
+        let saved: Saved = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved.version, FEED_VERSION);
+        assert_eq!(saved.items, conversation);
     }
 }
