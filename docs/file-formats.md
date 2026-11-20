@@ -46,6 +46,10 @@ same way, and a newer `config.toml` that can't be read gives defaults without to
 A newer `.cany` is refused outright: its evidence layout may have changed in ways we can't
 see.
 
+Before saving `feed.json`, a filesystem read failure also stops the save and keeps the existing path.
+Only a path confirmed absent without following symlinks can be created without inspecting an old
+version. A readable feed with malformed JSON retains its existing recovery behavior.
+
 A file that can't be parsed is not "newer": `config.toml` is set aside as `config.toml.broken` and
 defaults are used; an unreadable `craft.json` gives a plain-English error when opened and is left
 out of the project list.

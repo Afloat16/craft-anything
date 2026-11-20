@@ -1661,9 +1661,10 @@ Owner: maintainers · Status: in progress
 ### R2.9 Everyday use: typing, projects, settings
 Owner: maintainers · Status: in progress
 Gaps found while using the app for real projects.
-- [ ] Keep an existing project conversation unchanged when its format-version read fails;
-      only an absent `feed.json` may be created without inspecting its previous version.
-      — claimed: Afloat16, branch bugfix/r2.9-feed-read-errors-20261120
+- [x] Keep an existing project conversation unchanged when its format-version read fails;
+      only a confirmed absent `feed.json` is created without inspecting its previous version.
+      Readable malformed JSON still recovers as before; permission and symlink regressions cover
+      the save path and a saved answer's retry.
 - [x] `i18n::trf` filled placeholders with repeated replacements, so a value containing a later
       placeholder was rewritten. It now fills them in one pass over the template: inserted names
       and other values stay literal, and unknown names and stray braces are kept as written. The
