@@ -1652,7 +1652,7 @@ Owner: open · Status: in progress
       to add them (`kinds/website.rs`), so a translated rebuild is told to put them back. A
       matching declared language doesn't show the words were translated
 
-- [ ] Keep an unreadable website study inventory from silently dropping captured pages or
+- [x] Keep an unreadable website study inventory from silently dropping captured pages or
       opened controls from the rebuild check. Distinguish an absent optional route list
       from a broken record, bound the reads, and preserve the recorded files on failure
       — claimed: Afloat16, branch bugfix/r2.7-website-capture-inventories
