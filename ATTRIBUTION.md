@@ -1,7 +1,16 @@
 # Attribution
 
 Third-party material bundled with Craft Anything, file by file. Rust crates are pulled from
-crates.io under their own licences (see `Cargo.lock`) and are not listed here.
+crates.io under their own licences (see `Cargo.lock` and the release licence bundle).
+
+## Language-tag parsing
+
+`icu_locale_core` 2.3.0 is used unmodified from crates.io to validate explicit website-language
+requests. Source: [Unicode ICU4X](https://github.com/unicode-org/icu4x), the published
+[`icu_locale_core` 2.3.0 crate](https://crates.io/crates/icu_locale_core/2.3.0).
+Copyright © 2020–2024 Unicode, Inc.; `Unicode-3.0`. Its complete `LICENSE` is included by the
+release licence bundle described in `docs/licences.md`. This adds a direct use of the version
+already in `Cargo.lock`; no upstream source or language data was copied into this repository.
 
 ## Fonts (`assets/fonts/`)
 

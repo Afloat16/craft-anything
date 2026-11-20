@@ -503,6 +503,27 @@ coverage and secrets passed. The companion CLI was built with locked dependencie
 
 | Plan steps stopped at a run's end | A run that finishes (ready, failed or paused) marks still-open steps `Stopped` on the plan card instead of leaving them "Doing" until the card is folded (#504). The stopped steps stay in the saved conversation (`FEED_VERSION` 5); a later run's checklist updates the list again, and a plan left partly unticked still shows with its stopped steps | Regression tests in `ai::rebuild::feed` (ready, paused and no-checklist finishes, a later run taking the list over) and an engine save/load round trip of a stopped step; the checklist draws a warning circle for stopped steps. Not checked: a live desktop run |
 
+### Requested website language (R2.7)
+
+Clear requests such as "Rebuild this website in French", "Use German for the site", or
+"Set the page language to fr-CA" replace original-word and heading feedback with a check of
+the captured HTML language declaration. Explicit language tags use ICU's existing locale
+parser; language names come from an app-specific vocabulary. Arbitrary natural-language
+phrasing is not inferred. Matching is case-insensitive at subtag boundaries: `fr` permits
+`fr-CA`, while `fr-CA` requires that regional tag. A matching declaration does not verify
+translation quality. Missing capture evidence is unknown, and an absent or wrong declaration
+fails its own claim. Layout, screenshots, structure and other health checks remain.
+
+The latest explicit request is saved in `craft.json` version 6, including "restore the original
+language". Follow-ups and delivered notes update it; queued notes do not. A stale worker save
+preserves the saved choice, and a failed choice write keeps the note available and stops the
+check. Version 5 projects migrate without inventing a language choice. Policy, persisted
+project, note-delivery and write-failure regressions cover these paths; the original text
+policy fails the translated-page and wrong-declaration regressions. No live browser rebuild
+or translation-quality evaluation is claimed. A captured menu state whose translated label
+cannot be paired is unknown, rather than a claim that the control is absent; independent
+evidence for pairing translated controls remains the separate R2.7 work.
+
 ### Builder retry policy
 
 Builder failures carry a typed reason through `Conversation::last_failure`. Typed authentication,

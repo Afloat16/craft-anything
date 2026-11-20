@@ -20,6 +20,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
 regex = { workspace = true }
+# Already used transitively; parse explicit language tags with ICU, not an app-local grammar.
+icu_locale_core = "2"
 toml = { workspace = true }
 ureq = "3"
 # Pictures are sent to models as base64 (the same version the engine crate uses).

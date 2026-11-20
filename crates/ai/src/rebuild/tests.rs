@@ -7,6 +7,9 @@ mod note_progress;
 #[path = "stall_tests.rs"]
 mod stall;
 
+#[path = "website_language_tests.rs"]
+mod website_language;
+
 // Helpers that take a built-in kind's id, so each test reads as one line.
 fn kind(id: &str) -> Arc<dyn TargetKind> {
     KindRegistry::built_in().get(id).unwrap()
@@ -550,7 +553,7 @@ fn notes_added_while_it_works_reach_the_agent_at_its_next_step() {
         self_check: None,
         reset_progress_after_notes: false,
     };
-    assert!(w.added(&mut ws, true, true).is_none(), "nothing added, nothing to say");
+    assert!(w.added(&mut ws, true, true).unwrap().is_none(), "nothing added, nothing to say");
     use craft_anything_engine::questions::{self, AskedQuestion};
     let asked = AskedQuestion { deep: false, ..AskedQuestion::new("where is the score kept".into(), "In src.".into(), true, "Stand-in".into(), None, 0) };
     questions::add(&ws, asked.clone()).unwrap();
@@ -558,7 +561,7 @@ fn notes_added_while_it_works_reach_the_agent_at_its_next_step() {
     let mut first = note(1, "Make it faster");
     first.questions = vec![asked];
     notes.lock().unwrap().extend([first, note(2, "A blue sky")]);
-    let (p, more) = w.added(&mut ws, true, true).unwrap();
+    let (p, more) = w.added(&mut ws, true, true).unwrap().unwrap();
     assert!(p.contains("where is the score kept") && p.contains("- Make it faster (pictures: a.png)\n- A blue sky"), "{p}");
     assert_eq!(more.len(), 1, "the question is marked told after the turn");
     assert!(notes.lock().unwrap().is_empty(), "each note goes in once");
@@ -3973,13 +3976,13 @@ fn a_note_the_builder_took_at_a_step_joins_the_feed_and_isnt_sent_again() {
     std::fs::rename(dir.join("2.json"), dir.join("2.wait")).unwrap();
     assert_eq!(notes::claim(&dir), ["make the header blue"]);
     std::fs::rename(dir.join("2.wait"), dir.join("2.json")).unwrap();
-    w.relay_read_notes(&ws);
+    w.relay_read_notes(&mut ws).unwrap();
     assert!(questions::untold(&ws, false).is_empty(), "the answers in a read note are told");
     let shown: Vec<String> = rx.try_iter().filter_map(|e| if let RunEvent::Note { shown, .. } = e { Some(shown) } else { None }).collect();
     assert_eq!(shown, ["make the header blue"], "it joins the feed as soon as the builder took it");
     assert!(!notes::was_read(&dir, 1), "its files are gone");
     // After the turn, only the note nobody took is sent, and no hook can hand it over again.
-    let (follow, _) = w.added(&mut ws, true, true).unwrap();
+    let (follow, _) = w.added(&mut ws, true, true).unwrap().unwrap();
     assert!(follow.contains("add a footer") && !follow.contains("make the header blue"), "{follow}");
     assert!(notes::claim(&dir).is_empty());
 }

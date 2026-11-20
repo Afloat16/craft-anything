@@ -696,10 +696,19 @@ impl Worker {
 
     /// The prompt for notes the person added while the agent worked, if there are any, and the
     /// Just-ask answers it carries so they're marked told once the turn finishes.
-    fn added(&self, ws: &mut Workspace, deep: bool, sees_pictures: bool) -> Option<(String, Vec<AskedQuestion>)> {
+    fn added(&self, ws: &mut Workspace, deep: bool, sees_pictures: bool) -> Result<Option<(String, Vec<AskedQuestion>)>, ToolError> {
         let mut notes = std::mem::take(&mut *self.notes.lock().unwrap_or_else(PoisonError::into_inner));
         if notes.is_empty() {
-            return None;
+            return Ok(None);
+        }
+        if let Some((kind, _)) = &self.self_check {
+            let requests: Vec<&str> = notes.iter().filter(|n| !n.text.trim().is_empty()).map(|n| n.shown.as_str()).collect();
+            if let Err(error) = kind.record_requests(ws, &requests) {
+                let mut waiting = self.notes.lock().unwrap_or_else(PoisonError::into_inner);
+                notes.append(&mut *waiting);
+                *waiting = notes;
+                return Err(error);
+            }
         }
         // They go in this message, so no hook hands them over again.
         let dir = notes::notes_dir(&ws.inbox_dir());
@@ -708,7 +717,7 @@ impl Worker {
         }
         notes.retain(|n| !n.text.trim().is_empty());
         if notes.is_empty() {
-            return None;
+            return Ok(None);
         }
         for n in &notes {
             self.emit(RunEvent::Note { shown: n.shown.clone(), pictures: n.pictures.clone() });
@@ -724,7 +733,7 @@ impl Worker {
         questions.extend(extra);
         let context = just_asked(&questions);
         let texts: Vec<String> = notes.into_iter().map(|n| n.text).collect();
-        Some((context + &added_prompt(&texts) + &pictures_reminder(ws, sees_pictures), questions))
+        Ok(Some((context + &added_prompt(&texts) + &pictures_reminder(ws, sees_pictures), questions)))
     }
 
     /// Decides an ACP builder's permission requests with the same policy Claude Code's approval
@@ -855,6 +864,9 @@ impl Worker {
         let kind = opts.kinds.detect(&ws.manifest.request, &ws.manifest.target, &ws.manifest.stack).ok_or_else(no_kind)?;
         self.self_check = Some((kind.clone(), opts.good_enough));
         let kind = kind.as_ref();
+        // Attachment paths added to the builder's message aren't instructions from the person.
+        let request = opts.message.as_deref().map(|message| opts.shown.as_deref().unwrap_or(message));
+        kind.record_requests(ws, &request.into_iter().collect::<Vec<_>>())?;
         self.editor = self.find_editor(&ws.manifest.stack)?;
         // A new build whose stack's program is missing would learn so only at its first check,
         // after a whole turn (#1837). A project already in app/ isn't stopped: the person may
@@ -1032,7 +1044,7 @@ impl Worker {
                     progress.save(&ws.root)?;
                 }
                 // What the person added while the agent worked goes in before anything else.
-                if let Some((p, more)) = self.added(ws, deep, sees_pictures) {
+                if let Some((p, more)) = self.added(ws, deep, sees_pictures)? {
                     asked.extend(more);
                     progress.reset();
                     progress.save(&ws.root)?;
@@ -1062,7 +1074,7 @@ impl Worker {
             for c in &checks {
                 self.emit(RunEvent::Checked(c.clone()));
             }
-            if let Some((p, more)) = self.added(ws, deep, sees_pictures) {
+            if let Some((p, more)) = self.added(ws, deep, sees_pictures)? {
                 asked.extend(more);
                 progress.reset();
                 progress.save(&ws.root)?;
@@ -1385,7 +1397,7 @@ impl Worker {
                     self.emit(RunEvent::Agent(e));
                 }
                 if done {
-                    self.relay_read_notes(ws);
+                    self.relay_read_notes(ws)?;
                     for line in newly_said(&ws.inbox_dir(), &mut said) {
                         self.emit(RunEvent::Step { step: Step::Build, text: line });
                     }
@@ -1403,7 +1415,7 @@ impl Worker {
                 refresh = false;
             }
             self.relay_inbox();
-            self.relay_read_notes(ws);
+            self.relay_read_notes(ws)?;
             for line in newly_said(&ws.inbox_dir(), &mut said) {
                 self.emit(RunEvent::Step { step: Step::Build, text: line });
             }
@@ -1417,14 +1429,25 @@ impl Worker {
 
     /// Notes the builder took at a step of this turn (its hook claimed them): they join the feed
     /// now and aren't sent again after the turn.
-    fn relay_read_notes(&mut self, ws: &Workspace) {
+    fn relay_read_notes(&mut self, ws: &mut Workspace) -> Result<(), ToolError> {
         let dir = notes::notes_dir(&ws.inbox_dir());
-        let read: Vec<Note> = {
+        let mut read: Vec<Note> = {
             let mut notes = self.notes.lock().unwrap_or_else(PoisonError::into_inner);
             let (read, waiting) = std::mem::take(&mut *notes).into_iter().partition(|n| notes::was_read(&dir, n.id));
             *notes = waiting;
             read
         };
+        if let Some((kind, _)) = &self.self_check {
+            let requests: Vec<&str> = read.iter().map(|n| n.shown.as_str()).collect();
+            if !requests.is_empty()
+                && let Err(error) = kind.record_requests(ws, &requests)
+            {
+                let mut waiting = self.notes.lock().unwrap_or_else(PoisonError::into_inner);
+                read.append(&mut *waiting);
+                *waiting = read;
+                return Err(error);
+            }
+        }
         let new_request = read.iter().any(|n| !n.text.trim().is_empty());
         for n in read {
             // The agent's hook took the note, so the Just-ask answers in its text were told.
@@ -1437,6 +1460,7 @@ impl Worker {
             self.emit(RunEvent::Note { shown: n.shown, pictures: n.pictures });
         }
         self.reset_progress_after_notes |= new_request;
+        Ok(())
     }
 
     fn relay_inbox(&mut self) {

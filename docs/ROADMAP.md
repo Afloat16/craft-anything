@@ -1647,11 +1647,14 @@ Owner: open · Status: in progress
 - [x] System-tool and media-player phrases keep the app target: "a low level disk tool",
       "an MPEG 2 player" and "a single player app for movies". Independent game cues still apply
       — claimed: Afloat16, branch bugfix/r2.7-media-and-system-apps
-- [ ] When the request names a language, check the page's declared language rather than the
+- [x] When the request names a language, check the page's declared language rather than the
       original's words: the check lists missing words and the refine message tells the builder
       to add them (`kinds/website.rs`), so a translated rebuild is told to put them back. A
       matching declared language doesn't show the words were translated
       — claimed: Afloat16, branch feature/r2.7-requested-website-language-20261120
+- [ ] Pair translated opened menu and pop-up states without assuming their labels are unchanged:
+      `pair_states` currently requires the original label even when the page language was
+      explicitly changed. Preserve evidence of which control opened; do not pair by guesswork.
 
 ### R2.8 Clean room means clean room
 Owner: maintainers · Status: in progress
