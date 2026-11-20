@@ -277,13 +277,15 @@ only when it's green and a maintainer has fully reviewed it, code as well as wor
       keys) when rsa 0.10 lands, and unmaintained `zbus_names`/`zvariant` (Linux-only via keyring
       and accesskit) when those move on. `deny.toml`'s comments pointed at R0.3, which never held
       them; they name this line now — claimed: kuseidos, branch docs/r5.2-deny-points-at-its-own-roadmap-line
-- [x] Check the Node.js runtimes used by the release workflow. At
-      [craft-common-actions 3e2ac19](https://github.com/storytold/craft-common-actions/blob/3e2ac193fdf93009ef6e88ae34fe1c32340ae039/.github/workflows/release.yml),
-      the release workflow and its 15 shared composite actions reach eight external action manifests.
-      Checkout, artifact upload and download, cache restore and save, Rust cache and the FreeBSD VM
-      all declare `node24`. The Rust toolchain installer is a shell composite. Recheck the shared
-      workflow and its action pins if a future release reports a Node.js runtime warning.
+- [x] Check the Node.js runtime declarations reachable from `.github/workflows/release.yml`.
+      Audited on 2026-11-20 at
+      [craft-common-actions ab4f427](https://github.com/storytold/craft-common-actions/blob/ab4f4278458c4daa3912211f448b3233929d9638/.github/workflows/release.yml):
+      followed the shared composites and exact external action pins. Every reached JavaScript
+      action declares `node24`; the other reached actions are shell composites. This records
+      that `@main` snapshot; recheck after shared workflow or action-pin changes.
       — claimed: Afloat16, branch docs/r5.2-release-actions-runtime-audit
+- [ ] Check the action runtime declarations reachable from `ci.yml`, `freebsd.yml` and
+      `windows-arm64.yml`; these workflow entry points were outside the `release.yml` audit.
 - [x] Correct STATUS.md's obsolete GUI-only limit: document the shared project feed, engine
       setup, launch and preview tools, with their consent and lifetime limits — PR #1014
       — claimed: Codex, branch docs/r5.2-headless-status
