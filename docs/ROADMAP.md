@@ -1157,8 +1157,12 @@ Owner: open · Status: in progress
       writes under one bounded, cancellable interprocess lock. Refuse malformed state rather
       than replacing it; separate-process regressions retain concurrent appends and reject one
       of two updates based on the same revision
-- [ ] Refresh externally changed investigation/evidence records incrementally, avoiding repeated
-      full reloads under the session lock while retaining mid-turn findings visibility
+- [x] Refresh externally changed investigation/evidence records incrementally: reuse verified
+      evidence and parsed investigation state only when the complete file-byte digest matches.
+      Changed records still pass their integrity checks; local replacements and project switches
+      invalidate reuse, and unchanged evidence still consumes the count/byte budgets. Mid-turn
+      findings stay visible. File scans, reads and byte hashing still run under the caller's
+      session lock; repeated JSON decoding, canonical hashing and payload replacement do not.
       — claimed: Afloat16, branch refactor/r2.2-incremental-investigation-refresh
 - [x] Offer OpenCode locally and over SSH with its own visible chat models and supported thinking
       depths (Low, Medium, High, Xhigh, Max) in settings and headless clients. Choices are validated
