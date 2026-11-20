@@ -357,10 +357,13 @@ fn project_build_finish(_ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput,
     use crate::workspace::{Status, Step};
     let p: FinishParams = parse_params(params)?;
     let mut ws = open(&p.project)?;
-    ws.set_status(Status::Ready, CALLED_DONE)?;
     let mut items = feed::load(&ws);
-    items.push(feed::FeedItem::Step { step: Step::Done, text: CALLED_DONE.into() });
+    // A previous attempt may have saved the conversation before the status write failed.
+    if !matches!(items.last(), Some(feed::FeedItem::Step { step: Step::Done, text }) if text == CALLED_DONE) {
+        items.push(feed::FeedItem::Step { step: Step::Done, text: CALLED_DONE.into() });
+    }
     feed::save(&ws.root, &mut items)?;
+    ws.set_status(Status::Ready, CALLED_DONE)?;
     Ok(ToolOutput::Value(json!({"project": ws.root, "status": ws.manifest.status})))
 }
 
@@ -596,11 +599,6 @@ fn project_inbox_answer(_ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput,
     let p: AnswerParams = parse_params(params)?;
     let ws = open(&p.project)?;
     let inbox = Inbox::new(ws.inbox_dir());
-    // Taken before it's answered: the session that asked may read and remove it right after.
-    let Some(question) = inbox.pending().into_iter().find(|r| r.id == p.id) else {
-        return Err(ToolError::new(ErrorCode::NotFound, format!("No question {} is waiting in this project.", p.id))
-            .with_remediation("Use project_show to see the questions still waiting."));
-    };
     let answer = Answer { choice: p.choice, text: p.text, allow: p.allow, always: p.always };
     let shown = match answer.allow {
         Some(true) if answer.always => "Always allowed".to_string(),
@@ -608,10 +606,7 @@ fn project_inbox_answer(_ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput,
         Some(false) => "Not allowed".to_string(),
         None => answer.as_text(),
     };
-    // Keep the answer before publishing it: the asking process can consume both inbox files
-    // immediately. A failed feed save leaves the question pending so this call can be retried.
-    feed::record_answer(&ws, &question, &shown)?;
-    inbox.answer(&p.id, &answer)?;
+    inbox.answer_recorded(&ws, &p.id, &answer, &shown)?;
     Ok(ToolOutput::Value(json!({"answered": p.id, "shown": shown})))
 }
 
@@ -709,6 +704,63 @@ mod tests {
         );
         let err = e.call("project_build_finish", json!({"project": d.path().join("nope")}), CallOptions::new(Caller::Cli)).unwrap_err();
         assert!(err.message.contains("isn't a project folder"), "{err:?}");
+    }
+
+    #[test]
+    fn a_failed_conversation_save_keeps_a_builds_status_unchanged() {
+        use crate::workspace::{MANIFEST, Status, Step};
+        let d = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(d.path(), "Site", "A website", TargetRef::None).unwrap();
+        ws.set_status(Status::Stopped, "Paused.").unwrap();
+        let original_manifest = std::fs::read(ws.root.join(MANIFEST)).unwrap();
+        let path = ws.root.join(feed::FEED_FILE);
+        std::fs::create_dir(&path).unwrap();
+        let engine = Engine::new(crate::testing::session());
+        let finish = || engine.call("project_build_finish", json!({"project": ws.root}), CallOptions::new(Caller::Cli));
+
+        assert!(finish().is_err(), "the unreadable conversation must prevent completion");
+        assert_eq!(std::fs::read(ws.root.join(MANIFEST)).unwrap(), original_manifest, "a failed feed save must not mark the project Ready");
+        assert!(path.is_dir(), "the unreadable conversation is left alone");
+
+        std::fs::remove_dir(&path).unwrap();
+        finish().unwrap();
+        let ws = Workspace::open(&ws.root).unwrap();
+        assert_eq!((ws.manifest.status, ws.manifest.note.as_str()), (Status::Ready, CALLED_DONE));
+        let items = feed::load(&ws);
+        assert!(matches!(&items[0], feed::FeedItem::User(user) if user.text() == "A website"));
+        assert_eq!(items.iter().filter(|item| matches!(item, feed::FeedItem::Step { step: Step::Done, text } if text == CALLED_DONE)).count(), 1);
+    }
+
+    #[test]
+    fn a_build_finish_retry_does_not_repeat_a_saved_done_entry() {
+        use crate::workspace::{MANIFEST, Status, Step};
+        let d = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(d.path(), "Site", "A website", TargetRef::None).unwrap();
+        ws.set_status(Status::Stopped, "Paused.").unwrap();
+        let original_manifest = std::fs::read(ws.root.join(MANIFEST)).unwrap();
+        let mut items = feed::load(&ws);
+        items.push(feed::FeedItem::Step { step: Step::Done, text: CALLED_DONE.into() });
+        feed::save(&ws.root, &mut items).unwrap();
+        let saved_feed = std::fs::read(ws.root.join(feed::FEED_FILE)).unwrap();
+
+        // Exercise a real status-write failure after the conversation was saved, without
+        // relying on permissions or a race between the tool's two writes.
+        std::fs::remove_file(ws.root.join(MANIFEST)).unwrap();
+        std::fs::create_dir(ws.root.join(MANIFEST)).unwrap();
+        assert!(ws.set_status(Status::Ready, CALLED_DONE).is_err());
+        assert_eq!(std::fs::read(ws.root.join(feed::FEED_FILE)).unwrap(), saved_feed);
+        std::fs::remove_dir(ws.root.join(MANIFEST)).unwrap();
+        std::fs::write(ws.root.join(MANIFEST), original_manifest).unwrap();
+
+        let engine = Engine::new(crate::testing::session());
+        let finish = || engine.call("project_build_finish", json!({"project": ws.root}), CallOptions::new(Caller::Cli));
+        finish().unwrap();
+        finish().unwrap();
+        let ws = Workspace::open(&ws.root).unwrap();
+        assert_eq!((ws.manifest.status, ws.manifest.note.as_str()), (Status::Ready, CALLED_DONE));
+        let items = feed::load(&ws);
+        assert_eq!(items.iter().filter(|item| matches!(item, feed::FeedItem::Step { step: Step::Done, text } if text == CALLED_DONE)).count(), 1);
+        assert_eq!(std::fs::read(ws.root.join(feed::FEED_FILE)).unwrap(), saved_feed);
     }
 
     #[test]

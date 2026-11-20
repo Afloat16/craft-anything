@@ -640,6 +640,49 @@ fn a_note_written_for_the_hook_carries_its_answers() {
 }
 
 #[test]
+fn a_live_run_can_answer_after_another_client_recovers_its_conversation() {
+    use craft_anything_engine::inbox::RequestKind;
+    let d = tempfile::tempdir().unwrap();
+    let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+    let inbox = Inbox::new(ws.inbox_dir());
+    let first = inbox.post(RequestKind::Question, "Blue?", "", vec![], true, None).unwrap();
+    let question = inbox.pending().pop().unwrap();
+    std::fs::write(ws.root.join(feed::FEED_FILE), b"damaged conversation").unwrap();
+    let feed = Arc::new(Mutex::new(feed::FeedLog::open(&ws)));
+    let activity = feed.lock().unwrap_or_else(PoisonError::into_inner).activity();
+    let (_tx, rx) = std::sync::mpsc::channel();
+    let run = RebuildRun {
+        rx,
+        stop: CancelToken::default(),
+        inbox: inbox.clone(),
+        running: Arc::new(AtomicBool::new(true)),
+        preview: Arc::default(),
+        notes: Arc::default(),
+        clean_room: false,
+        feed,
+        root: ws.root.clone(),
+        started: Instant::now(),
+        activity,
+    };
+    let blue = Answer { choice: Some("Blue".into()), ..Default::default() };
+    feed::record_answer(&ws, &question, "Blue").unwrap();
+    inbox.answer(&first, &blue).unwrap();
+    let mut repaired = feed::load(&ws);
+    repaired.push(feed::FeedItem::User(feed::UserItem::Text("Keep the repaired conversation".into())));
+    feed::save(&ws.root, &mut repaired).unwrap();
+    let second = inbox.post(RequestKind::Question, "Green?", "", vec![], true, None).unwrap();
+    run.answer_as(&second, &Answer { choice: Some("Green".into()), ..Default::default() }, "Green").unwrap();
+    assert!(inbox.pending().is_empty());
+    let saved = feed::load(&ws);
+    for (id, shown) in [(first, "Blue"), (second, "Green")] {
+        assert!(saved.iter().any(|item| matches!(item, feed::FeedItem::Ask { request, answer: Some(answer) } if request.id == id && answer == shown)));
+    }
+    assert!(saved.iter().any(|item| matches!(item, feed::FeedItem::User(note) if note.text() == "Keep the repaired conversation")));
+    assert_eq!(std::fs::read(ws.root.join("feed.json.broken")).unwrap(), b"damaged conversation");
+    assert!(!ws.root.join("feed.json.broken.1").exists());
+}
+
+#[test]
 fn a_live_run_keeps_an_answer_pending_until_the_feed_is_saved() {
     use craft_anything_engine::inbox::RequestKind;
     let d = tempfile::tempdir().unwrap();

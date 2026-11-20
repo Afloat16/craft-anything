@@ -907,6 +907,19 @@ the inbox can deliver it and let the asker remove the request. An undelivered an
 as pending only in a display copy: clearing it in the writer lets a save between recording and
 delivery erase the answer. A live writer also keeps the recovery state after a successful save,
 even when delivery fails, and merges a later answer saved by another client before saving again.
+If that client recovered damaged bytes first, the live writer must reload the valid recovery and
+replay only its unsaved events; keeping the old damaged-file guard prevents every later save.
+The manifest may already project a pending check, completed reply or failure into that history.
+Reconcile only confirmed new occurrences in its history prefix, preserving older and external
+equal content and replaying every pending event, including the plan's finish transition.
+Saving a reply and withdrawing its request also share the request's file lock: a withdrawn
+request cannot stage a reply, while an accepted submission finishes before timeout or cancellation.
+An expired self-check reply is withdrawn; it does not fail the build that completed the check.
+Both the desktop and tools use the engine's same answer transaction and show its remediation.
+A persistence notice is separate from a builder error, so it cannot hide why a build failed.
+Calling a build done saves its conversation entry before changing the manifest, and a retry after
+a failed status write recognizes that entry. Recovery backups use one reserved-name list for
+writing, deletion, new-project conflicts, source scanning and coding-agent protection.
 And "not found" wasn't that either: reading a link whose target is missing answers "not found"
 too, so such a config.toml was a first start and the next save put a file where the link was. A
 read's error describes the end of the path it followed, not the path: before treating "not

@@ -2872,6 +2872,40 @@ fn the_builders_open_questions_show_beside_the_project() {
 }
 
 #[test]
+fn a_failed_answer_shows_its_fix_and_keeps_the_reply() {
+    use craft_anything_engine::feed::{FEED_FILE, FeedItem};
+    use craft_anything_engine::inbox::{Answer, Inbox, RequestKind};
+    use craft_anything_engine::workspace::{TargetRef, Workspace};
+    let directory = tempfile::tempdir().unwrap();
+    let ws = Workspace::create(directory.path(), "Colour", "Pick a colour", TargetRef::None).unwrap();
+    let inbox = Inbox::new(ws.inbox_dir());
+    let id = inbox.post(RequestKind::Question, "Choose a colour", "", vec![], true, None).unwrap();
+    let path = ws.root.join(FEED_FILE);
+    std::fs::create_dir(&path).unwrap();
+    let mut h = harness(move || {
+        let mut app = demo::app(demo::engine(Mode::Beginner, true));
+        app.open_workspace(ws);
+        app
+    });
+    h.state_mut().state.answers.insert(id.clone(), "Blue".into());
+    let answer = Answer { text: Some("Blue".into()), ..Default::default() };
+    h.state_mut().answer_request(&id, answer.clone(), "Blue".into());
+    h.run_steps(3);
+    let (message, error) = h.state().state.toasts.last().unwrap();
+    assert!(*error);
+    assert!(message.contains("Make it readable, then reopen the project"), "{message}");
+    h.get_by_label(message);
+    assert_eq!(h.state().state.answers.get(&id).map(String::as_str), Some("Blue"));
+    assert!(h.state().state.feed.iter().any(|item| matches!(item, FeedItem::Ask { request, answer: None } if request.id == id)));
+    assert_eq!(inbox.pending().len(), 1);
+    std::fs::remove_dir(&path).unwrap();
+    h.state_mut().answer_request(&id, answer, "Blue".into());
+    h.run_steps(3);
+    assert!(!h.state().state.answers.contains_key(&id));
+    assert!(h.state().state.feed.iter().any(|item| matches!(item, FeedItem::Ask { request, answer: Some(answer) } if request.id == id && answer == "Blue")));
+}
+
+#[test]
 fn saves_a_picture_from_a_unity_bundle() {
     use craft_anything_testkit::games::{unity_bundle_with, unity_serialized_file, unity_texture2d};
     use craft_anything_ui_egui::{game_files, state::Modal};

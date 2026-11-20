@@ -1069,25 +1069,41 @@ pub const AGENT_SESSION_FILE: &str = "agent-session.jsonl";
 
 /// The names Craft Anything keeps in a project folder beside app/. A folder the person picks
 /// mustn't already have any of them.
-pub const OWN_NAMES: &[&str] = &[
-    MANIFEST,
-    crate::feed::FEED_FILE,
-    crate::questions::QUESTIONS_FILE,
-    USAGE_FILE,
-    ACTIVITY_LOG,
-    ACTIVITY_LOG_OLD,
-    ASSETS,
-    "transcript.json",
-    "extract-transcript.json",
-    AGENT_SESSION_FILE,
-    "inbox",
-    "checks",
-    "capture",
-    "reference",
-    "attachments",
-    "investigation.cany",
-    crate::pins::PINNED,
-];
+pub const OWN_NAMES: &[&str] = &{
+    const RECORDS: &[&str] = &[
+        MANIFEST,
+        crate::feed::FEED_FILE,
+        crate::questions::QUESTIONS_FILE,
+        USAGE_FILE,
+        ACTIVITY_LOG,
+        ACTIVITY_LOG_OLD,
+        ASSETS,
+        "transcript.json",
+        "extract-transcript.json",
+        AGENT_SESSION_FILE,
+        "inbox",
+        "checks",
+        "capture",
+        "reference",
+        "attachments",
+        "investigation.cany",
+        crate::pins::PINNED,
+    ];
+    const BACKUPS: &[&str] = crate::feed::DAMAGED_BACKUP_NAMES;
+    // Keep the public slice and every ownership consumer on the writer's exact name set.
+    let mut names = [""; RECORDS.len() + BACKUPS.len()];
+    let mut index = 0;
+    while index < RECORDS.len() {
+        names[index] = RECORDS[index];
+        index += 1;
+    }
+    let mut index = 0;
+    while index < BACKUPS.len() {
+        names[RECORDS.len() + index] = BACKUPS[index];
+        index += 1;
+    }
+    names
+};
 
 /// `p` is `dir` or inside it (case-insensitive on Windows, where paths are).
 pub fn inside(dir: &Path, p: &Path) -> bool {
@@ -2157,6 +2173,68 @@ mod tests {
         ws.delete().unwrap();
         assert_eq!(std::fs::read_to_string(mine.join("index.html")).unwrap(), "<p>hi</p>");
         assert!(!mine.join(MANIFEST).exists() && !mine.join("inbox").exists() && !mine.join(AGENT_SESSION_FILE).exists());
+    }
+
+    #[test]
+    fn a_picked_folder_with_a_recovery_backup_is_left_alone() {
+        for index in 0..16 {
+            let name = if index == 0 { "feed.json.broken".into() } else { format!("feed.json.broken.{index}") };
+            for existing in [ExistingFiles::Edit, ExistingFiles::StartFrom] {
+                let d = tempfile::tempdir().unwrap();
+                let original = b"An older recovery copy belonging to the person";
+                std::fs::write(d.path().join(&name), original).unwrap();
+
+                let error = Workspace::create_at(d.path(), "Site", "A website", TargetRef::None, Some(existing)).unwrap_err();
+
+                assert!(error.message.contains(&name), "{error:?}");
+                assert_eq!(clashes(d.path(), existing), [name.as_str()]);
+                assert_eq!(std::fs::read(d.path().join(&name)).unwrap(), original);
+                assert!(!d.path().join(MANIFEST).exists(), "no project is created over the person's recovery file");
+            }
+        }
+    }
+
+    #[test]
+    fn deleting_a_project_removes_every_recovered_feed_backup() {
+        for in_place in [false, true] {
+            let d = tempfile::tempdir().unwrap();
+            let ws = if in_place {
+                std::fs::write(d.path().join("index.html"), "<p>Keep my app</p>").unwrap();
+                Workspace::create_at(d.path(), "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap()
+            } else {
+                Workspace::create(d.path(), "Site", "A website", TargetRef::None).unwrap()
+            };
+            let root = ws.root.clone();
+            let mut backups = Vec::new();
+            for index in 0..16 {
+                let original = format!("damaged conversation {index}");
+                std::fs::write(root.join(crate::feed::FEED_FILE), original.as_bytes()).unwrap();
+                let mut items = crate::feed::load(&ws);
+                crate::feed::save(&root, &mut items).unwrap();
+                let name = if index == 0 { "feed.json.broken".into() } else { format!("feed.json.broken.{index}") };
+                let backup = root.join(name);
+                assert_eq!(std::fs::read(&backup).unwrap(), original.as_bytes());
+                backups.push(backup);
+            }
+            if in_place {
+                std::fs::write(root.join("feed.json.broken.notes"), "my notes").unwrap();
+                std::fs::write(root.join("feed.json.broken.16"), "my other file").unwrap();
+            }
+
+            ws.delete().unwrap();
+
+            for backup in backups {
+                assert!(!backup.exists(), "the deleted conversation remains at {}", backup.display());
+            }
+            if in_place {
+                assert_eq!(std::fs::read_to_string(root.join("index.html")).unwrap(), "<p>Keep my app</p>");
+                assert_eq!(std::fs::read_to_string(root.join("feed.json.broken.notes")).unwrap(), "my notes");
+                assert_eq!(std::fs::read_to_string(root.join("feed.json.broken.16")).unwrap(), "my other file");
+                assert!(!root.join(MANIFEST).exists());
+            } else {
+                assert!(!root.exists(), "a project with no personal files is removed with its folder");
+            }
+        }
     }
 
     #[test]

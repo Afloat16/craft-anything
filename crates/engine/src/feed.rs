@@ -15,6 +15,27 @@ use std::path::{Path, PathBuf};
 /// Where the conversation is kept in the project folder.
 pub const FEED_FILE: &str = "feed.json";
 
+/// Recovery copies are project records too: the writer and workspace ownership rules share
+/// this finite set so copies are protected, kept out of the app, and deleted with the project.
+pub(crate) const DAMAGED_BACKUP_NAMES: &[&str] = &[
+    "feed.json.broken",
+    "feed.json.broken.1",
+    "feed.json.broken.2",
+    "feed.json.broken.3",
+    "feed.json.broken.4",
+    "feed.json.broken.5",
+    "feed.json.broken.6",
+    "feed.json.broken.7",
+    "feed.json.broken.8",
+    "feed.json.broken.9",
+    "feed.json.broken.10",
+    "feed.json.broken.11",
+    "feed.json.broken.12",
+    "feed.json.broken.13",
+    "feed.json.broken.14",
+    "feed.json.broken.15",
+];
+
 /// The format written today (5 marks open plan steps stopped at a run's end; 4 saves a dismissed
 /// plan card with it; 3 saved a prompt's pictures); files without a version are the earlier bare
 /// list. An older Craft Anything won't rewrite a file it can't read (`save` refuses a newer version).
@@ -177,6 +198,12 @@ pub struct LoadedFeed {
 }
 
 impl LoadedFeed {
+    /// Whether loading found no read or decoding error. A confirmed absent file also starts
+    /// a new conversation; callers looking for a repaired file must check that it exists.
+    pub fn is_readable(&self) -> bool {
+        self.not_loaded.is_none() && self.damaged.is_none()
+    }
+
     /// Take the items for a read-only view. Writers keep the `LoadedFeed` and pass it to `save`.
     pub fn into_items(self) -> Vec<FeedItem> {
         self.items
@@ -339,7 +366,7 @@ pub fn save(root: &Path, feed: &mut LoadedFeed) -> Result<(), ToolError> {
     }
     let mut items = feed.items.clone();
     if let Some(bytes) = previous.filter(|bytes| decode(bytes).is_none()) {
-        let backup = keep_damaged(&path, &bytes)?;
+        let backup = keep_damaged(root, &bytes)?;
         let notice = FeedItem::Error {
             message: DAMAGED_NOTICE.into(),
             remediation: Some(format!(
@@ -362,11 +389,16 @@ pub fn save(root: &Path, feed: &mut LoadedFeed) -> Result<(), ToolError> {
     Ok(())
 }
 
+/// Every backup recovery can create. Project deletion uses the same paths so no saved
+/// conversation is left behind when the project's own files are removed.
+fn damaged_backups(root: &Path) -> impl Iterator<Item = PathBuf> + '_ {
+    DAMAGED_BACKUP_NAMES.iter().map(move |name| root.join(name))
+}
+
 /// Keep an exact copy without ever opening an existing backup for replacement. A failed copy
 /// leaves the source untouched; a failed later save can try the next unused name.
-fn keep_damaged(path: &Path, bytes: &[u8]) -> Result<PathBuf, ToolError> {
-    for index in 0..16 {
-        let backup = path.with_extension(if index == 0 { "json.broken".into() } else { format!("json.broken.{index}") });
+fn keep_damaged(root: &Path, bytes: &[u8]) -> Result<PathBuf, ToolError> {
+    for backup in damaged_backups(root) {
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -387,8 +419,11 @@ fn keep_damaged(path: &Path, bytes: &[u8]) -> Result<PathBuf, ToolError> {
         }
         return Ok(backup);
     }
-    Err(ToolError::new(ErrorCode::FileError, "The conversation wasn't saved: all 16 backup names beside feed.json are already in use.")
-        .with_remediation("Move an earlier .broken backup to another safe location, then retry. The original conversation is unchanged."))
+    Err(ToolError::new(
+        ErrorCode::FileError,
+        format!("The conversation wasn't saved: all {} backup names beside feed.json are already in use.", DAMAGED_BACKUP_NAMES.len()),
+    )
+    .with_remediation("Move an earlier .broken backup to another safe location, then retry. The original conversation is unchanged."))
 }
 
 /// Record an answer given while no run is going (straight into the saved feed). `request` is the

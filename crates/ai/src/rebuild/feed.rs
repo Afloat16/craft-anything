@@ -124,15 +124,52 @@ pub fn plan_from(input: &Value) -> Option<Vec<PlanStep>> {
 pub(super) struct FeedLog {
     root: PathBuf,
     feed: LoadedFeed,
+    history_at_open: HistoryAtOpen,
+    pending: Vec<FeedChange>,
+    save_error: Option<FeedItem>,
     saved_at: Option<std::time::Instant>,
     activity: Arc<Activity>,
     log: ActivityFile,
 }
 
+struct HistoryAtOpen {
+    checks: Vec<CheckResult>,
+    last_reply: String,
+    failure_note: Option<String>,
+}
+
+enum FeedChange {
+    Event(RunEvent),
+    Item(FeedItem),
+}
+
+impl FeedChange {
+    fn apply(&self, feed: &mut Vec<FeedItem>) {
+        match self {
+            Self::Event(event) => apply(feed, event),
+            Self::Item(item) => feed.push(item.clone()),
+        }
+    }
+}
+
 impl FeedLog {
     pub(super) fn open(ws: &Workspace) -> FeedLog {
         let activity = Arc::new(Activity::new(vec![ws.app_dir(), ws.root.clone()]));
-        FeedLog { root: ws.root.clone(), feed: load(ws), saved_at: None, activity, log: ActivityFile::new(&ws.root) }
+        let history_at_open = HistoryAtOpen {
+            checks: ws.manifest.checks.clone(),
+            last_reply: ws.manifest.last_reply.clone(),
+            failure_note: (ws.manifest.status == Status::NeedsYou && !ws.manifest.note.is_empty()).then(|| ws.manifest.note.clone()),
+        };
+        FeedLog {
+            root: ws.root.clone(),
+            feed: load(ws),
+            history_at_open,
+            pending: Vec::new(),
+            save_error: None,
+            saved_at: None,
+            activity,
+            log: ActivityFile::new(&ws.root),
+        }
     }
 
     pub(super) fn activity(&self) -> Arc<Activity> {
@@ -143,15 +180,23 @@ impl FeedLog {
         let lines = self.activity.record(e);
         self.log.append(&lines, &self.activity);
         apply(&mut self.feed, e);
+        if !matches!(e, RunEvent::Preview(_) | RunEvent::Agent(AgentEvent::Output { .. })) {
+            self.pending.push(FeedChange::Event(e.clone()));
+        }
         self.save(matches!(e, RunEvent::Finished { .. }));
     }
 
-    pub(super) fn items(&self) -> &[FeedItem] {
-        &self.feed
+    pub(super) fn items(&self) -> Vec<FeedItem> {
+        let mut items = self.feed.to_vec();
+        // A persistence failure is a live notice, not the builder's explanation for a failed
+        // run. Keep it out of `apply` and the saved conversation; a successful retry removes it.
+        items.extend(self.save_error.iter().cloned());
+        items
     }
 
     pub(super) fn push(&mut self, item: FeedItem) {
-        self.feed.push(item);
+        self.feed.push(item.clone());
+        self.pending.push(FeedChange::Item(item));
         self.save(true);
     }
 
@@ -159,8 +204,10 @@ impl FeedLog {
         let mut candidate = self.feed.clone();
         merge_saved_answers(&self.root, &mut candidate);
         record_pending_answer(&mut candidate, request, shown);
-        save(&self.root, &mut candidate)?;
+        save_with_recovery(&self.root, &mut candidate, &self.history_at_open, &self.pending, Some((request, shown)))?;
         self.feed = candidate;
+        self.pending.clear();
+        self.save_error = None;
         self.saved_at = Some(std::time::Instant::now());
         // The raw saved state (including recovery from damaged bytes) is now committed. The
         // display still offers this request while its inbox delivery is pending or fails.
@@ -174,15 +221,160 @@ impl FeedLog {
         // Answers given elsewhere while it runs (the CLI, an agent's project_inbox_answer) went
         // into the file; keep them.
         merge_saved_answers(&self.root, &mut self.feed);
-        if let Err(e) = save(&self.root, &mut self.feed) {
-            log::warn!("couldn't save the project's feed: {}", e.message);
-            let notice = FeedItem::Error { message: format!("Couldn't save the project's conversation: {}", e.message), remediation: e.remediation, log: None };
-            if !self.feed.contains(&notice) {
-                self.feed.push(notice);
+        match save_with_recovery(&self.root, &mut self.feed, &self.history_at_open, &self.pending, None) {
+            Ok(()) => {
+                self.pending.clear();
+                self.save_error = None;
+            }
+            Err(e) => {
+                log::warn!("couldn't save the project's feed: {}", e.message);
+                self.save_error = Some(FeedItem::Error {
+                    message: format!("Couldn't save the project's conversation: {}", e.message),
+                    remediation: e.remediation,
+                    log: None,
+                });
             }
         }
         self.saved_at = Some(std::time::Instant::now());
     }
+}
+
+fn save_with_recovery(
+    root: &Path,
+    feed: &mut LoadedFeed,
+    opened: &HistoryAtOpen,
+    pending: &[FeedChange],
+    answer: Option<(&Request, &str)>,
+) -> Result<(), ToolError> {
+    let error = match save(root, feed) {
+        Ok(()) => return Ok(()),
+        Err(error) => error,
+    };
+    if error.code != ErrorCode::FileChanged || !root.join(FEED_FILE).is_file() {
+        return Err(error);
+    }
+    let Ok(ws) = Workspace::open(root) else {
+        return Err(error);
+    };
+    let mut repaired = load(&ws);
+    if !repaired.is_readable() {
+        return Err(error);
+    }
+    // Another client recovered the file after this run opened it. Its conversation is the new
+    // base; replay only this run's unsaved changes, never its fallback history.
+    reconcile_history(&mut repaired, &ws, opened, pending);
+    for change in pending {
+        change.apply(&mut repaired);
+    }
+    if let Some((request, shown)) = answer {
+        record_pending_answer(&mut repaired, request, shown);
+    }
+    save(root, &mut repaired)?;
+    *feed = repaired;
+    Ok(())
+}
+
+/// A recovery starts with `history(ws)`. Checks, the completed reply and a failure note may reach craft.json
+/// before their feed events can be saved. Remove only those newly projected occurrences from
+/// that exact prefix, then replay every event: equal older records, later external additions,
+/// and genuinely repeated events must all survive.
+fn reconcile_history(repaired: &mut Vec<FeedItem>, ws: &Workspace, opened: &HistoryAtOpen, pending: &[FeedChange]) {
+    if !matches!(repaired.first(), Some(FeedItem::User(UserItem::Text(request))) if request == &ws.manifest.request) {
+        return;
+    }
+    let mut checks = 0usize;
+    for item in repaired.iter().skip(1) {
+        let FeedItem::Check(check) = item else { break };
+        if ws.manifest.checks.get(checks) != Some(check) || (checks < opened.checks.len() && opened.checks.get(checks) != Some(check)) {
+            return;
+        }
+        checks = checks.saturating_add(1);
+    }
+    if checks < opened.checks.len() {
+        return;
+    }
+    let mut removed = std::collections::BTreeSet::new();
+    for change in pending {
+        let FeedChange::Event(RunEvent::Checked(check)) = change else { continue };
+        if let Some((index, _)) = repaired
+            .iter()
+            .enumerate()
+            .skip(opened.checks.len().saturating_add(1))
+            .take(checks.saturating_sub(opened.checks.len()))
+            .find(|(index, item)| !removed.contains(index) && matches!(item, FeedItem::Check(value) if value == check))
+        {
+            removed.insert(index);
+        }
+    }
+    let reply_index = checks.saturating_add(1);
+    if let Some(FeedItem::Agent { text, streaming: false }) = repaired.get(reply_index)
+        && !text.is_empty()
+        && text == &ws.manifest.last_reply
+        && text.trim() != opened.last_reply.trim()
+        && latest_completed_reply(pending).as_deref() == Some(text.trim())
+    {
+        removed.insert(reply_index);
+    }
+    let failure_index = if ws.manifest.last_reply.is_empty() {
+        Some(reply_index)
+    } else if matches!(repaired.get(reply_index), Some(FeedItem::Agent { text, streaming: false }) if text == &ws.manifest.last_reply) {
+        Some(reply_index.saturating_add(1))
+    } else {
+        None
+    };
+    if let Some(index) = failure_index
+        && ws.manifest.status == Status::NeedsYou
+        && !ws.manifest.note.is_empty()
+        && opened.failure_note.as_deref() != Some(ws.manifest.note.as_str())
+        && matches!(repaired.get(index), Some(FeedItem::Error { message, remediation: None, log: None }) if message == &ws.manifest.note)
+        && replay_recreates_error(repaired, &removed, index, pending)
+    {
+        removed.insert(index);
+    }
+    let mut index = 0usize;
+    repaired.retain(|_| {
+        let keep = !removed.contains(&index);
+        index = index.saturating_add(1);
+        keep
+    });
+}
+
+/// Finished can suppress its message when a builder error already explains it. Preview the
+/// real replay without this one projected note, rather than duplicate that decision or skip
+/// Finished's other effects. An equal external error is retained and is not replay evidence.
+fn replay_recreates_error(repaired: &[FeedItem], removed: &std::collections::BTreeSet<usize>, projected: usize, pending: &[FeedChange]) -> bool {
+    let Some(error @ FeedItem::Error { .. }) = repaired.get(projected) else { return false };
+    let mut preview: Vec<_> =
+        repaired.iter().enumerate().filter(|(index, _)| *index != projected && !removed.contains(index)).map(|(_, item)| item.clone()).collect();
+    let count = |items: &[FeedItem]| items.iter().filter(|item| *item == error).count();
+    let before = count(&preview);
+    for change in pending {
+        change.apply(&mut preview);
+    }
+    count(&preview) > before
+}
+
+/// Mirror converse_turn: tool/status events do not split its accumulated reply. A partial or
+/// failed turn is not evidence that a same-text manifest summary belongs to this run.
+fn latest_completed_reply(pending: &[FeedChange]) -> Option<String> {
+    let mut text = String::new();
+    let mut failed = false;
+    let mut latest = None;
+    for change in pending {
+        match change {
+            FeedChange::Event(RunEvent::Agent(AgentEvent::TextDelta { text: delta })) => text.push_str(delta),
+            FeedChange::Event(RunEvent::Agent(AgentEvent::Error { .. })) => failed = true,
+            FeedChange::Event(RunEvent::Agent(AgentEvent::TurnDone { .. })) => {
+                if !failed && !text.trim().is_empty() {
+                    latest = Some(text.trim().to_owned());
+                }
+                text.clear();
+                failed = false;
+            }
+            _ => {}
+        }
+    }
+    latest
 }
 
 fn merge_saved_answers(root: &Path, feed: &mut LoadedFeed) {
@@ -198,6 +390,280 @@ fn merge_saved_answers(root: &Path, feed: &mut LoadedFeed) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn a_live_feed_with_busy_recovery_names(ws: &Workspace) -> FeedLog {
+        std::fs::write(ws.root.join(FEED_FILE), b"damaged conversation").unwrap();
+        for index in 0..16 {
+            let name = if index == 0 { "feed.json.broken".into() } else { format!("feed.json.broken.{index}") };
+            std::fs::write(ws.root.join(name), b"an earlier recovery copy").unwrap();
+        }
+        let mut log = FeedLog::open(ws);
+        log.record(&RunEvent::Step { step: Step::Build, text: "Building".into() });
+        assert_eq!(std::fs::read(ws.root.join(FEED_FILE)).unwrap(), b"damaged conversation");
+        log
+    }
+
+    fn recover_the_conversation_through_the_cli(ws: &Workspace) {
+        std::fs::remove_file(ws.root.join("feed.json.broken")).unwrap();
+        let id = Inbox::new(ws.inbox_dir()).post(craft_anything_engine::inbox::RequestKind::Question, "Blue?", "", vec![], true, None).unwrap();
+        let engine = craft_anything_engine::Engine::new(craft_anything_engine::testing::session());
+        engine
+            .call(
+                "project_inbox_answer",
+                json!({"project": ws.root, "id": id, "choice": "Blue"}),
+                craft_anything_engine::CallOptions::new(craft_anything_engine::Caller::Cli),
+            )
+            .unwrap();
+        assert_eq!(std::fs::read(ws.root.join("feed.json.broken")).unwrap(), b"damaged conversation");
+    }
+
+    fn finished_turn() -> RunEvent {
+        RunEvent::Agent(AgentEvent::TurnDone {
+            backend: "test".into(),
+            input_tokens: 0,
+            output_tokens: 0,
+            tokens_unknown: false,
+            cost_usd: None,
+            cost_is_estimate: false,
+        })
+    }
+
+    #[test]
+    fn a_recovered_manifest_check_is_replayed_once_without_dropping_other_occurrences() {
+        let d = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let mut check = CheckResult::new("build", 1, true, "The build passed.");
+        check.at_ms = 17;
+        ws.manifest.checks.push(check.clone());
+        ws.save().unwrap();
+        let mut log = a_live_feed_with_busy_recovery_names(&ws);
+        // The worker saves the check in craft.json before emitting its feed event. An equal
+        // earlier check and a repeated event are separate occurrences, not a deduplication set.
+        ws.manifest.checks.push(check.clone());
+        ws.save().unwrap();
+        log.record(&RunEvent::Checked(check.clone()));
+        log.record(&RunEvent::Checked(check.clone()));
+        recover_the_conversation_through_the_cli(&ws);
+        let mut repaired = load(&ws);
+        repaired.push(FeedItem::Check(check.clone()));
+        repaired.push(FeedItem::User(UserItem::Text("Keep the external note".into())));
+        save(&ws.root, &mut repaired).unwrap();
+
+        log.record(&RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false });
+        log.record(&RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false });
+
+        let saved = load(&ws);
+        assert_eq!(saved.iter().filter(|item| matches!(item, FeedItem::Check(value) if value == &check)).count(), 4);
+        assert_eq!(saved.iter().filter(|item| matches!(item, FeedItem::User(note) if note.text() == "Keep the external note")).count(), 1);
+        assert!(saved.iter().any(|item| matches!(item, FeedItem::Ask { answer: Some(value), .. } if value == "Blue")));
+    }
+
+    #[test]
+    fn a_recovered_complete_reply_keeps_both_turns_and_external_matching_text() {
+        let d = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        ws.manifest.last_reply = "An earlier reply.".into();
+        ws.save().unwrap();
+        let mut log = a_live_feed_with_busy_recovery_names(&ws);
+        for _ in 0..2 {
+            log.record(&RunEvent::Agent(AgentEvent::TextDelta { text: " Ready".into() }));
+            log.record(&RunEvent::Agent(AgentEvent::ToolStarted { call_id: "check".into(), tool: "build_check".into(), input: json!({}) }));
+            log.record(&RunEvent::Agent(AgentEvent::Status { text: "Checking".into() }));
+            log.record(&RunEvent::Agent(AgentEvent::TextDelta { text: " to ship. ".into() }));
+            log.record(&finished_turn());
+            // converse_turn concatenates all text deltas, including those separated by tools;
+            // its caller stores the trimmed complete reply before the next checking step.
+            ws.manifest.last_reply = "Ready to ship.".into();
+            ws.save().unwrap();
+            log.record(&RunEvent::Step { step: Step::Check, text: "Checking the build".into() });
+        }
+        recover_the_conversation_through_the_cli(&ws);
+        let mut repaired = load(&ws);
+        repaired.push(FeedItem::Agent { text: "Ready to ship.".into(), streaming: false });
+        repaired.push(FeedItem::User(UserItem::Text("Keep the external reply".into())));
+        save(&ws.root, &mut repaired).unwrap();
+
+        log.record(&RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false });
+
+        let saved = load(&ws);
+        let replies: Vec<_> =
+            saved.iter().filter_map(|item| if let FeedItem::Agent { text, streaming: false } = item { Some(text.as_str()) } else { None }).collect();
+        assert_eq!(replies.iter().filter(|text| **text == "Ready to ship.").count(), 1, "the external matching reply stays");
+        assert_eq!(replies.iter().filter(|text| **text == " Ready").count(), 2, "both genuine turns keep their first segment");
+        assert_eq!(replies.iter().filter(|text| **text == " to ship. ").count(), 2, "both turns keep their second segment");
+        assert_eq!(saved.iter().filter(|item| matches!(item, FeedItem::User(note) if note.text() == "Keep the external reply")).count(), 1);
+    }
+
+    #[test]
+    fn a_recovered_reply_does_not_consume_old_unfinished_or_failed_matching_text() {
+        for (original, complete, failed) in [("Repeat.", true, false), ("Earlier.", false, false), ("Earlier.", true, true)] {
+            let d = tempfile::tempdir().unwrap();
+            let mut ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+            ws.manifest.last_reply = original.into();
+            ws.save().unwrap();
+            let mut log = a_live_feed_with_busy_recovery_names(&ws);
+            log.record(&RunEvent::Agent(AgentEvent::TextDelta { text: "Repeat.".into() }));
+            if failed {
+                log.record(&RunEvent::Agent(AgentEvent::Error { message: "The turn failed.".into(), remediation: None, log: None }));
+            }
+            if complete {
+                log.record(&finished_turn());
+            }
+            ws.manifest.last_reply = "Repeat.".into();
+            ws.save().unwrap();
+            recover_the_conversation_through_the_cli(&ws);
+
+            log.record(&RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false });
+
+            let saved = load(&ws);
+            assert_eq!(
+                saved.iter().filter(|item| matches!(item, FeedItem::Agent { text, streaming: false } if text == "Repeat.")).count(),
+                2,
+                "matching text alone is not proof of a newly projected completed turn: {original}, {complete}, {failed}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_recovered_failure_note_keeps_external_errors_and_finishes_the_plan() {
+        let d = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        ws.manifest.last_reply = "The earlier reply".into();
+        ws.save().unwrap();
+        let mut log = a_live_feed_with_busy_recovery_names(&ws);
+        log.push(FeedItem::Plan(vec![PlanStep { text: "Check the build".into(), doing: "Checking".into(), status: PlanStatus::Doing }]));
+        let message = "The build check failed.";
+        // run_outcome persists NeedsYou and its note before emitting Finished. The CLI can
+        // recover that projection while this live writer still has unsaved events.
+        ws.set_status(Status::NeedsYou, message).unwrap();
+        recover_the_conversation_through_the_cli(&ws);
+        let mut repaired = load(&ws);
+        for text in [message, "Keep the other client's error"] {
+            repaired.push(FeedItem::Error { message: text.into(), remediation: None, log: None });
+        }
+        save(&ws.root, &mut repaired).unwrap();
+
+        log.record(&RunEvent::Finished { ok: false, message: message.into(), paused: false });
+
+        let saved = load(&ws);
+        assert_eq!(saved.iter().filter(|item| matches!(item, FeedItem::Error { message: text, .. } if text == message)).count(), 2);
+        assert_eq!(saved.iter().filter(|item| matches!(item, FeedItem::Error { message, .. } if message == "Keep the other client's error")).count(), 1);
+        assert!(saved.iter().any(|item| matches!(item, FeedItem::Plan(steps) if steps.len() == 1 && steps[0].status == PlanStatus::Stopped)));
+    }
+
+    #[test]
+    fn a_recovered_failure_note_preserves_an_equal_older_failure() {
+        let d = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let message = "The build check failed.";
+        ws.set_status(Status::NeedsYou, message).unwrap();
+        let mut log = a_live_feed_with_busy_recovery_names(&ws);
+        ws.set_status(Status::NeedsYou, message).unwrap();
+        recover_the_conversation_through_the_cli(&ws);
+
+        log.record(&RunEvent::Finished { ok: false, message: message.into(), paused: false });
+
+        assert_eq!(load(&ws).iter().filter(|item| matches!(item, FeedItem::Error { message: text, .. } if text == message)).count(), 2);
+    }
+
+    #[test]
+    fn a_recovered_failure_note_stays_when_replay_would_not_recreate_it() {
+        let d = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let mut log = a_live_feed_with_busy_recovery_names(&ws);
+        log.record(&RunEvent::Agent(AgentEvent::Error { message: "The compiler rejected the source.".into(), remediation: None, log: None }));
+        let message = "The build failed.";
+        ws.set_status(Status::NeedsYou, message).unwrap();
+        recover_the_conversation_through_the_cli(&ws);
+
+        log.record(&RunEvent::Finished { ok: false, message: message.into(), paused: false });
+
+        let saved = load(&ws);
+        assert_eq!(saved.iter().filter(|item| matches!(item, FeedItem::Error { message: text, .. } if text == message)).count(), 1);
+        assert_eq!(saved.iter().filter(|item| matches!(item, FeedItem::Error { message, .. } if message == "The compiler rejected the source.")).count(), 1);
+    }
+
+    #[test]
+    fn a_conversation_save_error_does_not_hide_the_build_failure() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let mut log = FeedLog::open(&ws);
+        let path = ws.root.join(FEED_FILE);
+        std::fs::create_dir(&path).unwrap();
+        log.record(&RunEvent::Step { step: Step::Build, text: "Building".into() });
+        assert!(log.items().iter().any(|item| matches!(item, FeedItem::Error { .. })));
+        std::fs::remove_dir(&path).unwrap();
+        log.record(&RunEvent::Finished { ok: false, message: "The build check failed.".into(), paused: false });
+        let saved = load(&ws);
+        let errors: Vec<_> = saved.iter().filter_map(|item| if let FeedItem::Error { message, .. } = item { Some(message.as_str()) } else { None }).collect();
+        assert_eq!(errors, ["The build check failed."]);
+        assert_eq!(log.items().to_vec(), saved.into_items(), "a successful save clears the old persistence notice");
+    }
+
+    #[test]
+    fn a_save_notice_does_not_duplicate_an_explained_build_failure() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let mut log = FeedLog::open(&ws);
+        let path = ws.root.join(FEED_FILE);
+        std::fs::create_dir(&path).unwrap();
+        log.record(&RunEvent::Agent(AgentEvent::Error { message: "The compiler rejected the source.".into(), remediation: None, log: None }));
+        std::fs::remove_dir(&path).unwrap();
+        log.record(&RunEvent::Finished { ok: false, message: "The build failed.".into(), paused: false });
+        let saved = load(&ws);
+        let errors: Vec<_> = saved.iter().filter_map(|item| if let FeedItem::Error { message, .. } = item { Some(message.as_str()) } else { None }).collect();
+        assert_eq!(errors, ["The compiler rejected the source."]);
+    }
+
+    #[test]
+    fn a_live_feed_keeps_run_changes_when_another_client_recovers_the_conversation() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let inbox = Inbox::new(ws.inbox_dir());
+        let id = inbox.post(craft_anything_engine::inbox::RequestKind::Question, "Blue?", "", vec![], true, None).unwrap();
+        let question = inbox.pending().pop().unwrap();
+        std::fs::write(ws.root.join(FEED_FILE), b"damaged conversation").unwrap();
+        let mut log = FeedLog::open(&ws);
+        record_answer(&ws, &question, "Blue").unwrap();
+        let mut repaired = load(&ws);
+        repaired.push(FeedItem::User(UserItem::Text("Keep the other client's note".into())));
+        save(&ws.root, &mut repaired).unwrap();
+        log.record(&RunEvent::Note { shown: "Keep the live run's note".into(), pictures: Vec::new() });
+        log.record(&RunEvent::Agent(AgentEvent::TextDelta { text: "Still building.".into() }));
+        log.record(&RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false });
+        let saved = load(&ws);
+        assert!(saved.iter().any(|item| matches!(item, FeedItem::Ask { request, answer: Some(answer) } if request.id == id && answer == "Blue")));
+        for text in ["Keep the other client's note", "Keep the live run's note"] {
+            assert_eq!(saved.iter().filter(|item| matches!(item, FeedItem::User(note) if note.text() == text)).count(), 1, "{text}");
+        }
+        assert!(saved.iter().any(|item| matches!(item, FeedItem::Agent { text, streaming: false } if text == "Still building.")));
+        assert_eq!(std::fs::read(ws.root.join("feed.json.broken")).unwrap(), b"damaged conversation");
+        assert!(!ws.root.join("feed.json.broken.1").exists(), "the live writer does not recover the file a second time");
+    }
+
+    #[test]
+    fn a_live_feed_does_not_replace_an_unreadable_or_missing_recovery() {
+        let replacements: [Option<&[u8]>; 3] = [None, Some(b"another damaged conversation"), Some(br#"{"version":999,"items":[]}"#)];
+        for replacement in replacements {
+            let d = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+            let path = ws.root.join(FEED_FILE);
+            std::fs::write(&path, b"damaged conversation").unwrap();
+            let mut log = FeedLog::open(&ws);
+            if let Some(bytes) = replacement {
+                std::fs::write(&path, bytes).unwrap();
+            } else {
+                std::fs::remove_file(&path).unwrap();
+            }
+            log.push(FeedItem::User(UserItem::Text("An unsaved run note".into())));
+            if let Some(bytes) = replacement {
+                assert_eq!(std::fs::read(&path).unwrap(), bytes);
+            } else {
+                assert!(!path.exists());
+            }
+            assert!(!ws.root.join("feed.json.broken").exists(), "only a valid replacement can become the live writer's new base");
+        }
+    }
 
     #[test]
     fn a_live_answer_does_not_recreate_a_moved_project_without_its_conversation() {

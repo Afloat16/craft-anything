@@ -9,8 +9,9 @@
 //! join.
 
 use crate::project::write_atomic;
-use craft_anything_evidence::ToolError;
+use craft_anything_evidence::{ErrorCode, ToolError};
 use serde::{Deserialize, Serialize};
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -100,6 +101,22 @@ fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
+fn no_longer_waiting() -> ToolError {
+    ToolError::new(ErrorCode::NotFound, "This question is no longer waiting.").with_remediation("Keep your reply and answer a new request from the builder.")
+}
+
+fn read_answer(path: &Path) -> Option<Answer> {
+    if !path.is_file() {
+        return None;
+    }
+    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
+
+// A second submitter should report a busy request instead of waiting indefinitely for the
+// first. The waiter itself must let an already accepted submission finish before withdrawing.
+const ANSWER_LOCK_WAIT: Duration = Duration::from_secs(2);
+const LOCK_POLL: Duration = Duration::from_millis(5);
+
 impl Inbox {
     pub fn new(dir: impl Into<PathBuf>) -> Inbox {
         Inbox { dir: dir.into() }
@@ -141,7 +158,7 @@ impl Inbox {
         let mut out: Vec<Request> = rd
             .flatten()
             .filter_map(|e| e.file_name().to_str().and_then(|n| n.strip_suffix(".request.json")).map(str::to_string))
-            .filter(|id| valid_id(id) && !self.dir.join(format!("{id}.answer.json")).exists())
+            .filter(|id| valid_id(id) && read_answer(&self.dir.join(format!("{id}.answer.json"))).is_none())
             .filter_map(|id| std::fs::read(self.dir.join(format!("{id}.request.json"))).ok())
             .filter_map(|b| serde_json::from_slice::<Request>(&b).ok())
             .collect();
@@ -151,28 +168,94 @@ impl Inbox {
 
     /// Write the person's answer.
     pub fn answer(&self, id: &str, answer: &Answer) -> Result<(), ToolError> {
-        let bytes = serde_json::to_vec(answer).map_err(|e| ToolError::internal(e.to_string()))?;
-        craft_anything_platform::fs::write_atomic_private(&self.path(id, "answer")?, &bytes)
+        self.answer_with(id, answer, |_| Ok(()))
     }
 
-    /// Wait for the answer to `id` (polling), until `timeout` or `cancelled()`. The request and
-    /// answer files are removed once read; on timeout or cancel the request is withdrawn.
+    /// Save an offline answer in the project's conversation before delivering it. Desktop,
+    /// CLI and MCP callers share the same validation, persistence and submission transaction.
+    pub fn answer_recorded(&self, ws: &crate::workspace::Workspace, id: &str, answer: &Answer, shown: &str) -> Result<(), ToolError> {
+        self.answer_with(id, answer, |request| crate::feed::record_answer(ws, request, shown))
+    }
+
+    /// Accept one pending request, persist its reply, then deliver it. The request file's OS
+    /// lock also guards withdrawal in `wait`, across handles and processes. `persist` runs only
+    /// after accepting a still-pending request; it must not submit to this inbox again.
+    /// A persistence failure releases the reservation and leaves the request available to retry.
+    pub fn answer_with(&self, id: &str, answer: &Answer, persist: impl FnOnce(&Request) -> Result<(), ToolError>) -> Result<(), ToolError> {
+        let request_path = self.path(id, "request")?;
+        let answer_path = self.path(id, "answer")?;
+        let bytes = serde_json::to_vec(answer).map_err(|e| ToolError::internal(e.to_string()))?;
+        // Requests are created once with unique ids; neither submitters nor waiters recreate
+        // them. Keep this handle open until delivery, and recheck the path after taking its
+        // lock: a waiter may have unlinked the request while this handle was waiting for it.
+        let mut request_file = std::fs::File::open(&request_path)
+            .map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { no_longer_waiting() } else { ToolError::io(request_path.display(), e) })?;
+        let started = Instant::now();
+        loop {
+            match request_file.try_lock() {
+                Ok(()) => break,
+                Err(std::fs::TryLockError::WouldBlock) if started.elapsed() < ANSWER_LOCK_WAIT => std::thread::sleep(LOCK_POLL),
+                Err(std::fs::TryLockError::WouldBlock) => {
+                    return Err(ToolError::new(ErrorCode::TimedOut, "Another answer to this question is being saved.")
+                        .with_remediation("Wait for that answer to finish, then retry if the question is still waiting."));
+                }
+                Err(std::fs::TryLockError::Error(e)) => return Err(ToolError::io(request_path.display(), e)),
+            }
+        }
+        if !request_path.try_exists().map_err(|e| ToolError::io(request_path.display(), e))? {
+            return Err(no_longer_waiting());
+        }
+        // Windows denies reads through a second handle to an exclusively locked byte range.
+        // Read through the handle that owns this reservation, after rejecting an unlinked one.
+        let mut request_bytes = Vec::new();
+        request_file.read_to_end(&mut request_bytes).map_err(|e| ToolError::io(request_path.display(), e))?;
+        if read_answer(&answer_path).is_some() {
+            return Err(no_longer_waiting());
+        }
+        let request: Request = serde_json::from_slice(&request_bytes).map_err(|_| {
+            ToolError::new(ErrorCode::GarbledOutput, "This question could not be read.").with_remediation("Ask the builder to send a new request.")
+        })?;
+        if request.id != id {
+            return Err(ToolError::invalid("The saved question does not match its inbox id."));
+        }
+        persist(&request)?;
+        craft_anything_platform::fs::write_atomic_private(&answer_path, &bytes)
+    }
+
+    /// Wait for the answer to `id` (polling). Timeout and cancellation withdraw a request that
+    /// has not yet been accepted. An accepted save/submission finishes first: an answer wins
+    /// over withdrawal, while a failed submission leaves the waiter free to withdraw. A file
+    /// lock is released when its holder closes or exits; this cannot interrupt blocked file I/O.
+    /// The request and answer files are removed once read.
     pub fn wait(&self, id: &str, timeout: Duration, cancelled: &dyn Fn() -> bool) -> Option<Answer> {
         let (req, ans) = (self.path(id, "request").ok()?, self.path(id, "answer").ok()?);
         let start = Instant::now();
         loop {
-            if let Ok(bytes) = std::fs::read(&ans)
-                && let Ok(a) = serde_json::from_slice::<Answer>(&bytes)
-            {
-                let _ = std::fs::remove_file(&ans);
-                let _ = std::fs::remove_file(&req);
-                return Some(a);
-            }
-            if cancelled() || start.elapsed() >= timeout {
-                let _ = std::fs::remove_file(&req);
-                return None;
-            }
-            std::thread::sleep(Duration::from_millis(200));
+            let request_file = std::fs::File::open(&req).ok()?;
+            let delay = match request_file.try_lock() {
+                Ok(()) => {
+                    if let Some(answer) = read_answer(&ans) {
+                        let _ = std::fs::remove_file(&ans);
+                        let _ = std::fs::remove_file(&req);
+                        return Some(answer);
+                    }
+                    if !req.exists() {
+                        return None;
+                    }
+                    if cancelled() || start.elapsed() >= timeout {
+                        let _ = std::fs::remove_file(&req);
+                        return None;
+                    }
+                    Duration::from_millis(200)
+                }
+                Err(std::fs::TryLockError::WouldBlock) => LOCK_POLL,
+                Err(std::fs::TryLockError::Error(e)) => {
+                    log::warn!("Couldn't wait for this question: {e}");
+                    return None;
+                }
+            };
+            drop(request_file);
+            std::thread::sleep(delay);
         }
     }
 }
@@ -297,6 +380,158 @@ mod tests {
         assert!(inbox.pending().is_empty());
         assert!(inbox.answer("../escape", &Answer::default()).is_err());
         assert!(inbox.answer("A", &Answer::default()).is_err());
+    }
+
+    #[test]
+    fn an_expired_request_cannot_be_answered() {
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = Inbox::new(dir.path());
+        let id = inbox.post(RequestKind::Question, "Which colour?", "", vec![], true, None).unwrap();
+        assert!(inbox.wait(&id, Duration::ZERO, &|| false).is_none());
+        let error = inbox.answer(&id, &Answer { text: Some("Blue".into()), ..Default::default() }).unwrap_err();
+        assert_eq!(error.code, craft_anything_evidence::ErrorCode::NotFound);
+        assert!(!dir.path().join(format!("{id}.answer.json")).exists());
+    }
+
+    /// Guarded child fixture: normal test discovery must not touch a real inbox.
+    #[test]
+    fn inbox_answer_child() {
+        let Ok(directory) = std::env::var("CRAFT_TEST_INBOX_DIR") else { return };
+        let id = std::env::var("CRAFT_TEST_INBOX_ID").unwrap();
+        let label = std::env::var("CRAFT_TEST_INBOX_LABEL").unwrap();
+        let directory = PathBuf::from(directory);
+        std::fs::write(directory.join(format!("{label}.ready")), b"ready").unwrap();
+        let started = Instant::now();
+        while !directory.join("go").exists() && started.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(directory.join("go").exists(), "the parent releases the submitters");
+        let result = Inbox::new(directory.join("inbox")).answer(&id, &Answer { text: Some(label.clone()), ..Default::default() });
+        let outcome = match result {
+            Ok(()) => "ok",
+            Err(error) if error.code == craft_anything_evidence::ErrorCode::NotFound => "expired",
+            Err(error) => panic!("{error:?}"),
+        };
+        std::fs::write(directory.join(format!("{label}.result")), outcome).unwrap();
+    }
+
+    #[test]
+    fn only_one_process_can_submit_an_answer() {
+        let directory = tempfile::tempdir().unwrap();
+        let inbox = Inbox::new(directory.path().join("inbox"));
+        let id = inbox.post(RequestKind::Question, "Which colour?", "", vec![], true, None).unwrap();
+        let children: Vec<_> = ["blue", "red"]
+            .into_iter()
+            .map(|label| {
+                let root = directory.path().to_path_buf();
+                let id = id.clone();
+                std::thread::spawn(move || {
+                    craft_anything_platform::Process::new(std::env::current_exe().unwrap())
+                        .args(["--exact", "inbox::tests::inbox_answer_child", "--test-threads=1"])
+                        .env("CRAFT_TEST_INBOX_DIR", &root)
+                        .env("CRAFT_TEST_INBOX_ID", &id)
+                        .env("CRAFT_TEST_INBOX_LABEL", label)
+                        .timeout(Duration::from_secs(10))
+                        .stdout_cap(64 * 1024)
+                        .stderr_cap(64 * 1024)
+                        .run_checked()
+                })
+            })
+            .collect();
+        let started = Instant::now();
+        let ready = || ["blue", "red"].into_iter().all(|label| directory.path().join(format!("{label}.ready")).exists());
+        while !ready() && started.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let both_ready = ready();
+        std::fs::write(directory.path().join("go"), b"go").unwrap();
+        for child in children {
+            child.join().unwrap().unwrap();
+        }
+        assert!(both_ready, "both processes reached the same submission race");
+        let outcomes: Vec<_> =
+            ["blue", "red"].into_iter().map(|label| (label, std::fs::read_to_string(directory.path().join(format!("{label}.result"))).unwrap())).collect();
+        assert_eq!(outcomes.iter().filter(|(_, result)| result == "ok").count(), 1, "{outcomes:?}");
+        assert_eq!(outcomes.iter().filter(|(_, result)| result == "expired").count(), 1, "{outcomes:?}");
+        let winner = outcomes.iter().find(|(_, result)| result == "ok").unwrap().0;
+        assert_eq!(inbox.wait(&id, Duration::ZERO, &|| false).unwrap().as_text(), winner);
+        assert_eq!(std::fs::read_dir(inbox.dir()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn withdrawal_prevents_persistence_and_delivery() {
+        for cancelled in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let inbox = Inbox::new(directory.path());
+            let id = inbox.post(RequestKind::Question, "Which colour?", "", vec![], true, None).unwrap();
+            assert!(inbox.wait(&id, Duration::ZERO, &|| cancelled).is_none());
+            let mut saved = false;
+            let error = inbox
+                .answer_with(&id, &Answer::default(), |_| {
+                    saved = true;
+                    Ok(())
+                })
+                .unwrap_err();
+            assert_eq!(error.code, ErrorCode::NotFound);
+            assert!(!saved, "an expired request must not stage an answer in the conversation");
+            assert!(!directory.path().join(format!("{id}.answer.json")).exists());
+        }
+    }
+
+    #[test]
+    fn accepted_submission_finishes_before_timeout_or_cancellation() {
+        for cancelled in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let inbox = Inbox::new(directory.path());
+            let id = inbox.post(RequestKind::Question, "Which colour?", "", vec![], true, None).unwrap();
+            let (accepted, accepting) = std::sync::mpsc::channel();
+            let (release, finishing) = std::sync::mpsc::channel();
+            std::thread::scope(|scope| {
+                let (inbox, id) = (&inbox, &id);
+                let submitting = scope.spawn(move || {
+                    inbox.answer_with(id, &Answer { text: Some("Blue".into()), ..Default::default() }, |_| {
+                        accepted.send(()).unwrap();
+                        finishing.recv_timeout(Duration::from_secs(5)).unwrap();
+                        Ok(())
+                    })
+                });
+                accepting.recv_timeout(Duration::from_secs(5)).unwrap();
+                let (finished, waiting) = std::sync::mpsc::channel();
+                let waiter = scope.spawn(move || {
+                    finished.send(inbox.wait(id, Duration::ZERO, &|| cancelled)).unwrap();
+                });
+                let premature = waiting.recv_timeout(Duration::from_millis(50));
+                release.send(()).unwrap();
+                submitting.join().unwrap().unwrap();
+                waiter.join().unwrap();
+                assert!(matches!(premature, Err(std::sync::mpsc::RecvTimeoutError::Timeout)), "an accepted save finishes before withdrawal");
+                assert_eq!(waiting.recv_timeout(Duration::from_secs(5)).unwrap().unwrap().as_text(), "Blue");
+            });
+            assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+        }
+    }
+
+    #[test]
+    fn a_failed_recorded_answer_can_be_retried() {
+        use crate::workspace::{TargetRef, Workspace};
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Colour", "Pick a colour", TargetRef::None).unwrap();
+        let inbox = Inbox::new(ws.inbox_dir());
+        let id = inbox.post(RequestKind::Question, "Which colour?", "", vec![], true, None).unwrap();
+        let path = ws.root.join(crate::feed::FEED_FILE);
+        std::fs::create_dir(&path).unwrap();
+        let answer = Answer { text: Some("Blue".into()), ..Default::default() };
+        assert!(inbox.answer_recorded(&ws, &id, &answer, "Blue").is_err());
+        assert_eq!(inbox.pending().len(), 1);
+        assert!(!inbox.dir().join(format!("{id}.answer.json")).exists());
+        std::fs::remove_dir(&path).unwrap();
+        inbox.answer_recorded(&ws, &id, &answer, "Blue").unwrap();
+        assert_eq!(inbox.wait(&id, Duration::ZERO, &|| false).unwrap().as_text(), "Blue");
+        assert!(
+            crate::feed::for_display(&ws)
+                .iter()
+                .any(|item| matches!(item, crate::feed::FeedItem::Ask { request, answer: Some(answer) } if request.id == id && answer == "Blue"))
+        );
     }
 
     /// A request can carry the person's own words and an answer can carry a typed reply or an
