@@ -747,12 +747,19 @@ app paths. Failed saves leave them pending; failed delivery remains retryable wi
 the recorded answer when another writer saves. Recovery replay checks the decoded repair's digest
 against the save's disk read; a changed replacement keeps the journal for another load. Recovery
 provenance survives later manifest updates, and only this run's own errors suppress its failure note.
+The explanation state calculated during replay is installed with the recovered conversation only
+after its guarded save succeeds, including when subsequent answer delivery fails.
 Expired staged replies remain visibly undelivered; unreadable delivery evidence is shown as unknown
 without advising another submission. Existing answer I/O errors stop a new persistence attempt.
+Timeout and cancellation invalidate a locked request even when its directory prevents unlinking it;
+restoring directory access cannot make that withdrawn request answerable again. Checked waits report
+I/O failures instead of presenting them as confirmed withdrawal or a person's refusal.
 Delivered receipts survive request cleanup. Project deletion atomically claims each selected
 recovery copy before checking its ownership; changed entries survive in their original or reported
-quarantine location. Duplication keeps personal backup-shaped files and directories, and creation
-rejects dangling reserved links or propagates metadata errors. Newer read-only manifests are rejected
+quarantine location. Duplication checks ownership before creating its destination and classifies
+backup-shaped files through the handle it copies. New or changed unverified entries require a retry;
+stable personal files and directories are retained, and verified recovery copies are excluded.
+Creation rejects dangling reserved links or propagates metadata errors. Newer read-only manifests are rejected
 before build-finish touches their conversations.
 Regression coverage includes sticky read failures, exact recovery copies and occupied backup names,
 tool/live-run answer delivery, intervening writers, dangling/looping links and normal saves.

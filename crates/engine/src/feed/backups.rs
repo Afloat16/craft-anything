@@ -3,7 +3,7 @@
 use craft_anything_evidence::{ErrorCode, ToolError, sha256_hex};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::io::{Read as _, Write as _};
+use std::io::{Read as _, Seek as _, Write as _};
 use std::path::{Path, PathBuf};
 
 const FORMAT: &str = "craft-anything.feed-backup";
@@ -89,12 +89,24 @@ fn matches_file(path: &Path, receipt: &Receipt) -> Result<bool, ToolError> {
     if !before.is_file() || before.file_type().is_symlink() || before.len() != receipt.length {
         return Ok(false);
     }
-    let (mut file, opened) = craft_anything_platform::fs::open_regular_file(path)?;
-    if opened.len() != receipt.length {
+    let (mut file, _) = craft_anything_platform::fs::open_regular_file(path)?;
+    let matches = matches_open_file(path, &mut file, receipt)?;
+    let after = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(ToolError::io(path.display(), error)),
+    };
+    Ok(matches && after.is_file() && !after.file_type().is_symlink() && after.len() == receipt.length && before.modified().ok() == after.modified().ok())
+}
+
+fn matches_open_file(path: &Path, file: &mut std::fs::File, receipt: &Receipt) -> Result<bool, ToolError> {
+    let opened = file.metadata().map_err(|error| ToolError::io(path.display(), error))?;
+    if !opened.is_file() || opened.len() != receipt.length {
         return Ok(false);
     }
+    file.rewind().map_err(|error| ToolError::io(path.display(), error))?;
     // Bound the read to the recorded size so a growing file cannot keep deletion waiting.
-    let mut reader = (&mut file).take(receipt.length);
+    let mut reader = (&mut *file).take(receipt.length);
     let mut length = 0u64;
     let mut hash = Sha256::new();
     let mut buffer = [0u8; 64 * 1024];
@@ -106,17 +118,26 @@ fn matches_file(path: &Path, receipt: &Receipt) -> Result<bool, ToolError> {
         length = length.saturating_add(count as u64);
         hash.update(buffer.get(..count).ok_or_else(|| ToolError::internal("A recovery-copy read exceeded its buffer."))?);
     }
-    let after = match std::fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(ToolError::io(path.display(), error)),
-    };
-    Ok(after.is_file()
-        && !after.file_type().is_symlink()
-        && after.len() == receipt.length
-        && before.modified().ok() == after.modified().ok()
+    let after = file.metadata().map_err(|error| ToolError::io(path.display(), error))?;
+    file.rewind().map_err(|error| ToolError::io(path.display(), error))?;
+    Ok(after.len() == receipt.length
+        && opened.modified().ok() == after.modified().ok()
         && length == receipt.length
         && hex::encode(hash.finalize()) == receipt.sha256)
+}
+
+/// Classify the opened file, not a previously discovered pathname. The caller keeps this
+/// handle for copying; a readable, unrecognized receipt does not own personal content.
+/// A successful check leaves the handle at its beginning.
+pub(crate) fn owns_open_backup(root: &Path, path: &Path, file: &mut std::fs::File) -> Result<bool, ToolError> {
+    file.rewind().map_err(|error| ToolError::io(path.display(), error))?;
+    let Some(name) = path.file_name().and_then(|name| name.to_str()).filter(|name| valid_name(name)) else { return Ok(false) };
+    if path != root.join(name) {
+        return Ok(false);
+    }
+    let Some(directory) = directory(root, false)? else { return Ok(false) };
+    let Some(receipt) = read_receipt(&directory.join(format!("{name}.json")), name)? else { return Ok(false) };
+    matches_open_file(path, file, &receipt)
 }
 
 /// Record a newly created, complete recovery copy. Per-copy receipts avoid a shared registry
@@ -296,6 +317,50 @@ fn remove_after_claim(root: &Path, candidates: &[PathBuf], mut after_claim: impl
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ownership_checks_the_open_file_instead_of_reopening_its_path() {
+        use std::io::Read as _;
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let backup = root.join("feed.json.broken");
+        std::fs::write(&backup, b"personal content").unwrap();
+        let mut personal = std::fs::File::open(&backup).unwrap();
+        std::fs::rename(&backup, root.join("personal.txt")).unwrap();
+        std::fs::write(&backup, b"generated backup").unwrap();
+        record(root, &backup, b"generated backup").unwrap();
+
+        assert!(!owns_open_backup(root, &backup, &mut personal).unwrap(), "the receipt at this path does not own the earlier open file");
+        let mut bytes = Vec::new();
+        personal.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, b"personal content", "the same handle remains positioned for copying");
+        let mut generated = std::fs::File::open(&backup).unwrap();
+        assert!(owns_open_backup(root, &backup, &mut generated).unwrap());
+    }
+
+    #[test]
+    fn unowned_backup_checks_rewind_the_copy_handle() {
+        use std::io::Read as _;
+        for with_receipt in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let root = directory.path();
+            let backup = root.join("feed.json.broken");
+            std::fs::write(&backup, b"generated backup").unwrap();
+            if with_receipt {
+                record(root, &backup, b"generated backup").unwrap();
+            }
+            std::fs::write(&backup, b"personal words with a different length").unwrap();
+            let mut file = std::fs::File::open(&backup).unwrap();
+            let mut prefix = [0u8; 4];
+            file.read_exact(&mut prefix).unwrap();
+
+            assert!(!owns_open_backup(root, &backup, &mut file).unwrap());
+
+            let mut copied = Vec::new();
+            file.read_to_end(&mut copied).unwrap();
+            assert_eq!(copied, b"personal words with a different length", "missing receipt and length mismatch both reset the copy position");
+        }
+    }
 
     #[test]
     fn deleting_a_claimed_backup_leaves_a_new_public_entry() {

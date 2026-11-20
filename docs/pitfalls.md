@@ -923,8 +923,14 @@ turns, preserving older and external equal content and replaying every pending e
 the plan's finish transition. Older files without provenance must not lose matching text.
 An external tail error cannot explain this run's failure. Track which errors the run supplied,
 and use the same rule when replaying and checking whether a projected failure will be recreated.
+Install that replayed explanation state with the feed only after the guarded recovery commit succeeds;
+discarding it can append a duplicate Finished error after a replay skips an already present question.
 Saving a reply and withdrawing its request also share the request's file lock: a withdrawn
 request cannot stage a reply, while an accepted submission finishes before timeout or cancellation.
+An ignored unlink error does not withdraw a request. If its directory prevents removal, invalidate
+and sync the already locked request file before returning a confirmed withdrawal. Reject the empty
+marker on submission. Checked waits must propagate failures to read, lock or invalidate the request;
+an I/O error is neither a timeout nor a person's refusal, and must not start an infinite retry loop.
 Open lock-owning request handles for reading and writing: a network filesystem can emulate an
 exclusive file lock with a write lock. A staged/delivered receipt survives request withdrawal;
 absence of a request does not prove the saved reply was delivered. Keep a failed delivery's words
@@ -946,7 +952,13 @@ unlink the same public path later: atomically claim a candidate into a fresh non
 verify that claimed file, then unlink it. Preserve unexpected contents without overwriting any
 new public entry, and never recursively clean a quarantine folder on error or on a later delete.
 Copy legacy personal entries under reserved backup names; only verified generated copies are
-excluded. Creation must treat dangling reserved links and metadata errors as existing conflicts.
+excluded. Preflight ownership reads before creating the destination, then classify the file handle
+actually used for copying. A discovered pathname is not a stable identity, and recovery can publish
+backup bytes before its receipt. Require a retry for newly observed or changed unverified entries;
+do not silently skip personal replacements or copy a new recovery file through that publication gap.
+A missing or unrecognized receipt cannot reclassify an already known recovery copy as personal
+content during that same copy attempt.
+Creation must treat dangling reserved links and metadata errors as existing conflicts.
 When freeing a backup slot, move its associated ownership receipt too if one exists.
 And "not found" wasn't that either: reading a link whose target is missing answers "not found"
 too, so such a config.toml was a first start and the next save put a file where the link was. A

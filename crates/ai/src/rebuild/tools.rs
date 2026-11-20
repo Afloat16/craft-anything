@@ -551,14 +551,14 @@ fn rebuild_check(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolErr
     let id = asks.post(craft_anything_engine::inbox::RequestKind::Question, "Check the build", "", Vec::new(), false, None)?;
     ctx.report(None, "Checking the build against the original…");
     let cancel = ctx.cancel.clone();
-    let answer = asks.wait(&id, Duration::from_secs(p.wait_minutes.saturating_mul(60)), &|| cancel.is_cancelled());
+    let answer = asks.try_wait(&id, Duration::from_secs(p.wait_minutes.saturating_mul(60)), &|| cancel.is_cancelled());
     // The run marks a request it has taken: without the mark, no run took it.
     let mark = self_check::taken_mark(&ws.root, &id);
     let taken = mark.as_ref().is_some_and(|m| m.is_file());
     if let Some(mark) = &mark {
         let _ = std::fs::remove_file(mark);
     }
-    match answer {
+    match answer? {
         Some(a) => Ok(ToolOutput::Value(json!({"project": ws.root.display().to_string(), "report": a.text.unwrap_or_default()}))),
         None if ctx.cancel.is_cancelled() => Err(ToolError::new(ErrorCode::Cancelled, "Stopped.")),
         None => Err(unanswered(taken, p.wait_minutes)),

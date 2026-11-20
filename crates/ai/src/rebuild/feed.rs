@@ -169,11 +169,12 @@ impl FeedChange {
     }
 }
 
-fn replay_changes(feed: &mut Vec<FeedItem>, pending: &[FeedChange]) {
+fn replay_changes(feed: &mut Vec<FeedItem>, pending: &[FeedChange]) -> bool {
     let mut explained = false;
     for change in pending {
         change.apply(feed, &mut explained);
     }
+    explained
 }
 
 impl FeedLog {
@@ -230,8 +231,11 @@ impl FeedLog {
         let mut candidate = self.feed.clone();
         merge_saved_answers(&self.root, &mut candidate);
         record_pending_answer(&mut candidate, request, shown);
-        save_with_recovery(&self.root, &mut candidate, &self.history_at_open, &self.pending, Some((request, shown)))?;
+        let replayed_explanation = save_with_recovery(&self.root, &mut candidate, &self.history_at_open, &self.pending, Some((request, shown)))?;
         self.feed = candidate;
+        if let Some(explained) = replayed_explanation {
+            self.failure_explained = explained;
+        }
         self.pending.clear();
         self.save_error = None;
         self.saved_at = Some(std::time::Instant::now());
@@ -248,7 +252,10 @@ impl FeedLog {
         // into the file; keep them.
         merge_saved_answers(&self.root, &mut self.feed);
         match save_with_recovery(&self.root, &mut self.feed, &self.history_at_open, &self.pending, None) {
-            Ok(()) => {
+            Ok(replayed_explanation) => {
+                if let Some(explained) = replayed_explanation {
+                    self.failure_explained = explained;
+                }
                 self.pending.clear();
                 self.save_error = None;
             }
@@ -265,13 +272,15 @@ impl FeedLog {
     }
 }
 
+/// A recovery commit supplies the explanation state of its replayed feed. An ordinary save
+/// leaves the caller's existing run state unchanged.
 fn save_with_recovery(
     root: &Path,
     feed: &mut LoadedFeed,
     opened: &HistoryAtOpen,
     pending: &[FeedChange],
     answer: Option<(&Request, &str)>,
-) -> Result<(), ToolError> {
+) -> Result<Option<bool>, ToolError> {
     save_with_recovery_using(root, feed, opened, pending, answer, save_if_unchanged)
 }
 
@@ -282,9 +291,9 @@ fn save_with_recovery_using(
     pending: &[FeedChange],
     answer: Option<(&Request, &str)>,
     commit_recovery: impl FnOnce(&Path, &mut LoadedFeed) -> Result<(), ToolError>,
-) -> Result<(), ToolError> {
+) -> Result<Option<bool>, ToolError> {
     let error = match save(root, feed) {
-        Ok(()) => return Ok(()),
+        Ok(()) => return Ok(None),
         Err(error) => error,
     };
     if error.code != ErrorCode::FileChanged && !feed.had_read_error() {
@@ -303,7 +312,7 @@ fn save_with_recovery_using(
     // of this writer's actual damaged bytes can overlap its pending events; a read error or
     // repair from another source provides no such identity, even when the words match.
     let consumed_projection = repaired.was_recovered_from(feed) && reconcile_history(&mut repaired, opened, pending);
-    replay_changes(&mut repaired, pending);
+    let explained = replay_changes(&mut repaired, pending);
     if let Some((request, shown)) = answer {
         record_pending_answer(&mut repaired, request, shown);
     }
@@ -314,7 +323,7 @@ fn save_with_recovery_using(
     // original writer and journal intact; its next attempt reloads the latest saved bytes.
     commit_recovery(root, &mut repaired)?;
     *feed = repaired;
-    Ok(())
+    Ok(Some(explained && matches!(feed.last(), Some(FeedItem::Error { .. }))))
 }
 
 /// A recovered file records the manifest projection used to create it. The current manifest
@@ -1050,6 +1059,101 @@ mod tests {
                 usize::from(next_step)
             );
         }
+    }
+
+    fn a_read_error_run_with_an_error_then_a_new_question(ws: &Workspace) -> (FeedLog, Request) {
+        std::fs::create_dir(ws.root.join(FEED_FILE)).unwrap();
+        let mut log = FeedLog::open(ws);
+        log.record(&RunEvent::Agent(AgentEvent::Error { message: "The compiler rejected the source.".into(), remediation: None, log: None }));
+        assert!(log.failure_explained);
+        let inbox = Inbox::new(ws.inbox_dir());
+        inbox.post(craft_anything_engine::inbox::RequestKind::Question, "Try another compiler?", "", vec![], true, None).unwrap();
+        let question = inbox.pending().pop().unwrap();
+        log.record(&RunEvent::Ask(question.clone()));
+        assert!(!log.failure_explained, "the new question follows the error in the original writer");
+        assert!(matches!(log.feed.last(), Some(FeedItem::Ask { .. })));
+        assert_eq!(log.pending.len(), 2);
+        (log, question)
+    }
+
+    #[test]
+    fn recovery_failure_explanation_is_saved_with_the_replayed_feed() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let (mut log, question) = a_read_error_run_with_an_error_then_a_new_question(&ws);
+        let path = ws.root.join(FEED_FILE);
+        std::fs::remove_dir(&path).unwrap();
+        std::fs::write(&path, br#"{"version":5,"items":[{"User":"Keep the repaired conversation"}]}"#).unwrap();
+
+        log.save(true);
+
+        assert!(log.pending.is_empty());
+        assert!(matches!(log.feed.last(), Some(FeedItem::Error { message, .. }) if message == "The compiler rejected the source."));
+        log.record(&RunEvent::Finished { ok: false, message: "The build failed.".into(), paused: false });
+        let saved = load(&ws);
+        let errors: Vec<_> = saved.iter().filter_map(|item| if let FeedItem::Error { message, .. } = item { Some(message.as_str()) } else { None }).collect();
+        assert_eq!(errors, ["The compiler rejected the source."], "the saved replay already explains this failure");
+        assert_eq!(saved.iter().filter(|item| matches!(item, FeedItem::Ask { request, .. } if request.id == question.id)).count(), 1);
+        assert_eq!(log.items(), saved.into_items());
+    }
+
+    #[test]
+    fn recovery_failure_explanation_survives_answer_delivery() {
+        for delivery_fails in [false, true] {
+            let d = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+            let (mut log, question) = a_read_error_run_with_an_error_then_a_new_question(&ws);
+            let path = ws.root.join(FEED_FILE);
+            std::fs::remove_dir(&path).unwrap();
+            std::fs::write(&path, br#"{"version":5,"items":[{"User":"Keep the repaired conversation"}]}"#).unwrap();
+            let inbox = Inbox::new(ws.inbox_dir());
+
+            let result = log.answered(&question, "Yes", || {
+                if delivery_fails {
+                    Err(ToolError::new(ErrorCode::FileError, "Delivery is unavailable."))
+                } else {
+                    inbox.answer(&question.id, &craft_anything_engine::inbox::Answer { text: Some("Yes".into()), ..Default::default() })
+                }
+            });
+
+            assert_eq!(result.is_err(), delivery_fails);
+            assert!(log.pending.is_empty(), "the feed commit succeeds before the delivery result");
+            assert!(matches!(log.feed.last(), Some(FeedItem::Error { message, .. }) if message == "The compiler rejected the source."));
+            log.record(&RunEvent::Finished { ok: false, message: "The build failed.".into(), paused: false });
+            let saved = load(&ws);
+            let errors: Vec<_> =
+                saved.iter().filter_map(|item| if let FeedItem::Error { message, .. } = item { Some(message.as_str()) } else { None }).collect();
+            assert_eq!(errors, ["The compiler rejected the source."], "delivery_fails={delivery_fails}");
+            assert_eq!(saved.iter().filter(|item| matches!(item, FeedItem::Ask { request, .. } if request.id == question.id)).count(), 1);
+            assert!(saved.iter().any(|item| matches!(item, FeedItem::Ask { request, answer: Some(answer) } if request.id == question.id && answer == "Yes")));
+            assert_eq!(log.items(), saved.into_items());
+        }
+    }
+
+    #[test]
+    fn recovery_failure_explanation_is_unchanged_after_a_guarded_conflict() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let (mut log, _) = a_read_error_run_with_an_error_then_a_new_question(&ws);
+        let path = ws.root.join(FEED_FILE);
+        std::fs::remove_dir(&path).unwrap();
+        std::fs::write(&path, br#"{"version":5,"items":[{"User":"Keep the repaired conversation"}]}"#).unwrap();
+        let before = log.feed.to_vec();
+        let changed = br#"{"version":5,"items":[{"User":"Keep the concurrent writer's words"}]}"#;
+
+        let error = save_with_recovery_using(&ws.root, &mut log.feed, &log.history_at_open, &log.pending, None, |root, replayed| {
+            assert!(matches!(replayed.last(), Some(FeedItem::Error { message, .. }) if message == "The compiler rejected the source."));
+            std::fs::write(&path, changed).unwrap();
+            save_if_unchanged(root, replayed)
+        })
+        .unwrap_err();
+
+        assert_eq!(error.code, ErrorCode::FileChanged);
+        assert!(!log.failure_explained, "a rejected replay must not change the original writer's explanation state");
+        assert!(log.feed.had_read_error());
+        assert_eq!(log.feed.to_vec(), before);
+        assert_eq!(log.pending.len(), 2);
+        assert_eq!(std::fs::read(&path).unwrap(), changed);
     }
 
     #[test]

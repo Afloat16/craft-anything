@@ -59,7 +59,7 @@ pub(crate) fn rebuilt(p: &Path) -> bool {
 }
 
 /// Copy a folder's files and folders (links are skipped), leaving out what `skip` says.
-fn copy_tree(from: &Path, to: &Path, skip: &dyn Fn(&Path) -> bool, depth: usize) -> Result<(), ToolError> {
+fn copy_tree(from: &Path, to: &Path, skip: &dyn Fn(&Path) -> bool, depth: usize, backups: Option<&CopyBackups<'_>>) -> Result<(), ToolError> {
     if depth > COPY_DEPTH {
         return Err(ToolError::new(ErrorCode::OverLimit, format!("{} is nested more than {COPY_DEPTH} folders deep.", from.display())));
     }
@@ -72,12 +72,106 @@ fn copy_tree(from: &Path, to: &Path, skip: &dyn Fn(&Path) -> bool, depth: usize)
         }
         let dest = to.join(entry.file_name());
         if kind.is_dir() {
-            copy_tree(&path, &dest, skip, depth + 1)?;
+            copy_tree(&path, &dest, skip, depth + 1, backups)?;
         } else if kind.is_file() {
-            std::fs::copy(&path, &dest).map_err(|e| ToolError::io(path.display(), e))?;
+            if let Some(backups) = backups.filter(|backups| path.parent() == Some(backups.root))
+                && path.file_name().and_then(|name| name.to_str()).is_some_and(|name| crate::feed::DAMAGED_BACKUP_NAMES.contains(&name))
+            {
+                copy_personal_backup(backups, &path, &dest)?;
+            } else {
+                std::fs::copy(&path, &dest).map_err(|e| ToolError::io(path.display(), e))?;
+            }
         }
     }
     Ok(())
+}
+
+struct CopyBackups<'a> {
+    root: &'a Path,
+    entries: Vec<(PathBuf, std::fs::Metadata)>,
+    owned: Vec<PathBuf>,
+}
+
+impl<'a> CopyBackups<'a> {
+    fn discover(root: &'a Path) -> Result<Self, ToolError> {
+        let mut entries = Vec::new();
+        for name in crate::feed::DAMAGED_BACKUP_NAMES {
+            let path = root.join(name);
+            match std::fs::symlink_metadata(&path) {
+                Ok(metadata) => entries.push((path, metadata)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(ToolError::io(path.display(), error)),
+            }
+        }
+        let owned = crate::feed::owned_backups(root)?;
+        Ok(Self { root, entries, owned })
+    }
+}
+
+/// Recovery may add or replace an entry after discovery. Inspect and copy one open handle;
+/// observed changes stop the copy, rather than silently omitting personal content.
+fn copy_personal_backup(backups: &CopyBackups<'_>, from: &Path, to: &Path) -> Result<(), ToolError> {
+    use std::io::Read as _;
+    let (mut file, metadata) = craft_anything_platform::fs::open_regular_file(from)?;
+    check_copy_entry(from, &metadata)?;
+    let owned = crate::feed::owns_open_backup(backups.root, from, &mut file)?;
+    check_copy_entry(from, &metadata)?;
+    if owned {
+        return Ok(());
+    }
+    // A recovery copy is written before its receipt. A new or changed unrecognized entry
+    // might be in that window, so do not copy it as personal data until a fresh attempt.
+    // Losing a previously recognized receipt cannot turn known conversation bytes into app content.
+    if backups.owned.iter().any(|path| path == from) || !backups.entries.iter().any(|(path, before)| path == from && same_copy_entry(before, &metadata)) {
+        return Err(copy_changed(from));
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+        options.mode(metadata.permissions().mode());
+    }
+    let mut output = options.open(to).map_err(|error| ToolError::io(to.display(), error))?;
+    let copied = std::io::copy(&mut (&mut file).take(metadata.len()), &mut output).map_err(|error| ToolError::io(from.display(), error))?;
+    let mut extra = [0u8; 1];
+    if copied != metadata.len() || file.read(&mut extra).map_err(|error| ToolError::io(from.display(), error))? != 0 {
+        return Err(copy_changed(from));
+    }
+    check_copy_entry(from, &metadata)?;
+    output.set_permissions(metadata.permissions()).map_err(|error| ToolError::io(to.display(), error))?;
+    Ok(())
+}
+
+fn copy_changed(path: &Path) -> ToolError {
+    ToolError::new(ErrorCode::FileChanged, format!("{} changed while the project was being copied.", path.display()))
+        .with_remediation("Let conversation recovery or edits finish, then retry copying. The original project is unchanged.")
+}
+
+fn check_copy_entry(path: &Path, opened: &std::fs::Metadata) -> Result<(), ToolError> {
+    let current = std::fs::symlink_metadata(path).map_err(|error| ToolError::io(path.display(), error))?;
+    if same_copy_entry(&current, opened) { Ok(()) } else { Err(copy_changed(path)) }
+}
+
+fn same_copy_entry(current: &std::fs::Metadata, opened: &std::fs::Metadata) -> bool {
+    if !current.is_file()
+        || !opened.is_file()
+        || current.file_type().is_symlink()
+        || opened.file_type().is_symlink()
+        || current.len() != opened.len()
+        || current.modified().ok() != opened.modified().ok()
+        || current.created().ok() != opened.created().ok()
+    {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        if current.dev() != opened.dev() || current.ino() != opened.ino() || current.ctime() != opened.ctime() || current.ctime_nsec() != opened.ctime_nsec() {
+            return false;
+        }
+    }
+    true
 }
 
 /// The current `craft.json` format version. Bumping it means appending a step to [`MANIFEST_STEPS`].
@@ -777,28 +871,36 @@ impl Workspace {
     /// questions or usage. An app edited in place is copied into the copy's app/. What a build
     /// makes again (dependencies, compiler output) is left out.
     pub fn duplicate(&self, name: &str) -> Result<Workspace, ToolError> {
+        self.duplicate_after_discovery(name, |_| {})
+    }
+
+    fn duplicate_after_discovery(&self, name: &str, after_discovery: impl FnOnce(&[PathBuf])) -> Result<Workspace, ToolError> {
         let parent = self.root.parent().ok_or_else(|| ToolError::invalid(format!("{} has no parent folder to copy it into.", self.root.display())))?;
         let m = &self.manifest;
-        let mut copy = Workspace::create(parent, name, &m.request, m.target.clone())?;
         let in_place = m.app_in_root;
         let app = self.app_dir();
-        let generated_backups = if in_place { crate::feed::owned_backups(&self.root)? } else { Vec::new() };
+        // Fail a discovery read before creating a project that would appear as an empty copy.
+        // This is only a preflight: each backup-shaped file is classified again when opened.
+        let backups = if in_place { Some(CopyBackups::discover(&self.root)?) } else { None };
+        let generated_backups = backups.as_ref().map(|backups| backups.owned.as_slice()).unwrap_or(&[]);
+        after_discovery(generated_backups);
+        let mut copy = Workspace::create(parent, name, &m.request, m.target.clone())?;
         if app.is_dir() {
             copy_tree(
                 &app,
                 &copy.app_dir(),
                 &|p| {
                     let backup_name = crate::feed::DAMAGED_BACKUP_NAMES.iter().any(|name| inside(&self.root.join(name), p));
-                    let generated = generated_backups.iter().any(|backup| inside(backup, p));
-                    rebuilt(p) || (in_place && self.is_own_record(p) && (!backup_name || generated))
+                    rebuilt(p) || (in_place && self.is_own_record(p) && !backup_name)
                 },
                 0,
+                backups.as_ref(),
             )?;
         }
         for dir in ["reference", "capture"] {
             let from = self.root.join(dir);
             if from.is_dir() {
-                copy_tree(&from, &copy.root.join(dir), &rebuilt, 0)?;
+                copy_tree(&from, &copy.root.join(dir), &rebuilt, 0, None)?;
             }
         }
         copy.manifest.stack.clone_from(&m.stack);
@@ -2363,6 +2465,173 @@ mod tests {
             assert!(!copy.app_dir().join("feed.json.broken").exists(), "a verified generated backup is not part of the copied app");
             assert!(!copy.app_dir().join("inbox").exists());
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_backup_ownership_read_error_does_not_create_a_duplicate() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let directory = tempfile::tempdir().unwrap();
+        let original = directory.path().join("original");
+        std::fs::create_dir(&original).unwrap();
+        std::fs::write(original.join("index.html"), "Keep my app").unwrap();
+        let ws = Workspace::create_at(&original, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+        std::fs::write(original.join(crate::feed::FEED_FILE), b"damaged conversation").unwrap();
+        crate::feed::save(&original, &mut crate::feed::load(&ws)).unwrap();
+        let receipt = original.join("inbox/feed-backups/feed.json.broken.json");
+        let permissions = std::fs::metadata(&receipt).unwrap().permissions();
+        std::fs::set_permissions(&receipt, std::fs::Permissions::from_mode(0o000)).unwrap();
+        // Privileged users can still read the file; restore permissions before any assertion.
+        let result = std::fs::read(&receipt).is_err().then(|| ws.duplicate("Copy"));
+        std::fs::set_permissions(&receipt, permissions).unwrap();
+        let Some(result) = result else { return };
+
+        assert!(result.is_err());
+        assert!(!directory.path().join("copy").exists(), "ownership discovery must fail before creating a discoverable destination project");
+        assert_eq!(std::fs::read(original.join("feed.json.broken")).unwrap(), b"damaged conversation");
+        let copy = ws.duplicate("Copy").unwrap();
+        assert_eq!(copy.root, directory.path().join("copy"), "retry does not allocate another folder");
+        assert_eq!(std::fs::read(copy.app_dir().join("index.html")).unwrap(), b"Keep my app");
+        assert!(!copy.app_dir().join("feed.json.broken").exists());
+    }
+
+    #[test]
+    fn duplication_keeps_personal_replacements_after_backup_discovery() {
+        for directory_replacement in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let original = directory.path().join("original");
+            std::fs::create_dir(&original).unwrap();
+            std::fs::write(original.join("index.html"), "Keep my app").unwrap();
+            let ws = Workspace::create_at(&original, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+            std::fs::write(original.join(crate::feed::FEED_FILE), b"damaged conversation").unwrap();
+            crate::feed::save(&original, &mut crate::feed::load(&ws)).unwrap();
+            let backup = original.join("feed.json.broken");
+
+            let result = ws.duplicate_after_discovery("Copy", |selected| {
+                assert_eq!(selected, std::slice::from_ref(&backup));
+                std::fs::remove_file(&backup).unwrap();
+                if directory_replacement {
+                    std::fs::create_dir(&backup).unwrap();
+                    std::fs::write(backup.join("notes.txt"), "Keep the personal replacement").unwrap();
+                } else {
+                    std::fs::write(&backup, "Keep the personal replacement").unwrap();
+                }
+            });
+            let copy = match result {
+                Ok(copy) => copy,
+                Err(error) => {
+                    assert_eq!(error.code, ErrorCode::FileChanged, "an uncertain changed entry requires a fresh copy");
+                    ws.duplicate("Retry").unwrap()
+                }
+            };
+
+            let relative = if directory_replacement { "feed.json.broken/notes.txt" } else { "feed.json.broken" };
+            assert_eq!(std::fs::read(copy.app_dir().join(relative)).unwrap(), b"Keep the personal replacement");
+            assert_eq!(std::fs::read(original.join(relative)).unwrap(), b"Keep the personal replacement");
+        }
+    }
+
+    #[test]
+    fn duplication_excludes_backups_created_after_discovery() {
+        let directory = tempfile::tempdir().unwrap();
+        let original = directory.path().join("original");
+        std::fs::create_dir(&original).unwrap();
+        std::fs::write(original.join("index.html"), "Keep my app").unwrap();
+        let ws = Workspace::create_at(&original, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+
+        let copy = ws
+            .duplicate_after_discovery("Copy", |selected| {
+                assert!(selected.is_empty());
+                std::fs::write(original.join(crate::feed::FEED_FILE), b"newly damaged conversation").unwrap();
+                crate::feed::save(&original, &mut crate::feed::load(&ws)).unwrap();
+            })
+            .unwrap();
+
+        assert_eq!(std::fs::read(original.join("feed.json.broken")).unwrap(), b"newly damaged conversation");
+        assert!(!copy.app_dir().join("feed.json.broken").exists(), "a newly generated backup is not part of the app");
+        assert_eq!(std::fs::read(copy.app_dir().join("index.html")).unwrap(), b"Keep my app");
+    }
+
+    #[test]
+    fn duplication_waits_for_a_new_backups_ownership_record() {
+        let directory = tempfile::tempdir().unwrap();
+        let original = directory.path().join("original");
+        std::fs::create_dir(&original).unwrap();
+        std::fs::write(original.join("index.html"), "Keep my app").unwrap();
+        let ws = Workspace::create_at(&original, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+        // Retain a real recovery receipt, then reproduce the interval between the completed
+        // backup write and publication of that receipt during a later copy.
+        std::fs::write(original.join(crate::feed::FEED_FILE), b"damaged conversation").unwrap();
+        crate::feed::save(&original, &mut crate::feed::load(&ws)).unwrap();
+        let backup = original.join("feed.json.broken");
+        let receipt = original.join("inbox/feed-backups/feed.json.broken.json");
+        let ownership = std::fs::read(&receipt).unwrap();
+        std::fs::remove_file(&backup).unwrap();
+        std::fs::remove_file(&receipt).unwrap();
+
+        let result = ws.duplicate_after_discovery("Copy", |selected| {
+            assert!(selected.is_empty());
+            std::fs::write(&backup, b"damaged conversation").unwrap();
+        });
+
+        assert_eq!(result.unwrap_err().code, ErrorCode::FileChanged);
+        assert!(!directory.path().join("copy/app/feed.json.broken").exists(), "do not copy recovery bytes before their receipt is published");
+        assert_eq!(std::fs::read(&backup).unwrap(), b"damaged conversation");
+        std::fs::write(&receipt, ownership).unwrap();
+        let copy = ws.duplicate("Retry").unwrap();
+        assert!(!copy.app_dir().join("feed.json.broken").exists());
+        assert_eq!(std::fs::read(copy.app_dir().join("index.html")).unwrap(), b"Keep my app");
+    }
+
+    #[test]
+    fn duplication_does_not_copy_a_known_backup_after_its_receipt_disappears() {
+        for missing in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let original = directory.path().join("original");
+            std::fs::create_dir(&original).unwrap();
+            std::fs::write(original.join("index.html"), "Keep my app").unwrap();
+            let ws = Workspace::create_at(&original, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+            std::fs::write(original.join(crate::feed::FEED_FILE), b"damaged conversation").unwrap();
+            crate::feed::save(&original, &mut crate::feed::load(&ws)).unwrap();
+            let backup = original.join("feed.json.broken");
+            let receipt = original.join("inbox/feed-backups/feed.json.broken.json");
+            let ownership = std::fs::read(&receipt).unwrap();
+
+            let result = ws.duplicate_after_discovery("Copy", |selected| {
+                assert_eq!(selected, std::slice::from_ref(&backup));
+                if missing {
+                    std::fs::remove_file(&receipt).unwrap();
+                } else {
+                    std::fs::write(&receipt, b"unrecognized record").unwrap();
+                }
+            });
+
+            match result {
+                Ok(copy) => {
+                    assert!(!copy.app_dir().join("feed.json.broken").exists(), "losing a receipt must not turn known conversation bytes into app content")
+                }
+                Err(error) => assert_eq!(error.code, ErrorCode::FileChanged),
+            }
+            assert_eq!(std::fs::read(&backup).unwrap(), b"damaged conversation");
+            std::fs::write(&receipt, ownership).unwrap();
+            let copy = ws.duplicate("Retry").unwrap();
+            assert!(!copy.app_dir().join("feed.json.broken").exists());
+        }
+    }
+
+    #[test]
+    fn duplication_rejects_a_backup_entry_replaced_after_opening() {
+        let directory = tempfile::tempdir().unwrap();
+        let backup = directory.path().join("feed.json.broken");
+        std::fs::write(&backup, b"personal content").unwrap();
+        let (_opened, metadata) = craft_anything_platform::fs::open_regular_file(&backup).unwrap();
+        std::fs::rename(&backup, directory.path().join("personal.txt")).unwrap();
+        std::fs::create_dir(&backup).unwrap();
+        std::fs::write(backup.join("notes.txt"), b"Keep my notes").unwrap();
+
+        assert_eq!(check_copy_entry(&backup, &metadata).unwrap_err().code, ErrorCode::FileChanged);
+        assert_eq!(std::fs::read(backup.join("notes.txt")).unwrap(), b"Keep my notes");
+        assert_eq!(std::fs::read(directory.path().join("personal.txt")).unwrap(), b"personal content");
     }
 
     #[cfg(unix)]

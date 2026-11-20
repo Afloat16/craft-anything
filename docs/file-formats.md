@@ -56,9 +56,22 @@ exactly to an unused `feed.json.broken` (then `.broken.1` through `.broken.15`) 
 Existing backups are never replaced. A private ownership receipt records each generated copy's name, length and digest. When all backup slots are occupied, move a backup and its associated receipt together before retrying. Project deletion first moves each selected backup into a fresh `.craft-backup-quarantine-*` folder beside the project records, then verifies the claimed regular file against its receipt before unlinking it. A changed entry is restored without replacing another path, or retained in that folder with an error explaining where it is. That folder is outside the records deleted with the project and is never cleaned recursively. Legacy personal files or directories with backup-shaped names survive deletion and are included when duplicating an in-place project; verified generated copies are excluded. A failed backup or receipt stops the save and leaves the source intact;
 the recovered conversation names the backup. A newer format is left in place without recovery.
 
+Duplication reads backup ownership before creating its destination. Each backup-shaped file is
+classified through the opened handle that will be copied, rather than a discovery-time path list.
+A new or changed unverified entry requires a retry, including a recovery copy whose receipt has not
+yet been published. Losing a receipt also cannot turn a previously verified recovery copy into
+personal app content during the same copy. This does not make a directory copy an atomic filesystem snapshot.
+
 Answers are saved in the conversation before they are delivered through the inbox. A save failure
 returns an error and leaves the question pending. A delivery failure also leaves it available for
 retry; display views show the pending question and saved reply while writers retain the recorded answer. A versioned delivery receipt is staged before persistence and marked delivered before the waiter removes an answer. If receipt persistence fails at consumption, the answer file remains as durable delivery evidence. An existing answer's I/O error stops another submission before its persistence callback. A confirmed staged reply whose request expires is shown as undelivered, with its text available for a new request. If delivery evidence cannot be read, the display keeps the words and says delivery is unknown, without suggesting another submission. Ordinary temporary inbox answers without feed persistence do not create receipts.
+
+Timeout and cancellation withdraw under the same request-file lock as submission. If unlinking
+the request fails, the waiter truncates and syncs its locked file as an empty withdrawal marker.
+Pending discovery ignores that marker and submission rejects it even after directory access is
+restored. A checked wait reports an I/O error if withdrawal cannot be confirmed; it does not report
+that failure as a person's refusal or a completed timeout. The compatibility `wait` API logs such
+an error and returns no answer; production callers use the checked path.
 
 A file that can't be parsed is not "newer": `config.toml` is set aside as `config.toml.broken` and
 defaults are used; an unreadable `craft.json` gives a plain-English error when opened and is left

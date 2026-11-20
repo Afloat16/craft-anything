@@ -108,6 +108,31 @@ fn no_longer_waiting() -> ToolError {
     ToolError::new(ErrorCode::NotFound, "This question is no longer waiting.").with_remediation("Keep your reply and answer a new request from the builder.")
 }
 
+fn request_entry_exists(path: &Path) -> Result<bool, ToolError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(ToolError::io(path.display(), error)),
+    }
+}
+
+/// The caller holds the request lock. If the directory cannot unlink the request, its
+/// writable handle can still leave an empty, synced tombstone that no submitter can parse.
+fn withdraw_request(path: &Path, request: &std::fs::File) -> Result<(), ToolError> {
+    let removal_error = match std::fs::remove_file(path) {
+        Ok(()) => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !request_entry_exists(path)? => return Ok(()),
+        Err(error) => error,
+    };
+    request.set_len(0).and_then(|()| request.sync_all()).map_err(|error| {
+        let mut error = ToolError::io(path.display(), error);
+        error.message = format!("This question could not be withdrawn: {}", error.message);
+        error.with_remediation(format!(
+            "Removing the request also failed: {removal_error}. It may still be waiting. Restore access to the inbox and withdraw it before submitting another reply."
+        ))
+    })
+}
+
 fn read_answer(path: &Path) -> Result<Option<Answer>, ToolError> {
     let unreadable = |mut error: ToolError| {
         // The entry exists even when its link target disappeared. NotFound is reserved for
@@ -251,6 +276,9 @@ impl Inbox {
         // Read through the handle that owns this reservation, after rejecting an unlinked one.
         let mut request_bytes = Vec::new();
         request_file.read_to_end(&mut request_bytes).map_err(|e| ToolError::io(request_path.display(), e))?;
+        if request_bytes.is_empty() {
+            return Err(no_longer_waiting());
+        }
         if self.delivery_state(id)? == DeliveryState::Delivered {
             return Err(no_longer_waiting());
         }
@@ -267,19 +295,45 @@ impl Inbox {
         craft_anything_platform::fs::write_atomic_private(&answer_path, &bytes)
     }
 
+    /// Compatibility wrapper for `try_wait`. None also includes a logged waiting or withdrawal
+    /// error; callers that need to distinguish it from a withdrawn request use `try_wait`.
+    pub fn wait(&self, id: &str, timeout: Duration, cancelled: &dyn Fn() -> bool) -> Option<Answer> {
+        match self.try_wait(id, timeout, cancelled) {
+            Ok(answer) => answer,
+            Err(error) => {
+                log::warn!("Couldn't wait for this question: {}", error.for_people());
+                None
+            }
+        }
+    }
+
     /// Wait for the answer to `id` (polling). Timeout and cancellation withdraw a request that
     /// has not yet been accepted. An accepted save/submission finishes first: an answer wins
     /// over withdrawal, while a failed submission leaves the waiter free to withdraw. A file
     /// lock is released when its holder closes or exits; this cannot interrupt blocked file I/O.
-    /// The request and answer files are removed once read.
-    pub fn wait(&self, id: &str, timeout: Duration, cancelled: &dyn Fn() -> bool) -> Option<Answer> {
-        let (req, ans) = (self.path(id, "request").ok()?, self.path(id, "answer").ok()?);
+    /// If a request cannot be unlinked, a synced empty file records its withdrawal. A failure
+    /// to remove or invalidate it is an error, never a claim that withdrawal succeeded.
+    pub fn try_wait(&self, id: &str, timeout: Duration, cancelled: &dyn Fn() -> bool) -> Result<Option<Answer>, ToolError> {
+        let (req, ans) = (self.path(id, "request")?, self.path(id, "answer")?);
         let start = Instant::now();
         loop {
-            let request_file = std::fs::OpenOptions::new().read(true).write(true).open(&req).ok()?;
+            let request_file = match std::fs::OpenOptions::new().read(true).write(true).open(&req) {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound && !request_entry_exists(&req)? => return Ok(None),
+                Err(error) => {
+                    let mut error = ToolError::io(req.display(), error);
+                    if error.code == ErrorCode::NotFound {
+                        error.code = ErrorCode::FileError;
+                    }
+                    return Err(error);
+                }
+            };
             let delay = match request_file.try_lock() {
                 Ok(()) => {
-                    if let Ok(Some(answer)) = read_answer(&ans) {
+                    if !request_entry_exists(&req)? || request_file.metadata().map_err(|error| ToolError::io(req.display(), error))?.len() == 0 {
+                        return Ok(None);
+                    }
+                    if let Some(answer) = read_answer(&ans)? {
                         // Never discard the last proof of delivery. If the receipt cannot be
                         // committed, keep the answer file while returning the actual answer.
                         match delivery::mark_delivered(&self.dir, id) {
@@ -289,22 +343,16 @@ impl Inbox {
                             Err(error) => log::warn!("Couldn't retain this answer's delivery receipt: {}", error.message),
                         }
                         let _ = std::fs::remove_file(&req);
-                        return Some(answer);
-                    }
-                    if !req.exists() {
-                        return None;
+                        return Ok(Some(answer));
                     }
                     if cancelled() || start.elapsed() >= timeout {
-                        let _ = std::fs::remove_file(&req);
-                        return None;
+                        withdraw_request(&req, &request_file)?;
+                        return Ok(None);
                     }
                     Duration::from_millis(200)
                 }
                 Err(std::fs::TryLockError::WouldBlock) => LOCK_POLL,
-                Err(std::fs::TryLockError::Error(e)) => {
-                    log::warn!("Couldn't wait for this question: {e}");
-                    return None;
-                }
+                Err(std::fs::TryLockError::Error(error)) => return Err(ToolError::io(req.display(), error)),
             };
             drop(request_file);
             std::thread::sleep(delay);
@@ -608,6 +656,127 @@ mod tests {
             assert!(!saved, "an expired request must not stage an answer in the conversation");
             assert!(!directory.path().join(format!("{id}.answer.json")).exists());
         }
+    }
+
+    #[cfg(unix)]
+    fn assert_no_late_submission_after_unlink_failure(cancelled: bool) {
+        use std::os::unix::fs::PermissionsExt as _;
+        struct RestorePermissions {
+            path: PathBuf,
+            permissions: std::fs::Permissions,
+        }
+        impl Drop for RestorePermissions {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.path, self.permissions.clone());
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let inbox = Inbox::new(directory.path().join("inbox"));
+        let id = inbox.post(RequestKind::Approval, "Run the check?", "", vec![], false, None).unwrap();
+        let request_path = inbox.path(&id, "request").unwrap();
+        let probe = inbox.dir().join("unlink-probe");
+        std::fs::write(&probe, b"check directory permissions").unwrap();
+        let restore = RestorePermissions { path: inbox.dir().to_path_buf(), permissions: std::fs::metadata(inbox.dir()).unwrap().permissions() };
+        std::fs::set_permissions(inbox.dir(), std::fs::Permissions::from_mode(0o500)).unwrap();
+        match std::fs::remove_file(&probe) {
+            Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied),
+            Ok(()) => {
+                eprintln!("permission test skipped: this process can unlink entries in a read-only directory");
+                return;
+            }
+        }
+
+        let timeout = if cancelled { Duration::from_secs(60) } else { Duration::ZERO };
+        let answer = inbox.wait(&id, timeout, &|| cancelled);
+        let request_remains = request_path.is_file();
+        drop(restore);
+
+        assert!(answer.is_none());
+        assert!(request_remains, "the request could not be unlinked from the read-only directory");
+        let reopened = Inbox::new(inbox.dir());
+        let mut persisted = false;
+        let result = reopened.answer_with(&id, &Answer { allow: Some(true), ..Default::default() }, |_| {
+            persisted = true;
+            Ok(())
+        });
+        assert!(!persisted, "restoring directory access must not resurrect a withdrawn approval");
+        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
+        assert!(reopened.pending().is_empty());
+        assert!(!inbox.path(&id, "answer").unwrap().exists());
+        assert!(!inbox.dir().join(format!("{id}.delivery.json")).exists(), "withdrawal must not invent delivery evidence");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_prevents_submission_after_unlink_failure() {
+        assert_no_late_submission_after_unlink_failure(false);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancellation_prevents_submission_after_unlink_failure() {
+        assert_no_late_submission_after_unlink_failure(true);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checked_wait_reports_existing_request_and_answer_read_errors() {
+        use std::os::unix::fs::symlink;
+        for (suffix, missing_target) in [("request", false), ("request", true), ("answer", false), ("answer", true)] {
+            let directory = tempfile::tempdir().unwrap();
+            let inbox = Inbox::new(directory.path());
+            let id = inbox.post(RequestKind::Question, "Which colour?", "", vec![], true, None).unwrap();
+            let path = inbox.path(&id, suffix).unwrap();
+            if suffix == "request" {
+                std::fs::remove_file(&path).unwrap();
+            }
+            let target = if missing_target { directory.path().join("missing-target") } else { path.clone() };
+            symlink(&target, &path).unwrap();
+
+            let result = inbox.try_wait(&id, Duration::ZERO, &|| true);
+
+            assert!(result.is_err(), "an existing unreadable {suffix} is not successful withdrawal");
+            assert_eq!(std::fs::read_link(&path).unwrap(), target);
+            assert!(!inbox.dir().join(format!("{id}.delivery.json")).exists());
+        }
+        let directory = tempfile::tempdir().unwrap();
+        assert_eq!(Inbox::new(directory.path()).try_wait("absent", Duration::ZERO, &|| true).unwrap(), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_request_invalidation_is_reported_without_claiming_withdrawal() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let directory = tempfile::tempdir().unwrap();
+        let inbox = Inbox::new(directory.path());
+        let id = inbox.post(RequestKind::Approval, "Run the check?", "", vec![], false, None).unwrap();
+        let path = inbox.path(&id, "request").unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let request = std::fs::File::open(&path).unwrap();
+        request.try_lock().unwrap();
+        let probe = directory.path().join("unlink-probe");
+        std::fs::write(&probe, b"check directory permissions").unwrap();
+        let permissions = std::fs::metadata(directory.path()).unwrap().permissions();
+        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+        let denied = std::fs::remove_file(&probe);
+        if denied.is_ok() {
+            std::fs::set_permissions(directory.path(), permissions).unwrap();
+            eprintln!("permission test skipped: this process can unlink entries in a read-only directory");
+            return;
+        }
+
+        // A real read-only file handle makes invalidation fail too. The helper reports that
+        // failure to try_wait instead of returning success or retrying indefinitely.
+        let result = withdraw_request(&path, &request);
+        std::fs::set_permissions(directory.path(), permissions).unwrap();
+
+        assert_eq!(denied.unwrap_err().kind(), std::io::ErrorKind::PermissionDenied);
+        let error = result.unwrap_err();
+        assert!(error.message.contains("could not be withdrawn"));
+        assert!(error.remediation.unwrap().contains("may still be waiting"));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert!(!inbox.path(&id, "answer").unwrap().exists());
+        assert!(!inbox.dir().join(format!("{id}.delivery.json")).exists());
     }
 
     #[test]

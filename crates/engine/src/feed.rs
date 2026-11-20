@@ -13,7 +13,7 @@ use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 
 mod backups;
-pub(crate) use backups::{owned_backups, remove_owned_backups};
+pub(crate) use backups::{owned_backups, owns_open_backup, remove_owned_backups};
 
 /// Where the conversation is kept in the project folder.
 pub const FEED_FILE: &str = "feed.json";
