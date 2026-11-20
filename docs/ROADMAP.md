@@ -1159,6 +1159,7 @@ Owner: open · Status: in progress
       of two updates based on the same revision
 - [ ] Refresh externally changed investigation/evidence records incrementally, avoiding repeated
       full reloads under the session lock while retaining mid-turn findings visibility
+      — claimed: Afloat16, branch refactor/r2.2-incremental-investigation-refresh
 - [x] Offer OpenCode locally and over SSH with its own visible chat models and supported thinking
       depths (Low, Medium, High, Xhigh, Max) in settings and headless clients. Choices are validated
       before saving; explicit choices are refused at execution until native MCP support is available.
