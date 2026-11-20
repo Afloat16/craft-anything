@@ -430,10 +430,8 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let ws = Workspace::create(dir.path(), "x", "Original request", TargetRef::None).unwrap();
-        let conversation = vec![
-            FeedItem::User(UserItem::Text("Original request".into())),
-            FeedItem::Agent { text: "Keep this completed work.".into(), streaming: false },
-        ];
+        let conversation =
+            vec![FeedItem::User(UserItem::Text("Original request".into())), FeedItem::Agent { text: "Keep this completed work.".into(), streaming: false }];
         save(&ws.root, &conversation).unwrap();
         let path = ws.root.join(FEED_FILE);
         let original = std::fs::read(&path).unwrap();
