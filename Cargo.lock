@@ -1415,6 +1415,7 @@ dependencies = [
  "log",
  "png 0.17.16",
  "regex",
+ "same-file",
  "schemars",
  "serde",
  "serde_json",

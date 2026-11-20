@@ -139,6 +139,7 @@ pub(super) struct FeedLog {
     feed: LoadedFeed,
     history_at_open: HistoryAtOpen,
     pending: Vec<FeedChange>,
+    pending_explanation: Option<Vec<FeedItem>>,
     failure_explained: bool,
     save_error: Option<FeedItem>,
     saved_at: Option<std::time::Instant>,
@@ -152,6 +153,7 @@ struct HistoryAtOpen {
     failure_note: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
 enum FeedChange {
     Event(RunEvent),
     Item(FeedItem),
@@ -169,12 +171,18 @@ impl FeedChange {
     }
 }
 
-fn replay_changes(feed: &mut Vec<FeedItem>, pending: &[FeedChange]) -> bool {
-    let mut explained = false;
+fn replay_changes(feed: &mut Vec<FeedItem>, pending: &[FeedChange], mut explained: bool) -> bool {
     for change in pending {
         change.apply(feed, &mut explained);
     }
     explained
+}
+
+/// A known explanation may survive edits before its saved context. An additional equal
+/// external Error is another occurrence, not proof that this run supplied the new tail.
+fn retains_explanation(feed: &[FeedItem], origin: &[FeedItem]) -> bool {
+    let Some(error @ FeedItem::Error { .. }) = origin.last() else { return false };
+    feed.ends_with(origin) && feed.iter().filter(|item| *item == error).count() == origin.iter().filter(|item| *item == error).count()
 }
 
 impl FeedLog {
@@ -190,6 +198,7 @@ impl FeedLog {
             feed: load(ws),
             history_at_open,
             pending: Vec::new(),
+            pending_explanation: None,
             failure_explained: false,
             save_error: None,
             saved_at: None,
@@ -205,11 +214,79 @@ impl FeedLog {
     pub(super) fn record(&mut self, e: &RunEvent) {
         let lines = self.activity.record(e);
         self.log.append(&lines, &self.activity);
+        let retain = !matches!(e, RunEvent::Preview(_) | RunEvent::Agent(AgentEvent::Output { .. }));
+        if retain {
+            self.begin_pending();
+        }
         apply_run_event(&mut self.feed, e, &mut self.failure_explained);
-        if !matches!(e, RunEvent::Preview(_) | RunEvent::Agent(AgentEvent::Output { .. })) {
+        if retain {
             self.pending.push(FeedChange::Event(e.clone()));
         }
-        self.save(matches!(e, RunEvent::Finished { .. }));
+        let finished = matches!(e, RunEvent::Finished { .. });
+        self.save(finished);
+        if finished && self.save_error.is_some() && !self.pending.is_empty() {
+            self.keep_recovery_copy();
+        }
+    }
+
+    fn begin_pending(&mut self) {
+        if self.pending.is_empty() {
+            self.pending_explanation = (self.failure_explained && matches!(self.feed.last(), Some(FeedItem::Error { .. }))).then(|| self.feed.to_vec());
+        }
+    }
+
+    /// The worker records the final event, including its durable handoff, before publishing it.
+    /// Neither polling nor releasing a run performs I/O or retries a failed save.
+    pub(super) fn completion_event(&self, mut event: RunEvent) -> RunEvent {
+        if let RunEvent::Finished { message, .. } = &mut event
+            && let Some(FeedItem::Error { message: error, remediation, log }) = &self.save_error
+        {
+            message.push_str("\n\n");
+            message.push_str(error);
+            if let Some(path) = log {
+                message.push_str(&format!("\nA conversation recovery copy was kept at {}. It has not been imported automatically.", path.display()));
+            } else if let Some(remediation) = remediation {
+                message.push('\n');
+                message.push_str(remediation);
+            }
+        }
+        event
+    }
+
+    fn keep_recovery_copy(&mut self) {
+        let Some(FeedItem::Error { message, .. }) = &self.save_error else { return };
+        let message = message.clone();
+        // The folded feed is the recoverable conversation. Raw tool input/output in RunEvent
+        // is deliberately excluded, just as it is from feed.json; no replay is promised here.
+        let snapshot = RecoverySnapshot::from_loaded(
+            &self.feed,
+            json!({
+                "pending_event_count": self.pending.len(),
+                "history_at_open": {
+                    "checks": self.history_at_open.checks,
+                    "last_reply": self.history_at_open.last_reply,
+                    "failure_note": self.history_at_open.failure_note
+                },
+                "save_error": message
+            }),
+        );
+        self.save_error = Some(match write_recovery_snapshot(&self.root, &snapshot) {
+            Ok(path) => FeedItem::Error {
+                message,
+                remediation: Some("A separate recovery copy was kept. Open it to inspect the conversation before deciding what to restore.".into()),
+                log: Some(path),
+            },
+            Err(error) => {
+                log::warn!("couldn't keep a conversation recovery copy: {}", error.message);
+                FeedItem::Error {
+                    message: format!("{message}\nCouldn't keep a conversation recovery copy: {}", error.message),
+                    remediation: Some(
+                        "The unsaved conversation has not been preserved on disk. Keep the visible words and restore write access before retrying.".into(),
+                    ),
+                    log: None,
+                }
+            }
+        });
     }
 
     pub(super) fn items(&self) -> Vec<FeedItem> {
@@ -221,6 +298,7 @@ impl FeedLog {
     }
 
     pub(super) fn push(&mut self, item: FeedItem) {
+        self.begin_pending();
         self.feed.push(item.clone());
         self.failure_explained = matches!(&item, FeedItem::Error { .. });
         self.pending.push(FeedChange::Item(item));
@@ -231,12 +309,16 @@ impl FeedLog {
         let mut candidate = self.feed.clone();
         merge_saved_answers(&self.root, &mut candidate);
         record_pending_answer(&mut candidate, request, shown);
-        let replayed_explanation = save_with_recovery(&self.root, &mut candidate, &self.history_at_open, &self.pending, Some((request, shown)))?;
+        // The candidate already contains the new answer. Its explanation comes from the
+        // committed owner state, before applying that answer, or from the pending prefix.
+        let explanation = self.pending_explanation.as_deref().or_else(|| (self.pending.is_empty() && self.failure_explained).then_some(self.feed.as_slice()));
+        let replayed_explanation = save_with_recovery(&self.root, &mut candidate, &self.history_at_open, &self.pending, explanation, Some((request, shown)))?;
         self.feed = candidate;
         if let Some(explained) = replayed_explanation {
             self.failure_explained = explained;
         }
         self.pending.clear();
+        self.pending_explanation = None;
         self.save_error = None;
         self.saved_at = Some(std::time::Instant::now());
         // The raw saved state (including recovery from damaged bytes) is now committed. The
@@ -245,18 +327,31 @@ impl FeedLog {
     }
 
     fn save(&mut self, now: bool) {
+        self.save_using(now, save_if_unchanged);
+    }
+
+    fn save_using(&mut self, now: bool, commit_recovery: impl FnOnce(&Path, &mut LoadedFeed) -> Result<(), ToolError>) {
         if !now && self.saved_at.is_some_and(|t| t.elapsed() < Duration::from_secs(2)) {
             return;
         }
         // Answers given elsewhere while it runs (the CLI, an agent's project_inbox_answer) went
         // into the file; keep them.
         merge_saved_answers(&self.root, &mut self.feed);
-        match save_with_recovery(&self.root, &mut self.feed, &self.history_at_open, &self.pending, None) {
+        match save_with_recovery_using(
+            &self.root,
+            &mut self.feed,
+            &self.history_at_open,
+            &self.pending,
+            self.pending_explanation.as_deref(),
+            None,
+            commit_recovery,
+        ) {
             Ok(replayed_explanation) => {
                 if let Some(explained) = replayed_explanation {
                     self.failure_explained = explained;
                 }
                 self.pending.clear();
+                self.pending_explanation = None;
                 self.save_error = None;
             }
             Err(e) => {
@@ -279,9 +374,10 @@ fn save_with_recovery(
     feed: &mut LoadedFeed,
     opened: &HistoryAtOpen,
     pending: &[FeedChange],
+    explanation: Option<&[FeedItem]>,
     answer: Option<(&Request, &str)>,
 ) -> Result<Option<bool>, ToolError> {
-    save_with_recovery_using(root, feed, opened, pending, answer, save_if_unchanged)
+    save_with_recovery_using(root, feed, opened, pending, explanation, answer, save_if_unchanged)
 }
 
 fn save_with_recovery_using(
@@ -289,6 +385,7 @@ fn save_with_recovery_using(
     feed: &mut LoadedFeed,
     opened: &HistoryAtOpen,
     pending: &[FeedChange],
+    explanation: Option<&[FeedItem]>,
     answer: Option<(&Request, &str)>,
     commit_recovery: impl FnOnce(&Path, &mut LoadedFeed) -> Result<(), ToolError>,
 ) -> Result<Option<bool>, ToolError> {
@@ -312,7 +409,11 @@ fn save_with_recovery_using(
     // of this writer's actual damaged bytes can overlap its pending events; a read error or
     // repair from another source provides no such identity, even when the words match.
     let consumed_projection = repaired.was_recovered_from(feed) && reconcile_history(&mut repaired, opened, pending);
-    let explained = replay_changes(&mut repaired, pending);
+    // A periodic save can rebase without any new run events. Only an unchanged tail retains
+    // the owner's existing explanation; a new external error or archive notice cannot supply it.
+    let keep_explanation = pending.is_empty() && retains_explanation(&repaired, feed);
+    let initial_explanation = explanation.is_some_and(|origin| retains_explanation(&repaired, origin));
+    let explained = replay_changes(&mut repaired, pending, initial_explanation);
     if let Some((request, shown)) = answer {
         record_pending_answer(&mut repaired, request, shown);
     }
@@ -323,7 +424,7 @@ fn save_with_recovery_using(
     // original writer and journal intact; its next attempt reloads the latest saved bytes.
     commit_recovery(root, &mut repaired)?;
     *feed = repaired;
-    Ok(Some(explained && matches!(feed.last(), Some(FeedItem::Error { .. }))))
+    Ok((!keep_explanation).then_some(explained && matches!(feed.last(), Some(FeedItem::Error { .. }))))
 }
 
 /// A recovered file records the manifest projection used to create it. The current manifest
@@ -395,7 +496,7 @@ fn replay_recreates_error(repaired: &[FeedItem], removed: &std::collections::BTr
         repaired.iter().enumerate().filter(|(index, _)| *index != projected && !removed.contains(index)).map(|(_, item)| item.clone()).collect();
     let count = |items: &[FeedItem]| items.iter().filter(|item| *item == error).count();
     let before = count(&preview);
-    replay_changes(&mut preview, pending);
+    replay_changes(&mut preview, pending, false);
     count(&preview) > before
 }
 
@@ -692,7 +793,7 @@ mod tests {
         let pending_count = log.pending.len();
         let mut external_bytes = Vec::new();
 
-        let error = save_with_recovery_using(&ws.root, &mut log.feed, &log.history_at_open, &log.pending, None, |root, replayed| {
+        let error = save_with_recovery_using(&ws.root, &mut log.feed, &log.history_at_open, &log.pending, None, None, |root, replayed| {
             assert!(replayed.was_decoded());
             assert!(replayed.iter().any(|item| matches!(item, FeedItem::User(note) if note.text() == "Keep the live run's note")));
             assert!(replayed.iter().any(|item| matches!(item, FeedItem::Ask { request, answer: None } if request.id == id)));
@@ -1139,21 +1240,133 @@ mod tests {
         std::fs::remove_dir(&path).unwrap();
         std::fs::write(&path, br#"{"version":5,"items":[{"User":"Keep the repaired conversation"}]}"#).unwrap();
         let before = log.feed.to_vec();
+        let pending = log.pending.clone();
         let changed = br#"{"version":5,"items":[{"User":"Keep the concurrent writer's words"}]}"#;
+        let mut committed = false;
 
-        let error = save_with_recovery_using(&ws.root, &mut log.feed, &log.history_at_open, &log.pending, None, |root, replayed| {
+        // Reach the owner that installs explanation state, with the same local seam used by
+        // save. A real write between reload and commit is rejected by the real guarded save.
+        log.save_using(true, |root, replayed| {
+            committed = true;
             assert!(matches!(replayed.last(), Some(FeedItem::Error { message, .. }) if message == "The compiler rejected the source."));
             std::fs::write(&path, changed).unwrap();
-            save_if_unchanged(root, replayed)
-        })
-        .unwrap_err();
+            let result = save_if_unchanged(root, replayed);
+            assert_eq!(result.as_ref().unwrap_err().code, ErrorCode::FileChanged);
+            result
+        });
 
-        assert_eq!(error.code, ErrorCode::FileChanged);
+        assert!(committed && log.save_error.is_some());
         assert!(!log.failure_explained, "a rejected replay must not change the original writer's explanation state");
         assert!(log.feed.had_read_error());
         assert_eq!(log.feed.to_vec(), before);
-        assert_eq!(log.pending.len(), 2);
+        assert_eq!(log.pending, pending);
         assert_eq!(std::fs::read(&path).unwrap(), changed);
+    }
+
+    #[test]
+    fn an_empty_pending_rebase_preserves_only_the_same_explained_tail() {
+        for external_error in [false, true] {
+            let d = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+            let mut log = FeedLog::open(&ws);
+            log.record(&RunEvent::Agent(AgentEvent::Error { message: "The compiler rejected the source.".into(), remediation: None, log: None }));
+            assert!(log.pending.is_empty() && log.failure_explained);
+            let mut external = load(&ws);
+            external.insert(0, FeedItem::User(UserItem::Text("Keep the external words".into())));
+            if external_error {
+                external.push(FeedItem::Error { message: "An unrelated client's error.".into(), remediation: None, log: None });
+            }
+            save(&ws.root, &mut external).unwrap();
+
+            log.save(true);
+
+            assert!(log.pending.is_empty());
+            assert_eq!(log.failure_explained, !external_error);
+            log.record(&RunEvent::Finished { ok: false, message: "The build failed.".into(), paused: false });
+            let saved = load(&ws);
+            assert!(saved.iter().any(|item| matches!(item, FeedItem::User(note) if note.text() == "Keep the external words")));
+            assert_eq!(
+                saved.iter().filter(|item| matches!(item, FeedItem::Error { message, .. } if message == "The build failed.")).count(),
+                usize::from(external_error)
+            );
+        }
+    }
+
+    #[test]
+    fn a_direct_finished_rebase_preserves_the_saved_run_explanation() {
+        let compiler = "The compiler rejected the source.";
+        for external_error in [None, Some("An unrelated client's error."), Some(compiler)] {
+            let d = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+            let mut log = FeedLog::open(&ws);
+            log.record(&RunEvent::Agent(AgentEvent::Error { message: compiler.into(), remediation: None, log: None }));
+            assert!(log.pending.is_empty() && log.failure_explained);
+            let mut external = load(&ws);
+            external.insert(0, FeedItem::User(UserItem::Text("Keep the external words".into())));
+            if let Some(message) = external_error {
+                external.push(FeedItem::Error { message: message.into(), remediation: None, log: None });
+            }
+            save(&ws.root, &mut external).unwrap();
+
+            // No intervening empty-journal save: Finished itself discovers the conflict.
+            log.record(&RunEvent::Finished { ok: false, message: "The build failed.".into(), paused: false });
+
+            assert!(log.pending.is_empty() && log.save_error.is_none());
+            let saved = load(&ws);
+            assert!(saved.iter().any(|item| matches!(item, FeedItem::User(note) if note.text() == "Keep the external words")));
+            assert_eq!(
+                saved.iter().filter(|item| matches!(item, FeedItem::Error { message, .. } if message == compiler)).count(),
+                1 + usize::from(external_error == Some(compiler))
+            );
+            assert_eq!(
+                saved.iter().filter(|item| matches!(item, FeedItem::Error { message, .. } if message == "The build failed.")).count(),
+                usize::from(external_error.is_some()),
+                "external_error={external_error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_answer_rebase_keeps_the_explanation_from_before_the_new_answer() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let inbox = Inbox::new(ws.inbox_dir());
+        inbox.post(craft_anything_engine::inbox::RequestKind::Question, "Try another compiler?", "", vec![], true, None).unwrap();
+        let question = inbox.pending().pop().unwrap();
+        let mut log = FeedLog::open(&ws);
+        log.record(&RunEvent::Agent(AgentEvent::Error { message: "The compiler rejected the source.".into(), remediation: None, log: None }));
+        assert!(log.pending.is_empty() && log.failure_explained);
+        let mut external = load(&ws);
+        external.insert(0, FeedItem::User(UserItem::Text("Keep the external words".into())));
+        save(&ws.root, &mut external).unwrap();
+
+        log.answered(&question, "Yes", || inbox.answer(&question.id, &Answer { text: Some("Yes".into()), ..Default::default() })).unwrap();
+
+        assert!(log.pending.is_empty() && log.failure_explained);
+        log.record(&RunEvent::Finished { ok: false, message: "The build failed.".into(), paused: false });
+        let saved = load(&ws);
+        assert!(saved.iter().any(|item| matches!(item, FeedItem::User(note) if note.text() == "Keep the external words")));
+        assert!(saved.iter().any(|item| matches!(item, FeedItem::Ask { request, answer: Some(answer) } if request.id == question.id && answer == "Yes")));
+        assert_eq!(saved.iter().filter(|item| matches!(item, FeedItem::Error { message, .. } if message == "The compiler rejected the source.")).count(), 1);
+        assert!(!saved.iter().any(|item| matches!(item, FeedItem::Error { message, .. } if message == "The build failed.")));
+    }
+
+    #[test]
+    fn a_retained_archive_notice_does_not_explain_a_new_runs_failure() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let snapshot = RecoverySnapshot::from_loaded(&load(&ws), json!({}));
+        let path = write_recovery_snapshot(&ws.root, &snapshot).unwrap();
+        let mut log = FeedLog::open(&ws);
+        assert!(matches!(log.feed.last(), Some(FeedItem::Error { log: Some(saved), .. }) if saved == &path));
+        assert!(!log.failure_explained);
+
+        log.record(&RunEvent::Finished { ok: false, message: "This new build failed.".into(), paused: false });
+
+        let saved = load(&ws);
+        assert_eq!(saved.iter().filter(|item| matches!(item, FeedItem::Error { message, .. } if message == "This new build failed.")).count(), 1);
+        assert_eq!(saved.iter().filter(|item| matches!(item, FeedItem::Error { log: Some(saved), .. } if saved == &path)).count(), 1);
+        assert!(log.pending.is_empty() && log.save_error.is_none());
     }
 
     #[test]
@@ -1405,5 +1618,179 @@ mod tests {
         inbox.answer(&id, &craft_anything_engine::inbox::Answer { text: Some("Yes".into()), ..Default::default() }).unwrap();
         log.record(&RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false });
         assert!(load(&ws).iter().any(|i| matches!(i, FeedItem::Ask { answer: Some(a), .. } if a == "Yes")));
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    /// The CLI owns this same RebuildRun; events go through the worker's real emit function.
+    fn owned_run(ws: &Workspace) -> (RebuildRun, Sender<RunEvent>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let feed = Arc::new(Mutex::new(FeedLog::open(ws)));
+        let activity = feed.lock().unwrap_or_else(PoisonError::into_inner).activity();
+        let run = RebuildRun {
+            rx,
+            stop: CancelToken::default(),
+            inbox: Inbox::new(ws.inbox_dir()),
+            running: Arc::new(AtomicBool::new(true)),
+            preview: Arc::default(),
+            notes: Arc::default(),
+            clean_room: false,
+            feed,
+            root: ws.root.clone(),
+            started: Instant::now(),
+            activity,
+        };
+        (run, tx)
+    }
+
+    fn emit(run: &RebuildRun, tx: &Sender<RunEvent>, event: RunEvent) {
+        let done = matches!(event, RunEvent::Finished { .. });
+        super::super::emit_event(&run.feed, tx, &Wake::default(), event);
+        if done {
+            run.running.store(false, Ordering::SeqCst);
+        }
+    }
+
+    fn copies(ws: &Workspace) -> Vec<PathBuf> {
+        std::fs::read_dir(ws.inbox_dir().join("feed-recovery"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.file_name().unwrap().to_string_lossy().ends_with(".recovery.json"))
+            .collect()
+    }
+
+    #[test]
+    fn final_feed_recovery_survives_cli_owner_release() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let main = ws.root.join(FEED_FILE);
+        std::fs::create_dir(&main).unwrap();
+        let (mut run, tx) = owned_run(&ws);
+        emit(&run, &tx, RunEvent::Agent(AgentEvent::TextDelta { text: "Keep the finished reply.".into() }));
+        emit(
+            &run,
+            &tx,
+            RunEvent::Agent(AgentEvent::ToolStarted {
+                call_id: "build".into(),
+                tool: "build_check".into(),
+                input: json!({"private_argument": "Do not retain raw tool input"}),
+            }),
+        );
+        emit(
+            &run,
+            &tx,
+            RunEvent::Agent(AgentEvent::ToolFinished {
+                call_id: "build".into(),
+                tool: "build_check".into(),
+                ok: true,
+                summary: "Do not retain the raw result".into(),
+                evidence_id: None,
+            }),
+        );
+        emit(&run, &tx, RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false });
+
+        let paths = copies(&ws);
+        assert_eq!(paths.len(), 1, "the copy is durable before the owner can receive Finished");
+        let path = &paths[0];
+        let bytes = std::fs::read(path).unwrap();
+        let snapshot: Value = serde_json::from_slice(&bytes).unwrap();
+        let items: Vec<FeedItem> = serde_json::from_value(snapshot["items"].clone()).unwrap();
+        assert_eq!(snapshot["version"], 1);
+        assert_eq!(snapshot["metadata"]["source"]["state"], "unreadable");
+        assert!(snapshot["metadata"]["details"]["pending_event_count"].as_u64().unwrap() >= 4);
+        assert!(items.iter().any(|item| matches!(item, FeedItem::Agent { text, streaming: false } if text == "Keep the finished reply.")));
+        let json = String::from_utf8(bytes.clone()).unwrap();
+        assert!(!json.contains("Do not retain raw tool input") && !json.contains("Do not retain the raw result"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            assert_eq!(std::fs::metadata(path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        assert!(run.poll().iter().any(|event| matches!(event, RunEvent::Finished { message, .. }
+            if message.contains("Couldn't save the project's conversation") && message.contains(path.to_str().unwrap()))));
+        drop(run);
+        drop(tx);
+
+        // The file becomes usable only after the CLI released the run. Opening it exposes the
+        // retained copy but never overwrites or imports over a different saved conversation.
+        std::fs::remove_dir(&main).unwrap();
+        let external = br#"{"version":5,"items":[{"User":"The other client's words"}]}"#;
+        std::fs::write(&main, external).unwrap();
+        let reopened = load(&Workspace::open(&ws.root).unwrap());
+        assert!(reopened.iter().any(|item| matches!(item, FeedItem::Error { log: Some(saved), .. } if saved == path)));
+        assert!(!reopened.iter().any(|item| matches!(item, FeedItem::Agent { text, .. } if text == "Keep the finished reply.")));
+        assert_eq!(std::fs::read(&main).unwrap(), external);
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+
+    #[test]
+    fn final_feed_recovery_survives_a_runset_replacement() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        std::fs::create_dir(ws.root.join(FEED_FILE)).unwrap();
+        let mut session = craft_anything_engine::testing::session();
+        session.settings.ai = toml::from_str("[[backends]]\nname = \"Agent\"\nkind = \"agent_cli\"\nmodel = \"claude-code\"\n").unwrap();
+        let hub = AiHub::new(Arc::new(Engine::new(session)));
+        let senders = Arc::new(Mutex::new(Vec::new()));
+        let controls = senders.clone();
+        let mut set = RunSet::new(1).with_starter(Box::new(move |_, ws, _| {
+            let (run, tx) = owned_run(&ws);
+            controls.lock().unwrap_or_else(PoisonError::into_inner).push(tx);
+            Ok(run)
+        }));
+        set.start(&hub, ws.clone(), RunOptions::default()).unwrap();
+        let run = set.get(&ws.root).unwrap();
+        let old_feed = Arc::downgrade(&run.feed);
+        let tx = senders.lock().unwrap_or_else(PoisonError::into_inner)[0].clone();
+        emit(run, &tx, RunEvent::Note { shown: "Keep the earlier run's words".into(), pictures: Vec::new() });
+        emit(run, &tx, RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false });
+        assert!(set.poll(&hub).iter().any(|(_, event)| matches!(event, RunEvent::Finished { .. })));
+        let paths = copies(&ws);
+        assert_eq!(paths.len(), 1);
+        let bytes = std::fs::read(&paths[0]).unwrap();
+
+        set.start(&hub, ws.clone(), RunOptions::default()).unwrap();
+        assert!(old_feed.upgrade().is_none(), "the replaced run really releases its only in-memory conversation");
+        drop(set);
+        assert_eq!(std::fs::read(&paths[0]).unwrap(), bytes);
+        let snapshot: Value = serde_json::from_slice(&bytes).unwrap();
+        let items: Vec<FeedItem> = serde_json::from_value(snapshot["items"].clone()).unwrap();
+        assert!(items.iter().any(|item| matches!(item, FeedItem::User(note) if note.text() == "Keep the earlier run's words")));
+    }
+
+    #[test]
+    fn final_feed_recovery_reports_an_unavailable_archive() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        std::fs::create_dir(ws.root.join(FEED_FILE)).unwrap();
+        std::fs::write(ws.inbox_dir(), b"An unrelated existing file").unwrap();
+        let (mut run, tx) = owned_run(&ws);
+        emit(&run, &tx, RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false });
+        let events = run.poll();
+        let message = events.iter().find_map(|event| if let RunEvent::Finished { message, .. } = event { Some(message) } else { None }).unwrap();
+        assert!(message.contains("Couldn't keep a conversation recovery copy"), "{message}");
+        assert!(message.contains("has not been preserved on disk"), "{message}");
+        assert!(!message.contains("was kept at"));
+        assert!(copies(&ws).is_empty());
+        assert_eq!(std::fs::read(ws.inbox_dir()).unwrap(), b"An unrelated existing file");
+    }
+
+    #[test]
+    fn final_feed_recovery_does_not_archive_successful_saves() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let (mut run, tx) = owned_run(&ws);
+        emit(&run, &tx, RunEvent::Note { shown: "Keep the saved words".into(), pictures: Vec::new() });
+        let finished = RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false };
+        emit(&run, &tx, finished.clone());
+        assert!(run.poll().contains(&finished));
+        assert!(copies(&ws).is_empty());
+        drop(run);
+        assert!(load(&ws).iter().any(|item| matches!(item, FeedItem::User(note) if note.text() == "Keep the saved words")));
     }
 }

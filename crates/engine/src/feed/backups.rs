@@ -204,6 +204,24 @@ pub(crate) fn owned_backups(root: &Path) -> Result<Vec<PathBuf>, ToolError> {
     Ok(owned)
 }
 
+/// A later feed replacement can fail after recovery has published a complete copy. Reuse
+/// only a recognized receipt and unchanged file that both match this exact damaged source.
+pub(super) fn matching_copy(root: &Path, bytes: &[u8]) -> Result<Option<PathBuf>, ToolError> {
+    let Some(directory) = directory(root, false)? else { return Ok(None) };
+    let length = u64::try_from(bytes.len()).map_err(|_| ToolError::new(ErrorCode::OverLimit, "The recovery copy is too large to verify."))?;
+    let source = sha256_hex(bytes);
+    for name in super::DAMAGED_BACKUP_NAMES {
+        if let Some(receipt) = read_receipt(&directory.join(format!("{name}.json")), name)?
+            && receipt.length == length
+            && receipt.sha256 == source
+            && matches_backup(root, &receipt)?
+        {
+            return Ok(Some(root.join(name)));
+        }
+    }
+    Ok(None)
+}
+
 // This directory is deliberately outside inbox and OWN_NAMES. A changed entry kept here is
 // the person's data, so neither a destructor nor a later workspace deletion may recurse into it.
 const QUARANTINE_PREFIX: &str = ".craft-backup-quarantine-";
@@ -317,6 +335,29 @@ fn remove_after_claim(root: &Path, candidates: &[PathBuf], mut after_claim: impl
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reusable_copy_requires_its_receipt_source_and_current_contents() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let backup = root.join("feed.json.broken");
+        std::fs::write(&backup, b"original").unwrap();
+        assert!(matching_copy(root, b"original").unwrap().is_none(), "unrecorded identical bytes are still an unrelated entry");
+        record(root, &backup, b"original").unwrap();
+        assert_eq!(matching_copy(root, b"original").unwrap(), Some(backup.clone()));
+        assert!(matching_copy(root, b"another source").unwrap().is_none());
+        std::fs::write(&backup, b"personal").unwrap();
+        assert!(matching_copy(root, b"original").unwrap().is_none(), "the receipt cannot own changed contents of the same length");
+        std::fs::write(&backup, b"original").unwrap();
+        let path = root.join("inbox/feed-backups/feed.json.broken.json");
+        let mut newer: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        newer["version"] = serde_json::json!(99);
+        let bytes = serde_json::to_vec(&newer).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(matching_copy(root, b"original").unwrap().is_none(), "an unknown receipt never authorizes reuse");
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert_eq!(std::fs::read(&backup).unwrap(), b"original");
+    }
 
     #[test]
     fn ownership_checks_the_open_file_instead_of_reopening_its_path() {

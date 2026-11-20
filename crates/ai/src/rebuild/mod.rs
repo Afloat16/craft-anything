@@ -573,7 +573,7 @@ const USAGE_FLUSH: Duration = Duration::from_secs(60);
 fn emit_event(feed: &Mutex<feed::FeedLog>, tx: &Sender<RunEvent>, wake: &Wake, e: RunEvent) {
     let mut feed = feed.lock().unwrap_or_else(PoisonError::into_inner);
     feed.record(&e);
-    let _ = tx.send(e);
+    let _ = tx.send(feed.completion_event(e));
     drop(feed);
     wake.call();
 }

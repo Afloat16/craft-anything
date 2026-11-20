@@ -13,7 +13,11 @@ use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 
 mod backups;
+mod recovery;
+mod transaction;
 pub(crate) use backups::{owned_backups, owns_open_backup, remove_owned_backups};
+pub use recovery::{RECOVERY_ARCHIVE_DIR, RecoverySnapshot, write_recovery_snapshot};
+pub use transaction::{ProjectFeedGuard, lock_project};
 
 /// Where the conversation is kept in the project folder.
 pub const FEED_FILE: &str = "feed.json";
@@ -219,7 +223,7 @@ struct Saved {
     recovery: Option<RecoveryProjection>,
 }
 
-/// A conversation together with whether its saved contents were actually read. A display
+/// A conversation together with its read state and last successfully saved source. A display
 /// fallback must keep that fact through edits: repairing the file later doesn't make the
 /// fallback safe to write over it. Load it again after fixing a read error.
 #[derive(Debug, Clone)]
@@ -238,7 +242,8 @@ impl LoadedFeed {
         self.not_loaded.is_none() && self.damaged.is_none()
     }
 
-    /// True only when this load actually decoded saved bytes, never for an absent-file fallback.
+    /// Whether valid saved bytes were decoded or this value was successfully committed.
+    /// An absent-file fallback has no such source until its first save succeeds.
     pub fn was_decoded(&self) -> bool {
         self.decoded_source.is_some()
     }
@@ -322,6 +327,14 @@ fn read_previous(path: &Path) -> Result<Option<Vec<u8>>, ToolError> {
 /// The feed for a project: what was saved, else rebuilt from its manifest. Questions still
 /// waiting in its inbox are always there.
 pub fn load(ws: &Workspace) -> LoadedFeed {
+    let mut feed = load_inner(ws);
+    // These are retained recovery records, not an automatic replay or a claim that the
+    // current feed failed. Reading notices never changes the saved-source guard.
+    recovery::append_recovery_notices(&ws.root, &mut feed.items);
+    feed
+}
+
+fn load_inner(ws: &Workspace) -> LoadedFeed {
     let saved = read_previous(&ws.root.join(FEED_FILE)).and_then(|bytes| match bytes {
         Some(bytes) if newer_version(&bytes) => Err(newer_error()),
         bytes => Ok(bytes),
@@ -438,21 +451,45 @@ pub fn history(ws: &Workspace) -> Vec<FeedItem> {
 /// Write the feed into the project folder (only one that exists; never creates one). A feed
 /// saved by a newer Craft Anything is never written over (docs/file-formats.md). A read failure
 /// also leaves the path unchanged; only a missing path can be created. A readable damaged
-/// conversation is copied byte-for-byte to an unused backup before it can be replaced.
+/// conversation is preserved byte-for-byte in a verified recovery copy before replacement.
+/// The loaded source is compared under the project lock on every save.
 pub fn save(root: &Path, feed: &mut LoadedFeed) -> Result<(), ToolError> {
     save_inner(root, feed, false)
 }
 
 /// Save replayed events only if the replacement still matches the bytes that were decoded.
-/// This checks the existing read immediately before saving; it is not a filesystem lock.
+/// All application feed writers share the project lock through comparison and replacement.
 pub fn save_if_unchanged(root: &Path, feed: &mut LoadedFeed) -> Result<(), ToolError> {
     save_inner(root, feed, true)
 }
 
 fn save_inner(root: &Path, feed: &mut LoadedFeed, require_decoded_source: bool) -> Result<(), ToolError> {
+    save_using(root, feed, require_decoded_source, crate::project::write_atomic)
+}
+
+fn save_using(
+    root: &Path,
+    feed: &mut LoadedFeed,
+    require_decoded_source: bool,
+    write: impl FnOnce(&Path, &[u8]) -> Result<(), ToolError>,
+) -> Result<(), ToolError> {
     if let Some(error) = &feed.not_loaded {
         return Err(error.clone());
     }
+    let guard = lock_project(root)?;
+    save_locked_using(&guard, feed, require_decoded_source, write)
+}
+
+fn save_locked_using(
+    guard: &ProjectFeedGuard,
+    feed: &mut LoadedFeed,
+    require_decoded_source: bool,
+    write: impl FnOnce(&Path, &[u8]) -> Result<(), ToolError>,
+) -> Result<(), ToolError> {
+    if let Some(error) = &feed.not_loaded {
+        return Err(error.clone());
+    }
+    let root = &guard.root;
     if !root.is_dir() {
         return Err(ToolError::new(ErrorCode::FileError, "The project's folder isn't available, so its conversation wasn't saved.")
             .with_remediation("Restore the project folder, then reopen the project before retrying."));
@@ -462,8 +499,11 @@ fn save_inner(root: &Path, feed: &mut LoadedFeed, require_decoded_source: bool) 
     if previous.as_deref().is_some_and(newer_version) {
         return Err(newer_error());
     }
-    if require_decoded_source
-        && (feed.decoded_source.is_none() || previous.as_deref().map(craft_anything_evidence::sha256_hex).as_ref() != feed.decoded_source.as_ref())
+    // An ordinary caller can hold an old snapshot too. Compare every loaded source while
+    // holding the same lock as replacement, including a confirmed-absent original.
+    if (require_decoded_source && feed.decoded_source.is_none())
+        || feed.decoded_source.as_ref().is_some_and(|source| previous.as_deref().map(craft_anything_evidence::sha256_hex).as_ref() != Some(source))
+        || (feed.decoded_source.is_none() && feed.damaged.is_none() && previous.is_some())
     {
         return Err(ToolError::new(ErrorCode::FileChanged, "The saved conversation changed before its pending events could be saved.")
             .with_remediation("Load the current conversation again before replaying the pending events. Nothing was written."));
@@ -493,12 +533,10 @@ fn save_inner(root: &Path, feed: &mut LoadedFeed, require_decoded_source: bool) 
     }
     let saved = Saved { version: FEED_VERSION, items, recovery: feed.recovery.clone() };
     let json = serde_json::to_vec(&saved).map_err(|e| ToolError::internal(e.to_string()))?;
-    crate::project::write_atomic(&path, &json)?;
+    write(&path, &json)?;
     feed.items = saved.items;
     feed.damaged = None;
-    if feed.decoded_source.is_some() {
-        feed.decoded_source = Some(craft_anything_evidence::sha256_hex(&json));
-    }
+    feed.decoded_source = Some(craft_anything_evidence::sha256_hex(&json));
     Ok(())
 }
 
@@ -509,8 +547,11 @@ fn damaged_backups(root: &Path) -> impl Iterator<Item = PathBuf> + '_ {
 }
 
 /// Keep an exact copy without ever opening an existing backup for replacement. A failed copy
-/// leaves the source untouched; a failed later save can try the next unused name.
+/// leaves the source untouched; a failed later save reuses only a verified copy of these bytes.
 fn keep_damaged(root: &Path, bytes: &[u8]) -> Result<PathBuf, ToolError> {
+    if let Some(backup) = backups::matching_copy(root, bytes)? {
+        return Ok(backup);
+    }
     for backup in damaged_backups(root) {
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
@@ -549,9 +590,17 @@ fn keep_damaged(root: &Path, bytes: &[u8]) -> Result<PathBuf, ToolError> {
 /// question, taken before it was answered: one the saved conversation doesn't have yet (posted
 /// from outside a run) is added with its answer, rather than lost once it stops waiting (#176).
 pub fn record_answer(ws: &Workspace, request: &Request, shown: &str) -> Result<(), ToolError> {
+    record_answer_using(ws, request, shown, || {})
+}
+
+fn record_answer_using(ws: &Workspace, request: &Request, shown: &str, before_save: impl FnOnce()) -> Result<(), ToolError> {
+    // Inbox submission already owns its request lock. Do not reacquire it while holding
+    // this feed lock; load only reads pending requests and delivery evidence.
+    let guard = lock_project(&ws.root)?;
     let mut feed = load(ws);
     record_pending_answer(&mut feed, request, shown);
-    save(&ws.root, &mut feed)
+    before_save();
+    save_locked_using(&guard, &mut feed, false, crate::project::write_atomic)
 }
 
 /// Record the latest answer to a request captured from the pending inbox, including a retry
@@ -570,9 +619,191 @@ mod tests {
     use crate::inbox::RequestKind;
     use crate::workspace::TargetRef;
 
-    /// Seed a fixture directly; production writers can only save a value returned by `load`.
+    /// Seed a fixture against its current bytes; production writers use the value from `load`.
     fn save(root: &Path, items: &[FeedItem]) -> Result<(), ToolError> {
-        super::save(root, &mut LoadedFeed { items: items.to_vec(), not_loaded: None, damaged: None, decoded_source: None, recovery: None })
+        let previous = read_previous(&root.join(FEED_FILE))?;
+        let damaged = previous.as_ref().filter(|bytes| decode(bytes).is_none()).cloned();
+        let decoded_source = previous.as_ref().filter(|bytes| decode(bytes).is_some()).map(|bytes| craft_anything_evidence::sha256_hex(bytes));
+        super::save(root, &mut LoadedFeed { items: items.to_vec(), not_loaded: None, damaged, decoded_source, recovery: None })
+    }
+
+    fn question(ws: &Workspace, title: &str) -> Request {
+        let inbox = Inbox::new(ws.inbox_dir());
+        let id = inbox.post(RequestKind::Question, title, "", vec![], true, None).unwrap();
+        inbox.pending().into_iter().find(|request| request.id == id).unwrap()
+    }
+
+    #[test]
+    fn ordinary_saves_preserve_a_concurrently_recorded_answer() {
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Site", "A website", TargetRef::None).unwrap();
+        let request = question(&ws, "Which colour?");
+        super::save(&ws.root, &mut load(&ws)).unwrap();
+        let mut older = load(&ws);
+        older.push(FeedItem::Paused);
+        record_answer(&ws, &request, "Blue").unwrap();
+        let path = ws.root.join(FEED_FILE);
+        let before = std::fs::read(&path).unwrap();
+
+        assert_eq!(super::save(&ws.root, &mut older).unwrap_err().code, ErrorCode::FileChanged);
+
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert!(matches!(older.last(), Some(FeedItem::Paused)), "the caller retains its unsaved change for replay");
+    }
+
+    #[test]
+    fn an_absent_feed_snapshot_cannot_replace_a_new_conversation() {
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Site", "A website", TargetRef::None).unwrap();
+        let request = question(&ws, "Which colour?");
+        let mut absent = load(&ws);
+        record_answer(&ws, &request, "Blue").unwrap();
+        let path = ws.root.join(FEED_FILE);
+        let before = std::fs::read(&path).unwrap();
+        absent.push(FeedItem::Paused);
+
+        assert_eq!(super::save(&ws.root, &mut absent).unwrap_err().code, ErrorCode::FileChanged);
+
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn a_successful_first_save_establishes_the_next_source_guard() {
+        for damaged in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(directory.path(), "Site", "A website", TargetRef::None).unwrap();
+            let path = ws.root.join(FEED_FILE);
+            if damaged {
+                std::fs::write(&path, b"damaged conversation").unwrap();
+            }
+            let mut feed = load(&ws);
+            super::save(&ws.root, &mut feed).unwrap();
+            feed.push(FeedItem::Paused);
+
+            save_if_unchanged(&ws.root, &mut feed).unwrap();
+            super::save(&ws.root, &mut feed).unwrap();
+
+            assert_eq!(feed.decoded_source, Some(craft_anything_evidence::sha256_hex(&std::fs::read(&path).unwrap())));
+            assert_eq!(load(&ws).iter().filter(|item| matches!(item, FeedItem::Paused)).count(), 1);
+        }
+    }
+
+    #[test]
+    fn an_answer_cannot_commit_between_recovery_comparison_and_replacement() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Site", "A website", TargetRef::None).unwrap();
+        let request = question(&ws, "Which colour?");
+        super::save(&ws.root, &mut load(&ws)).unwrap();
+        let mut replayed = load(&ws);
+        replayed.push(FeedItem::Paused);
+
+        std::thread::scope(|scope| {
+            let (release, go) = mpsc::channel();
+            let (entered, ready) = mpsc::channel();
+            let (completed, done) = mpsc::channel();
+            let ws = &ws;
+            let request = &request;
+            let other = scope.spawn(move || {
+                go.recv_timeout(Duration::from_secs(5)).unwrap();
+                entered.send(()).unwrap();
+                let result = record_answer(ws, request, "Blue");
+                completed.send(()).unwrap();
+                result
+            });
+            save_using(&ws.root, &mut replayed, true, |path, bytes| {
+                release.send(()).unwrap();
+                ready.recv_timeout(Duration::from_secs(5)).unwrap();
+                // The old uncoordinated answer completes here; a coordinated writer waits
+                // for this comparison/replacement transaction to release its lock.
+                let _ = done.recv_timeout(Duration::from_millis(200));
+                crate::project::write_atomic(path, bytes)
+            })
+            .unwrap();
+            other.join().unwrap().unwrap();
+        });
+
+        let saved = load(&ws);
+        assert!(saved.iter().any(|item| matches!(item, FeedItem::Paused)));
+        assert!(saved.iter().any(|item| matches!(item, FeedItem::Ask { request: saved, answer: Some(answer) } if saved.id == request.id && answer == "Blue")));
+    }
+
+    #[test]
+    fn concurrent_answer_transactions_keep_both_replies() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Site", "A website", TargetRef::None).unwrap();
+        let first = question(&ws, "Which colour?");
+        let second = question(&ws, "Which size?");
+        super::save(&ws.root, &mut load(&ws)).unwrap();
+
+        std::thread::scope(|scope| {
+            let (release, go) = mpsc::channel();
+            let (entered, ready) = mpsc::channel();
+            let (completed, done) = mpsc::channel();
+            let ws = &ws;
+            let second = &second;
+            let other = scope.spawn(move || {
+                go.recv_timeout(Duration::from_secs(5)).unwrap();
+                entered.send(()).unwrap();
+                let result = record_answer(ws, second, "Large");
+                completed.send(()).unwrap();
+                result
+            });
+            record_answer_using(ws, &first, "Blue", || {
+                release.send(()).unwrap();
+                ready.recv_timeout(Duration::from_secs(5)).unwrap();
+                let _ = done.recv_timeout(Duration::from_millis(200));
+            })
+            .unwrap();
+            other.join().unwrap().unwrap();
+        });
+
+        let saved = load(&ws);
+        for (request, shown) in [(&first, "Blue"), (&second, "Large")] {
+            assert!(
+                saved.iter().any(|item| matches!(item, FeedItem::Ask { request: saved, answer: Some(answer) } if saved.id == request.id && answer == shown))
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_replacements_reuse_one_verified_recovery_copy() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Site", "A website", TargetRef::None).unwrap();
+        let permissions = std::fs::metadata(&ws.root).unwrap().permissions();
+        std::fs::set_permissions(&ws.root, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let probe = ws.root.join("write-probe");
+        let denied = std::fs::write(&probe, b"probe");
+        std::fs::set_permissions(&ws.root, permissions.clone()).unwrap();
+        if denied.is_ok() {
+            std::fs::remove_file(&probe).unwrap();
+            eprintln!("permission test skipped: this process can create entries in a read-only directory");
+            return;
+        }
+        let path = ws.root.join(FEED_FILE);
+        let original = b"damaged conversation";
+        std::fs::write(&path, original).unwrap();
+        let mut feed = load(&ws);
+        for _ in 0..20 {
+            let result = save_using(&ws.root, &mut feed, false, |path, bytes| {
+                std::fs::set_permissions(&ws.root, std::fs::Permissions::from_mode(0o500)).unwrap();
+                let result = crate::project::write_atomic(path, bytes);
+                std::fs::set_permissions(&ws.root, permissions.clone()).unwrap();
+                result
+            });
+            assert!(result.is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), original);
+            assert_eq!(damaged_backups(&ws.root).filter(|backup| backup.exists()).count(), 1, "retry reuses the complete verified copy");
+        }
+        super::save(&ws.root, &mut feed).unwrap();
+        assert!(load(&ws).was_decoded());
+        assert_eq!(damaged_backups(&ws.root).filter(|backup| backup.exists()).count(), 1);
+        assert_eq!(std::fs::read(ws.root.join("feed.json.broken")).unwrap(), original);
     }
 
     #[test]

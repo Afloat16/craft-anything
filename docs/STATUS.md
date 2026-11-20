@@ -744,11 +744,20 @@ file readable later cannot let an earlier fallback replace it. Damaged readable 
 an unused `feed.json.broken` backup before replacement; backup failure stops the save, and the
 conversation names the recovery copy. Questions are saved before inbox delivery in the tool and
 app paths. Failed saves leave them pending; failed delivery remains retryable without discarding
-the recorded answer when another writer saves. Recovery replay checks the decoded repair's digest
-against the save's disk read; a changed replacement keeps the journal for another load. Recovery
+the recorded answer when another writer saves. All application feed writes compare their loaded
+source while holding a bounded cross-process lock through replacement, including an originally
+absent file. Ordinary answer transactions load and apply their reply under that lock. A changed
+replacement keeps the journal for another load; a retry after failed replacement reuses a recovery
+copy only when both its receipt and current bytes match the damaged source. Recovery
 provenance survives later manifest updates, and only this run's own errors suppress its failure note.
 The explanation state calculated during replay is installed with the recovered conversation only
 after its guarded save succeeds, including when subsequent answer delivery fails.
+If the final save still fails, the worker keeps a separate versioned recovery copy before sending
+the completion event. The copy contains the folded conversation and its source context, without raw
+tool-event input or output. Releasing the CLI run or replacing a desktop run leaves that copy on
+disk, and reopening shows its path as a historical notice. Copies are bounded and never imported
+automatically; a failure of both writes explicitly reports that the unsaved conversation was not
+preserved. Polling and dropping a run do not perform I/O.
 Expired staged replies remain visibly undelivered; unreadable delivery evidence is shown as unknown
 without advising another submission. Existing answer I/O errors stop a new persistence attempt.
 Timeout and cancellation invalidate a locked request even when its directory prevents unlinking it;
@@ -756,14 +765,18 @@ restoring directory access cannot make that withdrawn request answerable again. 
 I/O failures instead of presenting them as confirmed withdrawal or a person's refusal.
 Delivered receipts survive request cleanup. Project deletion atomically claims each selected
 recovery copy before checking its ownership; changed entries survive in their original or reported
-quarantine location. Duplication checks ownership before creating its destination and classifies
-backup-shaped files through the handle it copies. New or changed unverified entries require a retry;
-stable personal files and directories are retained, and verified recovery copies are excluded.
+quarantine location. In-place duplication holds the feed lock across discovery, copying and final
+manifest publication. It classifies backup-shaped files through the handle it copies, recognizing
+equivalent case spellings only when they are the same file. New or changed unverified entries
+require a retry; stable personal files and directories are retained, and verified recovery copies
+are excluded. A failed copy removes only its newly created destination after checking its identity;
+an external replacement is kept with an error, and no partial project manifest is published.
 Creation rejects dangling reserved links or propagates metadata errors. Newer read-only manifests are rejected
 before build-finish touches their conversations.
 Regression coverage includes sticky read failures, exact recovery copies and occupied backup names,
-tool/live-run answer delivery, intervening writers, dangling/looping links and normal saves.
-A Windows no-sharing regression is included but has not been run locally. No live desktop or remote
+tool/live-run answer delivery, intervening writers, cross-process locking, final-save owner release,
+failed-copy cleanup, case-sensitive personal files, same-file aliases, dangling/looping links and normal saves.
+Windows no-sharing and case-insensitive rename regressions are included but have not been run locally. No live desktop or remote
 filesystem run is claimed.
 
 `engines_list` reports external and game-engine readiness; `engines_install` installs Ghidra,

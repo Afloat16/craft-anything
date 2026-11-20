@@ -912,8 +912,12 @@ actually decoded contents and replay only its unsaved events. A path-existence p
 by an absent-file fallback is not proof of a decoded conversation; retain the original guard
 until the replacement is successfully saved.
 Bind a recovery replay to the decoded replacement's digest at the save's existing disk read.
-Another client's intervening answer must yield FileChanged and retain the journal for a new load;
-a second successful decode alone does not make the stale replay current.
+Compare and replace under the same cross-process lock used by every application feed writer;
+a digest check alone still has a window in which another answer can be lost. Ordinary saves must
+also reject stale loaded sources, including a file created after an absent snapshot. Load and apply
+an ordinary answer while holding that lock. Keep request-before-feed lock order, bounded waits and
+a persistent coordination file. Another client's intervening answer must yield FileChanged and
+retain the journal for a new load; a second successful decode alone does not make the stale replay current.
 The manifest may already project a pending check, completed reply or failure into that history.
 Save that projection and its damaged source digest with the recovery rather than guessing from a
 manifest that may have advanced. A temporary read failure or a different damaged source does not
@@ -925,6 +929,12 @@ An external tail error cannot explain this run's failure. Track which errors the
 and use the same rule when replaying and checking whether a projected failure will be recreated.
 Install that replayed explanation state with the feed only after the guarded recovery commit succeeds;
 discarding it can append a duplicate Finished error after a replay skips an already present question.
+A failed final save cannot leave the only pending conversation in a run that is about to be dropped
+or replaced. Keep an explicit recovery copy on the worker before publishing Finished, and report
+both failures honestly if that copy also cannot be written. Keep the folded feed and source context,
+not raw tool events that may contain input absent from the conversation. Historical recovery notices
+must not explain a new run's failure. Do not perform persistence I/O in polling or destructors, and
+do not automatically import retained copies whose contents may overlap a later successful save.
 Saving a reply and withdrawing its request also share the request's file lock: a withdrawn
 request cannot stage a reply, while an accepted submission finishes before timeout or cancellation.
 An ignored unlink error does not withdraw a request. If its directory prevents removal, invalidate
@@ -957,7 +967,15 @@ actually used for copying. A discovered pathname is not a stable identity, and r
 backup bytes before its receipt. Require a retry for newly observed or changed unverified entries;
 do not silently skip personal replacements or copy a new recovery file through that publication gap.
 A missing or unrecognized receipt cannot reclassify an already known recovery copy as personal
-content during that same copy attempt.
+content during that same copy attempt. Hold the source feed lock across discovery and copying,
+so a backup already present before discovery cannot be mistaken for personal content while its
+receipt is still being written. Match case variants by the opened file's identity, not by lowercasing
+all names: a case-sensitive filesystem can hold a distinct personal file with that spelling.
+Publish a duplicate's manifest only after the copy succeeds. On failure, remove the newly created
+destination only while its held directory identity still matches, so a retry can use the same name
+without deleting an unrelated replacement. Reuse a completed damaged-feed backup after replacement
+fails only when both its receipt and current contents match the original source; repeated retries
+must not consume every backup slot for identical bytes.
 Creation must treat dangling reserved links and metadata errors as existing conflicts.
 When freeing a backup slot, move its associated ownership receipt too if one exists.
 And "not found" wasn't that either: reading a link whose target is missing answers "not found"
