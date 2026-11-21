@@ -280,6 +280,10 @@ impl CraftApp {
 
     /// Answer a question or approval card. `shown` is what the feed says was answered.
     pub fn answer_request(&mut self, id: &str, answer: Answer, shown: String) {
+        self.answer_request_using(id, answer, shown, || {});
+    }
+
+    fn answer_request_using(&mut self, id: &str, answer: Answer, shown: String, after_answer: impl FnOnce()) {
         let r = match (self.open_run(), &self.workspace) {
             (Some(run), _) => run.answer_as(id, &answer, &shown),
             (None, Some(ws)) => Inbox::new(ws.inbox_dir()).answer_recorded(ws, id, &answer, &shown),
@@ -289,17 +293,25 @@ impl CraftApp {
             self.toast(e.for_people(), true);
             return;
         }
+        after_answer();
         let current = match (self.open_run(), &self.workspace) {
             (Some(run), _) => run.display_feed(),
             (None, Some(ws)) => feed::for_display(ws),
             _ => Vec::new(),
         };
-        if let Some(updated) = current.into_iter().find(|item| matches!(item, FeedItem::Ask { request, .. } if request.id == id))
-            && let Some(card) = self.state.feed.iter_mut().find(|item| matches!(item, FeedItem::Ask { request, .. } if request.id == id))
-        {
+        let updated = current.into_iter().find(|item| matches!(item, FeedItem::Ask { request, answer: Some(_) } if request.id == id));
+        if let Some(card) = self.state.feed.iter_mut().find(|item| matches!(item, FeedItem::Ask { request, .. } if request.id == id)) {
             // The display may have added an undelivered-reply hint to the old request.
             // Replace that card only; pending events still need their usual polling effects.
-            *card = updated;
+            if let Some(updated) = updated {
+                *card = updated;
+            } else if let FeedItem::Ask { request, answer } = card {
+                // Submission succeeded even if another writer removed this row before refresh.
+                // The answered card shows the submitted words; omit the obsolete detail and
+                // its delivery warning until a canonical card is available again.
+                request.detail.clear();
+                *answer = Some(shown);
+            }
         }
         self.state.answers.remove(id);
         if !self.state.feed.iter().any(|f| matches!(f, FeedItem::Ask { answer: None, .. }))
@@ -313,20 +325,19 @@ impl CraftApp {
     /// project's feed). Queued runs start as others finish.
     pub fn poll_run(&mut self) {
         self.runs.set_limit(self.settings.build.parallel);
-        let events = self.runs.poll(&self.hub);
+        let mut events = self.runs.poll_with_snapshots(&self.hub);
         if events.is_empty() {
             return;
         }
         let open = self.workspace.as_ref().map(|w| w.root.clone());
         let mut finished = Vec::new();
-        for (root, e) in &events {
+        for update in &mut events {
+            let (root, e) = (&update.root, &update.event);
             if open.as_ref() == Some(root) {
-                if matches!(e, RunEvent::Finished { .. })
-                    && let Some(run) = self.runs.get(root)
-                {
+                if let Some(feed) = update.completed_feed.take() {
                     // Finished.message serves text clients. This display keeps the build's
                     // result and its separate final persistence notice, including recovery.
-                    self.state.feed = run.display_feed();
+                    self.state.feed = feed;
                 } else {
                     apply(&mut self.state.feed, e);
                 }
@@ -356,7 +367,7 @@ impl CraftApp {
                 _ => {}
             }
         }
-        if events.iter().any(|(root, _)| open.as_ref() == Some(root)) {
+        if events.iter().any(|update| open.as_ref() == Some(&update.root)) {
             self.refresh_side_panel();
         }
         if finished.is_empty() {
@@ -2635,6 +2646,54 @@ mod tests {
         assert!(!app.state.answers.contains_key(&id));
         assert!(app.state.feed.iter().any(|item| matches!(item, FeedItem::Ask { request, answer: Some(answer) } if request.id == id && answer == "Blue")));
         assert!(feed::load(&ws).iter().any(|item| matches!(item, FeedItem::Ask { request, answer: Some(answer) } if request.id == id && answer == "Blue")));
+    }
+
+    #[test]
+    fn a_delivered_answer_loses_its_retry_control_when_the_display_changes() {
+        for (live, consume_before_refresh) in [(false, true), (true, true), (false, false), (true, false)] {
+            let directory = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(directory.path(), "Colour", "Pick a colour", TargetRef::None).unwrap();
+            let other = Workspace::create(directory.path(), "Other", "Another project", TargetRef::None).unwrap();
+            let inbox = Inbox::new(ws.inbox_dir());
+            let id = inbox.post(RequestKind::Question, "Blue or red?", "Choose a colour.", vec![], true, None).unwrap();
+            let mut app = crate::demo::app(crate::demo::engine(craft_anything_engine::Mode::Beginner, true));
+            if live {
+                let runs = rebuild::StandIns::new();
+                app.runs = rebuild::RunSet::new(1).with_starter(runs.starter());
+                app.runs.start(&app.hub, ws.clone(), RunOptions::default()).unwrap();
+            }
+            app.open_workspace(ws.clone());
+            let blocked = inbox.dir().join(format!("{id}.answer.json"));
+            std::fs::create_dir(&blocked).unwrap();
+            app.answer_request(&id, Answer { text: Some("Blue".into()), ..Default::default() }, "Blue".into());
+            app.open_workspace(other);
+            app.open_workspace(ws.clone());
+            assert!(app.state.feed.iter().any(|item| matches!(item,
+                FeedItem::Ask { request, answer: None } if request.id == id && request.detail.contains("has not been delivered"))));
+            std::fs::remove_dir(blocked).unwrap();
+            app.state.answers.insert(id.clone(), "Red".into());
+            let mut delivered = None;
+            app.answer_request_using(&id, Answer { text: Some("Red".into()), ..Default::default() }, "Red".into(), || {
+                if consume_before_refresh {
+                    delivered = inbox.try_wait(&id, std::time::Duration::ZERO, &|| false).unwrap();
+                    assert!(delivered.is_some());
+                }
+                let mut changed = craft_anything_engine::feed::load(&ws);
+                changed.retain(|item| !matches!(item, FeedItem::Ask { request, .. } if request.id == id));
+                craft_anything_engine::feed::save(&ws.root, &mut changed).unwrap();
+            });
+            assert!(
+                app.state.feed.iter().any(|item| matches!(item,
+                FeedItem::Ask { request, answer: Some(answer) } if request.id == id && answer == "Red" && !request.detail.contains("has not been delivered"))),
+                "a successful reply must not retain an old retry control: {:?}",
+                app.state.feed
+            );
+            assert!(!app.state.answers.contains_key(&id));
+            if !consume_before_refresh {
+                delivered = inbox.try_wait(&id, std::time::Duration::ZERO, &|| false).unwrap();
+            }
+            assert_eq!(delivered.unwrap().as_text(), "Red");
+        }
     }
 
     #[test]

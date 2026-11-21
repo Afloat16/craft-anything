@@ -992,6 +992,16 @@ question's retry control once its display already says delivery is unconfirmed. 
 to the same project identity. Use a nonblocking regular-file probe for the source recheck, since a
 path replaced by a FIFO must not freeze the display. After a successful retry, refresh that question's
 canonical detail instead of leaving the previous reply's warning; do not drain queued workflow events.
+If a snapshot is stale while the question remains pending, label its words as an earlier reply:
+another client may have staged a newer one for that same request. After successful delivery, retire
+the retry control even if the refreshed display has no matching answered row. A completion snapshot
+travels with its event; looking up the project's retained run can return an older run when a queued
+follow-up fails before starting. Verify the staging path itself before offering manual cleanup;
+a verified completed archive does not authorize moving a replacement at its former staging path.
+Use the nonblocking regular-file open in the guarded save as well as the display probe; a plain
+read of a substituted FIFO can hold the project guard forever. Sync the inbox directory after
+staging a delivery receipt and before saving the reply, even when the receipt was already staged:
+an earlier attempt may have failed its directory sync. A file sync alone does not publish its name.
 An expired self-check reply is withdrawn; it does not fail the build that completed the check.
 Both the desktop and tools use the engine's same answer transaction and show its remediation.
 A persistence notice is separate from a builder error, so it cannot hide why a build failed.
@@ -999,7 +1009,10 @@ Calling a build done checks manifest writability before any feed mutation, then 
 conversation entry before changing the manifest; a retry after a failed status write recognizes
 that entry. A manifest update must validate its loaded project under the deletion guard before
 merging current fields and writing; adopting the path's current generation first would overwrite a
-replacement project. Keep initial publication separate so a stale save cannot recreate a deleted
+replacement project. Person-setting writes start from the current disk manifest; only build saves
+start from their cached build state and merge person-owned fields. Apply new-project choices inside
+the person-setting transaction too; changing a cached stack before that call would lose it. Keep
+initial publication separate so a stale save cannot recreate a deleted
 manifest. Recovery backups share a reserved-name list for writing, new-project conflicts,
 source scanning and coding-agent protection. Deletion also verifies a generated ownership
 receipt and the current regular file's bytes; a matching name never owns a legacy personal file

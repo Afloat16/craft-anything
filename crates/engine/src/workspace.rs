@@ -1301,14 +1301,23 @@ impl Workspace {
     /// they are on disk, so a writer holding an older copy (a run that started before the person
     /// raised the budget) can't undo their change. This acquires the non-reentrant project lock.
     pub fn save(&self) -> Result<(), ToolError> {
-        self.write_manifest(|_| {}).map(|_| ())
+        self.write_manifest(|disk| {
+            let mut manifest = self.manifest.clone();
+            manifest.take_person_fields(disk);
+            manifest
+        })
+        .map(|_| ())
     }
 
     /// Change the fields the person owns (the asset budget, whether assets are generated, the
     /// actions always allowed): start from what's on disk, apply `f` and save. This is the only
     /// way they change.
     pub fn set_person(&mut self, f: impl FnOnce(&mut Manifest)) -> Result<(), ToolError> {
-        self.manifest = self.write_manifest(f)?;
+        self.manifest = self.write_manifest(|disk| {
+            let mut manifest = disk.clone();
+            f(&mut manifest);
+            manifest
+        })?;
         Ok(())
     }
 
@@ -1320,7 +1329,7 @@ impl Workspace {
         write_atomic(&self.root.join(MANIFEST), &bytes)
     }
 
-    fn write_manifest(&self, change: impl FnOnce(&mut Manifest)) -> Result<Manifest, ToolError> {
+    fn write_manifest(&self, change: impl FnOnce(&Manifest) -> Manifest) -> Result<Manifest, ToolError> {
         self.ensure_writable()?;
         let guard = crate::feed::lock_project(&self.root)?;
         // A pathname can now name a replacement project. Do not adopt its identity or
@@ -1328,9 +1337,7 @@ impl Workspace {
         guard.check_workspace(self)?;
         let disk = Workspace::open(&self.root)?;
         disk.ensure_writable()?;
-        let mut m = self.manifest.clone();
-        m.take_person_fields(&disk.manifest);
-        change(&mut m);
+        let mut m = change(&disk.manifest);
         // Creation owns these fields. The checked disk record is the same project;
         // neither a cached save nor a person-setting closure changes its identity.
         m.generation = disk.manifest.generation;
@@ -2130,6 +2137,37 @@ mod tests {
         run.set_person(|m| m.asset_budget_usd = 25.0).unwrap();
         let disk = Workspace::open(&run.root).unwrap().manifest;
         assert_eq!((disk.asset_budget_usd, disk.generate_assets), (25.0, true));
+    }
+
+    #[test]
+    fn a_stale_person_change_keeps_the_latest_build_progress() {
+        for rename in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut person = Workspace::create(directory.path(), "Project", "Build a clock", TargetRef::None).unwrap();
+            let mut run = Workspace::open(&person.root).unwrap();
+            run.manifest.status = Status::Ready;
+            run.manifest.note = "The build passed".into();
+            run.manifest.checks.push(CheckResult::new(CheckResult::BUILD, 3, true, "Compiled"));
+            run.manifest.agent_session = Some("test-session".into());
+            run.manifest.agent_session_by = Some("codex".into());
+            run.manifest.agent_session_deep = Some(false);
+            run.manifest.last_reply = "The clock is ready".into();
+            run.save().unwrap();
+            let mut expected = Workspace::open(&person.root).unwrap().manifest;
+            if rename {
+                person.rename("Renamed project").unwrap();
+                expected.name = "Renamed project".into();
+            } else {
+                person.set_person(|manifest| manifest.asset_budget_usd = 25.0).unwrap();
+                expected.asset_budget_usd = 25.0;
+            }
+            assert_eq!(
+                serde_json::to_value(&person.manifest).unwrap(),
+                serde_json::to_value(&expected).unwrap(),
+                "person-setting writes must keep the current build fields"
+            );
+            assert_eq!(serde_json::to_value(Workspace::open(&person.root).unwrap().manifest).unwrap(), serde_json::to_value(expected).unwrap());
+        }
     }
 
     #[test]

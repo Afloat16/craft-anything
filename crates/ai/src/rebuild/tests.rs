@@ -4180,6 +4180,8 @@ fn a_new_project_gets_the_settings_it_started_with() {
     assert!(ws.manifest.generate_assets, "the asset choice is written");
     assert_eq!(ws.manifest.asset_budget_usd, session.settings.assets.budget(), "the budget comes from settings");
     assert_eq!(ws.manifest.request, "A game");
+    let reopened = Workspace::open(&folder).unwrap();
+    assert_eq!(serde_json::to_value(&reopened.manifest).unwrap(), serde_json::to_value(&ws.manifest).unwrap(), "all initial choices are persisted together");
 }
 
 #[test]

@@ -258,8 +258,10 @@ fn write_recovery_snapshot_report_using(
 fn retained_write_error(error: ToolError, pending: &Path, published: Option<&Path>, identity: &same_file::Handle, complete: bool) -> ToolError {
     let mut retained = Vec::new();
     let mut unverified = Vec::new();
+    let mut staging_verified = false;
     for path in std::iter::once(pending).chain(published) {
         if super::backups::same_file_at(path, identity).unwrap_or(false) {
+            staging_verified |= path == pending;
             retained.push(path.display().to_string());
         } else {
             unverified.push(path.display().to_string());
@@ -271,11 +273,19 @@ fn retained_write_error(error: ToolError, pending: &Path, published: Option<&Pat
         "This recovery write did not complete.".into()
     };
     let location = if retained.is_empty() {
-        format!("The original staging entry at {} could not be verified and may now name another file. Do not remove it based on its name.", pending.display())
+        String::new()
     } else {
         format!(
-            "This attempt's verified remaining file paths are: {}. Inspect them and save any useful conversation fragments elsewhere first. To reclaim staging space, move only the inspected staging file out of pending; keep a completed archive. Recheck the file before moving it if anything else has changed it.",
+            "This attempt's verified remaining file paths are: {}. Inspect them and save any useful conversation fragments elsewhere first.",
             retained.join(", ")
+        )
+    };
+    let staging = if staging_verified {
+        "To reclaim staging space, move only the inspected staging file out of pending; keep a completed archive. Recheck the file before moving it if anything else has changed it.".into()
+    } else {
+        format!(
+            "The original staging entry at {} could not be verified and may now name another file. Do not remove it based on its name, or move it to reclaim staging space.",
+            pending.display()
         )
     };
     let retry = if complete {
@@ -286,7 +296,7 @@ fn retained_write_error(error: ToolError, pending: &Path, published: Option<&Pat
     let previous = error.remediation.clone().unwrap_or_default();
     let cause = error.details.clone();
     error
-        .with_remediation(format!("{previous} {outcome} {location} {retry}").trim().to_owned())
+        .with_remediation(format!("{previous} {outcome} {location} {staging} {retry}").trim().to_owned())
         .with_details(json!({"recovery_complete": complete, "retained_paths": retained, "unverified_paths": unverified, "expected_staging_path": pending.display().to_string(), "cause": cause}))
 }
 
@@ -543,6 +553,44 @@ mod tests {
         assert_eq!(std::fs::read(replaced).unwrap(), b"Keep this personal replacement");
         assert!(moved.is_file());
         assert!(recovery_notices(&ws.root).is_empty());
+    }
+
+    #[test]
+    fn a_completed_archive_does_not_authorize_moving_replaced_staging() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "Project", "Keep my conversation", TargetRef::None).unwrap();
+        let snapshot = RecoverySnapshot::from_loaded(&load(&ws), json!({}));
+        let directory = ws.inbox_dir().join(RECOVERY_ARCHIVE_DIR);
+        let moved = d.path().join("original-staging");
+        let mut replaced = None;
+        let report = write_recovery_snapshot_report_using(
+            &ws.root,
+            &snapshot,
+            |path| {
+                sync_directory(path)?;
+                if path == directory && std::fs::read_dir(path).unwrap().any(|entry| recovery_filename(&entry.unwrap().path())) {
+                    let pending = std::fs::read_dir(directory.join(STAGING_DIR)).unwrap().next().unwrap().unwrap().path();
+                    std::fs::rename(&pending, &moved).unwrap();
+                    std::fs::write(&pending, b"Keep this personal replacement").unwrap();
+                    replaced = Some(pending);
+                }
+                Ok(())
+            },
+            MAX_BYTES,
+            sync_file,
+            |_| panic!("a replaced staging entry must not be removed"),
+        )
+        .unwrap();
+        let replaced = replaced.unwrap();
+        let warning = report.cleanup_warning.unwrap();
+        assert_eq!(warning.details.as_ref().unwrap()["retained_paths"], json!([report.path.display().to_string()]));
+        assert_eq!(warning.details.as_ref().unwrap()["unverified_paths"], json!([replaced.display().to_string()]));
+        let remediation = warning.remediation.unwrap();
+        assert!(remediation.contains(&report.path.display().to_string()));
+        assert!(remediation.contains("Do not remove it based on its name"), "the text-only notice must protect unverified staging: {remediation}");
+        assert!(!remediation.contains("move only the inspected staging file"));
+        assert_eq!(std::fs::read(replaced).unwrap(), b"Keep this personal replacement");
+        assert_eq!(std::fs::read(&report.path).unwrap(), std::fs::read(moved).unwrap());
     }
 
     #[test]

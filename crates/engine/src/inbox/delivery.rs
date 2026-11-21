@@ -92,15 +92,25 @@ fn write(dir: &Path, id: &str, state: SavedState) -> Result<(), ToolError> {
     craft_anything_platform::fs::write_atomic_private(&path, &bytes).map_err(unreadable)
 }
 
-/// Record the attempt before saving its reply. Repeated attempts remain staged; an already
-/// delivered answer cannot be downgraded or authorize another conversation write.
+/// Durably record the attempt before saving its reply. Repeated attempts remain staged and
+/// retry the directory sync; an already delivered answer cannot authorize another write.
 pub(super) fn stage(dir: &Path, id: &str) -> Result<(), ToolError> {
+    stage_using(dir, id, crate::feed::sync_directory)
+}
+
+fn stage_using(dir: &Path, id: &str, sync: impl FnOnce(&Path) -> Result<(), ToolError>) -> Result<(), ToolError> {
     match state(dir, id)? {
-        DeliveryState::Untracked => write(dir, id, SavedState::Staged),
-        DeliveryState::Staged => Ok(()),
-        DeliveryState::Delivered => Err(ToolError::new(ErrorCode::NotFound, "This question's answer has already been delivered.")
-            .with_remediation("Answer a new request from the builder instead.")),
+        DeliveryState::Untracked => write(dir, id, SavedState::Staged)?,
+        DeliveryState::Staged => {}
+        DeliveryState::Delivered => {
+            return Err(ToolError::new(ErrorCode::NotFound, "This question's answer has already been delivered.")
+                .with_remediation("Answer a new request from the builder instead."));
+        }
     }
+    // Atomic replacement synced the receipt's contents, not its directory entry. Persisting
+    // the conversation first could otherwise leave a saved reply looking like a legacy answer
+    // after a crash. An existing staged receipt can be a previous attempt whose sync failed.
+    sync(dir).map_err(unreadable)
 }
 
 /// Confirm consumption before removing the answer. The caller retains the answer file if this
@@ -151,6 +161,44 @@ mod tests {
     }
 
     #[test]
+    fn new_and_existing_staged_receipts_require_a_directory_sync_before_persistence() {
+        for already_staged in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            if already_staged {
+                write(dir.path(), ID, SavedState::Staged).unwrap();
+            }
+            let record_path = path(dir.path(), ID).unwrap();
+            let mut syncs = 0;
+            let mut persisted = false;
+            let error = stage_using(dir.path(), ID, |synced| {
+                syncs += 1;
+                assert_eq!(synced, dir.path());
+                assert_eq!(state(dir.path(), ID).unwrap(), DeliveryState::Staged);
+                Err(ToolError::new(ErrorCode::FileError, "injected staged receipt directory sync failure"))
+            })
+            .map(|()| persisted = true)
+            .expect_err("staged receipt directory sync must run before persistence");
+            assert_eq!(syncs, 1);
+            assert!(!persisted, "a failed receipt sync must stop the following conversation write");
+            assert!(error.message.contains("injected staged receipt directory sync failure"));
+            assert_eq!(state(dir.path(), ID).unwrap(), DeliveryState::Staged);
+            let staged = std::fs::read(&record_path).unwrap();
+
+            stage_using(dir.path(), ID, |synced| {
+                syncs += 1;
+                assert_eq!(synced, dir.path());
+                assert_eq!(std::fs::read(&record_path).unwrap(), staged);
+                crate::feed::sync_directory(synced)
+            })
+            .map(|()| persisted = true)
+            .unwrap();
+            assert_eq!(syncs, 2, "retry must sync even when the receipt already says staged");
+            assert!(persisted);
+            assert_eq!(std::fs::read(&record_path).unwrap(), staged);
+        }
+    }
+
+    #[test]
     fn a_delivered_receipt_cannot_be_downgraded() {
         let dir = tempfile::tempdir().unwrap();
         stage(dir.path(), ID).unwrap();
@@ -158,7 +206,7 @@ mod tests {
         let record_path = path(dir.path(), ID).unwrap();
         let before = std::fs::read(&record_path).unwrap();
 
-        assert_eq!(stage(dir.path(), ID).unwrap_err().code, ErrorCode::NotFound);
+        assert_eq!(stage_using(dir.path(), ID, |_| panic!("a delivered receipt cannot authorize persistence")).unwrap_err().code, ErrorCode::NotFound);
 
         assert_eq!(state(dir.path(), ID).unwrap(), DeliveryState::Delivered);
         assert_eq!(std::fs::read(&record_path).unwrap(), before);

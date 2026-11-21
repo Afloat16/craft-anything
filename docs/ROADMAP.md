@@ -1681,7 +1681,12 @@ Gaps found while using the app for real projects.
       nonblocking source probes, durable delivery cleanup, reported partials and final archive
       cleanup warnings protect the remaining persistence boundaries. Manifest updates reject
       replacement projects under the deletion guard, and fingerprint classification and hashing
-      share the same opened file.
+      share the same opened file. Stale person-setting updates retain current build progress;
+      changed retry snapshots label older reply text, and successful submission always retires
+      its retry control. Completion displays travel with the run event that produced them,
+      and staging cleanup advice requires that staging file's own verified identity. Guarded
+      feed reads reject named pipes without waiting, and staged delivery receipts sync their
+      inbox directory before conversation persistence, including repeated staging attempts.
       — claimed: Afloat16, branch bugfix/r2.9-feed-read-errors-20261120
 - [x] `i18n::trf` filled placeholders with repeated replacements, so a value containing a later
       placeholder was rewritten. It now fills them in one pass over the template: inserted names

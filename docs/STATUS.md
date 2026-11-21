@@ -819,7 +819,10 @@ refuses to replay or archive into a new project at that path when the directory 
 Deletion verifies the workspace the caller loaded against its lock before removing any content.
 `craft.json` version 6 keeps the generation assigned to new projects and copies; legacy projects keep
 none without writes on open. Ordinary manifest updates validate the caller's original identity and
-merge current person-owned fields under the project lock before replacing the file; they cannot
+merge current person-owned fields under the project lock before replacing the file. Person-setting
+updates instead start from the current disk manifest, preserving a newer build's checks, status
+and session while changing a budget or name. New-project choices, including the initial stack,
+are applied together in that disk-based transaction. Neither kind can
 adopt a replacement project's generation or recreate a deleted manifest. Initial publication by a
 new project or duplicate is separate. Fingerprinting hashes a personal backup-shaped file through
 the same handle used to classify it, even if recovery publishes a new file at that path meanwhile.
@@ -837,6 +840,15 @@ staging cleanup, equal-content replacements and partial archives outside discove
 regressions cover project replacement between build-finish's feed and status saves, guarded manifest
 updates, classification-to-hash replacement, expired-question replay, answer-card retries, FIFO
 display probes, delivery-directory sync and final desktop notices across all three build outcomes.
+Changed pending-reply snapshots label their words as an earlier reply rather than the current
+saved retry. Successful submission removes the old retry control even if a later display load no
+longer has that question. Completion snapshots belong to their individual run events, so a queued
+follow-up that fails to start preserves its failure and request instead of restoring an older run.
+Cleanup instructions for a changed staging path remain conservative even when its completed archive
+is verified; archive ownership does not authorize moving a different file at the staging path.
+The guarded save and fresh load both use a nonblocking regular-file handle, refusing a named pipe
+without retaining the project lock. Recorded replies sync the inbox directory after staging and
+before saving the conversation; retries repeat that barrier for an existing staged receipt.
 Windows no-sharing and case-insensitive rename regressions are included but have not been run locally. No live desktop or remote
 filesystem run is claimed.
 

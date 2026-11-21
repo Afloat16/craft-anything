@@ -31,6 +31,15 @@ pub enum Stopped {
     Nothing,
 }
 
+/// An event and, for a completed run, the display that belongs to that same run.
+#[derive(Debug)]
+pub struct RunUpdate {
+    pub root: PathBuf,
+    pub event: RunEvent,
+    /// None for ordinary events and for queued starts that failed before a run existed.
+    pub completed_feed: Option<Vec<feed::FeedItem>>,
+}
+
 pub struct RunSet {
     limit: usize,
     /// Running and finished runs (a finished one keeps its preview and unsent notes).
@@ -117,9 +126,24 @@ impl RunSet {
     /// Every run's new events, by project folder, then start queued runs in the places that came
     /// free. A queued run that can't start gives a `Finished { ok: false }` with the reason.
     pub fn poll(&mut self, hub: &AiHub) -> Vec<(PathBuf, RunEvent)> {
-        let mut out: Vec<(PathBuf, RunEvent)> = Vec::new();
+        self.poll_using(hub, |root, event, _| (root, event))
+    }
+
+    /// Attach a completed display before a queued run can replace its owner. A failed start
+    /// has no snapshot, even when the map still retains an older run for the same project.
+    pub fn poll_with_snapshots(&mut self, hub: &AiHub) -> Vec<RunUpdate> {
+        self.poll_using(hub, |root, event, run| {
+            let completed_feed = if matches!(&event, RunEvent::Finished { .. }) { run.map(RebuildRun::display_feed) } else { None };
+            RunUpdate { root, event, completed_feed }
+        })
+    }
+
+    fn poll_using<T>(&mut self, hub: &AiHub, mut collect: impl FnMut(PathBuf, RunEvent, Option<&RebuildRun>) -> T) -> Vec<T> {
+        let mut out = Vec::new();
         for (root, run) in &mut self.runs {
-            out.extend(run.poll().into_iter().map(|e| (root.clone(), e)));
+            for event in run.poll() {
+                out.push(collect(root.clone(), event, Some(run)));
+            }
         }
         while self.queue.front().is_some_and(|(_, _, alone)| self.has_room(*alone)) {
             let Some((ws, opts, _)) = self.queue.pop_front() else { break };
@@ -142,7 +166,7 @@ impl RunSet {
                 Err(e) => {
                     let message = e.for_people();
                     let _ = keep.set_status(Status::NeedsYou, message.clone());
-                    out.push((root, RunEvent::Finished { ok: false, message, paused: false }));
+                    out.push(collect(root, RunEvent::Finished { ok: false, message, paused: false }, None));
                 }
             }
         }

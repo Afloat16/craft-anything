@@ -156,6 +156,7 @@ const PLUMBING: &[(&str, &str)] = &[
     ("stuck_banner", "draws what the lock watchdog found; `sync::problems` and its log are the headless side"),
     ("act", "runs a button's tool on a worker (play, preview, open folder)"),
     ("waiting_question", "finds the question an answer is for"),
+    ("answer_request_using", "internal answer_request implementation with a completion hook for deterministic refresh tests"),
     ("acted", "shows a button tool's result (toast, open the preview)"),
     ("engines_found", "a job's result"), ("engine_got", "a job's result"), ("ghidra_got", "a job's result"),
     ("ghidra_ready", "a query"), ("ghidra_found", "a query"), ("ghidra_missing", "a query"),

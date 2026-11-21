@@ -1148,7 +1148,7 @@ mod tests {
                     syncs += 1;
                     assert_eq!(dir, inbox.dir());
                     assert_eq!(delivery::state(dir, &id).unwrap(), DeliveryState::Delivered);
-                    assert_eq!(std::fs::read(&request_path).unwrap(), request_bytes, "sync must precede request cleanup");
+                    assert!(request_path.exists(), "sync must precede request cleanup");
                     assert_eq!(std::fs::read(&answer_path).unwrap(), answer_bytes, "sync must precede answer cleanup");
                     if fail_sync {
                         Err(ToolError::new(ErrorCode::FileError, "injected delivery directory sync failure"))

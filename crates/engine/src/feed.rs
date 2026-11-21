@@ -8,6 +8,7 @@ use craft_anything_evidence::{ErrorCode, ToolError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
+use std::io::Read as _;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 
@@ -367,14 +368,18 @@ fn decode(bytes: &[u8]) -> Option<Saved> {
 /// Only a path with nothing at it is a new conversation. In particular, a dangling link is
 /// still the person's file and must not be replaced with a fallback.
 fn read_previous(path: &Path) -> Result<Option<Vec<u8>>, ToolError> {
-    match std::fs::read(path) {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(read_error) if read_error.kind() == std::io::ErrorKind::NotFound => match std::fs::symlink_metadata(path) {
+    match craft_anything_platform::fs::open_regular_file(path) {
+        Ok((mut file, _)) => {
+            let mut bytes = Vec::new();
+            file.read_to_end(&mut bytes).map_err(|error| ToolError::io(path.display(), error))?;
+            Ok(Some(bytes))
+        }
+        Err(read_error) if read_error.code == ErrorCode::NotFound => match std::fs::symlink_metadata(path) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(ToolError::io(path.display(), e)),
-            Ok(_) => Err(ToolError::io(path.display(), read_error)),
+            Ok(_) => Err(read_error),
         },
-        Err(e) => Err(ToolError::io(path.display(), e)),
+        Err(error) => Err(error),
     }
 }
 
@@ -500,7 +505,7 @@ pub fn show_pending_for_feed(items: &mut [FeedItem], inbox: &Inbox, source: &Loa
         .iter()
         .enumerate()
         .filter_map(|(index, item)| match item {
-            FeedItem::Ask { request, answer: Some(answer) } => Some((index, request.id.clone(), request.title.clone(), answer.clone())),
+            FeedItem::Ask { request, answer: Some(answer) } => Some((index, request.clone(), answer.clone())),
             _ => None,
         })
         .collect();
@@ -509,17 +514,23 @@ pub fn show_pending_for_feed(items: &mut [FeedItem], inbox: &Inbox, source: &Loa
     let same_project = root.is_some_and(|root| source.project.as_ref().is_ok_and(|project| project.check(root).is_ok()));
     let current = same_project && root.is_some_and(|root| source.display_source.as_ref().is_some_and(|saved| saved.is_current(&root.join(FEED_FILE))));
     if !current {
-        for (index, id, title, answer) in answered {
+        for (index, mut original, answer) in answered {
             if let Some(item) = items.get_mut(index) {
                 // The overlay has just checked that this question is still waiting and
                 // removed delivery confirmation. An unrelated feed write must not take
                 // away its retry control. A replaced project must not reuse that control.
-                if same_project && matches!(item, FeedItem::Ask { request, answer: None } if request.id == id) {
+                if same_project && matches!(item, FeedItem::Ask { request, answer: None } if request.id == original.id) {
+                    // The same request may have a newer undelivered reply on disk. Preserve
+                    // the control, but do not describe this snapshot's words as that reply.
+                    original.detail.push_str("\n\nA saved reply has not been delivered, but the conversation changed. Refresh to see the latest reply before retrying.\n\nEarlier saved reply:\n");
+                    original.detail.push_str(&answer);
+                    *item = FeedItem::Ask { request: original, answer: None };
                     continue;
                 }
                 *item = FeedItem::Error {
                     message: format!(
-                        "Delivery of your saved reply to \"{title}\" could not be confirmed because the conversation changed.\n\nEarlier saved reply:\n{answer}"
+                        "Delivery of your saved reply to \"{}\" could not be confirmed because the conversation changed.\n\nEarlier saved reply:\n{answer}",
+                        original.title
                     ),
                     remediation: Some("Refresh the conversation to see the latest reply and delivery state before answering again.".into()),
                     log: None,
@@ -909,6 +920,34 @@ mod tests {
     }
 
     #[test]
+    fn a_superseded_pending_reply_is_labelled_as_earlier_text() {
+        use crate::inbox::Answer;
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Colour", "Pick a colour", TargetRef::None).unwrap();
+        let inbox = Inbox::new(ws.inbox_dir());
+        let request = question(&ws, "Which colour?");
+        let blocked = inbox.dir().join(format!("{}.answer.json", request.id));
+        std::fs::create_dir(&blocked).unwrap();
+        assert!(inbox.answer_recorded(&ws, &request.id, &Answer { text: Some("Blue".into()), ..Default::default() }, "Blue").is_err());
+        let source = load(&ws);
+        assert!(inbox.answer_recorded(&ws, &request.id, &Answer { text: Some("Red".into()), ..Default::default() }, "Red").is_err());
+        let mut shown = source.items.clone();
+        show_pending_for_feed(&mut shown, &inbox, &source);
+        let card = shown
+            .iter()
+            .find_map(|item| match item {
+                FeedItem::Ask { request: current, answer: None } if current.id == request.id => Some(current),
+                _ => None,
+            })
+            .expect("the pending request stays actionable");
+        assert!(card.detail.contains("Earlier saved reply:\nBlue"), "stale words must not be offered as the current saved retry: {}", card.detail);
+        assert!(!card.detail.contains("You can retry it"));
+        assert!(for_display(&ws).iter().any(|item| matches!(item,
+            FeedItem::Ask { request: current, answer: None } if current.id == request.id && current.detail.ends_with("Red"))));
+        assert!(source.iter().any(|item| matches!(item, FeedItem::Ask { answer: Some(answer), .. } if answer == "Blue")));
+    }
+
+    #[test]
     fn an_unrelated_answer_keeps_a_pending_reply_available_for_retry() {
         use crate::inbox::Answer;
         for consumed in [false, true] {
@@ -1015,6 +1054,44 @@ mod tests {
             .stderr_cap(64 * 1024)
             .run_checked()
             .expect("a named pipe replacing the saved feed must not block display refresh");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_guarded_save_rejects_a_named_pipe_and_releases_the_project_lock() {
+        use std::os::unix::fs::FileTypeExt as _;
+        use std::time::Duration;
+        const FIXTURE: &str = "CRAFT_TEST_SAVE_FIFO_ROOT";
+        if let Some(root) = std::env::var_os(FIXTURE) {
+            let ws = Workspace::open(Path::new(&root)).unwrap();
+            let mut source = load(&ws);
+            assert!(source.was_decoded());
+            source.push(FeedItem::Paused);
+            let path = ws.root.join(FEED_FILE);
+            let original = ws.root.join("original-conversation.json");
+            std::fs::rename(&path, &original).unwrap();
+            let before = std::fs::read(&original).unwrap();
+            craft_anything_platform::Process::new("mkfifo").args([path.as_os_str()]).timeout(Duration::from_secs(2)).run_checked().unwrap();
+
+            assert_eq!(super::save(&ws.root, &mut source).unwrap_err().code, ErrorCode::BadInput);
+            assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_fifo());
+            assert_eq!(std::fs::read(&original).unwrap(), before);
+            assert!(load(&ws).had_read_error(), "a fresh load also refuses the pipe without waiting");
+            let guard = lock_project(&ws.root).expect("the rejected save releases its project guard");
+            guard.check_workspace(&ws).unwrap();
+            return;
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Project", "Keep my conversation", TargetRef::None).unwrap();
+        super::save(&ws.root, &mut load(&ws)).unwrap();
+        craft_anything_platform::Process::new(std::env::current_exe().unwrap())
+            .args(["--exact", "feed::tests::a_guarded_save_rejects_a_named_pipe_and_releases_the_project_lock", "--test-threads=1"])
+            .env(FIXTURE, &ws.root)
+            .timeout(Duration::from_secs(5))
+            .stdout_cap(64 * 1024)
+            .stderr_cap(64 * 1024)
+            .run_checked()
+            .expect("a pipe must not block a guarded save or leave the project locked");
     }
 
     #[test]

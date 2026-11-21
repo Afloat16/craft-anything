@@ -2273,6 +2273,50 @@ fn stand_in_app(projects: std::path::PathBuf, runs: &craft_anything_ai::rebuild:
 }
 
 #[test]
+fn a_failed_queued_follow_up_does_not_restore_the_previous_run_feed() {
+    use craft_anything_ai::{
+        AgentEvent,
+        rebuild::{RunEvent, StandIns},
+    };
+    use craft_anything_engine::workspace::{TargetRef, Workspace};
+    use craft_anything_ui_egui::state::FeedItem;
+
+    let d = tempfile::tempdir().unwrap();
+    let mut ws = Workspace::create(d.path(), "Previous run", "Make a clock", TargetRef::None).unwrap();
+    let busy = Workspace::create(d.path(), "Busy", "Keep working", TargetRef::None).unwrap();
+    let runs = StandIns::new().failing("Unavailable follow-up");
+    let (dir, r) = (d.path().to_path_buf(), runs.clone());
+    let mut h = harness(move || stand_in_app(dir, &r));
+    h.state_mut().open_workspace(ws.clone());
+    h.state_mut().continue_build();
+    assert!(runs.send(&ws.root, RunEvent::Agent(AgentEvent::TextDelta { text: "The first run finished".into() })));
+    assert!(runs.finish(&ws.root));
+    h.run_steps(3);
+    assert!(h.state().runs.get(&ws.root).is_some(), "the completed run stays available");
+
+    h.state_mut().open_workspace(busy.clone());
+    h.state_mut().continue_build();
+    ws.rename("Unavailable follow-up").unwrap();
+    h.state_mut().open_workspace(ws.clone());
+    h.state_mut().follow_up(Some("Make the next version red".into()));
+    assert_eq!(h.state().queue_position(), Some(1));
+    assert!(runs.finish(&busy.root));
+    h.run_steps(3);
+
+    assert!(
+        h.state().state.feed.iter().any(|item| matches!(item,
+        FeedItem::Error { message, .. } if message == "No coding agent.")),
+        "the new start failure must be visible"
+    );
+    assert!(
+        h.state().state.feed.iter().any(|item| matches!(item,
+        FeedItem::User(message) if message.text() == "Make the next version red")),
+        "the queued follow-up must not be replaced by the old snapshot"
+    );
+    assert!(!h.state().runs.is_busy(&ws.root));
+}
+
+#[test]
 fn a_successful_retry_replaces_the_old_undelivered_question_card() {
     use craft_anything_ai::rebuild::{RunEvent, StandIns, Step};
     use craft_anything_engine::inbox::{Answer, Inbox, RequestKind};
