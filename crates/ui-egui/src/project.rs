@@ -251,7 +251,7 @@ impl CraftApp {
             self.state.feed.push(FeedItem::User(UserItem::Text(t.clone())));
         }
         let shown = text.clone();
-        self.resume(text, shown, Vec::new());
+        self.resume(text, shown, Vec::new(), Vec::new(), Vec::new());
     }
 
     /// Carry on where the open project's last run stopped (paused, or the app or the computer
@@ -357,6 +357,8 @@ impl CraftApp {
             let join = |part: fn(&Note) -> &str| left.iter().map(part).collect::<Vec<_>>().join("\n\n");
             let (message, shown) = (join(|n| &n.text), join(|n| &n.shown));
             let pictures: Vec<PathBuf> = left.iter().flat_map(|n| n.pictures.clone()).collect();
+            let carried_note_ids = left.iter().map(|note| note.id).collect();
+            let request_parts = left.iter().map(|note| note.shown.clone()).collect();
             if open.as_ref() == Some(&root) {
                 if let Some(ws) = self.workspace.as_mut() {
                     let _ = ws.reload();
@@ -366,13 +368,15 @@ impl CraftApp {
                         self.state.feed.pop();
                     }
                     self.state.feed.push(FeedItem::User(UserItem::new(shown.clone(), pictures.clone())));
-                    self.resume(Some(message), Some(shown), pictures);
+                    self.resume(Some(message), Some(shown), pictures, carried_note_ids, request_parts);
                 }
             } else if !left.is_empty() {
                 // Another project's notes start its next run in the background.
                 let Ok(ws) = Workspace::open(&root) else { continue };
                 let Some(backend) = self.builder_backend(ws.manifest.builder.as_deref()) else { continue };
-                let opts = self.run_options(Some(backend), Some(message), Some(shown), pictures);
+                let mut opts = self.run_options(Some(backend), Some(message), Some(shown), pictures);
+                opts.carried_note_ids = carried_note_ids;
+                opts.request_parts = request_parts;
                 if let Err(e) = self.launch(ws, opts) {
                     self.toast(e.message, true);
                 }
@@ -2201,12 +2205,19 @@ impl CraftApp {
         match self.open_run() {
             Some(run) if run.is_running() => {
                 // It joins the feed when the builder reads it; until then it can be taken back.
-                let id = run.add_note(message, shown, files.clone());
+                let id = match run.add_note(message, shown, files.clone()) {
+                    Ok(id) => id,
+                    Err(error) => {
+                        self.state.project_input = text;
+                        self.state.project_attachments = attachments;
+                        return self.toast(error.for_people(), true);
+                    }
+                };
                 self.drafts.insert(id, Draft { root: ws.root.clone(), text, attachments });
             }
             _ => {
                 self.state.feed.push(FeedItem::User(UserItem::new(shown.clone(), files.clone())));
-                self.resume(Some(message), Some(shown), files);
+                self.resume(Some(message), Some(shown), files, Vec::new(), Vec::new());
             }
         }
     }
@@ -2225,11 +2236,14 @@ impl CraftApp {
 
     /// Start another run on the open project: with a message (already shown in the app's feed;
     /// `shown` puts it in the saved one, with `pictures`), or none to try again.
-    fn resume(&mut self, message: Option<String>, shown: Option<String>, pictures: Vec<PathBuf>) {
+    fn resume(&mut self, message: Option<String>, shown: Option<String>, pictures: Vec<PathBuf>, carried_note_ids: Vec<u64>, request_parts: Vec<String>) {
         let Some(ws) = self.workspace.clone() else { return };
         let ws = Workspace::open(&ws.root).unwrap_or(ws);
         let Some(backend) = self.builder_backend(ws.manifest.builder.as_deref()) else { return self.need_builder(false) };
-        self.start_run(ws, Some(backend), message, shown, pictures);
+        let mut opts = self.run_options(Some(backend), message, shown, pictures);
+        opts.carried_note_ids = carried_note_ids;
+        opts.request_parts = request_parts;
+        self.start_run_with(ws, opts);
     }
 }
 
@@ -2237,6 +2251,29 @@ impl CraftApp {
 mod tests {
     use super::*;
     use craft_anything_ai::AgentEvent;
+
+    #[test]
+    fn a_refused_note_id_keeps_the_persons_text_and_attachments() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "Notes", "A notes app", TargetRef::None).unwrap();
+        let runs = rebuild::StandIns::new();
+        let mut app = crate::demo::app(crate::demo::engine(craft_anything_engine::Mode::Beginner, true));
+        app.runs = rebuild::RunSet::new(1).with_starter(runs.starter());
+        app.open_workspace(ws.clone());
+        app.runs.start(&app.hub, ws.clone(), RunOptions::default()).unwrap();
+        let dir = rebuild::notes::notes_dir(&ws.inbox_dir());
+        std::fs::create_dir_all(&dir).unwrap();
+        let occupied = dir.join("18446744073709551615.json");
+        std::fs::write(&occupied, b"Keep this unrecognized record").unwrap();
+        let attachments = vec![d.path().join("chosen-picture.png")];
+        let files = vec![ws.root.join("pictures/copied-picture.png")];
+        app.deliver(ws.root.clone(), "Keep my message".into(), attachments.clone(), Ok(files));
+        assert_eq!(app.state.project_input, "Keep my message");
+        assert_eq!(app.state.project_attachments, attachments);
+        assert!(app.open_run().unwrap().waiting().is_empty());
+        assert!(app.state.toasts.iter().any(|(message, error)| *error && message.contains("no space for a later note")));
+        assert_eq!(std::fs::read(&occupied).unwrap(), b"Keep this unrecognized record");
+    }
 
     #[test]
     fn the_app_starts_with_the_persons_settings_while_the_engine_is_busy() {

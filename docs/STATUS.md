@@ -525,6 +525,19 @@ earlier excluded behavior. A live scan records only the id-ordered read prefix, 
 claim cannot let a later German request be overwritten by an earlier French request. A real
 restart through `RebuildRun::start` with the local builder stand-in, an interleaved real claim,
 and completion/cleanup failures have dedicated regressions.
+Restart inspects the complete note batch without removing it. Recovered notes keep their ids:
+their current-mode waiting copies are synced before old claimed copies are removed, and the
+entire queue is installed before the worker starts. Unknown or unreadable batches stop startup
+and stay at their original paths. Legacy waiting records are upgraded before becoming carried
+claimed records; genuine legacy claimed records keep their earlier exclusion. New ids follow every existing numeric record name and refuse
+overflow. The desktop explicitly identifies notes joined into its next message; those records
+remain recoverable until that initial builder turn succeeds. An unrelated follow-up carries
+older waiting words before the new request instead of deleting them or delivering them later
+out of order. Original request boundaries are retained for policy recording, including when
+an older observation contains quoted text. A claimed nonempty note resets the unchanged-turn
+allowance even if saving its request state or completion mark fails; notes not yet delivered
+do not claim that reset. File handoff is at-least-once; it is not a transaction with an external
+model's processing, and directory syncing follows the host platform's supported operations.
 Version 5 projects migrate without inventing a language choice. Policy, persisted
 project, note-delivery and write-failure regressions cover these paths; the original text
 policy fails the translated-page and wrong-declaration regressions. No live browser rebuild

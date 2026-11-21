@@ -1793,9 +1793,14 @@ Gaps found while using the app for real projects.
 - [x] A note still waiting when the app closes is sent by the next run instead of deleted when it
       starts (#1620): its hand-over file keeps the person's words (`notes::Left`), and a run started
       without a message takes them as its own waiting notes, so they stay on disk until its builder
-      takes them; a folder it can't read is moved aside (`notes-unread-…`), not deleted. A file
+      takes them. Restart now retains ids and syncs each successor before removing its claimed
+      predecessor; the complete queue is installed before the worker starts. An unreadable or
+      newer batch fails startup and remains in place. A file
       from before this has only the hand-over text, whose Just-ask answers may be from the other
-      mode, so it's still dropped. Unit-tested; not run live
+      mode, so it remains excluded. Explicitly joined notes stay durable through the next initial
+      turn, while an unrelated new message follows the older notes in request order; policy
+      recording preserves the individual request boundaries. Unit and local stand-in restart
+      regressions cover the handoff; not run against a live model
       — claimed: justinjohn0306, branches `bugfix/r2.9-notes-survive-restart`, `bugfix/r2.9-left-notes-kept`
 - [x] Record which mode a builder's session ran in: `agent_session` is kept across modes, so a Clean
       room build or question can resume a session from a Deep build and carry what it read, and such

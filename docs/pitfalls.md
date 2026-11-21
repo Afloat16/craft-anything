@@ -1345,3 +1345,19 @@ recovery is at-least-once; legacy claimed notes lack that pending-state evidence
 damaged or identity-mismatched claimed/completed records for inspection. Record only a continuous
 read prefix in note-id order: a claim arriving between observations must not let an earlier
 language request overwrite a later one.
+
+**Restart cleared a note before its successor was durable.** Inspect the whole batch first,
+retain the persistent id, sync the new waiting copy before removing an older claimed record,
+and install every queued note before spawning the worker. Unreadable, changed or newer records
+stay in place and fail startup; a fresh process's counter must advance beyond occupied names,
+including names whose contents it cannot interpret. An interrupted takeover may leave both
+waiting and claimed copies: matching raw note identity is one recoverable request, while a
+disagreement must be preserved and reported. Explicitly carried initial-message notes stay
+claimed through startup and failed turns, rather than being offered to the hook twice.
+
+**A combined message erased request order and boundaries.** Only note ids actually joined by
+the caller are already carried. Prepend older recovered words before a genuinely new message,
+and pass the original shown requests separately to the policy recorder: a quoted observation
+must not prevent a later language request from being recognized. Once a hook has delivered a
+nonempty note, set the pending progress reset before any fallible request/completion recording;
+an after-turn note whose recording failed has not yet been sent and must not claim consumption.

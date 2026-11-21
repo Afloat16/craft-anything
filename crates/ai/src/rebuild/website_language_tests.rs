@@ -134,7 +134,7 @@ fn claimed_language_note_recording_mark_failure_keeps_the_batch_retryable() {
     worker.relay_read_notes(&mut ws).unwrap();
     assert!(worker.notes.lock().unwrap().is_empty());
     assert_eq!(Workspace::open(&ws.root).unwrap().manifest.website_language, Some(WebsiteLanguage::Requested { tag: "de".into() }));
-    assert!(notes::take_left(&inbox, true).is_empty());
+    assert!(notes::take_left(&inbox).unwrap().is_empty());
 }
 
 #[test]

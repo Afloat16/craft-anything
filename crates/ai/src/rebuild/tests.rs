@@ -626,7 +626,7 @@ fn a_note_written_for_the_hook_carries_its_answers() {
         started: Instant::now(),
         activity,
     };
-    let id = run.add_note("make it blue".into(), "make it blue".into(), Vec::new());
+    let id = run.add_note("make it blue".into(), "make it blue".into(), Vec::new()).unwrap();
     let note = run.waiting().pop().unwrap();
     assert_eq!(note.text, "make it blue", "the in-memory text stays raw for a later run's mode");
     assert_eq!(note.questions.len(), 1);
@@ -1909,36 +1909,37 @@ mod picking_up_a_build {
         (ok.unwrap(), feed::load(&Workspace::open(&ws.root).unwrap()))
     }
 
+    struct LanguageKind;
+    impl TargetKind for LanguageKind {
+        fn id(&self) -> &'static str {
+            "language-recovery"
+        }
+        fn words(&self) -> KindWords {
+            FlakyKind.words()
+        }
+        fn detect(&self, _: &DetectCx) -> Option<u32> {
+            Some(2000)
+        }
+        fn default_stack(&self, cx: &DetectCx) -> &'static str {
+            FlakyKind.default_stack(cx)
+        }
+        fn goal(&self) -> &'static str {
+            FlakyKind.goal()
+        }
+        fn checks(&self, ws: &Workspace) -> Vec<Box<dyn Check>> {
+            FlakyKind.checks(ws)
+        }
+        fn record_requests(&self, ws: &mut Workspace, requests: &[&str]) -> Result<(), ToolError> {
+            kind("website").record_requests(ws, requests)
+        }
+    }
+
     #[test]
     fn a_restarted_run_records_a_previously_claimed_language_note() {
         use craft_anything_engine::workspace::WebsiteLanguage;
 
         // Use the real website request recorder, with the existing local builder/check
         // stand-ins so this restart exercises RebuildRun::start without opening a browser.
-        struct LanguageKind;
-        impl TargetKind for LanguageKind {
-            fn id(&self) -> &'static str {
-                "language-recovery"
-            }
-            fn words(&self) -> KindWords {
-                FlakyKind.words()
-            }
-            fn detect(&self, _: &DetectCx) -> Option<u32> {
-                Some(2000)
-            }
-            fn default_stack(&self, cx: &DetectCx) -> &'static str {
-                FlakyKind.default_stack(cx)
-            }
-            fn goal(&self) -> &'static str {
-                FlakyKind.goal()
-            }
-            fn checks(&self, ws: &Workspace) -> Vec<Box<dyn Check>> {
-                FlakyKind.checks(ws)
-            }
-            fn record_requests(&self, ws: &mut Workspace, requests: &[&str]) -> Result<(), ToolError> {
-                kind("website").record_requests(ws, requests)
-            }
-        }
 
         let b = bench();
         let mut ws = Workspace::create(&b.projects, "Site", "Rebuild this website in French", TargetRef::None).unwrap();
@@ -1965,11 +1966,169 @@ mod picking_up_a_build {
         assert_eq!(Workspace::open(&ws.root).unwrap().manifest.website_language, Some(WebsiteLanguage::Requested { tag: "de".into() }));
         assert!(std::fs::read_to_string(&b.prompts).unwrap().contains(text), "the real restarted builder receives the recovered request");
         assert!(feed.iter().any(|item| matches!(item, feed::FeedItem::User(user) if user.text() == text)));
-        assert!(notes::take_left(&inbox, true).is_empty(), "a successfully recorded request is not left for another restart");
+        assert!(notes::take_left(&inbox).unwrap().is_empty(), "a successfully recorded request is not left for another restart");
     }
 
     fn prompts_given(b: &Bench) -> usize {
         std::fs::read_to_string(&b.prompts).unwrap_or_default().matches("===").count()
+    }
+
+    #[test]
+    fn an_unrelated_followup_keeps_older_words_without_reversing_language_requests() {
+        use craft_anything_engine::workspace::WebsiteLanguage;
+        for (old, new, language) in [
+            ("Build the website in French", "Build the website in German", "de"),
+            ("The label says \"Bonjour\"", "Build the website in German", "de"),
+            ("Build the website in French", "Make the header blue", "fr"),
+        ] {
+            let b = bench();
+            let ws = Workspace::create(&b.projects, "Site", "Build the website in English", TargetRef::None).unwrap();
+            let dir = notes::notes_dir(&ws.inbox_dir());
+            let left = notes::Left { text: old.into(), shown: old.into(), pictures: Vec::new() };
+            notes::hand_over(&dir, 71, old, Some(&left)).unwrap();
+            let mut opts = RunOptions { message: Some(new.into()), shown: Some(new.into()), ..RunOptions::default() };
+            opts.kinds.register(Arc::new(LanguageKind));
+            let (ok, feed) = try_with(&b, &ws, opts);
+            assert!(ok, "{feed:?}");
+            assert_eq!(Workspace::open(&ws.root).unwrap().manifest.website_language, Some(WebsiteLanguage::Requested { tag: language.into() }));
+            let prompts = std::fs::read_to_string(&b.prompts).unwrap();
+            assert!(prompts.contains(&format!("{old}\n\n{new}")), "the actual builder sees the older request before the new one: {prompts}");
+            assert_eq!(prompts_given(&b), 1, "a restored older request is not delivered again after the newer initial message");
+            assert!(feed.iter().any(|item| matches!(item, feed::FeedItem::User(user) if user.text() == format!("{old}\n\n{new}"))));
+            assert!(notes::take_left(&dir).unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn carried_note_records_survive_failure_before_any_builder_turn() {
+        struct RefusesRequest;
+        impl TargetKind for RefusesRequest {
+            fn id(&self) -> &'static str {
+                "refuses-initial-request"
+            }
+            fn words(&self) -> KindWords {
+                LanguageKind.words()
+            }
+            fn detect(&self, _: &DetectCx) -> Option<u32> {
+                Some(3000)
+            }
+            fn default_stack(&self, cx: &DetectCx) -> &'static str {
+                LanguageKind.default_stack(cx)
+            }
+            fn goal(&self) -> &'static str {
+                LanguageKind.goal()
+            }
+            fn checks(&self, ws: &Workspace) -> Vec<Box<dyn Check>> {
+                LanguageKind.checks(ws)
+            }
+            fn record_requests(&self, _: &mut Workspace, _: &[&str]) -> Result<(), ToolError> {
+                Err(ToolError::new(ErrorCode::FileError, "The initial request record is unavailable."))
+            }
+        }
+        let b = bench();
+        let ws = Workspace::create(&b.projects, "Site", "Build the website in English", TargetRef::None).unwrap();
+        let dir = notes::notes_dir(&ws.inbox_dir());
+        let text = "Build the website in German";
+        let left = notes::Left { text: text.into(), shown: text.into(), pictures: Vec::new() };
+        notes::hand_over(&dir, 71, "Old mode context", Some(&left)).unwrap();
+        let mut opts = RunOptions {
+            message: Some(text.into()),
+            shown: Some(text.into()),
+            carried_note_ids: vec![71],
+            request_parts: vec![text.into()],
+            ..RunOptions::default()
+        };
+        opts.kinds.register(Arc::new(RefusesRequest));
+        let (ok, feed) = try_with(&b, &ws, opts);
+        assert!(!ok, "{feed:?}");
+        assert_eq!(prompts_given(&b), 0);
+        assert!(dir.join("71.read.json").is_file());
+        assert!(notes::claim(&dir).is_empty(), "a carried initial request is not offered to the hook too");
+        let recovered = notes::take_left(&dir).unwrap();
+        assert_eq!(recovered.len(), 1);
+        assert_eq!((recovered[0].id, &recovered[0].left), (71, &left));
+        drop(recovered);
+        let mut opts = RunOptions::default();
+        opts.kinds.register(Arc::new(LanguageKind));
+        let (ok, feed) = try_with(&b, &Workspace::open(&ws.root).unwrap(), opts);
+        assert!(ok, "{feed:?}");
+        assert!(std::fs::read_to_string(&b.prompts).unwrap().contains(text), "the real restarted builder still receives the request");
+        assert!(notes::take_left(&dir).unwrap().is_empty());
+    }
+
+    #[test]
+    fn carried_notes_remain_on_disk_until_the_actual_initial_turn_succeeds() {
+        for legacy in [false, true] {
+            for failed_turn in [false, true] {
+                let b = bench();
+                let ws = Workspace::create(&b.projects, "Site", "Build the website in English", TargetRef::None).unwrap();
+                let dir = notes::notes_dir(&ws.inbox_dir());
+                let text = "Build the website in German";
+                let left = notes::Left { text: text.into(), shown: text.into(), pictures: Vec::new() };
+                notes::hand_over(&dir, 71, "Old mode context", Some(&left)).unwrap();
+                if legacy {
+                    let path = dir.join("71.json");
+                    let mut old: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                    old.as_object_mut().unwrap().remove("version");
+                    std::fs::write(path, serde_json::to_vec(&old).unwrap()).unwrap();
+                }
+                let agent = b._dir.path().join("agent.sh");
+                let normal = std::fs::read_to_string(&agent).unwrap();
+                let witness = b._dir.path().join("saw-durable-note");
+                let mut script = normal.clone();
+                let finish = if failed_turn {
+                    // A plain nonzero exit is transient and correctly retries. Use the
+                    // existing typed authentication failure to end this actual turn.
+                    let mut config = b.hub.config();
+                    let mut entry = config.get("Stand-in").unwrap().clone();
+                    entry.config.model = "opencode".into();
+                    config.upsert(entry);
+                    b.hub.engine.session().settings.ai = config.to_table().unwrap();
+                    script =
+                        script.replacen("#!/bin/sh\n", "#!/bin/sh\nif [ \"$2\" = '--help' ]; then printf '%s\\n' '--format --standalone'; exit 0; fi\n", 1);
+                    let error =
+                        json!({"type":"error","error":{"name":"APIError","data":{"message":"fixture sign in needed","statusCode":401,"isRetryable":false}}});
+                    format!("printf '%s\\n' '{error}'\nexit 1")
+                } else {
+                    "echo Done.".into()
+                };
+                let observe = format!(
+                    "test -f '{}' && test ! -e '{}' || exit 9\nprintf 'kept' > '{}'\n{}",
+                    dir.join("71.read.json").display(),
+                    dir.join("71.json").display(),
+                    witness.display(),
+                    finish
+                );
+                std::fs::write(&agent, script.replace("echo Done.", &observe)).unwrap();
+                let mut opts = RunOptions {
+                    message: Some(text.into()),
+                    shown: Some(text.into()),
+                    carried_note_ids: vec![71],
+                    request_parts: vec![text.into()],
+                    ..RunOptions::default()
+                };
+                opts.kinds.register(Arc::new(LanguageKind));
+                let (ok, feed) = try_with(&b, &ws, opts);
+                assert_eq!(ok, !failed_turn, "{feed:?}");
+                assert_eq!(std::fs::read(&witness).unwrap(), b"kept", "the builder itself observes the durable handoff before it ends");
+                assert_eq!(prompts_given(&b), 1);
+                assert_eq!(notes::take_left(&dir).unwrap().len(), usize::from(failed_turn));
+                assert_eq!(dir.join("71.read.json").exists(), failed_turn);
+                assert!(notes::claim(&dir).is_empty());
+                if failed_turn {
+                    std::fs::write(&agent, normal).unwrap();
+                    let mut config = b.hub.config();
+                    let mut entry = config.get("Stand-in").unwrap().clone();
+                    entry.config.model = "stand-in".into();
+                    config.upsert(entry);
+                    b.hub.engine.session().settings.ai = config.to_table().unwrap();
+                    let mut opts = RunOptions::default();
+                    opts.kinds.register(Arc::new(LanguageKind));
+                    assert!(try_with(&b, &Workspace::open(&ws.root).unwrap(), opts).0);
+                    assert!(notes::take_left(&dir).unwrap().is_empty());
+                }
+            }
+        }
     }
 
     fn studied(feed: &[feed::FeedItem]) -> bool {

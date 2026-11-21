@@ -274,8 +274,8 @@ fn main() {
                 let root = ws.root.clone();
                 let _ = a.runs.start(&a.hub, ws, RunOptions::default());
                 if let Some(run) = a.runs.get(&root) {
-                    run.add_note("Make the header blue".into(), "Make the header blue".into(), Vec::new());
-                    run.add_note("And add a contact form".into(), "And add a contact form".into(), Vec::new());
+                    let _ = run.add_note("Make the header blue".into(), "Make the header blue".into(), Vec::new());
+                    let _ = run.add_note("And add a contact form".into(), "And add a contact form".into(), Vec::new());
                 }
             }
             a

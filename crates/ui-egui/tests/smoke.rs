@@ -2270,6 +2270,49 @@ fn stand_in_app(projects: std::path::PathBuf, runs: &craft_anything_ai::rebuild:
 }
 
 #[test]
+fn finished_notes_carry_their_ids_and_request_boundaries_to_the_next_run() {
+    use craft_anything_ai::rebuild::{RunOptions, RunSet, StandIns};
+    use craft_anything_engine::workspace::{TargetRef, Workspace};
+    use craft_anything_platform::sync::Mutex;
+    use std::sync::Arc;
+    let d = tempfile::tempdir().unwrap();
+    let ws = Workspace::create(d.path(), "Languages", "A website", TargetRef::None).unwrap();
+    let runs = StandIns::new();
+    let seen: Arc<Mutex<Vec<RunOptions>>> = Arc::default();
+    let observed = seen.clone();
+    let (dir, r) = (d.path().to_path_buf(), runs.clone());
+    let mut h = harness(move || {
+        let mut app = stand_in_app(dir, &r);
+        let mut starter = r.starter();
+        app.runs = RunSet::new(1).with_starter(Box::new(move |hub, ws, opts| {
+            observed.lock().unwrap().push(opts.clone());
+            starter(hub, ws, opts)
+        }));
+        app
+    });
+    h.state_mut().open_workspace(ws.clone());
+    h.state_mut().continue_build();
+    h.run_steps(2);
+    let parts = ["The earlier label says \"Bonjour\"", "Build the website in German"];
+    for text in parts {
+        h.state_mut().state.project_input = text.into();
+        h.state_mut().send_message();
+    }
+    let waiting = h.state().runs.get(&ws.root).unwrap().waiting();
+    assert_eq!(waiting.len(), 2);
+    let ids: Vec<_> = waiting.iter().map(|note| note.id).collect();
+    assert!(runs.finish(&ws.root));
+    h.run_steps(3);
+    let observed = seen.lock().unwrap();
+    assert_eq!(observed.len(), 2);
+    assert!(observed[0].carried_note_ids.is_empty() && observed[0].request_parts.is_empty());
+    assert_eq!(observed[1].carried_note_ids, ids, "only the ids actually joined by take_notes are carried");
+    assert_eq!(observed[1].request_parts, parts);
+    assert_eq!(observed[1].message.as_deref(), Some(parts.join("\n\n").as_str()));
+    assert_eq!(observed[1].shown, observed[1].message);
+}
+
+#[test]
 fn a_note_waiting_for_the_builder_can_be_taken_back_into_the_prompt_box() {
     use craft_anything_ai::rebuild::{RunEvent, StandIns};
     use craft_anything_engine::workspace::{TargetRef, Workspace};
