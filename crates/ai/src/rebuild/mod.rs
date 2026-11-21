@@ -452,9 +452,7 @@ impl RebuildRun {
     pub fn feed_now(&mut self) -> Vec<feed::FeedItem> {
         let feed = self.feed.lock().unwrap_or_else(PoisonError::into_inner);
         while self.rx.try_recv().is_ok() {}
-        let mut items = feed.items();
-        feed::show_pending(&mut items, &self.inbox);
-        items
+        feed.display_items(&self.inbox)
     }
 
     /// Answer a question or approval card.
@@ -465,7 +463,8 @@ impl RebuildRun {
     /// Answer a card; `shown` is how the answer appears in the project's feed.
     pub fn answer_as(&self, id: &str, answer: &Answer, shown: &str) -> Result<(), ToolError> {
         let mut feed = self.feed.lock().unwrap_or_else(PoisonError::into_inner);
-        self.inbox.answer_with(id, answer, |request| feed.answered(request, shown, || Ok(())))
+        let prepare = feed.prepare_answer();
+        self.inbox.answer_with_guard(id, answer, prepare, |guard, request| feed.answered(guard, request, shown, || Ok(())))
     }
 
     pub fn stop(&self) {

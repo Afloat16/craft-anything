@@ -342,7 +342,7 @@ fn fingerprint_tree(
             format!("Can't check build progress: {} is nested more than {MAX_DEPTH} folders deep.", dir.display()),
         ));
     }
-    let backups = if ws.manifest.app_in_root && dir == root { Some(CopyBackups::discover(root)?) } else { None };
+    let backups = if ws.manifest.app_in_root && dir == root { Some(CopyBackups::discover_with_cancel(root, stop)?) } else { None };
     let mut entries = Vec::new();
     for entry in std::fs::read_dir(dir).map_err(|e| ToolError::io(dir.display(), e))? {
         stop.check()?;
@@ -359,7 +359,7 @@ fn fingerprint_tree(
             && let Some(backups) = &backups
         {
             let (mut file, metadata) = craft_anything_platform::fs::open_regular_file(&path)?;
-            if backups.owns_open(&path, &mut file, &metadata)? {
+            if backups.owns_open_with_cancel(&path, &mut file, &metadata, stop)? {
                 continue;
             }
         }

@@ -13,6 +13,7 @@ pub const RECOVERY_ARCHIVE_DIR: &str = "feed-recovery";
 const FORMAT: &str = "craft-anything.feed-recovery";
 const VERSION: u32 = 1;
 const SUFFIX: &str = ".recovery.json";
+const STAGING_DIR: &str = "pending";
 const MAX_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ENTRIES: usize = 256;
 const MAX_NOTICES: usize = 16;
@@ -139,13 +140,22 @@ impl std::io::Write for CappedWriter<'_> {
 
 /// Keep a distinct owner-private copy, bounded to 64 MiB. Success means the complete file was
 /// synced, and on Unix its directory and ancestor directory entries were synced too. Even a
-/// partial failed write is left alone; discovery cannot mistake it for a complete record.
+/// partial failed write is left alone in private staging, outside discovery's file/byte budgets.
 /// Never touches the main feed.
 pub fn write_recovery_snapshot(root: &Path, snapshot: &RecoverySnapshot) -> Result<PathBuf, ToolError> {
     write_recovery_snapshot_using(root, snapshot, sync_directory)
 }
 
-fn write_recovery_snapshot_using(root: &Path, snapshot: &RecoverySnapshot, mut sync: impl FnMut(&Path) -> Result<(), ToolError>) -> Result<PathBuf, ToolError> {
+fn write_recovery_snapshot_using(root: &Path, snapshot: &RecoverySnapshot, sync: impl FnMut(&Path) -> Result<(), ToolError>) -> Result<PathBuf, ToolError> {
+    write_recovery_snapshot_with_limit(root, snapshot, sync, MAX_BYTES)
+}
+
+fn write_recovery_snapshot_with_limit(
+    root: &Path,
+    snapshot: &RecoverySnapshot,
+    mut sync: impl FnMut(&Path) -> Result<(), ToolError>,
+    limit: u64,
+) -> Result<PathBuf, ToolError> {
     if !snapshot.recognized() {
         return Err(ToolError::new(ErrorCode::NotSupported, "This conversation recovery-copy format isn't supported."));
     }
@@ -154,26 +164,55 @@ fn write_recovery_snapshot_using(root: &Path, snapshot: &RecoverySnapshot, mut s
         project.as_ref().map_err(Clone::clone)?.check(root)?;
     }
     let directory = directory_using(root, true, &mut sync)?.ok_or_else(|| ToolError::internal("The conversation-recovery folder wasn't created."))?;
+    let staging = staging_directory(&directory, &mut sync)?;
     static NEXT: AtomicU64 = AtomicU64::new(0);
     for _ in 0..64 {
         let name = format!("conversation-{}-{}-{}{SUFFIX}", crate::inbox::now_ms(), std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed));
-        let path = directory.join(name);
+        let path = directory.join(&name);
+        let pending = staging.join(format!("{name}.partial"));
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
         std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        let mut file = match options.open(&path) {
+        let mut file = match options.open(&pending) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(ToolError::io(path.display(), error)),
+            Err(error) => return Err(ToolError::io(pending.display(), error)),
         };
-        serde_json::to_writer(CappedWriter { file: &mut file, remaining: MAX_BYTES }, snapshot).map_err(|error| ToolError::io(path.display(), error.into()))?;
-        file.sync_all().map_err(|error| ToolError::io(path.display(), error))?;
+        serde_json::to_writer(CappedWriter { file: &mut file, remaining: limit.min(MAX_BYTES) }, snapshot)
+            .map_err(|error| ToolError::io(pending.display(), error.into()))?;
+        file.sync_all().map_err(|error| ToolError::io(pending.display(), error))?;
+        // Expose only a complete synced file, without replacing a pre-existing archive.
+        match std::fs::hard_link(&pending, &path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(ToolError::io(path.display(), error)),
+        }
         sync(&directory)?;
+        std::fs::remove_file(&pending).map_err(|error| ToolError::io(pending.display(), error))?;
+        sync(&staging)?;
         return Ok(path);
     }
     Err(ToolError::new(ErrorCode::FileError, "Couldn't reserve a new conversation recovery copy.")
         .with_remediation("Keep the existing recovery copies and retry."))
+}
+
+fn staging_directory(directory: &Path, sync: &mut impl FnMut(&Path) -> Result<(), ToolError>) -> Result<PathBuf, ToolError> {
+    let staging = directory.join(STAGING_DIR);
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    match builder.create(&staging) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(ToolError::io(staging.display(), error)),
+    }
+    let metadata = std::fs::symlink_metadata(&staging).map_err(|error| ToolError::io(staging.display(), error))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(ToolError::invalid(format!("{} isn't a regular conversation-recovery staging folder.", staging.display())));
+    }
+    sync(directory)?;
+    Ok(staging)
 }
 
 fn recovery_filename(path: &Path) -> bool {
@@ -328,6 +367,48 @@ mod tests {
     }
 
     #[test]
+    fn failed_archive_serialization_cannot_consume_discovery_budgets() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "Project", "Test", TargetRef::None).unwrap();
+        let mut feed = load(&ws);
+        feed.push(FeedItem::User(UserItem::Text("x".repeat(4096))));
+        let snapshot = RecoverySnapshot::from_loaded(&feed, json!({}));
+        let error = write_recovery_snapshot_with_limit(&ws.root, &snapshot, sync_directory, 1024).unwrap_err();
+        assert!(error.message.contains("exceeds 64 MiB"));
+        let directory = ws.inbox_dir().join(RECOVERY_ARCHIVE_DIR);
+        let pending = directory.join(STAGING_DIR);
+        assert!(std::fs::read_dir(&directory).unwrap().all(|entry| !recovery_filename(&entry.unwrap().path())));
+        let partial = std::fs::read_dir(&pending).unwrap().next().unwrap().unwrap().path();
+        assert!(std::fs::metadata(&partial).unwrap().len() > 0);
+        assert!(!recovery_filename(&partial));
+        // A sparse failed payload fills the byte budget without a large test allocation.
+        std::fs::OpenOptions::new().write(true).open(&partial).unwrap().set_len(MAX_BYTES).unwrap();
+        for index in 0..=MAX_ENTRIES {
+            std::fs::write(pending.join(format!("earlier-{index}.partial")), b"partial").unwrap();
+        }
+        let valid = write_recovery_snapshot(&ws.root, &RecoverySnapshot::from_loaded(&load(&ws), json!({}))).unwrap();
+        let shown = recovery_notices(&ws.root);
+        assert_eq!(shown.len(), 1, "private partial files use neither the archive entry budget nor its byte budget");
+        assert!(matches!(&shown[0], FeedItem::Error { log: Some(path), .. } if path == &valid));
+        assert_eq!(std::fs::metadata(partial).unwrap().len(), MAX_BYTES, "failed payloads remain available for inspection");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archive_staging_does_not_follow_an_existing_link() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "Project", "Test", TargetRef::None).unwrap();
+        let archive = directory(&ws.root, true).unwrap().unwrap();
+        let elsewhere = d.path().join("personal");
+        std::fs::create_dir(&elsewhere).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, archive.join(STAGING_DIR)).unwrap();
+        let snapshot = RecoverySnapshot::from_loaded(&load(&ws), json!({}));
+        assert!(write_recovery_snapshot(&ws.root, &snapshot).is_err());
+        assert!(std::fs::read_dir(elsewhere).unwrap().next().is_none());
+        assert!(recovery_notices(&ws.root).is_empty());
+    }
+
+    #[test]
     fn recovery_copy_does_not_replace_an_existing_folder_entry_or_follow_a_link() {
         let d = tempfile::tempdir().unwrap();
         let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
@@ -424,7 +505,8 @@ mod tests {
             sync_directory(path)
         })
         .unwrap();
-        assert_eq!(synced, vec![root.clone(), root.join("inbox"), root.join("inbox").join(RECOVERY_ARCHIVE_DIR)]);
+        let directory = root.join("inbox").join(RECOVERY_ARCHIVE_DIR);
+        assert_eq!(synced, vec![root.clone(), root.join("inbox"), directory.clone(), directory.clone(), directory.join(STAGING_DIR)]);
         assert!(archive.is_file());
     }
 
@@ -460,7 +542,8 @@ mod tests {
                 sync_directory(path)
             })
             .unwrap();
-            assert_eq!(synced, vec![root.clone(), root.join("inbox"), root.join("inbox").join(RECOVERY_ARCHIVE_DIR)]);
+            let directory = root.join("inbox").join(RECOVERY_ARCHIVE_DIR);
+            assert_eq!(synced, vec![root.clone(), root.join("inbox"), directory.clone(), directory.clone(), directory.join(STAGING_DIR)]);
             assert!(archive.is_file());
         }
     }

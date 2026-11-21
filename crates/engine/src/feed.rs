@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 mod backups;
 mod recovery;
 mod transaction;
-pub(crate) use backups::{owned_backups, owns_open_backup, remove_owned_backups};
+pub(crate) use backups::{owned_backups, owned_backups_with_cancel, owns_open_backup_with_cancel, remove_owned_backups};
 pub use recovery::{RECOVERY_ARCHIVE_DIR, RecoverySnapshot, recovery_notices, write_recovery_snapshot};
 pub use transaction::{ProjectFeedGuard, lock_project};
 
@@ -233,11 +233,55 @@ pub struct LoadedFeed {
     decoded_source: Option<String>,
     recovery: Option<RecoveryProjection>,
     project: Result<std::sync::Arc<transaction::ProjectIdentity>, ToolError>,
+    display_source: Option<std::sync::Arc<DisplaySource>>,
+    save_needs_sync: bool,
+}
+
+/// Keep the opened file alive so an atomic replacement cannot reuse its identity. These
+/// small metadata checks let a live display reject stale delivery evidence without reading
+/// and hashing the complete conversation on each UI poll.
+#[derive(Debug)]
+struct DisplaySource {
+    file: same_file::Handle,
+    length: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+impl DisplaySource {
+    fn read(path: &Path) -> Option<Self> {
+        let file = same_file::Handle::from_path(path).ok()?;
+        let metadata = file.as_file().metadata().ok()?;
+        metadata.is_file().then(|| Self { file, length: metadata.len(), modified: metadata.modified().ok() })
+    }
+
+    fn is_current(&self, path: &Path) -> bool {
+        Self::read(path).is_some_and(|current| self.file == current.file && self.length == current.length && self.modified == current.modified)
+    }
 }
 
 impl LoadedFeed {
+    /// Prepare an owned lock callback for an inbox transaction. It retains only the project
+    /// identity, not this conversation's items, and runs after the request reservation. This
+    /// lets the caller validate its loaded project before staging any delivery record.
+    pub fn prepare_transaction(&self, root: &Path) -> impl FnOnce() -> Result<ProjectFeedGuard, ToolError> + use<> {
+        let root = root.to_path_buf();
+        let project = self.project.clone();
+        move || {
+            let guard = lock_project(&root)?;
+            project?.check(&root)?;
+            Ok(guard)
+        }
+    }
+
+    /// The most recent save published these bytes but could not sync the containing folder.
+    /// Adopt the visible state before retrying, while continuing to report the sync error.
+    /// Every save resets this flag before validation or lock acquisition can fail.
+    pub fn save_needs_sync(&self) -> bool {
+        self.save_needs_sync
+    }
+
     /// A repaired conversation belongs to this writer only while its original project
-    /// directory and manifest creation time remain the same.
+    /// directory, manifest creation time and persistent generation remain the same.
     pub fn is_same_project(&self, other: &LoadedFeed) -> bool {
         match (&self.project, &other.project) {
             (Ok(own), Ok(other)) => own.same(other),
@@ -341,12 +385,26 @@ pub fn load(ws: &Workspace) -> LoadedFeed {
 
 fn load_inner(ws: &Workspace) -> LoadedFeed {
     let project = transaction::ProjectIdentity::from_workspace(ws).map(std::sync::Arc::new);
-    let saved = read_previous(&ws.root.join(FEED_FILE)).and_then(|bytes| match bytes {
+    let path = ws.root.join(FEED_FILE);
+    let display_source = DisplaySource::read(&path);
+    let saved = read_previous(&path).and_then(|bytes| match bytes {
         Some(bytes) if newer_version(&bytes) => Err(newer_error()),
         bytes => Ok(bytes),
     });
+    let display_source = display_source.filter(|source| source.is_current(&path)).map(std::sync::Arc::new);
     let saved = match saved {
-        Ok(None) => return LoadedFeed { items: history(ws), not_loaded: None, damaged: None, decoded_source: None, recovery: None, project },
+        Ok(None) => {
+            return LoadedFeed {
+                items: history(ws),
+                not_loaded: None,
+                damaged: None,
+                decoded_source: None,
+                recovery: None,
+                project,
+                display_source,
+                save_needs_sync: false,
+            };
+        }
         Err(error) => {
             let error = if error.remediation.is_some() {
                 error
@@ -359,7 +417,16 @@ fn load_inner(ws: &Workspace) -> LoadedFeed {
                 remediation: error.remediation.clone(),
                 log: None,
             });
-            return LoadedFeed { items, not_loaded: Some(error), damaged: None, decoded_source: None, recovery: None, project };
+            return LoadedFeed {
+                items,
+                not_loaded: Some(error),
+                damaged: None,
+                decoded_source: None,
+                recovery: None,
+                project,
+                display_source,
+                save_needs_sync: false,
+            };
         }
         Ok(Some(bytes)) => match decode(&bytes) {
             Some(saved) => (saved, craft_anything_evidence::sha256_hex(&bytes)),
@@ -371,7 +438,16 @@ fn load_inner(ws: &Workspace) -> LoadedFeed {
                     log: None,
                 });
                 let recovery = Some(RecoveryProjection::from_workspace(ws, &bytes));
-                return LoadedFeed { items, not_loaded: None, damaged: Some(bytes), decoded_source: None, recovery, project };
+                return LoadedFeed {
+                    items,
+                    not_loaded: None,
+                    damaged: Some(bytes),
+                    decoded_source: None,
+                    recovery,
+                    project,
+                    display_source,
+                    save_needs_sync: false,
+                };
             }
         },
     };
@@ -386,17 +462,65 @@ fn load_inner(ws: &Workspace) -> LoadedFeed {
     }
     let shown: HashSet<String> = feed.iter().filter_map(|i| if let FeedItem::Ask { request, .. } = i { Some(request.id.clone()) } else { None }).collect();
     feed.extend(Inbox::new(ws.inbox_dir()).pending().into_iter().filter(|r| !shown.contains(&r.id)).map(|request| FeedItem::Ask { request, answer: None }));
-    LoadedFeed { items: feed, not_loaded: None, damaged: None, decoded_source: Some(decoded_source), recovery: saved.recovery, project }
+    LoadedFeed {
+        items: feed,
+        not_loaded: None,
+        damaged: None,
+        decoded_source: Some(decoded_source),
+        recovery: saved.recovery,
+        project,
+        display_source,
+        save_needs_sync: false,
+    }
 }
 
 /// A read-only conversation view, including retryable questions whose answer was saved but
 /// couldn't yet be delivered. Writers use `load` so a save between recording and delivery
 /// cannot erase the recorded answer.
 pub fn for_display(ws: &Workspace) -> Vec<FeedItem> {
-    let mut items = load(ws).into_items();
-    show_pending(&mut items, &Inbox::new(ws.inbox_dir()));
+    for_display_using(ws, || {})
+}
+
+fn for_display_using(ws: &Workspace, after_load: impl FnOnce()) -> Vec<FeedItem> {
+    let feed = load(ws);
+    let mut items = feed.items.clone();
+    after_load();
+    show_pending_for_feed(&mut items, &Inbox::new(ws.inbox_dir()), &feed);
     items.extend(recovery_notices(&ws.root));
     items
+}
+
+/// Receipt state can change after the conversation snapshot was loaded. It confirms an
+/// answered row only while that snapshot's opened source is still current. A changed source
+/// leaves the earlier words visible as unconfirmed, rather than assigning a later reply's
+/// delivery to them. A subsequent display load picks up the new conversation.
+pub fn show_pending_for_feed(items: &mut [FeedItem], inbox: &Inbox, source: &LoadedFeed) {
+    let answered: Vec<_> = items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| match item {
+            FeedItem::Ask { request, answer: Some(answer) } => Some((index, request.title.clone(), answer.clone())),
+            _ => None,
+        })
+        .collect();
+    show_pending(items, inbox);
+    let current = inbox.dir().parent().is_some_and(|root| {
+        source.project.as_ref().is_ok_and(|project| project.check(root).is_ok())
+            && source.display_source.as_ref().is_some_and(|saved| saved.is_current(&root.join(FEED_FILE)))
+    });
+    if !current {
+        for (index, title, answer) in answered {
+            if let Some(item) = items.get_mut(index) {
+                *item = FeedItem::Error {
+                    message: format!(
+                        "Delivery of your saved reply to \"{title}\" could not be confirmed because the conversation changed.\n\nEarlier saved reply:\n{answer}"
+                    ),
+                    remediation: Some("Refresh the conversation to see the latest reply and delivery state before answering again.".into()),
+                    log: None,
+                };
+            }
+        }
+    }
 }
 
 /// Offer undelivered answers for retry in a cloned display list, never in a writer's feed.
@@ -471,6 +595,17 @@ pub fn save_if_unchanged(root: &Path, feed: &mut LoadedFeed) -> Result<(), ToolE
     save_inner(root, feed, true)
 }
 
+/// Save inside a transaction already held by an inbox submission. Request locks must have
+/// been acquired before this guard; the caller keeps the guard through answer publication.
+pub fn save_locked(guard: &ProjectFeedGuard, feed: &mut LoadedFeed) -> Result<(), ToolError> {
+    save_locked_using(guard, feed, false, crate::project::write_atomic)
+}
+
+/// Commit a replay against its decoded source without reacquiring the project lock.
+pub fn save_if_unchanged_locked(guard: &ProjectFeedGuard, feed: &mut LoadedFeed) -> Result<(), ToolError> {
+    save_locked_using(guard, feed, true, crate::project::write_atomic)
+}
+
 fn save_inner(root: &Path, feed: &mut LoadedFeed, require_decoded_source: bool) -> Result<(), ToolError> {
     save_using(root, feed, require_decoded_source, crate::project::write_atomic)
 }
@@ -481,6 +616,7 @@ fn save_using(
     require_decoded_source: bool,
     write: impl FnOnce(&Path, &[u8]) -> Result<(), ToolError>,
 ) -> Result<(), ToolError> {
+    feed.save_needs_sync = false;
     if let Some(error) = &feed.not_loaded {
         return Err(error.clone());
     }
@@ -494,6 +630,17 @@ fn save_locked_using(
     require_decoded_source: bool,
     write: impl FnOnce(&Path, &[u8]) -> Result<(), ToolError>,
 ) -> Result<(), ToolError> {
+    save_locked_with_directory_sync(guard, feed, require_decoded_source, write, recovery::sync_directory)
+}
+
+pub(crate) fn save_locked_with_directory_sync(
+    guard: &ProjectFeedGuard,
+    feed: &mut LoadedFeed,
+    require_decoded_source: bool,
+    write: impl FnOnce(&Path, &[u8]) -> Result<(), ToolError>,
+    sync: impl FnOnce(&Path) -> Result<(), ToolError>,
+) -> Result<(), ToolError> {
+    feed.save_needs_sync = false;
     if let Some(error) = &feed.not_loaded {
         return Err(error.clone());
     }
@@ -543,6 +690,18 @@ fn save_locked_using(
     feed.items = saved.items;
     feed.damaged = None;
     feed.decoded_source = Some(craft_anything_evidence::sha256_hex(&json));
+    feed.display_source = DisplaySource::read(&path).map(std::sync::Arc::new);
+    feed.save_needs_sync = true;
+    sync(root).map_err(|mut error| {
+        error.message = format!("The conversation was written, but its folder could not be synced: {}", error.message);
+        if error.remediation.is_none() {
+            error.remediation = Some(
+                "Keep the project open and restore access to its folder, then retry saving. Answer delivery remains pending until the save completes.".into(),
+            );
+        }
+        error
+    })?;
+    feed.save_needs_sync = false;
     Ok(())
 }
 
@@ -573,7 +732,7 @@ fn keep_damaged(root: &Path, bytes: &[u8]) -> Result<PathBuf, ToolError> {
         format!("The conversation wasn't saved: all {} conversation recovery slots are already in use.", DAMAGED_BACKUP_NAMES.len()),
     )
     .with_remediation(
-        "Move an earlier .broken backup and its matching inbox/feed-backups/<backup-name>.json ownership record, including any interrupted copy in inbox/feed-backups/pending, to another safe location, then retry. The original conversation is unchanged.",
+        "Move an earlier .broken backup and its matching inbox/feed-backups/<backup-name>.json ownership record, including its retained identity link and receipt in inbox/feed-backups/pending, to another safe location, then retry. The original conversation is unchanged.",
     ))
 }
 
@@ -584,14 +743,23 @@ pub fn record_answer(ws: &Workspace, request: &Request, shown: &str) -> Result<(
     record_answer_using(ws, request, shown, || {})
 }
 
+pub(crate) fn record_answer_locked(guard: &ProjectFeedGuard, ws: &Workspace, request: &Request, shown: &str) -> Result<(), ToolError> {
+    record_answer_locked_using(guard, ws, request, shown, || {})
+}
+
 fn record_answer_using(ws: &Workspace, request: &Request, shown: &str, before_save: impl FnOnce()) -> Result<(), ToolError> {
+    let guard = lock_project(&ws.root)?;
+    record_answer_locked_using(&guard, ws, request, shown, before_save)
+}
+
+fn record_answer_locked_using(guard: &ProjectFeedGuard, ws: &Workspace, request: &Request, shown: &str, before_save: impl FnOnce()) -> Result<(), ToolError> {
     // Inbox submission already owns its request lock. Do not reacquire it while holding
     // this feed lock; load only reads pending requests and delivery evidence.
-    let guard = lock_project(&ws.root)?;
+    guard.check_workspace(ws)?;
     let mut feed = load(ws);
     record_pending_answer(&mut feed, request, shown);
     before_save();
-    save_locked_using(&guard, &mut feed, false, crate::project::write_atomic)
+    save_locked_using(guard, &mut feed, false, crate::project::write_atomic)
 }
 
 /// Record the latest answer to a request captured from the pending inbox, including a retry
@@ -616,13 +784,122 @@ mod tests {
         let damaged = previous.as_ref().filter(|bytes| decode(bytes).is_none()).cloned();
         let decoded_source = previous.as_ref().filter(|bytes| decode(bytes).is_some()).map(|bytes| craft_anything_evidence::sha256_hex(bytes));
         let project = transaction::ProjectIdentity::from_workspace(&Workspace::open(root)?).map(std::sync::Arc::new);
-        super::save(root, &mut LoadedFeed { items: items.to_vec(), not_loaded: None, damaged, decoded_source, recovery: None, project })
+        let display_source = DisplaySource::read(&root.join(FEED_FILE)).map(std::sync::Arc::new);
+        super::save(
+            root,
+            &mut LoadedFeed {
+                items: items.to_vec(),
+                not_loaded: None,
+                damaged,
+                decoded_source,
+                recovery: None,
+                project,
+                display_source,
+                save_needs_sync: false,
+            },
+        )
     }
 
     fn question(ws: &Workspace, title: &str) -> Request {
         let inbox = Inbox::new(ws.inbox_dir());
         let id = inbox.post(RequestKind::Question, title, "", vec![], true, None).unwrap();
         inbox.pending().into_iter().find(|request| request.id == id).unwrap()
+    }
+
+    #[test]
+    fn a_directory_sync_failure_keeps_the_visible_feed_as_the_next_source() {
+        for damaged in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(directory.path(), "Site", "A website", TargetRef::None).unwrap();
+            let path = ws.root.join(FEED_FILE);
+            if damaged {
+                std::fs::write(&path, b"damaged conversation").unwrap();
+            }
+            let mut feed = load(&ws);
+            feed.push(FeedItem::Paused);
+            let guard = lock_project(&ws.root).unwrap();
+            let error = save_locked_with_directory_sync(&guard, &mut feed, false, crate::project::write_atomic, |_| {
+                Err(ToolError::new(ErrorCode::FileError, "injected directory sync failure"))
+            })
+            .unwrap_err();
+
+            assert!(error.message.contains("was written"));
+            assert!(error.message.contains("injected directory sync failure"));
+            assert!(feed.save_needs_sync());
+            assert!(feed.was_decoded());
+            assert_eq!(feed.decoded_source, Some(craft_anything_evidence::sha256_hex(&std::fs::read(&path).unwrap())));
+            assert_eq!(feed.items, load(&ws).items);
+
+            save_if_unchanged_locked(&guard, &mut feed).unwrap();
+            assert!(!feed.save_needs_sync());
+            assert_eq!(load(&ws).iter().filter(|item| matches!(item, FeedItem::Paused)).count(), 1);
+        }
+    }
+
+    #[test]
+    fn a_later_prewrite_failure_clears_the_previous_directory_sync_state() {
+        for failure in ["source", "project", "lock"] {
+            let directory = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(directory.path(), "Site", "A website", TargetRef::None).unwrap();
+            let mut feed = load(&ws);
+            let guard = lock_project(&ws.root).unwrap();
+            assert!(
+                save_locked_with_directory_sync(&guard, &mut feed, false, crate::project::write_atomic, |_| {
+                    Err(ToolError::new(ErrorCode::FileError, "injected directory sync failure"))
+                })
+                .is_err()
+            );
+            assert!(feed.save_needs_sync());
+            let path = ws.root.join(FEED_FILE);
+            feed.push(FeedItem::Paused);
+            match failure {
+                "source" => {
+                    std::fs::write(&path, br#"{"version":6,"items":[{"User":"Another saved conversation"}]}"#).unwrap();
+                    assert_eq!(save_locked(&guard, &mut feed).unwrap_err().code, ErrorCode::FileChanged);
+                }
+                "project" => {
+                    std::fs::remove_file(ws.root.join(crate::workspace::MANIFEST)).unwrap();
+                    assert!(save_locked(&guard, &mut feed).is_err());
+                }
+                _ => {
+                    drop(guard);
+                    std::fs::write(ws.inbox_dir().join("feed.lock"), b"personal entry").unwrap();
+                    assert!(super::save(&ws.root, &mut feed).is_err());
+                }
+            }
+            assert!(!feed.save_needs_sync(), "{failure}");
+            assert!(!decode(&std::fs::read(&path).unwrap()).unwrap().items.iter().any(|item| matches!(item, FeedItem::Paused)));
+        }
+    }
+
+    #[test]
+    fn a_stale_snapshot_does_not_assign_a_retry_delivery_to_earlier_words() {
+        use crate::inbox::Answer;
+        for consumed in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(directory.path(), "Colour", "Pick a colour", TargetRef::None).unwrap();
+            let inbox = Inbox::new(ws.inbox_dir());
+            let request = question(&ws, "Which colour?");
+            let answer_path = inbox.dir().join(format!("{}.answer.json", request.id));
+            std::fs::create_dir(&answer_path).unwrap();
+            assert!(inbox.answer_recorded(&ws, &request.id, &Answer { text: Some("Blue".into()), ..Default::default() }, "Blue").is_err());
+            std::fs::remove_dir(&answer_path).unwrap();
+
+            let shown = for_display_using(&ws, || {
+                inbox.answer_recorded(&ws, &request.id, &Answer { text: Some("Red".into()), ..Default::default() }, "Red").unwrap();
+                if consumed {
+                    assert_eq!(inbox.wait(&request.id, std::time::Duration::ZERO, &|| false).unwrap().as_text(), "Red");
+                }
+            });
+
+            assert!(
+                shown
+                    .iter()
+                    .any(|item| matches!(item, FeedItem::Error { message, .. } if message.contains("could not be confirmed") && message.contains("Blue")))
+            );
+            assert!(!shown.iter().any(|item| matches!(item, FeedItem::Ask { answer: Some(answer), .. } if answer == "Blue")));
+            assert!(for_display(&ws).iter().any(|item| matches!(item, FeedItem::Ask { answer: Some(answer), .. } if answer == "Red")));
+        }
     }
 
     #[test]

@@ -1410,6 +1410,7 @@ dependencies = [
  "craft-anything-testkit",
  "craft-sniff",
  "dirs",
+ "getrandom 0.4.3",
  "hex",
  "image",
  "log",

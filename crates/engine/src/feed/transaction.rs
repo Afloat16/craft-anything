@@ -21,12 +21,19 @@ impl ProjectFeedGuard {
     pub(super) fn check_project(&self) -> Result<(), ToolError> {
         self.project.check(&self.root)
     }
+
+    /// A lock acquired by pathname also has to match the workspace the caller loaded.
+    pub(crate) fn check_workspace(&self, ws: &crate::workspace::Workspace) -> Result<(), ToolError> {
+        self.check_project()?;
+        if self.project.same(&ProjectIdentity::from_workspace(ws)?) { Ok(()) } else { Err(project_changed()) }
+    }
 }
 
 #[derive(Debug)]
 pub(super) struct ProjectIdentity {
     directory: same_file::Handle,
     created_ms: u64,
+    generation: Option<String>,
 }
 
 impl ProjectIdentity {
@@ -42,21 +49,26 @@ impl ProjectIdentity {
         }
         let directory = same_file::Handle::from_path(root).map_err(|error| ToolError::io(root.display(), error))?;
         let created_ms = ws.manifest.created_ms;
-        Ok(Self { directory, created_ms })
+        let generation = ws.manifest.generation.clone();
+        Ok(Self { directory, created_ms, generation })
     }
 
     pub(super) fn same(&self, other: &Self) -> bool {
-        self.directory == other.directory && self.created_ms == other.created_ms
+        self.directory == other.directory && self.created_ms == other.created_ms && self.generation == other.generation
     }
 
     pub(super) fn check(&self, root: &Path) -> Result<(), ToolError> {
         let current = Self::read(root)?;
         if !self.same(&current) {
-            return Err(ToolError::new(ErrorCode::FileChanged, "The project changed while its conversation operation was waiting.")
-                .with_remediation("Open the current project before retrying. This operation has not changed its conversation."));
+            return Err(project_changed());
         }
         Ok(())
     }
+}
+
+fn project_changed() -> ToolError {
+    ToolError::new(ErrorCode::FileChanged, "The project changed while its conversation operation was waiting.")
+        .with_remediation("Open the current project before retrying. This operation has not changed its conversation.")
 }
 
 /// Coordinate feed comparison, replacement and backup publication across application processes.

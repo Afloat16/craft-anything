@@ -233,18 +233,53 @@ impl Inbox {
     /// Save an offline answer in the project's conversation before delivering it. Desktop,
     /// CLI and MCP callers share the same validation, persistence and submission transaction.
     pub fn answer_recorded(&self, ws: &crate::workspace::Workspace, id: &str, answer: &Answer, shown: &str) -> Result<(), ToolError> {
-        self.answer_with(id, answer, |request| crate::feed::record_answer(ws, request, shown))
+        self.answer_with_guard(
+            id,
+            answer,
+            || {
+                let guard = crate::feed::lock_project(&ws.root)?;
+                guard.check_workspace(ws)?;
+                Ok(guard)
+            },
+            |guard, request| crate::feed::record_answer_locked(guard, ws, request, shown),
+        )
     }
 
     /// Accept one pending request, persist its reply, then deliver it. The request file's OS
     /// lock also guards withdrawal in `wait`, across handles and processes. `persist` runs only
     /// after accepting a still-pending request; it must not submit to this inbox again.
     /// A persistence failure releases the reservation and leaves the request available to retry.
+    /// Project-backed writers use `answer_with_guard` to coordinate deletion before staging.
     pub fn answer_with(&self, id: &str, answer: &Answer, persist: impl FnOnce(&Request) -> Result<(), ToolError>) -> Result<(), ToolError> {
         self.answer_inner(id, answer, true, persist)
     }
 
+    /// Reserve the request, prepare and validate its project guard, stage delivery, save the
+    /// conversation and publish the answer. The guard survives every step after preparation.
+    /// `prepare` must acquire the project guard here, after the request lock, not beforehand.
+    pub fn answer_with_guard<G>(
+        &self,
+        id: &str,
+        answer: &Answer,
+        prepare: impl FnOnce() -> Result<G, ToolError>,
+        persist: impl FnOnce(&G, &Request) -> Result<(), ToolError>,
+    ) -> Result<(), ToolError> {
+        self.answer_inner_using(id, answer, true, prepare, persist, || {})
+    }
+
     fn answer_inner(&self, id: &str, answer: &Answer, recorded: bool, persist: impl FnOnce(&Request) -> Result<(), ToolError>) -> Result<(), ToolError> {
+        self.answer_inner_using(id, answer, recorded, || Ok(()), |_, request| persist(request), || {})
+    }
+
+    fn answer_inner_using<G>(
+        &self,
+        id: &str,
+        answer: &Answer,
+        recorded: bool,
+        prepare: impl FnOnce() -> Result<G, ToolError>,
+        persist: impl FnOnce(&G, &Request) -> Result<(), ToolError>,
+        before_publish: impl FnOnce(),
+    ) -> Result<(), ToolError> {
         let request_path = self.path(id, "request")?;
         let answer_path = self.path(id, "answer")?;
         let bytes = serde_json::to_vec(answer).map_err(|e| ToolError::internal(e.to_string()))?;
@@ -288,10 +323,24 @@ impl Inbox {
         if request.id != id {
             return Err(ToolError::invalid("The saved question does not match its inbox id."));
         }
+        let guard = prepare()?;
+        // Deletion can finish while preparation is waiting for the project lock. Reopening
+        // the same path must not turn this old request handle into a reservation on a new one.
+        let metadata = std::fs::symlink_metadata(&request_path)
+            .map_err(|error| if error.kind() == std::io::ErrorKind::NotFound { no_longer_waiting() } else { ToolError::io(request_path.display(), error) })?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(no_longer_waiting());
+        }
+        let current = same_file::Handle::from_path(&request_path).map_err(|error| ToolError::io(request_path.display(), error))?;
+        let reserved = request_file.try_clone().and_then(same_file::Handle::from_file).map_err(|error| ToolError::io(request_path.display(), error))?;
+        if current != reserved {
+            return Err(no_longer_waiting());
+        }
         if recorded {
             delivery::stage(&self.dir, id)?;
         }
-        persist(&request)?;
+        persist(&guard, &request)?;
+        before_publish();
         craft_anything_platform::fs::write_atomic_private(&answer_path, &bytes)
     }
 
@@ -433,6 +482,142 @@ pub fn clear_activity(inbox: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reply_waits_for_the_conversations_directory_sync() {
+        use crate::workspace::{TargetRef, Workspace};
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Colour", "Pick a colour", TargetRef::None).unwrap();
+        let inbox = Inbox::new(ws.inbox_dir());
+        let id = inbox.post(RequestKind::Question, "Which colour?", "", vec![], true, None).unwrap();
+        let answer = Answer { text: Some("Blue".into()), ..Default::default() };
+        let prepare = crate::feed::load(&ws).prepare_transaction(&ws.root);
+        let error = inbox
+            .answer_with_guard(&id, &answer, prepare, |guard, request| {
+                let mut feed = crate::feed::load(&ws);
+                crate::feed::record_pending_answer(&mut feed, request, "Blue");
+                crate::testing::save_feed_with_directory_sync(guard, &mut feed, false, |_| {
+                    Err(ToolError::new(ErrorCode::FileError, "injected directory sync failure"))
+                })
+            })
+            .unwrap_err();
+
+        assert!(error.message.contains("injected directory sync failure"));
+        assert!(!inbox.dir().join(format!("{id}.answer.json")).exists());
+        assert_eq!(inbox.pending().len(), 1);
+        assert!(crate::feed::load(&ws).iter().any(|item| matches!(item, crate::feed::FeedItem::Ask { answer: Some(answer), .. } if answer == "Blue")));
+        inbox.answer_recorded(&ws, &id, &answer, "Blue").unwrap();
+        assert_eq!(inbox.wait(&id, Duration::ZERO, &|| false).unwrap().as_text(), "Blue");
+        assert_eq!(crate::feed::load(&ws).iter().filter(|item| matches!(item, crate::feed::FeedItem::Ask { request, .. } if request.id == id)).count(), 1);
+    }
+
+    #[test]
+    fn a_recorded_answer_holds_the_project_lock_through_publication() {
+        use crate::workspace::{TargetRef, Workspace};
+        use std::sync::mpsc;
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Colour", "Pick a colour", TargetRef::None).unwrap();
+        let deleting = Workspace::open(&ws.root).unwrap();
+        let inbox = Inbox::new(ws.inbox_dir());
+        let id = inbox.post(RequestKind::Question, "Which colour?", "", vec![], true, None).unwrap();
+        let answer = Answer { text: Some("Blue".into()), ..Default::default() };
+        let (release, waiting) = mpsc::channel();
+        let (started, entering) = mpsc::channel();
+        let (finished, completed) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let deletion = scope.spawn(move || {
+                waiting.recv_timeout(Duration::from_secs(5)).unwrap();
+                started.send(()).unwrap();
+                let result = deleting.delete();
+                finished.send(()).unwrap();
+                result
+            });
+            let prepare = crate::feed::load(&ws).prepare_transaction(&ws.root);
+            inbox
+                .answer_inner_using(
+                    &id,
+                    &answer,
+                    true,
+                    prepare,
+                    |guard, request| crate::feed::record_answer_locked(guard, &ws, request, "Blue"),
+                    || {
+                        let probe = std::fs::OpenOptions::new().read(true).write(true).open(inbox.dir().join("feed.lock")).unwrap();
+                        assert!(
+                            matches!(probe.try_lock(), Err(std::fs::TryLockError::WouldBlock)),
+                            "the project guard must remain held after persistence returns"
+                        );
+                        release.send(()).unwrap();
+                        entering.recv_timeout(Duration::from_secs(5)).unwrap();
+                        assert!(matches!(completed.recv_timeout(Duration::from_millis(100)), Err(mpsc::RecvTimeoutError::Timeout)));
+                        assert!(ws.root.join(crate::workspace::MANIFEST).is_file());
+                        assert!(!inbox.dir().join(format!("{id}.answer.json")).exists());
+                    },
+                )
+                .unwrap();
+            deletion.join().unwrap().unwrap();
+        });
+        assert!(!ws.root.join(crate::workspace::MANIFEST).exists());
+        assert!(!inbox.dir().exists(), "publication cannot recreate inbox payloads after deletion completes");
+    }
+
+    #[test]
+    fn an_answer_reserved_before_deletion_cannot_recreate_delivery_records() {
+        use crate::workspace::{TargetRef, Workspace};
+        for recreate in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(directory.path(), "Colour", "Pick a colour", TargetRef::None).unwrap();
+            let inbox = Inbox::new(ws.inbox_dir());
+            let id = inbox.post(RequestKind::Question, "Which colour?", "", vec![], true, None).unwrap();
+            let prepare = crate::feed::load(&ws).prepare_transaction(&ws.root);
+            let answer = Answer { text: Some("Blue".into()), ..Default::default() };
+            let result = inbox.answer_with_guard(
+                &id,
+                &answer,
+                || {
+                    Workspace::open(&ws.root)?.delete()?;
+                    if recreate {
+                        Workspace::create_at(&ws.root, "Replacement", "Keep this new project", TargetRef::None, None)?;
+                    }
+                    prepare()
+                },
+                |_, _| panic!("a deleted or replaced project cannot persist the old reply"),
+            );
+
+            assert!(result.is_err());
+            assert!(!inbox.dir().join(format!("{id}.delivery.json")).exists());
+            assert!(!inbox.dir().join(format!("{id}.answer.json")).exists());
+            assert!(!ws.root.join(crate::feed::FEED_FILE).exists());
+            if recreate {
+                assert_eq!(Workspace::open(&ws.root).unwrap().manifest.request, "Keep this new project");
+            } else {
+                assert!(!ws.root.exists());
+            }
+        }
+    }
+
+    #[test]
+    fn a_replaced_request_is_rejected_before_staging() {
+        let directory = tempfile::tempdir().unwrap();
+        let inbox = Inbox::new(directory.path().join("inbox"));
+        let id = inbox.post(RequestKind::Question, "Which colour?", "", vec![], true, None).unwrap();
+        let request_path = inbox.dir().join(format!("{id}.request.json"));
+        let original = std::fs::read(&request_path).unwrap();
+        let result = inbox.answer_with_guard(
+            &id,
+            &Answer { text: Some("Blue".into()), ..Default::default() },
+            || {
+                std::fs::remove_file(&request_path).unwrap();
+                std::fs::write(&request_path, &original).unwrap();
+                Ok(())
+            },
+            |_, _| panic!("the reservation belongs to the old file, even when its bytes match"),
+        );
+
+        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
+        assert_eq!(std::fs::read(&request_path).unwrap(), original);
+        assert!(!inbox.dir().join(format!("{id}.delivery.json")).exists());
+        assert!(!inbox.dir().join(format!("{id}.answer.json")).exists());
+    }
 
     #[test]
     fn a_tool_says_what_it_waits_on_until_it_stops() {

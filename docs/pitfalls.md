@@ -934,12 +934,18 @@ turns, preserving older and external equal content and replaying every pending e
 the plan's finish transition. Older files without provenance must not lose matching text.
 An external tail error cannot explain this run's failure. Track which errors the run supplied,
 and use the same rule when replaying and checking whether a projected failure will be recreated.
-Install that replayed explanation state with the feed only after the guarded recovery commit succeeds;
+Install that replayed explanation state with the feed when guarded replacement becomes visible;
 discarding it can append a duplicate Finished error after a replay skips an already present question.
 Loading clears streaming flags for display, so replay must retain this run's saved stream position
 and context separately. A CLI answer can change without ending that message; equal external text is
 not permission to append to another writer's message. Commit replayed stream ownership only with a
-successful save, and close it when an event ends that stream.
+visible replacement, and close it when an event ends that stream. A newly introduced question is
+an event boundary even if loading already appended it or another client saved its answer; replay
+must move that row to its original boundary, while repeated Ask events remain no-ops.
+After atomic rename, a directory-sync failure cannot pretend no bytes were written. Update the
+loaded source and replay state, clear only the written journal, keep reporting the durability
+failure and withhold answer delivery. Reset that outcome flag before the next lock or source check
+can fail. At final completion, unconfirmed durability still needs an archive with an empty journal.
 A failed final save cannot leave the only pending conversation in a run that is about to be dropped
 or replaced. Keep an explicit recovery copy on the worker before publishing Finished, and report
 both failures honestly if that copy also cannot be written. Keep the folded feed and source context,
@@ -950,8 +956,15 @@ generated Error shape and archive path, preserving ordinary errors and same-text
 Sync every newly created recovery directory's parent before reporting a durable copy, and repeat
 the sync for existing directories on retry after failure. Do not perform persistence I/O in polling or destructors, and
 do not automatically import retained copies whose contents may overlap a later successful save.
+Serialize and sync archives outside the directory used for completed-copy discovery; partial files
+must not consume its bounded entry or byte budgets. Publish only complete files exclusively.
 Saving a reply and withdrawing its request also share the request's file lock: a withdrawn
 request cannot stage a reply, while an accepted submission finishes before timeout or cancellation.
+Acquire and validate the loaded project's guard after the request reservation but before staging
+any receipt, then keep it through feed persistence and answer publication. Recheck the reserved
+request's file identity after acquiring that guard. Returning from the save and dropping its guard
+before publication lets deletion finish in the middle; acquiring it only after staging can recreate
+an old receipt after deletion. A live handle must validate its original project before either step.
 An ignored unlink error does not withdraw a request. If its directory prevents removal, invalidate
 and sync the already locked request file before returning a confirmed withdrawal. Reject the empty
 marker on submission. Checked waits must propagate failures to read, lock or invalidate the request;
@@ -963,7 +976,10 @@ visible for retry or copying to a new request. Before removing a consumed answer
 delivered receipt; if that write fails, keep the answer file as the remaining evidence.
 An unreadable answer is not an absent one: propagate its I/O error before persisting a replacement.
 Unreadable delivery evidence means unknown delivery, not failed delivery; keep the saved words
-without suggesting a duplicate submission.
+without suggesting a duplicate submission. Recheck a display snapshot's source after reading a
+receipt, so a later retry's delivered state cannot be attached to the old reply's words. Keep those
+words as unconfirmed until a fresh load; metadata checks do not guarantee a snapshot against
+arbitrary external in-place writes.
 An expired self-check reply is withdrawn; it does not fail the build that completed the check.
 Both the desktop and tools use the engine's same answer transaction and show its remediation.
 A persistence notice is separate from a builder error, so it cannot hide why a build failed.
@@ -981,7 +997,13 @@ excluded. Preflight ownership reads before creating the destination, then classi
 actually used for copying. Complete raw bytes and a receipt in private staging before exposing a
 public backup name. A process can exit between publication and the final receipt even with a lock;
 pending ownership must validate both that receipt and the staged file's identity. Equal personal
-bytes in a separate file remain personal. Require a retry for newly observed or changed unverified entries;
+bytes in a separate file remain personal. New version-2 final receipts retain that identity anchor;
+completing a digest receipt cannot replace file identity. Preserve historical version-1 behavior
+without claiming missing past identity evidence. Publish the already-synced receipt exclusively.
+Clean an unpublished attempt only while its opened entries still match, retain replacements and
+the original error, and leave published proof intact. Skip irrelevant receipts for absent backup
+candidates, but keep I/O errors for present uncertain candidates. Check cancellation inside hash
+loops as well as between files. Require a retry for newly observed or changed unverified entries;
 do not silently skip personal replacements or copy a new recovery file through that publication gap.
 A missing or unrecognized receipt cannot reclassify an already known recovery copy as personal
 content during that same copy attempt. Hold the source feed lock across discovery and copying,
@@ -998,7 +1020,8 @@ Reuse a completed damaged-feed backup after replacement
 fails only when both its receipt and current contents match the original source; repeated retries
 must not consume every backup slot for identical bytes.
 Creation must treat dangling reserved links and metadata errors as existing conflicts.
-When freeing a backup slot, move its associated ownership receipt and interrupted pending records too if present.
+When freeing a backup slot, move its associated ownership receipt and retained private identity
+link and receipt together; `pending` also contains completed backups' anchors.
 And "not found" wasn't that either: reading a link whose target is missing answers "not found"
 too, so such a config.toml was a first start and the next save put a file where the link was. A
 read's error describes the end of the path it followed, not the path: before treating "not
@@ -1427,3 +1450,11 @@ exclusive-creation checks after selecting a name.
 then a fixed number of frames left the next action outside the settled layout. Wait for the
 background operation to finish and run immediate repaints after scrolling before clicking;
 otherwise a missed click looks like a backend mutation that never completed.
+
+**A directory and timestamp repeated for a different project.** Deleting an in-place project
+leaves its personal files and directory intact, and a millisecond clock can repeat. Bind loaded
+writers and deletion to a random persisted creation generation as well as directory identity;
+ordinary saves must keep it. Migrate older manifests without generating a different identity on
+each read. A denied lock operation, not owner mode bits, establishes a caller's inability to
+coordinate a read-only copy. If that fallback requires no inbox, check the same project and no
+inbox again before publishing the copy, while preserving normal publisher coordination.

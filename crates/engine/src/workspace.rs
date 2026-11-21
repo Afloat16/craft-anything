@@ -21,6 +21,7 @@ use crate::inbox::{next_counter, now_ms};
 use crate::project::write_atomic;
 use crate::versioned::{self, upgrade};
 use craft_anything_evidence::{ErrorCode, ToolError};
+use craft_anything_platform::cancel::CancelToken;
 use craft_anything_platform::fs::read_file_capped;
 use craft_anything_platform::sync::Mutex;
 use same_file::Handle as FileHandle;
@@ -98,8 +99,13 @@ struct CopyBackups<'a> {
 
 impl<'a> CopyBackups<'a> {
     fn discover(root: &'a Path) -> Result<Self, ToolError> {
+        Self::discover_with_cancel(root, &CancelToken::default())
+    }
+
+    fn discover_with_cancel(root: &'a Path, stop: &CancelToken) -> Result<Self, ToolError> {
         let mut entries = Vec::new();
         for name in crate::feed::DAMAGED_BACKUP_NAMES {
+            stop.check()?;
             let path = root.join(name);
             match std::fs::symlink_metadata(&path) {
                 Ok(metadata) => entries.push((path, metadata)),
@@ -107,7 +113,7 @@ impl<'a> CopyBackups<'a> {
                 Err(error) => return Err(ToolError::io(path.display(), error)),
             }
         }
-        let owned = crate::feed::owned_backups(root)?;
+        let owned = crate::feed::owned_backups_with_cancel(root, stop)?;
         Ok(Self { root, entries, owned })
     }
 
@@ -135,10 +141,15 @@ impl<'a> CopyBackups<'a> {
     }
 
     fn owns_open(&self, path: &Path, file: &mut std::fs::File, metadata: &std::fs::Metadata) -> Result<bool, ToolError> {
+        self.owns_open_with_cancel(path, file, metadata, &CancelToken::default())
+    }
+
+    fn owns_open_with_cancel(&self, path: &Path, file: &mut std::fs::File, metadata: &std::fs::Metadata, stop: &CancelToken) -> Result<bool, ToolError> {
+        stop.check()?;
         check_copy_entry(path, metadata)?;
         let slot = self.slot_for(path, file)?;
         let owned = match &slot {
-            Some(slot) => crate::feed::owns_open_backup(self.root, slot, file)?,
+            Some(slot) => crate::feed::owns_open_backup_with_cancel(self.root, slot, file, stop)?,
             None => false,
         };
         check_copy_entry(path, metadata)?;
@@ -215,10 +226,11 @@ fn same_copy_entry(current: &std::fs::Metadata, opened: &std::fs::Metadata) -> b
 }
 
 /// The current `craft.json` format version. Bumping it means appending a step to [`MANIFEST_STEPS`].
-pub const MANIFEST_VERSION: u32 = 5;
+pub const MANIFEST_VERSION: u32 = 6;
 
 /// The steps that bring an older `craft.json` forward; step `i` goes from version `i` to `i + 1`.
-const MANIFEST_STEPS: &[versioned::Step<Value>] = &[manifest_v0_to_v1, manifest_v1_to_v2, manifest_v2_to_v3, manifest_v3_to_v4, manifest_v4_to_v5];
+const MANIFEST_STEPS: &[versioned::Step<Value>] =
+    &[manifest_v0_to_v1, manifest_v1_to_v2, manifest_v2_to_v3, manifest_v3_to_v4, manifest_v4_to_v5, manifest_v5_to_v6];
 const _: () = assert!(MANIFEST_STEPS.len() == MANIFEST_VERSION as usize, "one step per craft.json version");
 
 /// Version 0 (no `version` field) has the same shape as version 1; only the number is new.
@@ -261,6 +273,14 @@ fn manifest_v4_to_v5(doc: &mut Value) -> Result<(), String> {
         obj.insert("capture_deep".into(), Value::Bool(true));
     }
     Ok(())
+}
+
+/// Version 6 keeps a random project generation. Older projects keep none: reading a manifest
+/// must not create a different identity on each open or require writing a read-only project.
+/// New projects always get a generation, so even a reused folder and timestamp differ. The
+/// version makes older builds read-only instead of silently dropping the identity on save.
+fn manifest_v5_to_v6(doc: &mut Value) -> Result<(), String> {
+    if doc.is_object() { Ok(()) } else { Err("the manifest isn't a JSON object".into()) }
 }
 
 /// Read a `craft.json` document of any version this build understands. A newer manifest is read
@@ -543,6 +563,10 @@ pub struct Manifest {
     pub note: String,
     pub created_ms: u64,
     pub updated_ms: u64,
+    /// Opaque identity assigned when a project is created, independent of its folder and clock.
+    /// None means a project from before generations were kept; ordinary saves preserve it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<String>,
     #[serde(default)]
     pub checks: Vec<CheckResult>,
     /// The coding agent's session, so a later request continues the same conversation.
@@ -622,9 +646,14 @@ impl Manifest {
     }
 
     /// The manifest for a new project, at the current format version.
-    fn new(name: &str, request: &str, target: TargetRef) -> Manifest {
+    fn new(name: &str, request: &str, target: TargetRef) -> Result<Manifest, ToolError> {
+        let mut generation = [0u8; 16];
+        getrandom::fill(&mut generation).map_err(|error| {
+            ToolError::internal(format!("A new project identity could not be generated: {error}"))
+                .with_remediation("Retry creating the project when the operating system's random source is available. No project was created.")
+        })?;
         let now = now_ms();
-        Manifest {
+        Ok(Manifest {
             version: MANIFEST_VERSION,
             name: name.trim().to_string(),
             request: request.trim().to_string(),
@@ -634,6 +663,7 @@ impl Manifest {
             note: String::new(),
             created_ms: now,
             updated_ms: now,
+            generation: Some(hex::encode(generation)),
             checks: Vec::new(),
             agent_session: None,
             agent_session_by: None,
@@ -651,7 +681,7 @@ impl Manifest {
             awaiting_check: false,
             not_working_checks: 0,
             decompiled: false,
-        }
+        })
     }
 
     /// The saved session, if `agent` (`claude-code`, `codex`…) saved it: another agent can't
@@ -981,11 +1011,46 @@ impl CopyDestination {
     }
 }
 
+/// An in-place copy normally holds the publisher lock. A caller denied permission to create
+/// an inbox may instead read a legacy source with no inbox, then recheck before publishing its
+/// copy. Application publishers retain that directory until project deletion, so its appearance
+/// makes the unlocked copy uncertain even if its lock has already been released.
+enum CopySource {
+    Locked(crate::feed::ProjectFeedGuard),
+    WithoutInbox(FileHandle),
+}
+
+impl CopySource {
+    fn check(&self, ws: &Workspace) -> Result<(), ToolError> {
+        match self {
+            Self::Locked(guard) => guard.check_workspace(ws),
+            Self::WithoutInbox(directory) => {
+                let metadata = std::fs::symlink_metadata(&ws.root).map_err(|error| ToolError::io(ws.root.display(), error))?;
+                if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                    return Err(copy_changed(&ws.root));
+                }
+                let current = FileHandle::from_path(&ws.root).map_err(|error| ToolError::io(ws.root.display(), error))?;
+                let manifest = Workspace::open(&ws.root)?.manifest;
+                if &current != directory || manifest.generation != ws.manifest.generation || manifest.created_ms != ws.manifest.created_ms {
+                    return Err(copy_changed(&ws.root));
+                }
+                let inbox = ws.inbox_dir();
+                match std::fs::symlink_metadata(&inbox) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    Ok(_) => Err(copy_changed(&inbox)),
+                    Err(error) => Err(ToolError::io(inbox.display(), error)),
+                }
+            }
+        }
+    }
+}
+
 impl Workspace {
     /// Create a new workspace folder under `projects_dir` (a fresh, unique folder).
     pub fn create(projects_dir: &Path, name: &str, request: &str, target: TargetRef) -> Result<Workspace, ToolError> {
+        let manifest = Manifest::new(name, request, target)?;
         let root = create_workspace_root(projects_dir, name)?;
-        let ws = Workspace { root, manifest: Manifest::new(name, request, target) };
+        let ws = Workspace { root, manifest };
         ws.save()?;
         Ok(ws)
     }
@@ -1013,20 +1078,34 @@ impl Workspace {
     }
 
     fn duplicate_with_hooks(&self, name: &str, after_discovery: impl FnOnce(&[PathBuf]), before_cleanup: impl FnOnce(&Path)) -> Result<Workspace, ToolError> {
+        // This guard is not reentrant; no source feed writer runs inside the copy.
+        let source = if self.manifest.app_in_root { Some(self.lock_copy_source()?) } else { None };
+        self.duplicate_from_source(name, source, after_discovery, before_cleanup)
+    }
+
+    fn duplicate_from_source(
+        &self,
+        name: &str,
+        source: Option<CopySource>,
+        after_discovery: impl FnOnce(&[PathBuf]),
+        before_cleanup: impl FnOnce(&Path),
+    ) -> Result<Workspace, ToolError> {
         let parent = self.root.parent().ok_or_else(|| ToolError::invalid(format!("{} has no parent folder to copy it into.", self.root.display())))?;
         let m = &self.manifest;
         let in_place = m.app_in_root;
         let app = self.app_dir();
         // Recovery must publish its backup and receipt together before discovery starts.
-        // This guard is not reentrant; no source feed writer runs inside the copy.
-        let _source_feed = if in_place { self.lock_copy_source()? } else { None };
+        if let Some(source) = &source {
+            source.check(self)?;
+        }
         // Fail a discovery read before creating a project that would appear as an empty copy.
         // This is only a preflight: each backup-shaped file is classified again when opened.
         let backups = if in_place { Some(CopyBackups::discover(&self.root)?) } else { None };
         let generated_backups = backups.as_ref().map(|backups| backups.owned.as_slice()).unwrap_or(&[]);
         after_discovery(generated_backups);
+        let manifest = Manifest::new(name, &m.request, m.target.clone())?;
         let destination = CopyDestination::create(parent, name)?;
-        let mut copy = Workspace { root: destination.root.clone(), manifest: Manifest::new(name, &m.request, m.target.clone()) };
+        let mut copy = Workspace { root: destination.root.clone(), manifest };
         let copied = (|| {
             if app.is_dir() {
                 copy_tree(
@@ -1057,6 +1136,9 @@ impl Workspace {
             copy.manifest.allowed_actions.clone_from(&m.allowed_actions);
             copy.manifest.questions = m.questions;
             copy.manifest.approvals.clone_from(&m.approvals);
+            if let Some(source) = &source {
+                source.check(self)?;
+            }
             destination.check_identity()?;
             // The manifest makes the project discoverable, so it is written only after
             // every copied file and all initial settings are complete.
@@ -1075,26 +1157,26 @@ impl Workspace {
         Ok(copy)
     }
 
-    fn lock_copy_source(&self) -> Result<Option<crate::feed::ProjectFeedGuard>, ToolError> {
-        match crate::feed::lock_project(&self.root) {
-            Ok(guard) => Ok(Some(guard)),
+    fn lock_copy_source(&self) -> Result<CopySource, ToolError> {
+        self.copy_source_after_lock(crate::feed::lock_project(&self.root))
+    }
+
+    fn copy_source_after_lock(&self, locked: Result<crate::feed::ProjectFeedGuard, ToolError>) -> Result<CopySource, ToolError> {
+        match locked {
+            Ok(guard) => Ok(CopySource::Locked(guard)),
             Err(error) if error.code == ErrorCode::NoPermission => {
-                let metadata = std::fs::metadata(&self.root).map_err(|error| ToolError::io(self.root.display(), error))?;
-                if !metadata.is_dir() || !metadata.permissions().readonly() {
-                    return Err(error);
-                }
                 let inbox = self.inbox_dir();
                 match std::fs::symlink_metadata(&inbox) {
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                     Ok(_) => return Err(error),
                     Err(error) => return Err(ToolError::io(inbox.display(), error)),
                 }
-                // A readable legacy project may have no place to create a coordination
-                // file. Do not let that exception hide a changed or unreadable manifest.
-                if Workspace::open(&self.root)?.manifest.created_ms != self.manifest.created_ms {
-                    return Err(copy_changed(&self.root));
-                }
-                Ok(None)
+                // Mode bits cannot determine this caller's access (for example, another
+                // user's 0755 directory). The failed operation is the permission evidence.
+                let directory = FileHandle::from_path(&self.root).map_err(|error| ToolError::io(self.root.display(), error))?;
+                let source = CopySource::WithoutInbox(directory);
+                source.check(self)?;
+                Ok(source)
             }
             Err(error) => Err(error),
         }
@@ -1111,7 +1193,10 @@ impl Workspace {
         if !self.root.join(MANIFEST).is_file() {
             return Err(ToolError::invalid(format!("{} isn't a project folder.", self.root.display())));
         }
-        let _feed = crate::feed::lock_project(&self.root)?;
+        let feed = crate::feed::lock_project(&self.root)?;
+        // The caller may still hold a workspace loaded before this folder was reused.
+        // Acquiring the replacement project's lock must not authorize deleting its data.
+        feed.check_workspace(&self)?;
         let gone = |p: &Path| -> Result<(), ToolError> {
             let r = if p.is_dir() { std::fs::remove_dir_all(p) } else { std::fs::remove_file(p) };
             match r {
@@ -1149,7 +1234,7 @@ impl Workspace {
     /// them. A folder that's already a project, or that has something named like a file Craft
     /// Anything keeps there, is refused, so nothing of theirs is ever replaced.
     pub fn create_at(folder: &Path, name: &str, request: &str, target: TargetRef, existing: Option<ExistingFiles>) -> Result<Workspace, ToolError> {
-        let mut manifest = Manifest::new(name, request, target);
+        let mut manifest = Manifest::new(name, request, target)?;
         match folder_state(folder)? {
             FolderState::Empty => std::fs::create_dir_all(folder).map_err(|e| ToolError::io(folder.display(), e))?,
             FolderState::Project => {
@@ -1236,7 +1321,13 @@ impl Workspace {
 
     fn write_manifest(&self, m: &Manifest) -> Result<(), ToolError> {
         self.ensure_writable()?;
-        let bytes = serde_json::to_vec_pretty(m).map_err(|e| ToolError::internal(e.to_string()))?;
+        let mut m = m.clone();
+        if let Ok(disk) = Workspace::open(&self.root) {
+            // Identity belongs to project creation, not to a run's cached copy or a
+            // setting update. In particular, a legacy snapshot cannot erase it.
+            m.generation = disk.manifest.generation;
+        }
+        let bytes = serde_json::to_vec_pretty(&m).map_err(|e| ToolError::internal(e.to_string()))?;
         write_atomic(&self.root.join(MANIFEST), &bytes)
     }
 
@@ -2159,6 +2250,46 @@ mod tests {
         assert_eq!(Workspace::open(dir.path()).unwrap().manifest, ws.manifest);
     }
 
+    #[test]
+    fn project_generations_survive_updates_and_are_new_for_copies() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(directory.path(), "Project", "Test", TargetRef::None).unwrap();
+        let generation = ws.manifest.generation.clone().unwrap();
+        assert_eq!(generation.len(), 32);
+        assert!(generation.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        ws.manifest.generation = None; // A cached manifest cannot erase the saved identity.
+        ws.set_status(Status::Building, "Working").unwrap();
+        assert_eq!(Workspace::open(&ws.root).unwrap().manifest.generation.as_ref(), Some(&generation));
+        ws.set_person(|manifest| manifest.name = "Renamed".into()).unwrap();
+        assert_eq!(Workspace::open(&ws.root).unwrap().manifest.generation.as_ref(), Some(&generation));
+        let copy = Workspace::open(&ws.root).unwrap().duplicate("Copy").unwrap();
+        assert!(copy.manifest.generation.is_some());
+        assert_ne!(copy.manifest.generation.as_ref(), Some(&generation));
+        assert_eq!(Workspace::open(&copy.root).unwrap().manifest.generation, copy.manifest.generation);
+    }
+
+    #[test]
+    fn a_version_5_project_keeps_its_legacy_identity_without_writing_on_open() {
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Legacy", "Test", TargetRef::None).unwrap();
+        let path = ws.root.join(MANIFEST);
+        let mut document = serde_json::to_value(&ws.manifest).unwrap();
+        document["version"] = Value::from(5);
+        document.as_object_mut().unwrap().remove("generation");
+        let original = serde_json::to_vec(&document).unwrap();
+        std::fs::write(&path, &original).unwrap();
+
+        let mut opened = Workspace::open(&ws.root).unwrap();
+        assert_eq!(opened.manifest.version, MANIFEST_VERSION);
+        assert!(opened.manifest.generation.is_none());
+        assert_eq!(opened.manifest, Workspace::open(&ws.root).unwrap().manifest);
+        assert_eq!(std::fs::read(&path).unwrap(), original, "opening a legacy project is read-only migration");
+        opened.set_status(Status::Building, "Working").unwrap();
+        let saved: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(saved["version"], MANIFEST_VERSION);
+        assert!(saved.get("generation").is_none(), "ordinary saves do not invent a new identity for a legacy project");
+    }
+
     /// Approval choices survive an old manifest, a stale save and a copy.
     #[test]
     fn approval_choices_survive_an_old_manifest_a_stale_save_and_a_copy() {
@@ -2421,7 +2552,7 @@ mod tests {
     /// #469: a saved session is only for the agent that saved it.
     #[test]
     fn a_session_is_only_for_the_agent_that_saved_it() {
-        let mut m = Manifest::new("x", "A thing", TargetRef::None);
+        let mut m = Manifest::new("x", "A thing", TargetRef::None).unwrap();
         assert_eq!(m.agent_session_for("codex"), None);
         m.agent_session = Some("s1".into());
         assert_eq!(m.agent_session_for("codex"), Some("s1"), "one saved before the agent was kept counts");
@@ -2786,6 +2917,125 @@ mod tests {
         assert!(!ws.inbox_dir().exists(), "a read-only copy does not write source coordination records");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn duplication_uses_denied_access_instead_of_owner_write_bits() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let directory = tempfile::tempdir().unwrap();
+        let original = directory.path().join("original");
+        std::fs::create_dir(&original).unwrap();
+        std::fs::write(original.join("index.html"), b"Keep my app").unwrap();
+        let ws = Workspace::create_at(&original, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+        std::fs::write(original.join("feed.json.broken"), b"A personal file with a reserved name").unwrap();
+        std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(!std::fs::metadata(&original).unwrap().permissions().readonly());
+        // Inject the actual lock operation's result, as for a readable directory owned by
+        // another user. This also exercises the fallback when the tests run as root.
+        let denied = ToolError::io(ws.inbox_dir().display(), std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        let source = ws.copy_source_after_lock(Err(denied)).unwrap();
+
+        let copy = ws.duplicate_from_source("Copy", Some(source), |_| {}, |_| {}).unwrap();
+
+        assert_eq!(std::fs::read(copy.app_dir().join("index.html")).unwrap(), b"Keep my app");
+        assert_eq!(std::fs::read(copy.app_dir().join("feed.json.broken")).unwrap(), b"A personal file with a reserved name");
+        assert!(!ws.inbox_dir().exists(), "the permission fallback does not write source coordination records");
+    }
+
+    #[test]
+    fn an_unlocked_copy_rejects_a_publisher_that_starts_after_discovery() {
+        let directory = tempfile::tempdir().unwrap();
+        let original = directory.path().join("original");
+        std::fs::create_dir(&original).unwrap();
+        std::fs::write(original.join("index.html"), b"Keep my app").unwrap();
+        let ws = Workspace::create_at(&original, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+        let denied = ToolError::io(ws.inbox_dir().display(), std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        let source = ws.copy_source_after_lock(Err(denied)).unwrap();
+        let publisher = std::cell::RefCell::new(None);
+
+        let result = ws.duplicate_from_source(
+            "Copy",
+            Some(source),
+            |_| {
+                publisher.replace(Some(crate::feed::lock_project(&original).unwrap()));
+            },
+            |_| {},
+        );
+
+        assert_eq!(result.unwrap_err().code, ErrorCode::FileChanged);
+        assert!(!directory.path().join("copy").exists(), "an uncoordinated copy cannot publish a project after a publisher starts");
+        assert!(publisher.borrow().is_some(), "the publisher remains active through the final source check");
+        assert!(ws.inbox_dir().is_dir());
+        assert_eq!(std::fs::read(original.join("index.html")).unwrap(), b"Keep my app");
+        let denied = ToolError::io(ws.inbox_dir().display(), std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        assert!(matches!(ws.copy_source_after_lock(Err(denied)), Err(error) if error.code == ErrorCode::NoPermission));
+    }
+
+    #[test]
+    fn reused_folders_and_timestamps_reject_old_conversations_and_archives() {
+        for legacy in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let original = directory.path().join("original");
+            std::fs::create_dir(&original).unwrap();
+            std::fs::write(original.join("index.html"), b"Keep my app").unwrap();
+            let mut ws = Workspace::create_at(&original, "Old", "Old request", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+            if legacy {
+                let mut document = serde_json::to_value(&ws.manifest).unwrap();
+                document["version"] = Value::from(5);
+                document.as_object_mut().unwrap().remove("generation");
+                std::fs::write(original.join(MANIFEST), serde_json::to_vec(&document).unwrap()).unwrap();
+                ws.reload().unwrap();
+            }
+            let previous_directory = FileHandle::from_path(&original).unwrap();
+            let created_ms = ws.manifest.created_ms;
+            let generation = ws.manifest.generation.clone();
+            let mut old = crate::feed::load(&ws);
+            let snapshot = crate::feed::RecoverySnapshot::from_loaded(&old, serde_json::json!({}));
+            ws.delete().unwrap();
+            let mut replacement = Workspace::create_at(&original, "New", "New request", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+            replacement.manifest.created_ms = created_ms;
+            replacement.save().unwrap();
+            assert_eq!(previous_directory, FileHandle::from_path(&original).unwrap(), "in-place deletion keeps the same directory");
+            assert_ne!(replacement.manifest.generation, generation);
+            let manifest = std::fs::read(original.join(MANIFEST)).unwrap();
+            old.push(crate::feed::FeedItem::User(crate::feed::UserItem::Text("Late old reply".into())));
+
+            assert_eq!(crate::feed::save(&original, &mut old).unwrap_err().code, ErrorCode::FileChanged);
+            assert_eq!(crate::feed::write_recovery_snapshot(&original, &snapshot).unwrap_err().code, ErrorCode::FileChanged);
+
+            assert!(!original.join(crate::feed::FEED_FILE).exists());
+            assert!(!original.join("inbox").join(crate::feed::RECOVERY_ARCHIVE_DIR).exists());
+            assert_eq!(std::fs::read(original.join(MANIFEST)).unwrap(), manifest);
+            assert_eq!(std::fs::read(original.join("index.html")).unwrap(), b"Keep my app");
+        }
+    }
+
+    #[test]
+    fn a_stale_workspace_cannot_delete_a_replacement_project() {
+        let directory = tempfile::tempdir().unwrap();
+        let old = Workspace::create(directory.path(), "Original", "Old request", TargetRef::None).unwrap();
+        let root = old.root.clone();
+        std::fs::write(root.join("personal.txt"), b"Keep this folder").unwrap();
+        old.clone().delete().unwrap();
+        std::fs::create_dir(root.join("app")).unwrap();
+        std::fs::write(root.join("app/index.html"), b"This is now a personal app folder").unwrap();
+        let mut replacement = Workspace::create_at(&root, "Replacement", "New request", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+        replacement.manifest.created_ms = old.manifest.created_ms;
+        replacement.save().unwrap();
+        assert!(!old.manifest.app_in_root);
+        assert!(replacement.manifest.app_in_root);
+        crate::feed::save(&root, &mut crate::feed::load(&replacement)).unwrap();
+        let manifest = std::fs::read(root.join(MANIFEST)).unwrap();
+        let feed = std::fs::read(root.join(crate::feed::FEED_FILE)).unwrap();
+
+        assert_eq!(old.delete().unwrap_err().code, ErrorCode::FileChanged);
+
+        assert_eq!(std::fs::read(root.join(MANIFEST)).unwrap(), manifest);
+        assert_eq!(std::fs::read(root.join(crate::feed::FEED_FILE)).unwrap(), feed);
+        assert_eq!(std::fs::read(root.join("app/index.html")).unwrap(), b"This is now a personal app folder");
+        assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep this folder");
+        assert!(replacement.inbox_dir().is_dir());
+    }
+
     #[test]
     fn deleted_in_place_projects_reject_loaded_feed_writers() {
         let directory = tempfile::tempdir().unwrap();
@@ -2851,7 +3101,8 @@ mod tests {
         crate::feed::save(&original, &mut crate::feed::load(&ws)).unwrap();
         let backup = original.join("feed.json.broken");
         let receipt = original.join("inbox/feed-backups/feed.json.broken.json");
-        let ownership = std::fs::read(&receipt).unwrap();
+        let anchor = original.join("inbox/feed-backups/pending/feed.json.broken");
+        let pending_receipt = original.join("inbox/feed-backups/pending/feed.json.broken.json");
         std::fs::remove_file(&backup).unwrap();
         std::fs::remove_file(&receipt).unwrap();
 
@@ -2860,8 +3111,10 @@ mod tests {
                 assert!(selected.is_empty());
                 // Simulate an outside writer without recursively acquiring the source
                 // transaction lock already held by duplication.
-                std::fs::write(&backup, b"newly damaged conversation").unwrap();
-                std::fs::write(&receipt, ownership).unwrap();
+                // A v2 publication retains the private inode; writing equal bytes into
+                // a new inode would intentionally describe a personal replacement.
+                std::fs::hard_link(&anchor, &backup).unwrap();
+                std::fs::hard_link(&pending_receipt, &receipt).unwrap();
             })
             .unwrap();
 
@@ -2877,19 +3130,22 @@ mod tests {
         std::fs::create_dir(&original).unwrap();
         std::fs::write(original.join("index.html"), "Keep my app").unwrap();
         let ws = Workspace::create_at(&original, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
-        // Retain a real recovery receipt, then reproduce the interval between the completed
-        // backup write and publication of that receipt during a later copy.
+        // Withhold both receipt entries to simulate an incomplete outside publication.
+        // The new public entry stays uncertain until its actual identity proof returns.
         std::fs::write(original.join(crate::feed::FEED_FILE), b"damaged conversation").unwrap();
         crate::feed::save(&original, &mut crate::feed::load(&ws)).unwrap();
         let backup = original.join("feed.json.broken");
         let receipt = original.join("inbox/feed-backups/feed.json.broken.json");
+        let anchor = original.join("inbox/feed-backups/pending/feed.json.broken");
+        let pending_receipt = original.join("inbox/feed-backups/pending/feed.json.broken.json");
         let ownership = std::fs::read(&receipt).unwrap();
         std::fs::remove_file(&backup).unwrap();
         std::fs::remove_file(&receipt).unwrap();
+        std::fs::remove_file(&pending_receipt).unwrap();
 
         let result = ws.duplicate_after_discovery("Copy", |selected| {
             assert!(selected.is_empty());
-            std::fs::write(&backup, b"damaged conversation").unwrap();
+            std::fs::hard_link(&anchor, &backup).unwrap();
         });
 
         assert_eq!(result.unwrap_err().code, ErrorCode::FileChanged);
@@ -2897,7 +3153,8 @@ mod tests {
         assert!(!directory.path().join("copy").exists(), "an unsuccessful attempt releases the destination it created");
         assert_eq!(Workspace::list(directory.path()).len(), 1, "an incomplete duplicate is not a discoverable project");
         assert_eq!(std::fs::read(&backup).unwrap(), b"damaged conversation");
-        std::fs::write(&receipt, ownership).unwrap();
+        std::fs::write(&pending_receipt, ownership).unwrap();
+        std::fs::hard_link(&pending_receipt, &receipt).unwrap();
         let copy = ws.duplicate("Copy").unwrap();
         assert_eq!(copy.root, directory.path().join("copy"), "retry uses the originally requested folder");
         assert!(!copy.app_dir().join("feed.json.broken").exists());

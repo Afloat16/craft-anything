@@ -7,7 +7,7 @@ version up to the current one, then turn the document into Rust types. The step 
 
 | File | Owner | Current version | Older files | Newer files |
 |---|---|---|---|---|
-| `<project>/craft.json` | `engine::workspace` (`Manifest`) | `MANIFEST_VERSION` = 5 (`version`; missing = 0; 3 adds `approvals`, 4 adds the saved builder session's mode `agent_session_deep`, 5 adds the current capture's mode `capture_deep`; a version-3 session and a version-4 capture migrate as Deep) | brought forward, saved as current | opened read-only: saving is refused |
+| `<project>/craft.json` | `engine::workspace` (`Manifest`) | `MANIFEST_VERSION` = 6 (`version`; missing = 0; 3 adds `approvals`, 4 adds the saved builder session's mode `agent_session_deep`, 5 adds the current capture's mode `capture_deep`, 6 adds project `generation`; a version-3 session and a version-4 capture migrate as Deep; older generations stay absent) | brought forward, saved as current | opened read-only: saving is refused |
 | `<project>/inbox/build-progress.json` | `engine::workspace::progress` (`BuildProgress`; written only by the rebuild run) | `BUILD_PROGRESS_VERSION` = 2 (`version`; missing = 0; 2 adds `checked`, the round kept while nothing it looked at changes) | brought forward; an absent file starts with no counted turns | the build stops and the record is left unchanged |
 | `config.toml` (`settings::config_dir()`) | `engine::settings` (`Settings`) | `SETTINGS_VERSION` = 2 (`version`; missing = 0; 2 moved `[engines.ghidra] enabled` to `deep_mode`) | brought forward | loaded, never saved over |
 | `<name>.cany/project.toml` | `engine::project` (`ProjectMeta`) | `FORMAT_VERSION` = 1 (`format_version`, required) | brought forward | refused, with "update Craft Anything" |
@@ -20,8 +20,8 @@ version up to the current one, then turn the document into Rust types. The step 
 | `<folder>/standin.json` | `engine::tools::standin_tools` (`analysis::standin::StandIn`; written only by `web_standin_build`) | `STANDIN_VERSION` = 1 (`version`, required) | brought forward | refused, with "update Craft Anything", and never written over |
 | `<project>/feed.json` | `ai::rebuild::feed` (written by the run) | `FEED_VERSION` = 6 (`{version, items, recovery?}`; a bare list = 0; 4 adds `PlanDismissed`; 5 marks open steps stopped at a run's end; 6 retains the manifest projection used during recovery) | read as before, saved as current | never written over; the conversation is rebuilt from the project for display |
 | `<project>/inbox/<id>.delivery.json` | `engine::inbox::delivery` | 1 (`format`, `version`, `id`, `state`; staged or delivered) | absent records leave existing feed answers compatible | unrecognized records are preserved and block a new recorded submission |
-| `<project>/inbox/feed-backups/<backup-name>.json` | `engine::feed::backups` | 1 (`format`, `version`, `backup`, `length`, `sha256`) | absent or unrecognized records establish no ownership | unrecognized records are preserved during recovery and never authorize backup deletion; deleting a project clears its inbox records but keeps unverified backup-shaped entries |
-| `<project>/inbox/feed-backups/pending/<backup-name>` and `<backup-name>.json` | `engine::feed::backups` | raw source bytes and a version-1 ownership receipt | no earlier format | an interrupted publication is owned only when the receipt matches and the opened root-level file is the same file as the staged copy; matching bytes in a separate file remain personal |
+| `<project>/inbox/feed-backups/<backup-name>.json` | `engine::feed::backups` | 2 (`format`, `version`, `backup`, `length`, `sha256`; requires retained private file identity) | version-1 final receipts retain historical length/hash proof; absent or unrecognized records establish no ownership | unrecognized records are preserved during recovery and never authorize backup deletion; deleting a project clears its inbox records but keeps unverified backup-shaped entries |
+| `<project>/inbox/feed-backups/pending/<backup-name>` and `<backup-name>.json` | `engine::feed::backups` | raw source bytes and a version-2 ownership receipt; the raw identity link remains after publication | version-1 interrupted records retain their same-file check, including a truncated old final receipt | interrupted and completed version-2 publication require the receipt and the same opened file as the private copy; equal bytes in a separate file remain personal |
 | `<project>/inbox/feed-recovery/conversation-<millis>-<pid>-<counter>.recovery.json` | `engine::feed::recovery`, requested by the run worker | 1 (`version`, folded `items`, `metadata` with format, source identity and recovery details) | no earlier format | unknown or invalid records are retained without automatic import or removal |
 
 A saved `User` message with pictures is `{text, pictures: [paths]}`, where the pictures are the
@@ -55,22 +55,31 @@ Only a path confirmed absent without following symlinks can be created without i
 version. A fallback remembers that the original wasn't loaded, even if the file becomes readable
 later. A live writer may load an actually decoded replacement and replay its unsaved events; a missing, unreadable, damaged or newer replacement cannot clear the original guard. Every application feed save compares its loaded source while holding a project-scoped operating-system lock through replacement. An originally absent path must still be absent. A mismatch retains the old writer and unsaved events for a fresh load; ordinary answer transactions load and apply their reply under the same lock. Version 6 records the damaged source's SHA-256 and the exact manifest request, checks, reply and failure note that produced a recovery prefix. Only a writer that observed that same damaged source can consume its projection; a temporary read failure cannot authorize removing old history. Later manifest updates cannot change the recorded origin. Older feeds have no recovery provenance; matching text alone never establishes it. Readable bytes that cannot be parsed are copied
 exactly to an unused `feed.json.broken` (then `.broken.1` through `.broken.15`) before replacement.
-Existing backups are never replaced. Recovery completes and syncs raw bytes and a version-1 receipt inside the private `inbox/feed-backups/pending/` directory before publishing a root-level hard link. The final receipt records that copy's name, length and digest; once it is synced, the pending records are removed. A process interruption before the final receipt leaves both a complete private receipt and same-file identity proof for the public backup. Neither a name nor equal bytes in a separate personal file establish that pending ownership. A failed hard link leaves the private copy and original conversation intact. If replacement fails after a complete backup, a retry reuses that copy only when its ownership proof and current bytes both match the damaged source. When all backup slots are occupied, move a backup and its associated records, including any interrupted pending copy, together before retrying. Project deletion first moves each selected backup into a fresh `.craft-backup-quarantine-*` folder beside the project records, then verifies the claimed regular file against its ownership proof before unlinking it. A changed entry is restored without replacing another path, or retained in that folder with an error explaining where it is. That folder is outside the records deleted with the project and is never cleaned recursively. Legacy personal files or directories with backup-shaped names survive deletion, are included when duplicating an in-place project and contribute to its app fingerprint; verified generated copies are excluded. A failed backup or receipt stops the save and leaves the source intact;
+Existing backups are never replaced. Recovery completes and syncs raw bytes and a version-2 receipt inside private `inbox/feed-backups/pending/` before publishing a root-level hard link. It publishes the already-synced receipt by an exclusive hard link, then retains the private raw link as file-identity proof. The directory name `pending` therefore also holds completed backups' identity anchors. Version-2 ownership requires that identity as well as matching length and digest, even after final publication. Version-1 final receipts keep their historical length/hash behavior; past identity evidence cannot be reconstructed. A complete version-1 pending receipt can still prove an interrupted old publication whose final JSON was truncated, while an unknown complete final version never falls back to pending evidence. Before public publication, a failed attempt cleans only its own unchanged staging entries and retains the original error if cleanup also fails. Replacements and already-published proof are preserved. If feed replacement fails after a complete backup, a retry reuses that copy only when its ownership proof and current bytes both match the damaged source. When freeing a slot, move the backup and all associated records, including its retained raw link and private receipt, together. Project deletion first moves each selected backup into a fresh `.craft-backup-quarantine-*` folder beside the project records, then verifies the claimed regular file against its ownership proof before unlinking it. A changed entry is restored without replacing another path, or retained in that folder with an error explaining where it is. That folder is outside the records deleted with the project and is never cleaned recursively. Legacy personal files or directories with backup-shaped names survive deletion, are included when duplicating an in-place project and contribute to its app fingerprint; verified generated copies are excluded. Ownership scans skip absent candidates before reading unrelated receipts, keep I/O errors for present uncertain candidates, and check cancellation between 64 KiB hash chunks. A failed backup or receipt stops the save and leaves the source intact;
 the recovered conversation names the backup. A newer format is left in place without recovery.
 
 The empty `inbox/feed.lock` coordination file remains in place after each transaction. Lock waits
 are bounded to five seconds; request locks precede this feed lock, never the other way around.
 Deletion holds the same lock, removes `craft.json` before removing `inbox/`, and retains its guard
 through final directory cleanup. Writers check that the project exists before creating coordination
-entries and recheck the root directory identity and manifest creation time after acquiring the lock.
-Loaded writers retain their original root identity and manifest creation time; replay and separate
-recovery archives reject a different project later created at the same path. They do not write
-conversation, backup or archive payloads after deletion. A lock acquisition that starts just before
+entries and recheck the root directory identity, manifest creation time and generation after acquiring
+the lock. New projects and copies receive an operating-system-random 128-bit generation, saved as
+32 hexadecimal characters in `craft.json`. Ordinary manifest updates preserve the disk generation.
+Version-5 and older manifests keep an absent generation when read or saved; opening one does not
+write it or invent a per-open identity. A later project created in the same directory receives a new
+generation even if its creation timestamp repeats. Loaded writers retain that identity; replay and separate
+recovery archives reject a different project later created at the same path. Saved-answer merging
+checks that identity before adopting any replacement rows. Deletion also compares
+its loaded workspace with the project under the lock before removing anything. They do not write
+conversation, backup, archive or recorded-answer payloads after deletion. A lock acquisition that starts just before
 deletion can leave an empty coordination directory or file; it still fails the check under the lock.
 In-place duplication holds the same lock from backup discovery through manifest publication, so
 application recovery cannot change ownership during the copy. A readable legacy source with no
-inbox can be copied without creating one only when its read-only root actually denies lock creation;
-manifest and backup classification checks still apply. Each backup-shaped file
+inbox can be copied without creating one when the attempted lock creation is denied; owner write
+bits do not establish the current caller's access. This fallback checks the same directory and project
+identity, and an absent inbox, both before copying and before publishing the destination manifest.
+Application publishers retain their inbox, so an inbox appearing during the copy requires a retry
+even after that publisher releases its lock. Manifest and backup classification checks still apply. Each backup-shaped file
 is classified through the opened handle that will be copied. Equivalent case spellings count as
 the reserved slot only when they identify the same file; a distinct personal file is retained.
 A new or changed unverified entry requires a retry. Losing a receipt also cannot turn a previously
@@ -84,7 +93,9 @@ If a run's final feed save fails, its worker attempts a separate recovery copy b
 `Finished` event. Version 1 keeps the complete folded conversation, the loaded source's state and
 SHA-256 where available, and details containing the pending-event count, original manifest history
 and save error. Raw tool-event parameters and results are not serialized. Each copy is exclusively
-created, uses mode `0600` on Unix, and is synced before it is reported as kept; Unix also syncs its
+created in private `inbox/feed-recovery/pending/`, uses mode `0600` on Unix, and is completely serialized
+and synced before an exclusive hard link publishes its final name. Partial staging files remain
+inspectable but do not enter completed-archive discovery or its file/byte budgets. Unix also syncs its
 directory and each parent entry, including on a retry after a failed parent sync. A record is limited to 64 MiB and name reservation to 64 attempts. An error keeping the
 copy is reported without claiming the unsaved conversation reached disk. Polling and dropping a
 run do not perform persistence I/O.
@@ -102,11 +113,20 @@ Within a live run, replay also retains the position and saved context of its act
 An intervening saved answer and the display-only clearing of streaming flags do not split its next
 text delta into another message. A replaced or separately appended external message does not become
 that stream merely because its text is equal. This context stays in memory and is committed with the
-replayed feed only after the guarded save succeeds; it adds no persisted feed fields.
+replayed feed when replacement becomes visible; it adds no persisted feed fields. A newly introduced
+question remains at its original event boundary during replay, even if loading already appended
+its pending row or another client answered it. Repeated Ask events do not move the existing row
+or end an active stream.
 
-Answers are saved in the conversation before they are delivered through the inbox. A save failure
-returns an error and leaves the question pending. A delivery failure also leaves it available for
-retry; display views show the pending question and saved reply while writers retain the recorded answer. A versioned delivery receipt is staged before persistence and marked delivered before the waiter removes an answer. If receipt persistence fails at consumption, the answer file remains as durable delivery evidence. An existing answer's I/O error stops another submission before its persistence callback. A confirmed staged reply whose request expires is shown as undelivered, with its text available for a new request. If delivery evidence cannot be read, the display keeps the words and says delivery is unknown, without suggesting another submission. Ordinary temporary inbox answers without feed persistence do not create receipts.
+Answers are saved in the conversation before they are delivered through the inbox. On Unix, the
+feed's containing directory is synced after atomic replacement and before delivery; non-Unix
+platforms retain the existing directory-sync no-op. If replacement is visible but directory sync
+fails, the loaded source, replayed state and cleared journal adopt those visible bytes, while the
+operation still reports the durability error and withholds answer delivery. A later pre-write failure
+cannot inherit the earlier visible-write flag. A final run with unconfirmed durability still attempts
+a separate recovery archive, including when its event journal is already empty. A save failure
+leaves the question pending. A delivery failure also leaves it available for
+retry; display views show the pending question and saved reply while writers retain the recorded answer. Submission reserves the request first, acquires and validates the loaded project's guard, rechecks the request file's identity, then stages a versioned receipt, persists the reply and publishes the answer while retaining that guard. Deletion cannot complete between these steps, and a submission prepared after deletion cannot recreate an old delivery record. The waiter marks the receipt delivered before removing an answer. If receipt persistence fails at consumption, the answer file remains as durable delivery evidence. An existing answer's I/O error stops another submission before its persistence callback. A confirmed staged reply whose request expires is shown as undelivered, with its text available for a new request. If delivery evidence cannot be read, the display keeps the words and says delivery is unknown, without suggesting another submission. Display snapshots retain the opened feed identity, length and modification time and recheck them after reading receipt state. A changed snapshot shows its earlier reply as unconfirmed rather than attributing a later retry's delivery to it; refreshing loads the latest reply. This check covers application atomic replacement, not arbitrary external in-place writes that preserve metadata. Ordinary temporary inbox answers without feed persistence do not create receipts.
 
 Timeout and cancellation withdraw under the same request-file lock as submission. If unlinking
 the request fails, the waiter truncates and syncs its locked file as an empty withdrawal marker.

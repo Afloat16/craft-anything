@@ -220,6 +220,7 @@ fn workspace(slug: &str, name: &str, request: &str, target: TargetRef, status: S
         root: PathBuf::from(format!("/demo/Craft Anything/{slug}")),
         manifest: Manifest {
             version: craft_anything_engine::workspace::MANIFEST_VERSION,
+            generation: None,
             name: name.into(),
             request: request.into(),
             target,

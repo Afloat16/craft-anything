@@ -160,6 +160,7 @@ struct HistoryAtOpen {
 enum FeedChange {
     Event(RunEvent),
     Item(FeedItem),
+    Ask { request: Request, introduced: bool },
 }
 
 impl FeedChange {
@@ -169,6 +170,16 @@ impl FeedChange {
             Self::Item(item) => {
                 feed.push(item.clone());
                 *explained = matches!(item, FeedItem::Error { .. });
+            }
+            Self::Ask { request, introduced } => {
+                if *introduced {
+                    // Loading may already have appended this pending request, or another
+                    // client may have answered it. It still belongs at this event boundary.
+                    let saved = feed.iter().position(|item| matches!(item, FeedItem::Ask { request: existing, .. } if existing.id == request.id));
+                    let item = saved.map(|index| feed.remove(index)).unwrap_or_else(|| FeedItem::Ask { request: request.clone(), answer: None });
+                    feed.push(item);
+                    *explained = false;
+                }
             }
         }
     }
@@ -229,7 +240,7 @@ fn retained_stream(feed: &[FeedItem], origin: &[FeedItem]) -> Option<usize> {
 fn keeps_stream(change: &FeedChange, feed: &[FeedItem]) -> bool {
     match change {
         FeedChange::Event(RunEvent::Preview(_) | RunEvent::Agent(AgentEvent::Output { .. } | AgentEvent::ToolFinished { .. })) => true,
-        FeedChange::Event(RunEvent::Ask(request)) => feed.iter().any(|item| matches!(item, FeedItem::Ask { request: saved, .. } if saved.id == request.id)),
+        FeedChange::Ask { introduced, .. } => !*introduced,
         FeedChange::Event(RunEvent::Agent(AgentEvent::ToolStarted { tool, input, .. })) if tool == "TodoWrite" || tool == "build_checklist" => {
             plan_from(input).is_none() || craft_anything_engine::feed::visible_plan(feed).is_some()
         }
@@ -241,6 +252,13 @@ fn keeps_stream(change: &FeedChange, feed: &[FeedItem]) -> bool {
 struct Replayed {
     explanation: Option<bool>,
     stream: Option<usize>,
+}
+
+#[derive(Debug)]
+struct SaveOutcome {
+    visible: bool,
+    replayed: Option<Replayed>,
+    result: Result<(), ToolError>,
 }
 
 fn replay_changes(feed: &mut Vec<FeedItem>, pending: &[FeedChange], mut explained: bool, origin: Option<&[FeedItem]>) -> (bool, Option<usize>) {
@@ -291,20 +309,34 @@ impl FeedLog {
     }
 
     pub(super) fn record(&mut self, e: &RunEvent) {
+        self.record_using(e, (save, save_if_unchanged));
+    }
+
+    fn record_using(
+        &mut self,
+        e: &RunEvent,
+        commits: (impl FnOnce(&Path, &mut LoadedFeed) -> Result<(), ToolError>, impl FnOnce(&Path, &mut LoadedFeed) -> Result<(), ToolError>),
+    ) {
         let lines = self.activity.record(e);
         self.log.append(&lines, &self.activity);
         let retain = !matches!(e, RunEvent::Preview(_) | RunEvent::Agent(AgentEvent::Output { .. }));
         if retain {
             self.begin_pending();
-            let change = FeedChange::Event(e.clone());
+            let change = match e {
+                RunEvent::Ask(request) => FeedChange::Ask {
+                    request: request.clone(),
+                    introduced: !self.feed.iter().any(|item| matches!(item, FeedItem::Ask { request: saved, .. } if saved.id == request.id)),
+                },
+                _ => FeedChange::Event(e.clone()),
+            };
             change.apply_with_stream(&mut self.feed, &mut self.failure_explained, &mut self.stream);
             self.pending.push(change);
         } else {
             apply_run_event(&mut self.feed, e, &mut self.failure_explained);
         }
         let finished = matches!(e, RunEvent::Finished { .. });
-        self.save(finished);
-        if finished && self.save_error.is_some() && !self.pending.is_empty() {
+        self.save_using(finished, commits);
+        if finished && self.save_error.is_some() && (!self.pending.is_empty() || self.feed.save_needs_sync()) {
             self.keep_recovery_copy();
         }
     }
@@ -359,11 +391,14 @@ impl FeedLog {
             },
             Err(error) => {
                 log::warn!("couldn't keep a conversation recovery copy: {}", error.message);
+                let remediation = if self.feed.save_needs_sync() {
+                    "The conversation is visible, but its durability and a separate recovery copy could not be confirmed. Keep the visible words and restore write access before retrying."
+                } else {
+                    "The unsaved conversation has not been preserved on disk. Keep the visible words and restore write access before retrying."
+                };
                 FeedItem::Error {
                     message: format!("{message}\nCouldn't keep a conversation recovery copy: {}", error.message),
-                    remediation: Some(
-                        "The unsaved conversation has not been preserved on disk. Keep the visible words and restore write access before retrying.".into(),
-                    ),
+                    remediation: Some(remediation.into()),
                     log: None,
                 }
             }
@@ -381,6 +416,12 @@ impl FeedLog {
         items
     }
 
+    pub(super) fn display_items(&self, inbox: &Inbox) -> Vec<FeedItem> {
+        let mut items = self.items();
+        show_pending_for_feed(&mut items, inbox, &self.feed);
+        items
+    }
+
     pub(super) fn push(&mut self, item: FeedItem) {
         self.begin_pending();
         let change = FeedChange::Item(item);
@@ -389,7 +430,37 @@ impl FeedLog {
         self.save(true);
     }
 
-    pub(super) fn answered(&mut self, request: &Request, shown: &str, deliver: impl FnOnce() -> Result<(), ToolError>) -> Result<(), ToolError> {
+    pub(super) fn prepare_answer(&self) -> impl FnOnce() -> Result<ProjectFeedGuard, ToolError> + use<> {
+        self.feed.prepare_transaction(&self.root)
+    }
+
+    /// The inbox holds the request reservation and this validated project guard through delivery.
+    pub(super) fn answered(
+        &mut self,
+        guard: &ProjectFeedGuard,
+        request: &Request,
+        shown: &str,
+        deliver: impl FnOnce() -> Result<(), ToolError>,
+    ) -> Result<(), ToolError> {
+        self.answered_using(
+            guard,
+            request,
+            shown,
+            deliver,
+            |guard, feed, decoded| {
+                if decoded { save_if_unchanged_locked(guard, feed) } else { save_locked(guard, feed) }
+            },
+        )
+    }
+
+    fn answered_using(
+        &mut self,
+        guard: &ProjectFeedGuard,
+        request: &Request,
+        shown: &str,
+        deliver: impl FnOnce() -> Result<(), ToolError>,
+        commit: impl Fn(&ProjectFeedGuard, &mut LoadedFeed, bool) -> Result<(), ToolError>,
+    ) -> Result<(), ToolError> {
         let mut candidate = self.feed.clone();
         merge_saved_answers(&self.root, &mut candidate);
         record_pending_answer(&mut candidate, request, shown);
@@ -398,29 +469,33 @@ impl FeedLog {
         let explanation = self.pending_explanation.as_deref().or_else(|| (self.pending.is_empty() && self.failure_explained).then_some(self.feed.as_slice()));
         let idle_stream = self.pending.is_empty().then(|| saved_stream(&self.feed, self.stream)).flatten();
         let context = ReplayContext { explanation, stream: self.pending_stream.as_deref().or(idle_stream.as_deref()) };
-        let replayed_explanation = save_with_recovery(&self.root, &mut candidate, &self.history_at_open, &self.pending, context, Some((request, shown)))?;
-        self.feed = candidate;
-        if let Some(replayed) = replayed_explanation {
-            if let Some(explained) = replayed.explanation {
-                self.failure_explained = explained;
-            }
-            self.stream = replayed.stream;
+        let outcome = save_with_recovery_using(
+            &self.root,
+            &mut candidate,
+            &self.history_at_open,
+            &self.pending,
+            context,
+            Some((request, shown)),
+            (|_, feed| commit(guard, feed, false), |_, feed| commit(guard, feed, true)),
+        );
+        if outcome.visible {
+            self.feed = candidate;
         }
-        self.pending.clear();
-        self.pending_explanation = None;
-        self.pending_stream = None;
-        self.save_error = None;
-        self.saved_at = Some(std::time::Instant::now());
+        self.accept_save(outcome)?;
         // The raw saved state (including recovery from damaged bytes) is now committed. The
         // display still offers this request while its inbox delivery is pending or fails.
         deliver()
     }
 
     fn save(&mut self, now: bool) {
-        self.save_using(now, save_if_unchanged);
+        self.save_using(now, (save, save_if_unchanged));
     }
 
-    fn save_using(&mut self, now: bool, commit_recovery: impl FnOnce(&Path, &mut LoadedFeed) -> Result<(), ToolError>) {
+    fn save_using(
+        &mut self,
+        now: bool,
+        commits: (impl FnOnce(&Path, &mut LoadedFeed) -> Result<(), ToolError>, impl FnOnce(&Path, &mut LoadedFeed) -> Result<(), ToolError>),
+    ) {
         if !now && self.saved_at.is_some_and(|t| t.elapsed() < Duration::from_secs(2)) {
             return;
         }
@@ -428,53 +503,51 @@ impl FeedLog {
         // into the file; keep them.
         let idle_stream = self.pending.is_empty().then(|| saved_stream(&self.feed, self.stream)).flatten();
         merge_saved_answers(&self.root, &mut self.feed);
-        match save_with_recovery_using(
+        let outcome = save_with_recovery_using(
             &self.root,
             &mut self.feed,
             &self.history_at_open,
             &self.pending,
             ReplayContext { explanation: self.pending_explanation.as_deref(), stream: self.pending_stream.as_deref().or(idle_stream.as_deref()) },
             None,
-            commit_recovery,
-        ) {
-            Ok(replayed_explanation) => {
-                if let Some(replayed) = replayed_explanation {
-                    if let Some(explained) = replayed.explanation {
-                        self.failure_explained = explained;
-                    }
-                    self.stream = replayed.stream;
+            commits,
+        );
+        let _ = self.accept_save(outcome);
+    }
+
+    fn accept_save(&mut self, outcome: SaveOutcome) -> Result<(), ToolError> {
+        if outcome.visible {
+            if let Some(replayed) = outcome.replayed {
+                if let Some(explained) = replayed.explanation {
+                    self.failure_explained = explained;
                 }
-                self.pending.clear();
-                self.pending_explanation = None;
-                self.pending_stream = None;
-                self.save_error = None;
+                self.stream = replayed.stream;
             }
+            // A rename followed by a failed directory sync has already written these events.
+            // Retrying durability must not replay them again over another client's update.
+            self.pending.clear();
+            self.pending_explanation = None;
+            self.pending_stream = None;
+        }
+        match &outcome.result {
+            Ok(()) => self.save_error = None,
             Err(e) => {
                 log::warn!("couldn't save the project's feed: {}", e.message);
                 self.save_error = Some(FeedItem::Error {
                     message: format!("Couldn't save the project's conversation: {}", e.message),
-                    remediation: e.remediation,
+                    remediation: e.remediation.clone(),
                     log: None,
                 });
             }
         }
         self.saved_at = Some(std::time::Instant::now());
+        outcome.result
     }
 }
 
 /// A recovery commit supplies the explanation state of its replayed feed. An ordinary save
-/// leaves the caller's existing run state unchanged.
-fn save_with_recovery(
-    root: &Path,
-    feed: &mut LoadedFeed,
-    opened: &HistoryAtOpen,
-    pending: &[FeedChange],
-    context: ReplayContext<'_>,
-    answer: Option<(&Request, &str)>,
-) -> Result<Option<Replayed>, ToolError> {
-    save_with_recovery_using(root, feed, opened, pending, context, answer, save_if_unchanged)
-}
-
+/// leaves the caller's existing run state unchanged. Visible but not yet durable replacements
+/// adopt their owner state while retaining the error, so retrying cannot duplicate the journal.
 fn save_with_recovery_using(
     root: &Path,
     feed: &mut LoadedFeed,
@@ -482,21 +555,23 @@ fn save_with_recovery_using(
     pending: &[FeedChange],
     context: ReplayContext<'_>,
     answer: Option<(&Request, &str)>,
-    commit_recovery: impl FnOnce(&Path, &mut LoadedFeed) -> Result<(), ToolError>,
-) -> Result<Option<Replayed>, ToolError> {
-    let error = match save(root, feed) {
-        Ok(()) => return Ok(None),
+    commits: (impl FnOnce(&Path, &mut LoadedFeed) -> Result<(), ToolError>, impl FnOnce(&Path, &mut LoadedFeed) -> Result<(), ToolError>),
+) -> SaveOutcome {
+    let (commit, commit_recovery) = commits;
+    let error = match commit(root, feed) {
+        Ok(()) => return SaveOutcome { visible: true, replayed: None, result: Ok(()) },
+        Err(error) if feed.save_needs_sync() => return SaveOutcome { visible: true, replayed: None, result: Err(error) },
         Err(error) => error,
     };
     if error.code != ErrorCode::FileChanged && !feed.had_read_error() {
-        return Err(error);
+        return SaveOutcome { visible: false, replayed: None, result: Err(error) };
     }
     let Ok(ws) = Workspace::open(root) else {
-        return Err(error);
+        return SaveOutcome { visible: false, replayed: None, result: Err(error) };
     };
     let mut repaired = load(&ws);
     if !repaired.was_decoded() || !repaired.is_same_project(feed) {
-        return Err(error);
+        return SaveOutcome { visible: false, replayed: None, result: Err(error) };
     }
     // Another client recovered the file after this run opened it. Its conversation is the new
     // base; replay only this run's unsaved changes, never its fallback history.
@@ -517,9 +592,15 @@ fn save_with_recovery_using(
     }
     // Commit only against the replacement that was actually replayed. A conflict keeps the
     // original writer and journal intact; its next attempt reloads the latest saved bytes.
-    commit_recovery(root, &mut repaired)?;
-    *feed = repaired;
-    Ok(Some(Replayed { explanation: (!keep_explanation).then_some(explained && matches!(feed.last(), Some(FeedItem::Error { .. }))), stream }))
+    let result = commit_recovery(root, &mut repaired);
+    let visible = result.is_ok() || repaired.save_needs_sync();
+    let replayed = if visible {
+        *feed = repaired;
+        Some(Replayed { explanation: (!keep_explanation).then_some(explained && matches!(feed.last(), Some(FeedItem::Error { .. }))), stream })
+    } else {
+        None
+    };
+    SaveOutcome { visible, replayed, result }
 }
 
 /// A recovered file records the manifest projection used to create it. The current manifest
@@ -619,7 +700,11 @@ fn has_completed_reply(pending: &[FeedChange], reply: &str) -> bool {
 
 fn merge_saved_answers(root: &Path, feed: &mut LoadedFeed) {
     if let Ok(ws) = Workspace::open(root) {
-        for item in load(&ws).into_items() {
+        let saved = load(&ws);
+        if !saved.is_same_project(feed) {
+            return;
+        }
+        for item in saved.into_items() {
             if let FeedItem::Ask { request, answer: Some(answer) } = item {
                 record_pending_answer(feed, &request, &answer);
             }
@@ -843,7 +928,6 @@ mod tests {
         let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
         let inbox = Inbox::new(ws.inbox_dir());
         let id = inbox.post(craft_anything_engine::inbox::RequestKind::Question, "Blue?", "", vec![], true, None).unwrap();
-        let question = inbox.pending().pop().unwrap();
         let path = ws.root.join(FEED_FILE);
         std::fs::create_dir(&path).unwrap();
         let mut log = FeedLog::open(&ws);
@@ -852,7 +936,11 @@ mod tests {
         std::fs::remove_dir(&path).unwrap();
         std::fs::write(&path, br#"{"version":5,"items":[{"User":"Keep the external conversation"}]}"#).unwrap();
 
-        log.answered(&question, "Blue", || inbox.answer(&id, &craft_anything_engine::inbox::Answer { choice: Some("Blue".into()), ..Default::default() }))
+        let prepare = log.prepare_answer();
+        inbox
+            .answer_with_guard(&id, &craft_anything_engine::inbox::Answer { choice: Some("Blue".into()), ..Default::default() }, prepare, |guard, request| {
+                log.answered(guard, request, "Blue", || Ok(()))
+            })
             .unwrap();
         log.record(&RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false });
 
@@ -888,23 +976,32 @@ mod tests {
         let pending_count = log.pending.len();
         let mut external_bytes = Vec::new();
 
-        let error = save_with_recovery_using(&ws.root, &mut log.feed, &log.history_at_open, &log.pending, ReplayContext::default(), None, |root, replayed| {
-            assert!(replayed.was_decoded());
-            assert!(replayed.iter().any(|item| matches!(item, FeedItem::User(note) if note.text() == "Keep the live run's note")));
-            assert!(replayed.iter().any(|item| matches!(item, FeedItem::Ask { request, answer: None } if request.id == id)));
-            // The exact write ordering is local to this call: another real client answers
-            // after the replacement load and before the guarded commit's disk read.
-            let engine = craft_anything_engine::Engine::new(craft_anything_engine::testing::session());
-            engine
-                .call(
-                    "project_inbox_answer",
-                    json!({"project": ws.root, "id": id, "choice": "Blue"}),
-                    craft_anything_engine::CallOptions::new(craft_anything_engine::Caller::Cli),
-                )
-                .unwrap();
-            external_bytes = std::fs::read(&path).unwrap();
-            save_if_unchanged(root, replayed)
-        })
+        let error = save_with_recovery_using(
+            &ws.root,
+            &mut log.feed,
+            &log.history_at_open,
+            &log.pending,
+            ReplayContext::default(),
+            None,
+            (save, |root, replayed| {
+                assert!(replayed.was_decoded());
+                assert!(replayed.iter().any(|item| matches!(item, FeedItem::User(note) if note.text() == "Keep the live run's note")));
+                assert!(replayed.iter().any(|item| matches!(item, FeedItem::Ask { request, answer: None } if request.id == id)));
+                // The exact write ordering is local to this call: another real client answers
+                // after the replacement load and before the guarded commit's disk read.
+                let engine = craft_anything_engine::Engine::new(craft_anything_engine::testing::session());
+                engine
+                    .call(
+                        "project_inbox_answer",
+                        json!({"project": ws.root, "id": id, "choice": "Blue"}),
+                        craft_anything_engine::CallOptions::new(craft_anything_engine::Caller::Cli),
+                    )
+                    .unwrap();
+                external_bytes = std::fs::read(&path).unwrap();
+                save_if_unchanged(root, replayed)
+            }),
+        )
+        .result
         .unwrap_err();
 
         assert_eq!(error.code, ErrorCode::FileChanged);
@@ -947,12 +1044,16 @@ mod tests {
                 std::fs::write(&path, bytes).unwrap();
             }
             let mut delivered = false;
+            let prepare = log.prepare_answer();
             assert!(
-                log.answered(&question, "Blue", || {
-                    delivered = true;
-                    Ok(())
-                })
-                .is_err()
+                inbox
+                    .answer_with_guard(&question.id, &Answer { text: Some("Blue".into()), ..Default::default() }, prepare, |guard, request| {
+                        log.answered(guard, request, "Blue", || {
+                            delivered = true;
+                            Ok(())
+                        })
+                    })
+                    .is_err()
             );
             assert!(!delivered);
             assert_eq!(inbox.pending().len(), 1);
@@ -1272,11 +1373,21 @@ mod tests {
         (log, question)
     }
 
+    fn normal_error_then_question_on_the_repaired_base(question: &Request) -> Vec<FeedItem> {
+        // The readable replacement supplies the base. Its normal fold never contains the
+        // old writer's transient read-error notice, only the workflow events being replayed.
+        let mut feed = vec![FeedItem::User(UserItem::Text("Keep the repaired conversation".into()))];
+        apply(&mut feed, &RunEvent::Agent(AgentEvent::Error { message: "The compiler rejected the source.".into(), remediation: None, log: None }));
+        apply(&mut feed, &RunEvent::Ask(question.clone()));
+        feed
+    }
+
     #[test]
     fn recovery_failure_explanation_is_saved_with_the_replayed_feed() {
         let d = tempfile::tempdir().unwrap();
         let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
         let (mut log, question) = a_read_error_run_with_an_error_then_a_new_question(&ws);
+        let mut expected = normal_error_then_question_on_the_repaired_base(&question);
         let path = ws.root.join(FEED_FILE);
         std::fs::remove_dir(&path).unwrap();
         std::fs::write(&path, br#"{"version":5,"items":[{"User":"Keep the repaired conversation"}]}"#).unwrap();
@@ -1284,11 +1395,15 @@ mod tests {
         log.save(true);
 
         assert!(log.pending.is_empty());
-        assert!(matches!(log.feed.last(), Some(FeedItem::Error { message, .. }) if message == "The compiler rejected the source."));
-        log.record(&RunEvent::Finished { ok: false, message: "The build failed.".into(), paused: false });
+        assert_eq!(log.feed.to_vec(), expected, "reloading the pending question must preserve the normal Error → Ask fold");
+        assert!(!log.failure_explained, "the newly introduced question still follows the earlier error");
+        let finished = RunEvent::Finished { ok: false, message: "The build failed.".into(), paused: false };
+        apply(&mut expected, &finished);
+        log.record(&finished);
         let saved = load(&ws);
+        assert_eq!(saved.to_vec(), expected, "the recovered run finishes exactly like the normal fold");
         let errors: Vec<_> = saved.iter().filter_map(|item| if let FeedItem::Error { message, .. } = item { Some(message.as_str()) } else { None }).collect();
-        assert_eq!(errors, ["The compiler rejected the source."], "the saved replay already explains this failure");
+        assert_eq!(errors, ["The compiler rejected the source.", "The build failed."], "the later question starts a new failure boundary");
         assert_eq!(saved.iter().filter(|item| matches!(item, FeedItem::Ask { request, .. } if request.id == question.id)).count(), 1);
         assert_eq!(log.items(), saved.into_items());
     }
@@ -1299,27 +1414,37 @@ mod tests {
             let d = tempfile::tempdir().unwrap();
             let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
             let (mut log, question) = a_read_error_run_with_an_error_then_a_new_question(&ws);
+            let mut expected = normal_error_then_question_on_the_repaired_base(&question);
+            record_pending_answer(&mut expected, &question, "Yes");
             let path = ws.root.join(FEED_FILE);
             std::fs::remove_dir(&path).unwrap();
             std::fs::write(&path, br#"{"version":5,"items":[{"User":"Keep the repaired conversation"}]}"#).unwrap();
             let inbox = Inbox::new(ws.inbox_dir());
 
-            let result = log.answered(&question, "Yes", || {
-                if delivery_fails {
-                    Err(ToolError::new(ErrorCode::FileError, "Delivery is unavailable."))
-                } else {
-                    inbox.answer(&question.id, &craft_anything_engine::inbox::Answer { text: Some("Yes".into()), ..Default::default() })
-                }
-            });
+            let prepare = log.prepare_answer();
+            let result = inbox.answer_with_guard(
+                &question.id,
+                &craft_anything_engine::inbox::Answer { text: Some("Yes".into()), ..Default::default() },
+                prepare,
+                |guard, request| {
+                    log.answered(guard, request, "Yes", || {
+                        if delivery_fails { Err(ToolError::new(ErrorCode::FileError, "Delivery is unavailable.")) } else { Ok(()) }
+                    })
+                },
+            );
 
             assert_eq!(result.is_err(), delivery_fails);
             assert!(log.pending.is_empty(), "the feed commit succeeds before the delivery result");
-            assert!(matches!(log.feed.last(), Some(FeedItem::Error { message, .. }) if message == "The compiler rejected the source."));
-            log.record(&RunEvent::Finished { ok: false, message: "The build failed.".into(), paused: false });
+            assert_eq!(log.feed.to_vec(), expected, "answering preserves the normal fold and the new question's event boundary");
+            assert!(!log.failure_explained);
+            let finished = RunEvent::Finished { ok: false, message: "The build failed.".into(), paused: false };
+            apply(&mut expected, &finished);
+            log.record(&finished);
             let saved = load(&ws);
+            assert_eq!(saved.to_vec(), expected, "delivery_fails={delivery_fails}");
             let errors: Vec<_> =
                 saved.iter().filter_map(|item| if let FeedItem::Error { message, .. } = item { Some(message.as_str()) } else { None }).collect();
-            assert_eq!(errors, ["The compiler rejected the source."], "delivery_fails={delivery_fails}");
+            assert_eq!(errors, ["The compiler rejected the source.", "The build failed."], "delivery_fails={delivery_fails}");
             assert_eq!(saved.iter().filter(|item| matches!(item, FeedItem::Ask { request, .. } if request.id == question.id)).count(), 1);
             assert!(saved.iter().any(|item| matches!(item, FeedItem::Ask { request, answer: Some(answer) } if request.id == question.id && answer == "Yes")));
             assert_eq!(log.items(), saved.into_items());
@@ -1330,25 +1455,29 @@ mod tests {
     fn recovery_failure_explanation_is_unchanged_after_a_guarded_conflict() {
         let d = tempfile::tempdir().unwrap();
         let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
-        let (mut log, _) = a_read_error_run_with_an_error_then_a_new_question(&ws);
+        let (mut log, question) = a_read_error_run_with_an_error_then_a_new_question(&ws);
         let path = ws.root.join(FEED_FILE);
         std::fs::remove_dir(&path).unwrap();
         std::fs::write(&path, br#"{"version":5,"items":[{"User":"Keep the repaired conversation"}]}"#).unwrap();
         let before = log.feed.to_vec();
+        let expected = normal_error_then_question_on_the_repaired_base(&question);
         let pending = log.pending.clone();
         let changed = br#"{"version":5,"items":[{"User":"Keep the concurrent writer's words"}]}"#;
         let mut committed = false;
 
         // Reach the owner that installs explanation state, with the same local seam used by
         // save. A real write between reload and commit is rejected by the real guarded save.
-        log.save_using(true, |root, replayed| {
-            committed = true;
-            assert!(matches!(replayed.last(), Some(FeedItem::Error { message, .. }) if message == "The compiler rejected the source."));
-            std::fs::write(&path, changed).unwrap();
-            let result = save_if_unchanged(root, replayed);
-            assert_eq!(result.as_ref().unwrap_err().code, ErrorCode::FileChanged);
-            result
-        });
+        log.save_using(
+            true,
+            (save, |root, replayed| {
+                committed = true;
+                assert_eq!(replayed.to_vec(), expected, "the rejected candidate still follows the normal Error → Ask fold");
+                std::fs::write(&path, changed).unwrap();
+                let result = save_if_unchanged(root, replayed);
+                assert_eq!(result.as_ref().unwrap_err().code, ErrorCode::FileChanged);
+                result
+            }),
+        );
 
         assert!(committed && log.save_error.is_some());
         assert!(!log.failure_explained, "a rejected replay must not change the original writer's explanation state");
@@ -1435,7 +1564,12 @@ mod tests {
         external.insert(0, FeedItem::User(UserItem::Text("Keep the external words".into())));
         save(&ws.root, &mut external).unwrap();
 
-        log.answered(&question, "Yes", || inbox.answer(&question.id, &Answer { text: Some("Yes".into()), ..Default::default() })).unwrap();
+        let prepare = log.prepare_answer();
+        inbox
+            .answer_with_guard(&question.id, &Answer { text: Some("Yes".into()), ..Default::default() }, prepare, |guard, request| {
+                log.answered(guard, request, "Yes", || Ok(()))
+            })
+            .unwrap();
 
         assert!(log.pending.is_empty() && log.failure_explained);
         log.record(&RunEvent::Finished { ok: false, message: "The build failed.".into(), paused: false });
@@ -1527,18 +1661,26 @@ mod tests {
         let moved = d.path().join("moved-project");
         std::fs::rename(&ws.root, &moved).unwrap();
         let mut delivered = false;
+        let prepare = log.prepare_answer();
         assert!(
-            log.answered(&question, "Blue", || {
-                delivered = true;
-                Ok(())
-            })
-            .is_err()
+            inbox
+                .answer_with_guard(&question.id, &Answer { text: Some("Blue".into()), ..Default::default() }, prepare, |guard, request| {
+                    log.answered(guard, request, "Blue", || {
+                        delivered = true;
+                        Ok(())
+                    })
+                })
+                .is_err()
         );
         assert!(!delivered);
         assert!(!ws.root.exists(), "a failed save must not recreate a moved project");
         std::fs::rename(&moved, &ws.root).unwrap();
         assert_eq!(inbox.pending().len(), 1);
-        log.answered(&question, "Blue", || inbox.answer(&id, &craft_anything_engine::inbox::Answer { choice: Some("Blue".into()), ..Default::default() }))
+        let prepare = log.prepare_answer();
+        inbox
+            .answer_with_guard(&id, &craft_anything_engine::inbox::Answer { choice: Some("Blue".into()), ..Default::default() }, prepare, |guard, request| {
+                log.answered(guard, request, "Blue", || Ok(()))
+            })
             .unwrap();
         assert!(inbox.pending().is_empty());
         assert!(load(&ws).iter().any(|item| matches!(item, FeedItem::Ask { request, answer: Some(answer) } if request.id == id && answer == "Blue")));
@@ -1554,14 +1696,22 @@ mod tests {
         std::fs::write(ws.root.join(FEED_FILE), b"damaged conversation").unwrap();
         let mut log = FeedLog::open(&ws);
         let failed = || Err(ToolError::new(craft_anything_evidence::ErrorCode::FileError, "delivery failed"));
-        assert_eq!(log.answered(&question, "Blue", failed).unwrap_err().message, "delivery failed");
+        let answer = Answer { text: Some("Blue".into()), ..Default::default() };
+        let prepare = log.prepare_answer();
+        assert_eq!(
+            inbox.answer_with_guard(&id, &answer, prepare, |guard, request| log.answered(guard, request, "Blue", failed)).unwrap_err().message,
+            "delivery failed"
+        );
         assert!(for_display(&ws).iter().any(|item| matches!(item, FeedItem::Ask { answer: None, .. })));
         assert_eq!(std::fs::read(ws.root.join("feed.json.broken")).unwrap(), b"damaged conversation");
         // The same live writer has kept the successful recovery state and can save again.
-        assert_eq!(log.answered(&question, "Blue", failed).unwrap_err().message, "delivery failed");
+        let prepare = log.prepare_answer();
+        assert_eq!(
+            inbox.answer_with_guard(&id, &answer, prepare, |guard, request| log.answered(guard, request, "Blue", failed)).unwrap_err().message,
+            "delivery failed"
+        );
         // The person retries through another client. A later live save keeps that new answer.
-        record_answer(&ws, &question, "Red").unwrap();
-        inbox.answer(&id, &craft_anything_engine::inbox::Answer { choice: Some("Red".into()), ..Default::default() }).unwrap();
+        inbox.answer_recorded(&ws, &id, &Answer { text: Some("Red".into()), ..Default::default() }, "Red").unwrap();
         log.record(&RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false });
         assert!(load(&ws).iter().any(|item| matches!(item, FeedItem::Ask { request, answer: Some(answer) } if request.id == id && answer == "Red")));
         log.record(&RunEvent::Ask(question.clone()));
@@ -1584,22 +1734,30 @@ mod tests {
         std::fs::create_dir(&path).unwrap();
         let mut log = FeedLog::open(&ws);
         let mut delivered = false;
+        let prepare = log.prepare_answer();
         assert!(
-            log.answered(&question, "Blue", || {
-                delivered = true;
-                Ok(())
-            })
-            .is_err()
+            inbox
+                .answer_with_guard(&question.id, &Answer { text: Some("Blue".into()), ..Default::default() }, prepare, |guard, request| {
+                    log.answered(guard, request, "Blue", || {
+                        delivered = true;
+                        Ok(())
+                    })
+                })
+                .is_err()
         );
         assert!(!delivered);
         assert_eq!(inbox.pending().len(), 1);
         std::fs::remove_dir(&path).unwrap();
         std::fs::write(&path, br#"{"version":5,"items":[{"User":"Keep the actual conversation"}]}"#).unwrap();
-        log.answered(&question, "Blue", || {
-            delivered = true;
-            inbox.answer(&id, &craft_anything_engine::inbox::Answer { choice: Some("Blue".into()), ..Default::default() })
-        })
-        .unwrap();
+        let prepare = log.prepare_answer();
+        inbox
+            .answer_with_guard(&id, &craft_anything_engine::inbox::Answer { choice: Some("Blue".into()), ..Default::default() }, prepare, |guard, request| {
+                log.answered(guard, request, "Blue", || {
+                    delivered = true;
+                    Ok(())
+                })
+            })
+            .unwrap();
         assert!(delivered, "the same writer reloads the repaired file before recording and delivering the answer");
         assert!(inbox.pending().is_empty());
         assert!(load(&ws).iter().any(|item| matches!(item, FeedItem::User(note) if note.text() == "Keep the actual conversation")));
@@ -1738,6 +1896,61 @@ mod tests {
     }
 
     #[test]
+    fn replay_keeps_a_new_question_between_streamed_messages() {
+        for answer_new_question in [false, true] {
+            let d = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+            let inbox = Inbox::new(ws.inbox_dir());
+            let old_id = inbox.post(craft_anything_engine::inbox::RequestKind::Question, "Blue?", "", vec![], true, None).unwrap();
+            let old_request = inbox.pending().into_iter().find(|request| request.id == old_id).unwrap();
+            let mut log = FeedLog::open(&ws);
+            log.record(&RunEvent::Agent(AgentEvent::TextDelta { text: "Hello ".into() }));
+            log.save(true);
+
+            let new_id = inbox.post(craft_anything_engine::inbox::RequestKind::Question, "Continue?", "", vec![], true, None).unwrap();
+            let new_request = inbox.pending().into_iter().find(|request| request.id == new_id).unwrap();
+            record_before_next_save(&mut log, RunEvent::Ask(new_request.clone()));
+            record_before_next_save(&mut log, RunEvent::Agent(AgentEvent::TextDelta { text: "world".into() }));
+            record_before_next_save(&mut log, RunEvent::Ask(new_request.clone()));
+            record_before_next_save(&mut log, RunEvent::Agent(AgentEvent::TextDelta { text: "!".into() }));
+
+            // The CLI loads the newly pending request before this writer has saved its Ask.
+            // Answering either request changes the source and forces the live journal to replay.
+            let engine = craft_anything_engine::Engine::new(craft_anything_engine::testing::session());
+            engine
+                .call(
+                    "project_inbox_answer",
+                    json!({"project": ws.root, "id": old_id, "choice": "Blue"}),
+                    craft_anything_engine::CallOptions::new(craft_anything_engine::Caller::Cli),
+                )
+                .unwrap();
+            if answer_new_question {
+                engine
+                    .call(
+                        "project_inbox_answer",
+                        json!({"project": ws.root, "id": new_id, "choice": "Yes"}),
+                        craft_anything_engine::CallOptions::new(craft_anything_engine::Caller::Cli),
+                    )
+                    .unwrap();
+            }
+            log.record(&RunEvent::Finished { ok: true, message: "Ready".into(), paused: false });
+
+            assert_eq!(
+                load(&ws).into_items(),
+                vec![
+                    FeedItem::User(UserItem::Text("A game".into())),
+                    FeedItem::Ask { request: old_request, answer: Some("Blue".into()) },
+                    FeedItem::Agent { text: "Hello ".into(), streaming: false },
+                    FeedItem::Ask { request: new_request, answer: answer_new_question.then(|| "Yes".into()) },
+                    FeedItem::Agent { text: "world!".into(), streaming: false },
+                ],
+                "the new Ask keeps its boundary and saved answer; its repeated event does not split the second message"
+            );
+            assert!(log.pending.is_empty() && log.save_error.is_none());
+        }
+    }
+
+    #[test]
     fn replay_does_not_append_to_another_writers_message() {
         for replace_owned in [false, true] {
             let d = tempfile::tempdir().unwrap();
@@ -1772,6 +1985,183 @@ mod tests {
     }
 
     #[test]
+    fn a_visible_save_sync_failure_is_not_replayed_after_an_external_answer() {
+        for needs_replay in [false, true] {
+            let d = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+            let inbox = Inbox::new(ws.inbox_dir());
+            let id = inbox.post(craft_anything_engine::inbox::RequestKind::Question, "Blue?", "", vec![], true, None).unwrap();
+            let mut log = FeedLog::open(&ws);
+            log.record(&RunEvent::Agent(AgentEvent::TextDelta { text: "Hello ".into() }));
+            log.save(true);
+            record_before_next_save(&mut log, RunEvent::Agent(AgentEvent::TextDelta { text: "world".into() }));
+            if needs_replay {
+                let mut external = load(&ws);
+                external.push(FeedItem::User(UserItem::Text("An external note".into())));
+                save(&ws.root, &mut external).unwrap();
+            }
+
+            let sync_calls = std::cell::Cell::new(0);
+            let failed_sync = |root: &Path, feed: &mut LoadedFeed, decoded| {
+                let guard = lock_project(root)?;
+                craft_anything_engine::testing::save_feed_with_directory_sync(&guard, feed, decoded, |directory| {
+                    assert_eq!(directory, ws.root);
+                    sync_calls.set(sync_calls.get() + 1);
+                    Err(ToolError::new(ErrorCode::FileError, "The parent directory sync failed."))
+                })
+            };
+            log.save_using(true, (|root, feed| failed_sync(root, feed, false), |root, feed| failed_sync(root, feed, true)));
+
+            assert_eq!(sync_calls.get(), 1, "the injected error follows a real visible feed replacement");
+            assert!(log.feed.save_needs_sync());
+            assert!(log.pending.is_empty(), "already visible deltas cannot remain in the replay journal");
+            assert!(matches!(&log.save_error, Some(FeedItem::Error { message, .. }) if message.contains("parent directory sync failed")));
+            assert_eq!(load(&ws).iter().filter(|item| matches!(item, FeedItem::Agent { text, .. } if text == "Hello world")).count(), 1);
+
+            let engine = craft_anything_engine::Engine::new(craft_anything_engine::testing::session());
+            engine
+                .call(
+                    "project_inbox_answer",
+                    json!({"project": ws.root, "id": id, "choice": "Blue"}),
+                    craft_anything_engine::CallOptions::new(craft_anything_engine::Caller::Cli),
+                )
+                .unwrap();
+            record_before_next_save(&mut log, RunEvent::Agent(AgentEvent::TextDelta { text: "!".into() }));
+            log.record(&RunEvent::Finished { ok: true, message: "Ready".into(), paused: false });
+
+            let saved = load(&ws);
+            let messages: Vec<_> = saved.iter().filter_map(|item| if let FeedItem::Agent { text, .. } = item { Some(text.as_str()) } else { None }).collect();
+            assert_eq!(messages, ["Hello world!"], "the retained stream continues without replaying its already written delta");
+            assert!(saved.iter().any(|item| matches!(item, FeedItem::Ask { request, answer: Some(answer) } if request.id == id && answer == "Blue")));
+            assert_eq!(
+                saved.iter().filter(|item| matches!(item, FeedItem::User(note) if note.text() == "An external note")).count(),
+                usize::from(needs_replay)
+            );
+            assert!(log.pending.is_empty() && log.save_error.is_none() && !log.feed.save_needs_sync());
+        }
+    }
+
+    #[test]
+    fn a_visible_answer_sync_failure_blocks_delivery_and_keeps_the_replayed_feed() {
+        for needs_replay in [false, true] {
+            let d = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+            let inbox = Inbox::new(ws.inbox_dir());
+            let id = inbox.post(craft_anything_engine::inbox::RequestKind::Question, "Blue?", "", vec![], true, None).unwrap();
+            let mut log = FeedLog::open(&ws);
+            log.save(true);
+            record_before_next_save(&mut log, RunEvent::Note { shown: "Keep this pending note".into(), pictures: Vec::new() });
+            if needs_replay {
+                let mut external = load(&ws);
+                external.push(FeedItem::User(UserItem::Text("An external note".into())));
+                save(&ws.root, &mut external).unwrap();
+            }
+            let mut delivered = false;
+            let sync_calls = std::cell::Cell::new(0);
+
+            let prepare = log.prepare_answer();
+            let error = inbox
+                .answer_with_guard(&id, &Answer { text: Some("Blue".into()), ..Default::default() }, prepare, |guard, request| {
+                    log.answered_using(
+                        guard,
+                        request,
+                        "Blue",
+                        || {
+                            delivered = true;
+                            Ok(())
+                        },
+                        |guard, feed, decoded| {
+                            craft_anything_engine::testing::save_feed_with_directory_sync(guard, feed, decoded, |_| {
+                                sync_calls.set(sync_calls.get() + 1);
+                                Err(ToolError::new(ErrorCode::FileError, "The parent directory sync failed."))
+                            })
+                        },
+                    )
+                })
+                .unwrap_err();
+
+            assert!(error.message.contains("parent directory sync failed"));
+            assert_eq!(sync_calls.get(), 1);
+            assert!(!delivered && !inbox.dir().join(format!("{id}.answer.json")).exists(), "an unsynced answer must not be published");
+            assert!(inbox.pending().iter().any(|request| request.id == id));
+            assert!(log.feed.save_needs_sync() && log.pending.is_empty() && log.save_error.is_some());
+            assert!(log.feed.iter().any(|item| matches!(item, FeedItem::Ask { request, answer: Some(answer) } if request.id == id && answer == "Blue")));
+            assert!(log.display_items(&inbox).iter().any(|item| matches!(item, FeedItem::Ask { request, answer: None } if request.id == id)));
+
+            // Another client can durably submit a different answer. Its delivery receipt must
+            // not confirm this stale Blue display, and a retry must not duplicate the saved note.
+            inbox.answer_recorded(&ws, &id, &Answer { text: Some("Red".into()), ..Default::default() }, "Red").unwrap();
+            let displayed = log.display_items(&inbox);
+            assert!(
+                displayed
+                    .iter()
+                    .any(|item| matches!(item, FeedItem::Error { message, .. } if message.contains("could not be confirmed") && message.contains("Blue")))
+            );
+            assert!(displayed.iter().all(|item| !matches!(item, FeedItem::Ask { request, .. } if request.id == id)));
+            log.save(true);
+
+            let saved = load(&ws);
+            assert_eq!(saved.iter().filter(|item| matches!(item, FeedItem::User(note) if note.text() == "Keep this pending note")).count(), 1);
+            assert_eq!(
+                saved.iter().filter(|item| matches!(item, FeedItem::User(note) if note.text() == "An external note")).count(),
+                usize::from(needs_replay)
+            );
+            assert!(saved.iter().any(|item| matches!(item, FeedItem::Ask { request, answer: Some(answer) } if request.id == id && answer == "Red")));
+            assert!(
+                log.display_items(&inbox)
+                    .iter()
+                    .any(|item| matches!(item, FeedItem::Ask { request, answer: Some(answer) } if request.id == id && answer == "Red"))
+            );
+            assert!(log.pending.is_empty() && log.save_error.is_none() && !log.feed.save_needs_sync());
+        }
+    }
+
+    #[test]
+    fn a_visible_final_sync_failure_keeps_recovery_after_the_journal_is_cleared() {
+        for archive_blocked in [false, true] {
+            let d = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+            let mut log = FeedLog::open(&ws);
+            log.save(true);
+            record_before_next_save(&mut log, RunEvent::Agent(AgentEvent::TextDelta { text: "Keep the visible words".into() }));
+            let archive = ws.inbox_dir().join(RECOVERY_ARCHIVE_DIR);
+            if archive_blocked {
+                std::fs::write(&archive, b"Keep this unrelated file").unwrap();
+            }
+            let sync_calls = std::cell::Cell::new(0);
+            let commit = |root: &Path, feed: &mut LoadedFeed, decoded| {
+                let guard = lock_project(root)?;
+                craft_anything_engine::testing::save_feed_with_directory_sync(&guard, feed, decoded, |_| {
+                    sync_calls.set(sync_calls.get() + 1);
+                    Err(ToolError::new(ErrorCode::FileError, "The parent directory sync failed."))
+                })
+            };
+            let finished = RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false };
+
+            log.record_using(&finished, (|root, feed| commit(root, feed, false), |root, feed| commit(root, feed, true)));
+
+            assert_eq!(sync_calls.get(), 1);
+            assert!(log.pending.is_empty() && log.feed.save_needs_sync(), "the renamed feed is visible even though durability failed");
+            let saved = load(&ws);
+            assert!(saved.iter().any(|item| matches!(item, FeedItem::Agent { text, streaming: false } if text == "Keep the visible words")));
+            let FeedItem::Error { remediation, log: path, .. } = log.save_error.as_ref().unwrap() else { panic!("retain the save failure") };
+            if archive_blocked {
+                assert!(path.is_none());
+                assert!(remediation.as_ref().unwrap().contains("conversation is visible, but its durability"));
+                assert!(!remediation.as_ref().unwrap().contains("has not been preserved on disk"));
+                assert_eq!(std::fs::read(&archive).unwrap(), b"Keep this unrelated file");
+            } else {
+                let snapshot: RecoverySnapshot = serde_json::from_slice(&std::fs::read(path.as_ref().unwrap()).unwrap()).unwrap();
+                assert_eq!(snapshot.items, saved.to_vec());
+                assert_eq!(snapshot.metadata["details"]["pending_event_count"], 0);
+            }
+            let RunEvent::Finished { message, .. } = log.completion_event(finished) else { panic!("keep the completion event") };
+            assert!(message.contains("parent directory sync failed"));
+            assert_eq!(message.contains("was kept at"), !archive_blocked);
+        }
+    }
+
+    #[test]
     fn a_live_run_cannot_replay_or_archive_into_a_recreated_project() {
         let d = tempfile::tempdir().unwrap();
         let ws = Workspace::create(d.path(), "Project", "Old request", TargetRef::None).unwrap();
@@ -1783,9 +2173,19 @@ mod tests {
         ws.delete().unwrap();
         let mut replacement =
             Workspace::create_at(&root, "New project", "New request", TargetRef::None, Some(craft_anything_engine::workspace::ExistingFiles::Edit)).unwrap();
-        replacement.manifest.created_ms = created_ms.saturating_add(1);
+        replacement.manifest.created_ms = created_ms;
         replacement.save().unwrap();
         save(&root, &mut load(&replacement)).unwrap();
+        let replacement_inbox = Inbox::new(replacement.inbox_dir());
+        let replacement_id = replacement_inbox.post(craft_anything_engine::inbox::RequestKind::Question, "New question?", "", vec![], true, None).unwrap();
+        replacement_inbox
+            .answer_recorded(
+                &replacement,
+                &replacement_id,
+                &Answer { text: Some("The replacement project's reply".into()), ..Default::default() },
+                "The replacement project's reply",
+            )
+            .unwrap();
         let current = std::fs::read(root.join(FEED_FILE)).unwrap();
 
         log.record(&RunEvent::Agent(AgentEvent::TextDelta { text: " after replacement".into() }));
@@ -1798,6 +2198,8 @@ mod tests {
             matches!(&log.save_error, Some(FeedItem::Error { remediation: Some(message), log: None, .. }) if message.contains("not been preserved on disk"))
         );
         assert!(log.items().iter().any(|item| matches!(item, FeedItem::Agent { text, .. } if text == "Old words after replacement")));
+        assert!(log.items().iter().all(|item| !matches!(item, FeedItem::Ask { request, .. } if request.id == replacement_id)));
+        assert!(log.feed.iter().all(|item| !matches!(item, FeedItem::Ask { request, .. } if request.id == replacement_id)));
     }
 
     #[test]
