@@ -15,7 +15,8 @@ mod backups;
 mod recovery;
 mod transaction;
 pub(crate) use backups::{owned_backups, owned_backups_with_cancel, owns_open_backup_with_cancel, remove_owned_backups};
-pub use recovery::{RECOVERY_ARCHIVE_DIR, RecoverySnapshot, recovery_notices, write_recovery_snapshot};
+pub(crate) use recovery::sync_directory;
+pub use recovery::{RECOVERY_ARCHIVE_DIR, RecoverySnapshot, RecoveryWrite, recovery_notices, write_recovery_snapshot, write_recovery_snapshot_report};
 pub use transaction::{ProjectFeedGuard, lock_project};
 
 /// Where the conversation is kept in the project folder.
@@ -249,9 +250,9 @@ struct DisplaySource {
 
 impl DisplaySource {
     fn read(path: &Path) -> Option<Self> {
-        let file = same_file::Handle::from_path(path).ok()?;
-        let metadata = file.as_file().metadata().ok()?;
-        metadata.is_file().then(|| Self { file, length: metadata.len(), modified: metadata.modified().ok() })
+        let (file, metadata) = craft_anything_platform::fs::open_regular_file(path).ok()?;
+        let file = same_file::Handle::from_file(file).ok()?;
+        Some(Self { file, length: metadata.len(), modified: metadata.modified().ok() })
     }
 
     fn is_current(&self, path: &Path) -> bool {
@@ -499,18 +500,23 @@ pub fn show_pending_for_feed(items: &mut [FeedItem], inbox: &Inbox, source: &Loa
         .iter()
         .enumerate()
         .filter_map(|(index, item)| match item {
-            FeedItem::Ask { request, answer: Some(answer) } => Some((index, request.title.clone(), answer.clone())),
+            FeedItem::Ask { request, answer: Some(answer) } => Some((index, request.id.clone(), request.title.clone(), answer.clone())),
             _ => None,
         })
         .collect();
     show_pending(items, inbox);
-    let current = inbox.dir().parent().is_some_and(|root| {
-        source.project.as_ref().is_ok_and(|project| project.check(root).is_ok())
-            && source.display_source.as_ref().is_some_and(|saved| saved.is_current(&root.join(FEED_FILE)))
-    });
+    let root = inbox.dir().parent();
+    let same_project = root.is_some_and(|root| source.project.as_ref().is_ok_and(|project| project.check(root).is_ok()));
+    let current = same_project && root.is_some_and(|root| source.display_source.as_ref().is_some_and(|saved| saved.is_current(&root.join(FEED_FILE))));
     if !current {
-        for (index, title, answer) in answered {
+        for (index, id, title, answer) in answered {
             if let Some(item) = items.get_mut(index) {
+                // The overlay has just checked that this question is still waiting and
+                // removed delivery confirmation. An unrelated feed write must not take
+                // away its retry control. A replaced project must not reuse that control.
+                if same_project && matches!(item, FeedItem::Ask { request, answer: None } if request.id == id) {
+                    continue;
+                }
                 *item = FeedItem::Error {
                     message: format!(
                         "Delivery of your saved reply to \"{title}\" could not be confirmed because the conversation changed.\n\nEarlier saved reply:\n{answer}"
@@ -900,6 +906,115 @@ mod tests {
             assert!(!shown.iter().any(|item| matches!(item, FeedItem::Ask { answer: Some(answer), .. } if answer == "Blue")));
             assert!(for_display(&ws).iter().any(|item| matches!(item, FeedItem::Ask { answer: Some(answer), .. } if answer == "Red")));
         }
+    }
+
+    #[test]
+    fn an_unrelated_answer_keeps_a_pending_reply_available_for_retry() {
+        use crate::inbox::Answer;
+        for consumed in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(directory.path(), "Colour", "Pick a colour", TargetRef::None).unwrap();
+            let inbox = Inbox::new(ws.inbox_dir());
+            let first = question(&ws, "Which colour?");
+            let second = question(&ws, "Which size?");
+            let blocked = inbox.dir().join(format!("{}.answer.json", first.id));
+            std::fs::create_dir(&blocked).unwrap();
+            assert!(inbox.answer_recorded(&ws, &first.id, &Answer { text: Some("Blue".into()), ..Default::default() }, "Blue").is_err());
+            std::fs::remove_dir(&blocked).unwrap();
+            let source = load(&ws);
+
+            inbox.answer_recorded(&ws, &second.id, &Answer { text: Some("Large".into()), ..Default::default() }, "Large").unwrap();
+            if consumed {
+                assert_eq!(inbox.wait(&second.id, std::time::Duration::ZERO, &|| false).unwrap().as_text(), "Large");
+            }
+            let mut shown = source.items.clone();
+            show_pending_for_feed(&mut shown, &inbox, &source);
+
+            assert!(
+                shown.iter().any(|item| {
+                    matches!(item, FeedItem::Ask { request, answer: None }
+                    if request.id == first.id && request.detail.contains("has not been delivered") && request.detail.contains("Blue"))
+                }),
+                "an unrelated conversation change must keep the pending question actionable"
+            );
+            assert!(!shown.iter().any(|item| matches!(item, FeedItem::Ask { request, answer: Some(_) } if request.id == first.id)));
+            assert!(source.iter().any(|item| matches!(item, FeedItem::Ask { request, answer: Some(answer) } if request.id == first.id && answer == "Blue")));
+            assert!(inbox.pending().iter().any(|request| request.id == first.id));
+
+            inbox.answer_recorded(&ws, &first.id, &Answer { text: Some("Red".into()), ..Default::default() }, "Red").unwrap();
+            assert_eq!(inbox.wait(&first.id, std::time::Duration::ZERO, &|| false).unwrap().as_text(), "Red");
+            assert!(for_display(&ws).iter().any(|item| {
+                matches!(item, FeedItem::Ask { request, answer: Some(answer) }
+                    if request.id == first.id && answer == "Red" && !request.detail.contains("has not been delivered"))
+            }));
+        }
+    }
+
+    #[test]
+    fn a_replaced_project_does_not_keep_an_old_question_retry_control() {
+        use crate::inbox::Answer;
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Colour", "Pick a colour", TargetRef::None).unwrap();
+        let inbox = Inbox::new(ws.inbox_dir());
+        let request = question(&ws, "Which colour?");
+        let blocked = inbox.dir().join(format!("{}.answer.json", request.id));
+        std::fs::create_dir(&blocked).unwrap();
+        assert!(inbox.answer_recorded(&ws, &request.id, &Answer { text: Some("Blue".into()), ..Default::default() }, "Blue").is_err());
+        std::fs::remove_dir(&blocked).unwrap();
+        let source = load(&ws);
+        let mut changed = serde_json::to_value(&ws.manifest).unwrap();
+        changed["generation"] = serde_json::json!("ffffffffffffffffffffffffffffffff");
+        crate::project::write_atomic(&ws.root.join(crate::workspace::MANIFEST), &serde_json::to_vec(&changed).unwrap()).unwrap();
+
+        let mut shown = source.items.clone();
+        show_pending_for_feed(&mut shown, &inbox, &source);
+
+        assert!(!shown.iter().any(|item| matches!(item, FeedItem::Ask { request: current, .. } if current.id == request.id)));
+        assert!(
+            shown.iter().any(|item| matches!(item, FeedItem::Error { message, .. } if message.contains("could not be confirmed") && message.contains("Blue")))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_live_display_does_not_block_on_a_named_pipe() {
+        use crate::inbox::Answer;
+        use std::time::Duration;
+        const FIXTURE: &str = "CRAFT_TEST_DISPLAY_FIFO_ROOT";
+        if let Some(root) = std::env::var_os(FIXTURE) {
+            let ws = Workspace::open(Path::new(&root)).unwrap();
+            let inbox = Inbox::new(ws.inbox_dir());
+            let source = load(&ws);
+            let mut unchanged = source.items.clone();
+            show_pending_for_feed(&mut unchanged, &inbox, &source);
+            assert!(unchanged.iter().any(|item| matches!(item, FeedItem::Ask { answer: Some(answer), .. } if answer == "Blue")));
+            let path = ws.root.join(FEED_FILE);
+            std::fs::remove_file(&path).unwrap();
+            craft_anything_platform::Process::new("mkfifo").args([path.as_os_str()]).timeout(Duration::from_secs(2)).run_checked().unwrap();
+
+            let mut shown = source.items.clone();
+            show_pending_for_feed(&mut shown, &inbox, &source);
+
+            assert!(
+                shown
+                    .iter()
+                    .any(|item| matches!(item, FeedItem::Error { message, .. } if message.contains("could not be confirmed") && message.contains("Blue")))
+            );
+            return;
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Colour", "Pick a colour", TargetRef::None).unwrap();
+        let inbox = Inbox::new(ws.inbox_dir());
+        let request = question(&ws, "Which colour?");
+        inbox.answer_recorded(&ws, &request.id, &Answer { text: Some("Blue".into()), ..Default::default() }, "Blue").unwrap();
+        craft_anything_platform::Process::new(std::env::current_exe().unwrap())
+            .args(["--exact", "feed::tests::a_live_display_does_not_block_on_a_named_pipe", "--test-threads=1"])
+            .env(FIXTURE, &ws.root)
+            .timeout(Duration::from_secs(5))
+            .stdout_cap(64 * 1024)
+            .stderr_cap(64 * 1024)
+            .run_checked()
+            .expect("a named pipe replacing the saved feed must not block display refresh");
     }
 
     #[test]

@@ -455,6 +455,12 @@ impl RebuildRun {
         feed.display_items(&self.inbox)
     }
 
+    /// Read the current display without consuming queued workflow events. A final save notice
+    /// remains separate from whether the build succeeded, paused, or failed.
+    pub fn display_feed(&self) -> Vec<feed::FeedItem> {
+        self.feed.lock().unwrap_or_else(PoisonError::into_inner).display_items(&self.inbox)
+    }
+
     /// Answer a question or approval card.
     pub fn answer(&self, id: &str, answer: &Answer) -> Result<(), ToolError> {
         self.answer_as(id, answer, &answer.as_text())

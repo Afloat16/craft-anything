@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -270,9 +270,10 @@ impl FileStamp {
     }
 }
 
-struct Scan {
+struct Scan<'a> {
     hash: Sha256,
     visited: usize,
+    after_classification: &'a mut dyn FnMut(&Path),
 }
 
 impl AppFingerprintCache {
@@ -280,6 +281,10 @@ impl AppFingerprintCache {
     /// Root changes, scan errors and cancellation discard cached comparisons. Missing files
     /// and paths that become another type are removed after every successful scan.
     pub fn scan(&mut self, ws: &Workspace, stop: &CancelToken) -> Result<String, ToolError> {
+        self.scan_after_classification(ws, stop, |_| {})
+    }
+
+    fn scan_after_classification(&mut self, ws: &Workspace, stop: &CancelToken, mut after_classification: impl FnMut(&Path)) -> Result<String, ToolError> {
         let root = ws.app_dir();
         if self.root.as_ref() != Some(&root) {
             self.files.clear();
@@ -288,7 +293,7 @@ impl AppFingerprintCache {
         for file in self.files.values_mut() {
             file.seen = false;
         }
-        let mut scan = Scan { hash: Sha256::new(), visited: 0 };
+        let mut scan = Scan { hash: Sha256::new(), visited: 0, after_classification: &mut after_classification };
         scan.hash.update(b"craft-build-files-v1\0");
         if let Err(error) = fingerprint_tree(ws, &root, &root, &mut scan, self, 0, stop) {
             self.files.clear();
@@ -299,9 +304,12 @@ impl AppFingerprintCache {
         Ok(hex::encode(scan.hash.finalize()))
     }
 
-    fn file(&mut self, path: &Path, relative: &Path, stop: &CancelToken) -> Result<[u8; 32], ToolError> {
+    fn file(&mut self, path: &Path, relative: &Path, opened: Option<(std::fs::File, std::fs::Metadata)>, stop: &CancelToken) -> Result<[u8; 32], ToolError> {
         stop.check()?;
-        let metadata = std::fs::symlink_metadata(path).map_err(|e| ToolError::io(path.display(), e))?;
+        let metadata = match &opened {
+            Some((_, metadata)) => metadata.clone(),
+            None => std::fs::symlink_metadata(path).map_err(|e| ToolError::io(path.display(), e))?,
+        };
         if !metadata.is_file() {
             return Err(ToolError::new(ErrorCode::FileChanged, format!("{} changed type while checking build progress.", path.display())));
         }
@@ -312,7 +320,10 @@ impl AppFingerprintCache {
             file.seen = true;
             return Ok(file.digest);
         }
-        let read = file_fingerprint(path, stop)?;
+        let read = match opened {
+            Some((mut file, before)) => file_fingerprint_opened(path, &mut file, before, stop)?,
+            None => file_fingerprint(path, stop)?,
+        };
         #[cfg(test)]
         {
             self.content_bytes = self.content_bytes.saturating_add(read.content_bytes);
@@ -330,7 +341,7 @@ fn fingerprint_tree(
     ws: &Workspace,
     root: &Path,
     dir: &Path,
-    scan: &mut Scan,
+    scan: &mut Scan<'_>,
     cache: &mut AppFingerprintCache,
     depth: usize,
     stop: &CancelToken,
@@ -354,6 +365,7 @@ fn fingerprint_tree(
             continue;
         }
         let kind = entry.file_type().map_err(|e| ToolError::io(path.display(), e))?;
+        let mut classified = None;
         if backup_name
             && kind.is_file()
             && let Some(backups) = &backups
@@ -362,6 +374,7 @@ fn fingerprint_tree(
             if backups.owns_open_with_cancel(&path, &mut file, &metadata, stop)? {
                 continue;
             }
+            classified = Some((file, metadata));
         }
         if kind.is_dir() && rebuilt(&path) {
             continue;
@@ -373,10 +386,20 @@ fn fingerprint_tree(
                 format!("Can't check build progress: {} contains more than {MAX_ENTRIES} files and folders.", root.display()),
             ));
         }
-        entries.push((path, kind));
+        let fingerprint = if let Some(opened) = classified {
+            (scan.after_classification)(&path);
+            let relative = path.strip_prefix(root).map_err(|_| ToolError::internal("A build file is outside its app folder."))?;
+            // Classification and hashing share this handle. Do not reopen a path that
+            // recovery could now have filled with a newly published backup. Hash here
+            // rather than retaining a file descriptor for every entry until sorting.
+            Some(cache.file(&path, relative, Some(opened), stop)?)
+        } else {
+            None
+        };
+        entries.push((path, kind, fingerprint));
     }
     entries.sort_by(|a, b| a.0.cmp(&b.0));
-    for (path, kind) in entries {
+    for (path, kind, fingerprint) in entries {
         stop.check()?;
         if kind.is_dir() {
             fingerprint_tree(ws, root, &path, scan, cache, depth + 1, stop)?;
@@ -397,7 +420,10 @@ fn fingerprint_tree(
             scan.hash.update(target);
         } else if kind.is_file() {
             scan.hash.update(b"file\0");
-            scan.hash.update(cache.file(&path, relative, stop)?);
+            scan.hash.update(match fingerprint {
+                Some(digest) => digest,
+                None => cache.file(&path, relative, None, stop)?,
+            });
         } else {
             // A dev server can leave sockets or pipes beside its source. Their contents are
             // not comparable (and opening a FIFO can block); only their name and type count.
@@ -438,9 +464,15 @@ struct FileFingerprint {
 fn file_fingerprint(path: &Path, stop: &CancelToken) -> Result<FileFingerprint, ToolError> {
     let mut file = std::fs::File::open(path).map_err(|e| ToolError::io(path.display(), e))?;
     let before = file.metadata().map_err(|e| ToolError::io(path.display(), e))?;
+    file_fingerprint_opened(path, &mut file, before, stop)
+}
+
+fn file_fingerprint_opened(path: &Path, file: &mut std::fs::File, before: std::fs::Metadata, stop: &CancelToken) -> Result<FileFingerprint, ToolError> {
+    // Backup ownership checks may already have read the entire opened file.
+    file.seek(SeekFrom::Start(0)).map_err(|e| ToolError::io(path.display(), e))?;
     // A growing log can't keep the scan running forever. A changed file is checked again on the
     // next run instead of being mistaken for an unchanged app.
-    let mut reader = (&mut file).take(before.len());
+    let mut reader = (&mut *file).take(before.len());
     let mut bytes = 0u64;
     let mut hash = Sha256::new();
     // Executability changes what can be built or launched. Other permission and timestamp
@@ -522,6 +554,42 @@ mod tests {
         std::fs::write(root.join(crate::feed::FEED_FILE), b"Damaged conversation").unwrap();
         crate::feed::save(&root, &mut crate::feed::load(&ws)).unwrap();
         assert_eq!(fingerprint(&ws), changed, "a verified recovery copy is not an app edit");
+    }
+
+    #[test]
+    fn a_personal_file_replaced_by_recovery_is_not_hashed_as_generated_app_content() {
+        for cached in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            std::fs::write(directory.path().join("index.html"), b"The app").unwrap();
+            let ws = Workspace::create_at(directory.path(), "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+            let without_personal = fingerprint(&ws);
+            let path = ws.root.join("feed.json.broken");
+            std::fs::write(&path, b"Personal app input").unwrap();
+            let with_personal = fingerprint(&ws);
+            assert_ne!(with_personal, without_personal, "an unchanged personal file is an app input");
+            let mut cache = AppFingerprintCache::default();
+            if cached {
+                assert_eq!(cache.scan(&ws, &CancelToken::default()).unwrap(), with_personal);
+            }
+            let mut replaced = false;
+
+            let result = cache.scan_after_classification(&ws, &CancelToken::default(), |classified| {
+                assert_eq!(classified, path);
+                std::fs::remove_file(&path).unwrap();
+                std::fs::write(ws.root.join(crate::feed::FEED_FILE), b"Damaged conversation, not app content").unwrap();
+                crate::feed::save(&ws.root, &mut crate::feed::load(&ws)).unwrap();
+                replaced = true;
+            });
+
+            assert!(replaced, "recovery replaces the path after the personal handle was classified");
+            match result {
+                Ok(scanned) => assert_eq!(scanned, with_personal, "the classified file, never the new backup, supplies this snapshot"),
+                Err(error) => assert_eq!(error.code, ErrorCode::FileChanged, "a changed opened file may instead invalidate the scan"),
+            }
+            assert_eq!(std::fs::read(&path).unwrap(), b"Damaged conversation, not app content");
+            assert_eq!(fingerprint(&ws), without_personal, "a fresh scan excludes the verified recovery backup");
+            assert_eq!(cache.scan(&ws, &CancelToken::default()).unwrap(), without_personal);
+        }
     }
 
     #[test]

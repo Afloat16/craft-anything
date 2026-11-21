@@ -354,9 +354,12 @@ pub struct FinishParams {
 pub const CALLED_DONE: &str = "Ready: you called it done. Everything so far is kept; a new message carries on from here.";
 
 fn project_build_finish(_ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolError> {
-    use crate::workspace::{Status, Step};
     let p: FinishParams = parse_params(params)?;
-    let mut ws = open(&p.project)?;
+    finish_build_after_feed_save(open(&p.project)?, |_| {})
+}
+
+fn finish_build_after_feed_save(mut ws: Workspace, after_feed_save: impl FnOnce(&Workspace)) -> Result<ToolOutput, ToolError> {
+    use crate::workspace::{Status, Step};
     ws.ensure_writable()?;
     let mut items = feed::load(&ws);
     // A previous attempt may have saved the conversation before the status write failed.
@@ -364,6 +367,7 @@ fn project_build_finish(_ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput,
         items.push(feed::FeedItem::Step { step: Step::Done, text: CALLED_DONE.into() });
     }
     feed::save(&ws.root, &mut items)?;
+    after_feed_save(&ws);
     ws.set_status(Status::Ready, CALLED_DONE)?;
     Ok(ToolOutput::Value(json!({"project": ws.root, "status": ws.manifest.status})))
 }
@@ -705,6 +709,39 @@ mod tests {
         );
         let err = e.call("project_build_finish", json!({"project": d.path().join("nope")}), CallOptions::new(Caller::Cli)).unwrap_err();
         assert!(err.message.contains("isn't a project folder"), "{err:?}");
+    }
+
+    #[test]
+    fn finishing_a_build_cannot_overwrite_a_project_recreated_after_its_feed_save() {
+        use crate::workspace::{ExistingFiles, MANIFEST, Status, Step};
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("site");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("index.html"), b"Keep the app").unwrap();
+        let mut original = Workspace::create_at(&root, "Original", "Original request", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+        original.set_status(Status::Stopped, "The original is paused.").unwrap();
+        let mut replacement_bytes = None;
+
+        let error = finish_build_after_feed_save(original, |old| {
+            assert!(matches!(feed::load(old).last(), Some(feed::FeedItem::Step { step: Step::Done, text }) if text == CALLED_DONE));
+            let old_generation = old.manifest.generation.clone();
+            old.clone().delete().unwrap();
+            let mut replacement = Workspace::create_at(&root, "Replacement", "Replacement request", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+            assert_ne!(replacement.manifest.generation, old_generation);
+            replacement.set_status(Status::Stopped, "The replacement is paused.").unwrap();
+            feed::save(&root, &mut feed::load(&replacement)).unwrap();
+            replacement_bytes = Some((std::fs::read(root.join(MANIFEST)).unwrap(), std::fs::read(root.join(feed::FEED_FILE)).unwrap()));
+        })
+        .unwrap_err();
+
+        assert_eq!(error.code, craft_anything_evidence::ErrorCode::FileChanged);
+        let (manifest, conversation) = replacement_bytes.unwrap();
+        assert_eq!(std::fs::read(root.join(MANIFEST)).unwrap(), manifest);
+        assert_eq!(std::fs::read(root.join(feed::FEED_FILE)).unwrap(), conversation);
+        let replacement = Workspace::open(&root).unwrap();
+        assert_eq!((replacement.manifest.request.as_str(), replacement.manifest.status), ("Replacement request", Status::Stopped));
+        feed::save(&root, &mut feed::load(&replacement)).unwrap();
+        assert_eq!(std::fs::read(root.join("index.html")).unwrap(), b"Keep the app");
     }
 
     #[test]

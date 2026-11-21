@@ -64,7 +64,11 @@ Deletion holds the same lock, removes `craft.json` before removing `inbox/`, and
 through final directory cleanup. Writers check that the project exists before creating coordination
 entries and recheck the root directory identity, manifest creation time and generation after acquiring
 the lock. New projects and copies receive an operating-system-random 128-bit generation, saved as
-32 hexadecimal characters in `craft.json`. Ordinary manifest updates preserve the disk generation.
+32 hexadecimal characters in `craft.json`. Ordinary manifest updates acquire the project lock,
+validate the caller's loaded identity, merge the current person-owned fields and replace the manifest
+without releasing that guard. They cannot adopt another project's generation or recreate a deleted
+manifest. Only initial creation and successful duplication publish a new manifest without an existing
+project guard.
 Version-5 and older manifests keep an absent generation when read or saved; opening one does not
 write it or invent a per-open identity. A later project created in the same directory receives a new
 generation even if its creation timestamp repeats. Loaded writers retain that identity; replay and separate
@@ -87,7 +91,9 @@ verified recovery copy into personal app content during the same copy. The desti
 is published after copying succeeds. A failed attempt first claims its destination into a fresh private
 `.craft-copy-cleanup-*` folder beside it, then checks the held directory identity before recursive
 removal. An unexpected replacement is preserved at the reported claimed path. This coordination does not make a directory copy an atomic filesystem snapshot
-against external programs that do not take the lock.
+against external programs that do not take the lock. App fingerprinting also uses the same opened
+regular file for ownership classification and content hashing, so recovery cannot substitute a newly
+generated backup between those two reads.
 
 If a run's final feed save fails, its worker attempts a separate recovery copy before sending the
 `Finished` event. Version 1 keeps the complete folded conversation, the loaded source's state and
@@ -97,8 +103,12 @@ created in private `inbox/feed-recovery/pending/`, uses mode `0600` on Unix, and
 and synced before an exclusive hard link publishes its final name. Partial staging files remain
 inspectable but do not enter completed-archive discovery or its file/byte budgets. Unix also syncs its
 directory and each parent entry, including on a retry after a failed parent sync. A record is limited to 64 MiB and name reservation to 64 attempts. An error keeping the
-copy is reported without claiming the unsaved conversation reached disk. Polling and dropping a
-run do not perform persistence I/O.
+copy is reported without claiming the complete unsaved conversation reached disk. Retained partial
+paths are reported for inspection before moving them aside, and changed entries are marked unverified.
+Repeating the same over-limit snapshot can leave another partial, so retry alone is not a cleanup
+strategy. A durable final archive remains a usable recovery copy if private staging cleanup fails;
+the report keeps its path and a separate cleanup warning. Polling and dropping a run do not retry
+persistence or archive writes.
 
 Display loading discovers at most 256 recovery-directory entries, reads at most 64 MiB in total
 and adds at most 16 historical notices for recognized records. A live run caches these notices
@@ -116,7 +126,11 @@ that stream merely because its text is equal. This context stays in memory and i
 replayed feed when replacement becomes visible; it adds no persisted feed fields. A newly introduced
 question remains at its original event boundary during replay, even if loading already appended
 its pending row or another client answered it. Repeated Ask events do not move the existing row
-or end an active stream.
+or end an active stream when that row exists. If repaired history no longer contains the question,
+replay restores it at the event boundary even if its inbox request has expired; the request is not
+reopened. The desktop uses the final display snapshot to show persistence warnings independently of
+the build outcome, and refreshes only the answered card after a successful retry without consuming
+queued workflow events.
 
 Answers are saved in the conversation before they are delivered through the inbox. On Unix, the
 feed's containing directory is synced after atomic replacement and before delivery; non-Unix
@@ -127,6 +141,18 @@ cannot inherit the earlier visible-write flag. A final run with unconfirmed dura
 a separate recovery archive, including when its event journal is already empty. A save failure
 leaves the question pending. A delivery failure also leaves it available for
 retry; display views show the pending question and saved reply while writers retain the recorded answer. Submission reserves the request first, acquires and validates the loaded project's guard, rechecks the request file's identity, then stages a versioned receipt, persists the reply and publishes the answer while retaining that guard. Deletion cannot complete between these steps, and a submission prepared after deletion cannot recreate an old delivery record. The waiter marks the receipt delivered before removing an answer. If receipt persistence fails at consumption, the answer file remains as durable delivery evidence. An existing answer's I/O error stops another submission before its persistence callback. A confirmed staged reply whose request expires is shown as undelivered, with its text available for a new request. If delivery evidence cannot be read, the display keeps the words and says delivery is unknown, without suggesting another submission. Display snapshots retain the opened feed identity, length and modification time and recheck them after reading receipt state. A changed snapshot shows its earlier reply as unconfirmed rather than attributing a later retry's delivery to it; refreshing loads the latest reply. This check covers application atomic replacement, not arbitrary external in-place writes that preserve metadata. Ordinary temporary inbox answers without feed persistence do not create receipts.
+
+A confirmed pending reply keeps its retry card through unrelated feed writes in the same project;
+it never gains delivery confirmation from the stale snapshot. A different project at the same path
+cannot reuse that card. The display recheck opens only regular files without blocking on a FIFO.
+After consumption, Unix directory sync confirms the delivered receipt before either request or
+answer is unlinked. A failed receipt write or sync retains both files while returning the actual
+accepted answer; discovery does not offer that answer for resubmission.
+
+A complete version-2 raw/receipt pair left in private backup staging can resume publication when
+both records match the damaged source and their opened identities remain unchanged. This can use
+the last available backup slot without creating another private copy. Unverifiable pairs remain in
+place with both exact paths in the error, and version-1 ownership compatibility is unchanged.
 
 Timeout and cancellation withdraw under the same request-file lock as submission. If unlinking
 the request fails, the waiter truncates and syncs its locked file as an empty withdrawal marker.

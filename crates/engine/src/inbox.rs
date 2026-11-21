@@ -363,6 +363,16 @@ impl Inbox {
     /// If a request cannot be unlinked, a synced empty file records its withdrawal. A failure
     /// to remove or invalidate it is an error, never a claim that withdrawal succeeded.
     pub fn try_wait(&self, id: &str, timeout: Duration, cancelled: &dyn Fn() -> bool) -> Result<Option<Answer>, ToolError> {
+        self.try_wait_with_directory_sync(id, timeout, cancelled, crate::feed::sync_directory)
+    }
+
+    fn try_wait_with_directory_sync(
+        &self,
+        id: &str,
+        timeout: Duration,
+        cancelled: &dyn Fn() -> bool,
+        mut sync: impl FnMut(&Path) -> Result<(), ToolError>,
+    ) -> Result<Option<Answer>, ToolError> {
         let (req, ans) = (self.path(id, "request")?, self.path(id, "answer")?);
         let start = Instant::now();
         loop {
@@ -383,15 +393,17 @@ impl Inbox {
                         return Ok(None);
                     }
                     if let Some(answer) = read_answer(&ans)? {
-                        // Never discard the last proof of delivery. If the receipt cannot be
-                        // committed, keep the answer file while returning the actual answer.
-                        match delivery::mark_delivered(&self.dir, id) {
+                        // Never discard the last proof of delivery. Commit the receipt's
+                        // directory entry before either unlink; otherwise retain both files
+                        // while returning the actual answer. Pending views still recognize
+                        // the retained answer as delivered.
+                        match delivery::mark_delivered(&self.dir, id).and_then(|()| sync(&self.dir)) {
                             Ok(()) => {
                                 let _ = std::fs::remove_file(&ans);
+                                let _ = std::fs::remove_file(&req);
                             }
                             Err(error) => log::warn!("Couldn't retain this answer's delivery receipt: {}", error.message),
                         }
-                        let _ = std::fs::remove_file(&req);
                         return Ok(Some(answer));
                     }
                     if cancelled() || start.elapsed() >= timeout {
@@ -1113,6 +1125,52 @@ mod tests {
                 .iter()
                 .any(|item| matches!(item, FeedItem::Ask { answer: Some(shown), .. } if shown == "Blue"))
         );
+    }
+
+    #[test]
+    fn delivery_sync_precedes_cleanup_and_failure_retains_both_files() {
+        use crate::workspace::{TargetRef, Workspace};
+        for fail_sync in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(directory.path(), "Colour", "Pick a colour", TargetRef::None).unwrap();
+            let inbox = Inbox::new(ws.inbox_dir());
+            let id = inbox.post(RequestKind::Question, "Which colour?", "", vec![], true, None).unwrap();
+            let answer = Answer { text: Some("Blue".into()), ..Default::default() };
+            inbox.answer_recorded(&ws, &id, &answer, "Blue").unwrap();
+            let request_path = inbox.path(&id, "request").unwrap();
+            let answer_path = inbox.path(&id, "answer").unwrap();
+            let request_bytes = std::fs::read(&request_path).unwrap();
+            let answer_bytes = std::fs::read(&answer_path).unwrap();
+            let mut syncs = 0;
+
+            let received = inbox
+                .try_wait_with_directory_sync(&id, Duration::ZERO, &|| false, |dir| {
+                    syncs += 1;
+                    assert_eq!(dir, inbox.dir());
+                    assert_eq!(delivery::state(dir, &id).unwrap(), DeliveryState::Delivered);
+                    assert_eq!(std::fs::read(&request_path).unwrap(), request_bytes, "sync must precede request cleanup");
+                    assert_eq!(std::fs::read(&answer_path).unwrap(), answer_bytes, "sync must precede answer cleanup");
+                    if fail_sync {
+                        Err(ToolError::new(ErrorCode::FileError, "injected delivery directory sync failure"))
+                    } else {
+                        crate::feed::sync_directory(dir)
+                    }
+                })
+                .unwrap();
+
+            assert_eq!(received, Some(answer.clone()));
+            assert_eq!(syncs, 1, "receipt durability is checked before either unlink");
+            assert!(inbox.pending().is_empty(), "a retained accepted answer must not be offered for resubmission");
+            if fail_sync {
+                assert_eq!(std::fs::read(&request_path).unwrap(), request_bytes);
+                assert_eq!(std::fs::read(&answer_path).unwrap(), answer_bytes);
+                assert_eq!(inbox.answer_recorded(&ws, &id, &answer, "Blue").unwrap_err().code, ErrorCode::NotFound);
+                assert_eq!(inbox.try_wait(&id, Duration::ZERO, &|| false).unwrap(), Some(answer));
+            }
+            assert!(!request_path.exists());
+            assert!(!answer_path.exists());
+            assert_eq!(delivery::state(inbox.dir(), &id).unwrap(), DeliveryState::Delivered);
+        }
     }
 
     /// A request can carry the person's own words and an answer can carry a typed reply or an

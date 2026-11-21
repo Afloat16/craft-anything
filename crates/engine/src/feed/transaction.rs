@@ -264,13 +264,15 @@ mod tests {
         std::fs::remove_file(&manifest).unwrap();
         assert!(guard.check_project().is_err());
         ws.manifest.created_ms = ws.manifest.created_ms.saturating_add(1);
-        ws.save().unwrap();
+        // Construct an external replacement; ordinary workspace updates keep the identity
+        // and acquire this same non-reentrant guard.
+        std::fs::write(&manifest, serde_json::to_vec_pretty(&ws.manifest).unwrap()).unwrap();
         assert_eq!(guard.check_project().unwrap_err().code, ErrorCode::FileChanged);
         let replacement = directory.path().join("replacement");
         std::fs::rename(&ws.root, &replacement).unwrap();
         std::fs::create_dir(&ws.root).unwrap();
         ws.manifest.created_ms = ws.manifest.created_ms.saturating_sub(1);
-        ws.save().unwrap();
+        std::fs::write(&manifest, serde_json::to_vec_pretty(&ws.manifest).unwrap()).unwrap();
         assert_eq!(guard.check_project().unwrap_err().code, ErrorCode::FileChanged);
     }
 

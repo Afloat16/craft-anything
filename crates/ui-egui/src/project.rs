@@ -289,7 +289,18 @@ impl CraftApp {
             self.toast(e.for_people(), true);
             return;
         }
-        feed::answered(&mut self.state.feed, id, &shown);
+        let current = match (self.open_run(), &self.workspace) {
+            (Some(run), _) => run.display_feed(),
+            (None, Some(ws)) => feed::for_display(ws),
+            _ => Vec::new(),
+        };
+        if let Some(updated) = current.into_iter().find(|item| matches!(item, FeedItem::Ask { request, .. } if request.id == id))
+            && let Some(card) = self.state.feed.iter_mut().find(|item| matches!(item, FeedItem::Ask { request, .. } if request.id == id))
+        {
+            // The display may have added an undelivered-reply hint to the old request.
+            // Replace that card only; pending events still need their usual polling effects.
+            *card = updated;
+        }
         self.state.answers.remove(id);
         if !self.state.feed.iter().any(|f| matches!(f, FeedItem::Ask { answer: None, .. }))
             && let Some(ws) = &self.workspace
@@ -310,7 +321,15 @@ impl CraftApp {
         let mut finished = Vec::new();
         for (root, e) in &events {
             if open.as_ref() == Some(root) {
-                apply(&mut self.state.feed, e);
+                if matches!(e, RunEvent::Finished { .. })
+                    && let Some(run) = self.runs.get(root)
+                {
+                    // Finished.message serves text clients. This display keeps the build's
+                    // result and its separate final persistence notice, including recovery.
+                    self.state.feed = run.display_feed();
+                } else {
+                    apply(&mut self.state.feed, e);
+                }
                 if matches!(e, RunEvent::Agent(AgentEvent::ToolFinished { .. } | AgentEvent::TurnDone { .. })) {
                     self.view_dirty = true;
                 }

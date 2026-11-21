@@ -12,7 +12,7 @@ const VERSION: u32 = 2;
 const LEGACY_VERSION: u32 = 1;
 const MAX_RECEIPT_BYTES: u64 = 4096;
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Receipt {
     format: String,
@@ -289,6 +289,21 @@ fn record_conflict(path: &Path) -> ToolError {
         .with_remediation("Move the existing recovery record to a safe location, then retry. The original conversation is unchanged.")
 }
 
+/// Check a retained open identity without following a link or blocking on a replaced FIFO.
+pub(super) fn same_file_at(path: &Path, expected: &same_file::Handle) -> Result<bool, ToolError> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(ToolError::io(path.display(), error)),
+    };
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Ok(false);
+    }
+    let (file, _) = craft_anything_platform::fs::open_regular_file(path)?;
+    let current = same_file::Handle::from_file(file).map_err(|error| ToolError::io(path.display(), error))?;
+    Ok(current == *expected && std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_file() && !metadata.file_type().is_symlink()))
+}
+
 /// Complete a private copy and its receipt before exposing a root-level name. A hard link
 /// publishes without replacing a legacy entry. Version 2 retains the private hard link as
 /// identity proof both before and after the final receipt is complete. Equal bytes alone do
@@ -306,6 +321,7 @@ enum PublishStep {
     Written,
     FileSynced,
     ReceiptSynced,
+    ResumeOpened,
 }
 
 fn publish_with_steps(
@@ -336,7 +352,9 @@ fn publish_with_steps(
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
     let file = match options.open(&staged) {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            return resume_staged(root, backup, &receipt, &mut after_step, after_publish);
+        }
         Err(error) => return Err(ToolError::io(staged.display(), error)),
     };
     let staged_identity = same_file::Handle::from_file(file).map_err(|error| ToolError::io(staged.display(), error))?;
@@ -398,6 +416,107 @@ fn publish_with_steps(
         }
     }
     result
+}
+
+fn staged_conflict(staged: &Path, record: &Path, error: ToolError) -> ToolError {
+    error.with_remediation(format!(
+        "The interrupted copy at {} and its receipt at {} could not be verified together. Both entries were left unchanged. Inspect and keep their contents before moving these exact entries aside and retrying; do not delete them merely because of their names. The original conversation is unchanged.",
+        staged.display(), record.display()
+    )).with_details(serde_json::json!({"staged_copy": staged.display().to_string(), "staged_receipt": record.display().to_string()}))
+}
+
+fn open_resume_file(path: &Path) -> Result<std::fs::File, ToolError> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| ToolError::io(path.display(), error))?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(record_conflict(path));
+    }
+    let (file, _) = craft_anything_platform::fs::open_regular_file(path)?;
+    #[cfg(windows)]
+    {
+        // Windows requires a writable handle for FlushFileBuffers. Keep the first regular
+        // handle alive and reject a replacement before using the writable handle.
+        let expected = same_file::Handle::from_file(file).map_err(|error| ToolError::io(path.display(), error))?;
+        let writable = std::fs::OpenOptions::new().read(true).write(true).open(path).map_err(|error| ToolError::io(path.display(), error))?;
+        let current = same_file::Handle::from_file(writable.try_clone().map_err(|error| ToolError::io(path.display(), error))?)
+            .map_err(|error| ToolError::io(path.display(), error))?;
+        if current != expected || !same_file_at(path, &expected)? {
+            return Err(record_conflict(path));
+        }
+        Ok(writable)
+    }
+    #[cfg(not(windows))]
+    Ok(file)
+}
+
+fn resume_staged(
+    root: &Path,
+    backup: &Path,
+    expected: &Receipt,
+    after_step: &mut impl FnMut(PublishStep) -> Result<(), ToolError>,
+    after_publish: impl FnOnce() -> Result<(), ToolError>,
+) -> Result<bool, ToolError> {
+    match std::fs::symlink_metadata(backup) {
+        Ok(_) => return Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(ToolError::io(backup.display(), error)),
+    }
+    let records = root.join("inbox").join("feed-backups");
+    let pending = records.join("pending");
+    let staged = pending.join(&expected.backup);
+    let pending_record = pending.join(format!("{}.json", expected.backup));
+    let final_record = records.join(format!("{}.json", expected.backup));
+    let prepared = (|| {
+        let mut raw = open_resume_file(&staged)?;
+        let mut record = open_resume_file(&pending_record)?;
+        let raw_identity = same_file::Handle::from_file(raw.try_clone().map_err(|error| ToolError::io(staged.display(), error))?)
+            .map_err(|error| ToolError::io(staged.display(), error))?;
+        let record_identity = same_file::Handle::from_file(record.try_clone().map_err(|error| ToolError::io(pending_record.display(), error))?)
+            .map_err(|error| ToolError::io(pending_record.display(), error))?;
+        after_step(PublishStep::ResumeOpened)?;
+        let mut bytes = Vec::new();
+        (&mut record).take(MAX_RECEIPT_BYTES + 1).read_to_end(&mut bytes).map_err(|error| ToolError::io(pending_record.display(), error))?;
+        if bytes.len() as u64 > MAX_RECEIPT_BYTES
+            || serde_json::from_slice::<Receipt>(&bytes).ok().as_ref() != Some(expected)
+            || !matches_open_file(&staged, &mut raw, expected, &mut || Ok(()))?
+            || !same_file_at(&staged, &raw_identity)?
+            || !same_file_at(&pending_record, &record_identity)?
+        {
+            return Err(ToolError::new(ErrorCode::FileChanged, "The interrupted recovery copy does not match this damaged conversation."));
+        }
+        raw.sync_all().map_err(|error| ToolError::io(staged.display(), error))?;
+        record.sync_all().map_err(|error| ToolError::io(pending_record.display(), error))?;
+        super::recovery::sync_directory(&pending)?;
+        Ok((raw_identity, record_identity))
+    })();
+    let (raw_identity, record_identity) = prepared.map_err(|error| staged_conflict(&staged, &pending_record, error))?;
+    let publication = (|| {
+        match std::fs::hard_link(&staged, backup) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(false),
+            Err(error) => return Err(ToolError::io(backup.display(), error)),
+        }
+        super::recovery::sync_directory(root)?;
+        after_publish()?;
+        if !same_file_at(backup, &raw_identity)? || !same_file_at(&staged, &raw_identity)? || !same_file_at(&pending_record, &record_identity)? {
+            return Err(ToolError::new(ErrorCode::FileChanged, "The interrupted recovery copy changed during publication."));
+        }
+        let proof = Ownership { receipt: expected.clone(), staged: Some(staged.clone()) };
+        if !matches_owned_path(backup, &proof)? {
+            return Err(ToolError::new(ErrorCode::FileChanged, "The interrupted recovery copy changed before it could be recorded."));
+        }
+        match std::fs::hard_link(&pending_record, &final_record) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                if read_receipt(&final_record, &expected.backup)?.as_ref() != Some(expected) {
+                    return Err(record_conflict(&final_record));
+                }
+            }
+            Err(error) => return Err(ToolError::io(final_record.display(), error)),
+        }
+        super::recovery::sync_directory(&records)?;
+        Ok(true)
+    })();
+    publication.map_err(|error| staged_conflict(&staged, &pending_record, error))
 }
 
 fn remove_created_file(path: &Path, created: &same_file::Handle) -> Result<(), ToolError> {
@@ -647,6 +766,114 @@ mod tests {
 
     fn owns_open_backup(root: &Path, path: &Path, file: &mut std::fs::File) -> Result<bool, ToolError> {
         owns_open_backup_with_cancel(root, path, file, &CancelToken::default())
+    }
+
+    fn stage_interrupted_copy(root: &Path, backup: &Path, bytes: &[u8]) -> (PathBuf, PathBuf) {
+        let pending = directory_for(root, true, true).unwrap().unwrap();
+        let receipt = receipt(backup, bytes).unwrap();
+        let staged = pending.join(&receipt.backup);
+        let mut file = std::fs::File::create(&staged).unwrap();
+        file.write_all(bytes).unwrap();
+        file.sync_all().unwrap();
+        write_receipt(&pending, &receipt).unwrap();
+        (staged, pending.join(format!("{}.json", receipt.backup)))
+    }
+
+    #[test]
+    fn the_last_backup_slot_resumes_a_verified_interrupted_copy() {
+        use crate::workspace::{TargetRef, Workspace};
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Project", "Keep my conversation", TargetRef::None).unwrap();
+        let names = super::super::DAMAGED_BACKUP_NAMES;
+        for name in &names[..names.len() - 1] {
+            assert!(publish(&ws.root, &ws.root.join(name), b"earlier damaged conversation").unwrap());
+        }
+        let backup = ws.root.join(names.last().unwrap());
+        let damaged = b"this is the current damaged conversation";
+        let (staged, pending_record) = stage_interrupted_copy(&ws.root, &backup, damaged);
+        let raw_identity = same_file::Handle::from_path(&staged).unwrap();
+        let record_identity = same_file::Handle::from_path(&pending_record).unwrap();
+        std::fs::write(ws.root.join(super::super::FEED_FILE), damaged).unwrap();
+        let mut feed = super::super::load(&ws);
+
+        super::super::save(&ws.root, &mut feed).unwrap();
+
+        assert_eq!(std::fs::read(&backup).unwrap(), damaged);
+        assert!(same_file_at(&backup, &raw_identity).unwrap());
+        assert!(same_file_at(&staged, &raw_identity).unwrap());
+        let final_record = ws.inbox_dir().join("feed-backups").join(format!("{}.json", backup.file_name().unwrap().to_string_lossy()));
+        assert!(same_file_at(&final_record, &record_identity).unwrap());
+        assert_eq!(owned_backups(&ws.root).unwrap().len(), names.len());
+        assert!(super::super::load(&ws).was_decoded());
+    }
+
+    #[test]
+    fn unverifiable_staging_is_preserved_with_both_exact_paths() {
+        for invalid in ["raw", "receipt", "newer receipt", "missing receipt"] {
+            let directory = tempfile::tempdir().unwrap();
+            let root = directory.path();
+            let backup = root.join("feed.json.broken");
+            let (staged, pending_record) = stage_interrupted_copy(root, &backup, b"damaged original");
+            match invalid {
+                "raw" => std::fs::write(&staged, b"Keep this different personal data").unwrap(),
+                "receipt" => std::fs::write(&pending_record, b"Keep this unrelated record").unwrap(),
+                "newer receipt" => {
+                    let mut newer = receipt(&backup, b"damaged original").unwrap();
+                    newer.version += 1;
+                    std::fs::write(&pending_record, serde_json::to_vec(&newer).unwrap()).unwrap();
+                }
+                _ => std::fs::remove_file(&pending_record).unwrap(),
+            }
+            let before = std::fs::read(&staged).unwrap();
+            let record_before = std::fs::read(&pending_record).ok();
+
+            let error = publish(root, &backup, b"damaged original").unwrap_err();
+
+            let guidance = error.remediation.unwrap();
+            assert!(guidance.contains(&staged.display().to_string()) && guidance.contains(&pending_record.display().to_string()));
+            assert!(!backup.exists());
+            assert_eq!(std::fs::read(&staged).unwrap(), before);
+            assert_eq!(std::fs::read(&pending_record).ok(), record_before);
+        }
+    }
+
+    #[test]
+    fn resuming_staging_keeps_opened_raw_and_receipt_identities() {
+        for replaced in ["raw", "receipt", "published"] {
+            let directory = tempfile::tempdir().unwrap();
+            let root = directory.path();
+            let backup = root.join("feed.json.broken");
+            let bytes = b"identical damaged words";
+            let (staged, pending_record) = stage_interrupted_copy(root, &backup, bytes);
+            let retained = root.join("retained-original");
+            let replacement = if replaced == "receipt" { pending_record.clone() } else { staged.clone() };
+            let before = std::fs::read(&replacement).unwrap();
+            let error = publish_with_steps(
+                root,
+                &backup,
+                bytes,
+                |step| {
+                    if step == PublishStep::ResumeOpened && replaced != "published" {
+                        std::fs::rename(&replacement, &retained).unwrap();
+                        std::fs::write(&replacement, &before).unwrap();
+                    }
+                    Ok(())
+                },
+                || {
+                    if replaced == "published" {
+                        std::fs::rename(&backup, &retained).unwrap();
+                        std::fs::write(&backup, bytes).unwrap();
+                    }
+                    Ok(())
+                },
+            )
+            .unwrap_err();
+            assert_eq!(error.code, ErrorCode::FileChanged);
+            assert!(retained.is_file());
+            assert_eq!(std::fs::read(&replacement).unwrap(), before);
+            assert_eq!(backup.exists(), replaced == "published");
+            assert!(!root.join("inbox/feed-backups/feed.json.broken.json").exists());
+        }
     }
 
     #[test]

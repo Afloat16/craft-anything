@@ -108,12 +108,12 @@ fn directory_using(root: &Path, create: bool, mut sync: impl FnMut(&Path) -> Res
 }
 
 #[cfg(unix)]
-pub(super) fn sync_directory(path: &Path) -> Result<(), ToolError> {
+pub(crate) fn sync_directory(path: &Path) -> Result<(), ToolError> {
     std::fs::File::open(path).and_then(|file| file.sync_all()).map_err(|error| ToolError::io(path.display(), error))
 }
 
 #[cfg(not(unix))]
-pub(super) fn sync_directory(_path: &Path) -> Result<(), ToolError> {
+pub(crate) fn sync_directory(_path: &Path) -> Result<(), ToolError> {
     Ok(())
 }
 
@@ -143,19 +143,59 @@ impl std::io::Write for CappedWriter<'_> {
 /// partial failed write is left alone in private staging, outside discovery's file/byte budgets.
 /// Never touches the main feed.
 pub fn write_recovery_snapshot(root: &Path, snapshot: &RecoverySnapshot) -> Result<PathBuf, ToolError> {
-    write_recovery_snapshot_using(root, snapshot, sync_directory)
+    write_recovery_snapshot_report(root, snapshot).map(archive_path)
 }
 
+/// Publication succeeded even when removing its extra staging link did not. The path always
+/// names the complete synced archive; cleanup warnings must not hide that saved copy.
+#[derive(Debug)]
+pub struct RecoveryWrite {
+    pub path: PathBuf,
+    pub cleanup_warning: Option<ToolError>,
+}
+
+pub fn write_recovery_snapshot_report(root: &Path, snapshot: &RecoverySnapshot) -> Result<RecoveryWrite, ToolError> {
+    write_recovery_snapshot_report_using(root, snapshot, sync_directory, MAX_BYTES, sync_file, remove_staging)
+}
+
+fn archive_path(report: RecoveryWrite) -> PathBuf {
+    if let Some(warning) = report.cleanup_warning {
+        log::warn!("Conversation recovery copy kept at {}: {}", report.path.display(), warning.for_people());
+    }
+    report.path
+}
+
+#[cfg(test)]
 fn write_recovery_snapshot_using(root: &Path, snapshot: &RecoverySnapshot, sync: impl FnMut(&Path) -> Result<(), ToolError>) -> Result<PathBuf, ToolError> {
     write_recovery_snapshot_with_limit(root, snapshot, sync, MAX_BYTES)
 }
 
+#[cfg(test)]
 fn write_recovery_snapshot_with_limit(
+    root: &Path,
+    snapshot: &RecoverySnapshot,
+    sync: impl FnMut(&Path) -> Result<(), ToolError>,
+    limit: u64,
+) -> Result<PathBuf, ToolError> {
+    write_recovery_snapshot_report_using(root, snapshot, sync, limit, sync_file, remove_staging).map(archive_path)
+}
+
+fn sync_file(file: &std::fs::File, path: &Path) -> Result<(), ToolError> {
+    file.sync_all().map_err(|error| ToolError::io(path.display(), error))
+}
+
+fn remove_staging(path: &Path) -> Result<(), ToolError> {
+    std::fs::remove_file(path).map_err(|error| ToolError::io(path.display(), error))
+}
+
+fn write_recovery_snapshot_report_using(
     root: &Path,
     snapshot: &RecoverySnapshot,
     mut sync: impl FnMut(&Path) -> Result<(), ToolError>,
     limit: u64,
-) -> Result<PathBuf, ToolError> {
+    mut sync_file: impl FnMut(&std::fs::File, &Path) -> Result<(), ToolError>,
+    mut remove_staging: impl FnMut(&Path) -> Result<(), ToolError>,
+) -> Result<RecoveryWrite, ToolError> {
     if !snapshot.recognized() {
         return Err(ToolError::new(ErrorCode::NotSupported, "This conversation recovery-copy format isn't supported."));
     }
@@ -174,27 +214,80 @@ fn write_recovery_snapshot_with_limit(
         options.write(true).create_new(true);
         #[cfg(unix)]
         std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        let mut file = match options.open(&pending) {
+        let file = match options.open(&pending) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(ToolError::io(pending.display(), error)),
         };
-        serde_json::to_writer(CappedWriter { file: &mut file, remaining: limit.min(MAX_BYTES) }, snapshot)
-            .map_err(|error| ToolError::io(pending.display(), error.into()))?;
-        file.sync_all().map_err(|error| ToolError::io(pending.display(), error))?;
-        // Expose only a complete synced file, without replacing a pre-existing archive.
-        match std::fs::hard_link(&pending, &path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(ToolError::io(path.display(), error)),
+        let identity = same_file::Handle::from_file(file).map_err(|error| ToolError::io(pending.display(), error))?;
+        let mut published = false;
+        let publication = (|| {
+            let mut file = identity.as_file().try_clone().map_err(|error| ToolError::io(pending.display(), error))?;
+            serde_json::to_writer(CappedWriter { file: &mut file, remaining: limit.min(MAX_BYTES) }, snapshot)
+                .map_err(|error| ToolError::io(pending.display(), error.into()))?;
+            sync_file(&file, &pending)?;
+            if !super::backups::same_file_at(&pending, &identity)? {
+                return Err(ToolError::new(ErrorCode::FileChanged, "The staged conversation copy changed before publication."));
+            }
+            // Expose only a complete synced file, without replacing an existing archive.
+            // A collision after creating this partial is reported, not retried into more files.
+            std::fs::hard_link(&pending, &path).map_err(|error| ToolError::io(path.display(), error))?;
+            published = true;
+            if !super::backups::same_file_at(&path, &identity)? {
+                return Err(ToolError::new(ErrorCode::FileChanged, "The conversation recovery copy changed during publication."));
+            }
+            sync(&directory)
+        })();
+        if let Err(error) = publication {
+            return Err(retained_write_error(error, &pending, published.then_some(path.as_path()), &identity, false));
         }
-        sync(&directory)?;
-        std::fs::remove_file(&pending).map_err(|error| ToolError::io(pending.display(), error))?;
-        sync(&staging)?;
-        return Ok(path);
+        let cleanup = (|| {
+            if !super::backups::same_file_at(&pending, &identity)? {
+                return Err(ToolError::new(ErrorCode::FileChanged, "The staging entry changed after the recovery archive was saved."));
+            }
+            remove_staging(&pending)?;
+            sync(&staging)
+        })();
+        let cleanup_warning = cleanup.err().map(|error| retained_write_error(error, &pending, Some(&path), &identity, true));
+        return Ok(RecoveryWrite { path, cleanup_warning });
     }
     Err(ToolError::new(ErrorCode::FileError, "Couldn't reserve a new conversation recovery copy.")
         .with_remediation("Keep the existing recovery copies and retry."))
+}
+
+fn retained_write_error(error: ToolError, pending: &Path, published: Option<&Path>, identity: &same_file::Handle, complete: bool) -> ToolError {
+    let mut retained = Vec::new();
+    let mut unverified = Vec::new();
+    for path in std::iter::once(pending).chain(published) {
+        if super::backups::same_file_at(path, identity).unwrap_or(false) {
+            retained.push(path.display().to_string());
+        } else {
+            unverified.push(path.display().to_string());
+        }
+    }
+    let outcome = if let Some(path) = published.filter(|_| complete) {
+        format!("The recovery archive was saved at {}; only staging cleanup at {} is unconfirmed.", path.display(), pending.display())
+    } else {
+        "This recovery write did not complete.".into()
+    };
+    let location = if retained.is_empty() {
+        format!("The original staging entry at {} could not be verified and may now name another file. Do not remove it based on its name.", pending.display())
+    } else {
+        format!(
+            "This attempt's verified remaining file paths are: {}. Inspect them and save any useful conversation fragments elsewhere first. To reclaim staging space, move only the inspected staging file out of pending; keep a completed archive. Recheck the file before moving it if anything else has changed it.",
+            retained.join(", ")
+        )
+    };
+    let retry = if complete {
+        "Do not repeat the archive merely because its staging cleanup failed."
+    } else {
+        "Retrying the same oversized conversation still exceeds the limit and can retain another partial file."
+    };
+    let previous = error.remediation.clone().unwrap_or_default();
+    let cause = error.details.clone();
+    error
+        .with_remediation(format!("{previous} {outcome} {location} {retry}").trim().to_owned())
+        .with_details(json!({"recovery_complete": complete, "retained_paths": retained, "unverified_paths": unverified, "expected_staging_path": pending.display().to_string(), "cause": cause}))
 }
 
 fn staging_directory(directory: &Path, sync: &mut impl FnMut(&Path) -> Result<(), ToolError>) -> Result<PathBuf, ToolError> {
@@ -393,6 +486,132 @@ mod tests {
         assert_eq!(std::fs::metadata(partial).unwrap().len(), MAX_BYTES, "failed payloads remain available for inspection");
     }
 
+    #[test]
+    fn failed_writes_report_the_verified_partial_and_manual_reclamation() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "Project", "Keep my conversation", TargetRef::None).unwrap();
+        let mut feed = load(&ws);
+        feed.push(FeedItem::User(UserItem::Text("Recover these words. ".repeat(256))));
+        let snapshot = RecoverySnapshot::from_loaded(&feed, json!({}));
+        let error = write_recovery_snapshot_with_limit(&ws.root, &snapshot, sync_directory, 1024).unwrap_err();
+        let pending = ws.inbox_dir().join(RECOVERY_ARCHIVE_DIR).join(STAGING_DIR);
+        let partial = std::fs::read_dir(&pending).unwrap().next().unwrap().unwrap().path();
+        let bytes = std::fs::read(&partial).unwrap();
+        assert!(!bytes.is_empty());
+        assert_eq!(error.details.as_ref().unwrap()["retained_paths"], json!([partial.display().to_string()]));
+        assert_eq!(error.details.as_ref().unwrap()["unverified_paths"], json!([]));
+        assert_eq!(error.details.as_ref().unwrap()["recovery_complete"], false);
+        let guidance = error.remediation.unwrap();
+        assert!(guidance.contains(&partial.display().to_string()));
+        assert!(guidance.contains("Inspect") && guidance.contains("save any useful") && guidance.contains("move only"));
+        assert!(guidance.contains("Retrying the same oversized conversation"));
+
+        // Model the explicitly described manual action, not automatic name-based cleanup.
+        let inspected = d.path().join("inspected-conversation-fragment.json");
+        std::fs::rename(&partial, &inspected).unwrap();
+        assert_eq!(std::fs::read(inspected).unwrap(), bytes);
+        assert_eq!(std::fs::read_dir(&pending).unwrap().count(), 0);
+        assert!(write_recovery_snapshot(&ws.root, &RecoverySnapshot::from_loaded(&load(&ws), json!({}))).is_ok());
+    }
+
+    #[test]
+    fn a_failed_write_never_authorizes_reclaiming_a_replaced_staging_path() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "Project", "Keep my conversation", TargetRef::None).unwrap();
+        let snapshot = RecoverySnapshot::from_loaded(&load(&ws), json!({}));
+        let moved = d.path().join("retained-original-partial");
+        let mut replaced = None;
+        let error = write_recovery_snapshot_report_using(
+            &ws.root,
+            &snapshot,
+            sync_directory,
+            MAX_BYTES,
+            |_, pending| {
+                std::fs::rename(pending, &moved).unwrap();
+                std::fs::write(pending, b"Keep this personal replacement").unwrap();
+                replaced = Some(pending.to_path_buf());
+                Err(ToolError::internal("injected original sync failure"))
+            },
+            remove_staging,
+        )
+        .unwrap_err();
+        let replaced = replaced.unwrap();
+        assert!(error.message.contains("injected original sync failure"));
+        assert_eq!(error.details.as_ref().unwrap()["retained_paths"], json!([]));
+        assert_eq!(error.details.as_ref().unwrap()["unverified_paths"], json!([replaced.display().to_string()]));
+        assert!(error.remediation.unwrap().contains("Do not remove it based on its name"));
+        assert_eq!(std::fs::read(replaced).unwrap(), b"Keep this personal replacement");
+        assert!(moved.is_file());
+        assert!(recovery_notices(&ws.root).is_empty());
+    }
+
+    #[test]
+    fn a_published_archive_survives_staging_cleanup_errors() {
+        for fail_unlink in [true, false] {
+            let d = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(d.path(), "Project", "Keep my conversation", TargetRef::None).unwrap();
+            let snapshot = RecoverySnapshot::from_loaded(&load(&ws), json!({}));
+            let report = write_recovery_snapshot_report_using(
+                &ws.root,
+                &snapshot,
+                |path| {
+                    if !fail_unlink && path.file_name().is_some_and(|name| name == STAGING_DIR) {
+                        Err(ToolError::internal("injected staging directory sync failure"))
+                    } else {
+                        sync_directory(path)
+                    }
+                },
+                MAX_BYTES,
+                sync_file,
+                |path| {
+                    if fail_unlink { Err(ToolError::internal("injected staging unlink failure")) } else { remove_staging(path) }
+                },
+            )
+            .unwrap();
+            let saved: RecoverySnapshot = serde_json::from_slice(&std::fs::read(&report.path).unwrap()).unwrap();
+            assert_eq!(saved.items, snapshot.items);
+            let warning = report.cleanup_warning.unwrap();
+            assert_eq!(warning.details.as_ref().unwrap()["recovery_complete"], true);
+            assert!(warning.remediation.unwrap().contains(&report.path.display().to_string()));
+            assert!(recovery_notices(&ws.root).iter().any(|item| matches!(item, FeedItem::Error { log: Some(path), .. } if path == &report.path)));
+            assert_eq!(std::fs::read_dir(ws.inbox_dir().join(RECOVERY_ARCHIVE_DIR).join(STAGING_DIR)).unwrap().count(), usize::from(fail_unlink));
+        }
+    }
+
+    #[test]
+    fn archive_file_and_publication_sync_failures_remain_errors_with_retained_paths() {
+        for fail_file in [true, false] {
+            let d = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(d.path(), "Project", "Keep my conversation", TargetRef::None).unwrap();
+            let snapshot = RecoverySnapshot::from_loaded(&load(&ws), json!({}));
+            let error = write_recovery_snapshot_report_using(
+                &ws.root,
+                &snapshot,
+                |path| {
+                    if !fail_file
+                        && path.file_name().is_some_and(|name| name == RECOVERY_ARCHIVE_DIR)
+                        && std::fs::read_dir(path).unwrap().any(|entry| recovery_filename(&entry.unwrap().path()))
+                    {
+                        Err(ToolError::internal("injected archive directory sync failure"))
+                    } else {
+                        sync_directory(path)
+                    }
+                },
+                MAX_BYTES,
+                |file, path| {
+                    if fail_file { Err(ToolError::internal("injected archive file sync failure")) } else { sync_file(file, path) }
+                },
+                |_| panic!("cleanup cannot run before archive durability succeeds"),
+            )
+            .unwrap_err();
+            assert!(error.message.contains("injected archive"));
+            let details = error.details.unwrap();
+            assert_eq!(details["recovery_complete"], false);
+            assert_eq!(details["retained_paths"].as_array().unwrap().len(), if fail_file { 1 } else { 2 });
+            assert_eq!(details["unverified_paths"], json!([]));
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn archive_staging_does_not_follow_an_existing_link() {
@@ -575,7 +794,8 @@ mod tests {
         ws.delete().unwrap();
         let mut new = Workspace::create_at(&root, "New project", "New words", TargetRef::None, Some(crate::workspace::ExistingFiles::Edit)).unwrap();
         new.manifest.created_ms = created_ms.saturating_add(1);
-        new.save().unwrap();
+        std::fs::write(root.join(crate::workspace::MANIFEST), serde_json::to_vec(&new.manifest).unwrap()).unwrap();
+        let new = Workspace::open(&root).unwrap();
         old.push(FeedItem::User(UserItem::Text("Stale words".into())));
         assert_eq!(save(&root, &mut old).unwrap_err().code, ErrorCode::FileChanged);
         assert_eq!(write_recovery_snapshot(&root, &snapshot).unwrap_err().code, ErrorCode::FileChanged);

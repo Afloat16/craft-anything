@@ -172,10 +172,12 @@ impl FeedChange {
                 *explained = matches!(item, FeedItem::Error { .. });
             }
             Self::Ask { request, introduced } => {
-                if *introduced {
+                let saved = feed.iter().position(|item| matches!(item, FeedItem::Ask { request: existing, .. } if existing.id == request.id));
+                if *introduced || saved.is_none() {
                     // Loading may already have appended this pending request, or another
                     // client may have answered it. It still belongs at this event boundary.
-                    let saved = feed.iter().position(|item| matches!(item, FeedItem::Ask { request: existing, .. } if existing.id == request.id));
+                    // A repeated event also restores its history if the inbox expired before
+                    // the repaired feed was loaded; an existing repeated question stays put.
                     let item = saved.map(|index| feed.remove(index)).unwrap_or_else(|| FeedItem::Ask { request: request.clone(), answer: None });
                     feed.push(item);
                     *explained = false;
@@ -240,7 +242,9 @@ fn retained_stream(feed: &[FeedItem], origin: &[FeedItem]) -> Option<usize> {
 fn keeps_stream(change: &FeedChange, feed: &[FeedItem]) -> bool {
     match change {
         FeedChange::Event(RunEvent::Preview(_) | RunEvent::Agent(AgentEvent::Output { .. } | AgentEvent::ToolFinished { .. })) => true,
-        FeedChange::Ask { introduced, .. } => !*introduced,
+        FeedChange::Ask { request, introduced } => {
+            !*introduced && feed.iter().any(|item| matches!(item, FeedItem::Ask { request: saved, .. } if saved.id == request.id))
+        }
         FeedChange::Event(RunEvent::Agent(AgentEvent::ToolStarted { tool, input, .. })) if tool == "TodoWrite" || tool == "build_checklist" => {
             plan_from(input).is_none() || craft_anything_engine::feed::visible_plan(feed).is_some()
         }
@@ -358,7 +362,8 @@ impl FeedLog {
             message.push_str(error);
             if let Some(path) = log {
                 message.push_str(&format!("\nA conversation recovery copy was kept at {}. It has not been imported automatically.", path.display()));
-            } else if let Some(remediation) = remediation {
+            }
+            if let Some(remediation) = remediation {
                 message.push('\n');
                 message.push_str(remediation);
             }
@@ -367,6 +372,10 @@ impl FeedLog {
     }
 
     fn keep_recovery_copy(&mut self) {
+        self.keep_recovery_copy_using(write_recovery_snapshot_report);
+    }
+
+    fn keep_recovery_copy_using(&mut self, archive: impl FnOnce(&Path, &RecoverySnapshot) -> Result<RecoveryWrite, ToolError>) {
         let Some(FeedItem::Error { message, .. }) = &self.save_error else { return };
         let message = message.clone();
         // The folded feed is the recoverable conversation. Raw tool input/output in RunEvent
@@ -383,22 +392,33 @@ impl FeedLog {
                 "save_error": message
             }),
         );
-        self.save_error = Some(match write_recovery_snapshot(&self.root, &snapshot) {
-            Ok(path) => FeedItem::Error {
-                message,
-                remediation: Some("A separate recovery copy was kept. Open it to inspect the conversation before deciding what to restore.".into()),
-                log: Some(path),
-            },
+        self.save_error = Some(match archive(&self.root, &snapshot) {
+            Ok(report) => {
+                let mut message = message;
+                let mut remediation = "A separate recovery copy was kept. Open it to inspect the conversation before deciding what to restore.".to_string();
+                if let Some(warning) = report.cleanup_warning {
+                    message.push_str(&format!("\nThe recovery copy was saved, but cleanup was incomplete: {}", warning.message));
+                    if let Some(next) = warning.remediation {
+                        remediation.push('\n');
+                        remediation.push_str(&next);
+                    }
+                }
+                FeedItem::Error { message, remediation: Some(remediation), log: Some(report.path) }
+            }
             Err(error) => {
                 log::warn!("couldn't keep a conversation recovery copy: {}", error.message);
-                let remediation = if self.feed.save_needs_sync() {
+                let mut remediation = if self.feed.save_needs_sync() {
                     "The conversation is visible, but its durability and a separate recovery copy could not be confirmed. Keep the visible words and restore write access before retrying."
                 } else {
-                    "The unsaved conversation has not been preserved on disk. Keep the visible words and restore write access before retrying."
-                };
+                    "A complete recovery copy of the unsaved conversation could not be confirmed. Keep the visible words and restore write access before retrying."
+                }.to_string();
+                if let Some(next) = error.remediation {
+                    remediation.push('\n');
+                    remediation.push_str(&next);
+                }
                 FeedItem::Error {
                     message: format!("{message}\nCouldn't keep a conversation recovery copy: {}", error.message),
-                    remediation: Some(remediation.into()),
+                    remediation: Some(remediation),
                     log: None,
                 }
             }
@@ -1896,6 +1916,50 @@ mod tests {
     }
 
     #[test]
+    fn replay_restores_an_expired_question_missing_from_the_repaired_feed() {
+        for kept_in_history in [false, true] {
+            let d = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+            let inbox = Inbox::new(ws.inbox_dir());
+            let id = inbox.post(craft_anything_engine::inbox::RequestKind::Question, "Which colour?", "Keep this detail", vec![], true, None).unwrap();
+            let question = inbox.pending().pop().unwrap();
+            let path = ws.root.join(FEED_FILE);
+            std::fs::create_dir(&path).unwrap();
+            let mut log = FeedLog::open(&ws);
+            assert!(log.feed.iter().any(|item| matches!(item, FeedItem::Ask { request, .. } if request.id == id)));
+            record_before_next_save(&mut log, RunEvent::Agent(AgentEvent::TextDelta { text: "Hello ".into() }));
+            record_before_next_save(&mut log, RunEvent::Ask(question.clone()));
+            record_before_next_save(&mut log, RunEvent::Agent(AgentEvent::TextDelta { text: "world".into() }));
+            assert!(log.pending.iter().any(|change| matches!(change, FeedChange::Ask { introduced: false, .. })));
+
+            assert!(inbox.try_wait(&id, std::time::Duration::ZERO, &|| false).unwrap().is_none());
+            std::fs::remove_dir(&path).unwrap();
+            let mut external = load(&ws);
+            external.clear();
+            external.push(FeedItem::User(UserItem::Text("The repaired conversation".into())));
+            if kept_in_history {
+                external.push(FeedItem::Ask { request: question.clone(), answer: Some("Blue".into()) });
+            }
+            save(&ws.root, &mut external).unwrap();
+            log.record(&RunEvent::Finished { ok: true, message: "Ready".into(), paused: false });
+
+            let mut expected = vec![FeedItem::User(UserItem::Text("The repaired conversation".into()))];
+            if kept_in_history {
+                expected.push(FeedItem::Ask { request: question, answer: Some("Blue".into()) });
+                expected.push(FeedItem::Agent { text: "Hello world".into(), streaming: false });
+            } else {
+                expected.push(FeedItem::Agent { text: "Hello ".into(), streaming: false });
+                expected.push(FeedItem::Ask { request: question, answer: None });
+                expected.push(FeedItem::Agent { text: "world".into(), streaming: false });
+            }
+            assert_eq!(load(&ws).into_items(), expected, "a missing question regains its event boundary; a retained question and answer stay put");
+            assert_eq!(log.items(), expected);
+            assert!(inbox.pending().is_empty(), "restoring conversation history does not reopen the inbox request");
+            assert!(log.pending.is_empty() && log.save_error.is_none());
+        }
+    }
+
+    #[test]
     fn replay_keeps_a_new_question_between_streamed_messages() {
         for answer_new_question in [false, true] {
             let d = tempfile::tempdir().unwrap();
@@ -2117,6 +2181,57 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_archive_keeps_its_path_when_private_cleanup_needs_attention() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let mut log = FeedLog::open(&ws);
+        std::fs::create_dir(ws.root.join(FEED_FILE)).unwrap();
+        log.record(&RunEvent::Agent(AgentEvent::TextDelta { text: "Keep these unsaved words".into() }));
+        let next = "Inspect the retained private staging file before moving it aside.";
+        log.keep_recovery_copy_using(|root, snapshot| {
+            let mut report = write_recovery_snapshot_report(root, snapshot)?;
+            report.cleanup_warning = Some(ToolError::new(ErrorCode::FileError, "Private staging cleanup failed.").with_remediation(next));
+            Ok(report)
+        });
+
+        let Some(FeedItem::Error { message, remediation: Some(remediation), log: Some(path) }) = &log.save_error else {
+            panic!("a durable archive remains a saved copy even when cleanup warns")
+        };
+        assert!(path.is_file());
+        assert!(message.contains("The recovery copy was saved, but cleanup was incomplete"));
+        assert!(remediation.contains(next));
+        let snapshot: RecoverySnapshot = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert!(snapshot.items.iter().any(|item| matches!(item, FeedItem::Agent { text, .. } if text == "Keep these unsaved words")));
+        let RunEvent::Finished { ok, message, paused } = log.completion_event(RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false }) else {
+            panic!("completion keeps the build result")
+        };
+        assert!(ok && !paused);
+        assert!(message.contains(&path.display().to_string()) && message.contains(next));
+        assert!(!message.contains("A complete recovery copy of the unsaved conversation could not be confirmed"));
+    }
+
+    #[test]
+    fn an_archive_failure_keeps_the_retained_partial_guidance() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let mut log = FeedLog::open(&ws);
+        std::fs::create_dir(ws.root.join(FEED_FILE)).unwrap();
+        log.record(&RunEvent::Agent(AgentEvent::TextDelta { text: "Keep these unsaved words".into() }));
+        let next = "Inspect the retained partial at inbox/feed-recovery/pending/retained.partial before moving it aside.";
+        log.keep_recovery_copy_using(|_, _| Err(ToolError::new(ErrorCode::FileError, "Private staging cleanup failed.").with_remediation(next)));
+
+        let Some(FeedItem::Error { remediation: Some(remediation), log: None, .. }) = &log.save_error else {
+            panic!("failed publication must keep its recovery instructions without claiming an archive")
+        };
+        assert!(remediation.contains("A complete recovery copy of the unsaved conversation could not be confirmed") && remediation.contains(next));
+        let RunEvent::Finished { message, .. } = log.completion_event(RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false }) else {
+            panic!("completion keeps the build result")
+        };
+        assert!(message.contains(next));
+        assert!(!message.contains("was kept at"));
+    }
+
+    #[test]
     fn a_visible_final_sync_failure_keeps_recovery_after_the_journal_is_cleared() {
         for archive_blocked in [false, true] {
             let d = tempfile::tempdir().unwrap();
@@ -2148,7 +2263,7 @@ mod tests {
             if archive_blocked {
                 assert!(path.is_none());
                 assert!(remediation.as_ref().unwrap().contains("conversation is visible, but its durability"));
-                assert!(!remediation.as_ref().unwrap().contains("has not been preserved on disk"));
+                assert!(!remediation.as_ref().unwrap().contains("A complete recovery copy of the unsaved conversation could not be confirmed"));
                 assert_eq!(std::fs::read(&archive).unwrap(), b"Keep this unrelated file");
             } else {
                 let snapshot: RecoverySnapshot = serde_json::from_slice(&std::fs::read(path.as_ref().unwrap()).unwrap()).unwrap();
@@ -2174,7 +2289,9 @@ mod tests {
         let mut replacement =
             Workspace::create_at(&root, "New project", "New request", TargetRef::None, Some(craft_anything_engine::workspace::ExistingFiles::Edit)).unwrap();
         replacement.manifest.created_ms = created_ms;
-        replacement.save().unwrap();
+        // An external replacement can reuse a timestamp; normal updates now reject changes
+        // to creation identity, so construct only this hostile fixture directly.
+        std::fs::write(replacement.root.join(craft_anything_engine::workspace::MANIFEST), serde_json::to_vec_pretty(&replacement.manifest).unwrap()).unwrap();
         save(&root, &mut load(&replacement)).unwrap();
         let replacement_inbox = Inbox::new(replacement.inbox_dir());
         let replacement_id = replacement_inbox.post(craft_anything_engine::inbox::RequestKind::Question, "New question?", "", vec![], true, None).unwrap();
@@ -2195,7 +2312,7 @@ mod tests {
         assert!(!root.join("inbox").join(RECOVERY_ARCHIVE_DIR).exists());
         assert!(!log.pending.is_empty());
         assert!(
-            matches!(&log.save_error, Some(FeedItem::Error { remediation: Some(message), log: None, .. }) if message.contains("not been preserved on disk"))
+            matches!(&log.save_error, Some(FeedItem::Error { remediation: Some(message), log: None, .. }) if message.contains("A complete recovery copy of the unsaved conversation could not be confirmed."))
         );
         assert!(log.items().iter().any(|item| matches!(item, FeedItem::Agent { text, .. } if text == "Old words after replacement")));
         assert!(log.items().iter().all(|item| !matches!(item, FeedItem::Ask { request, .. } if request.id == replacement_id)));
@@ -2379,7 +2496,7 @@ mod lifecycle_tests {
         let events = run.poll();
         let message = events.iter().find_map(|event| if let RunEvent::Finished { message, .. } = event { Some(message) } else { None }).unwrap();
         assert!(message.contains("Couldn't keep a conversation recovery copy"), "{message}");
-        assert!(message.contains("has not been preserved on disk"), "{message}");
+        assert!(message.contains("A complete recovery copy of the unsaved conversation could not be confirmed"), "{message}");
         assert!(!message.contains("was kept at"));
         assert!(copies(&ws).is_empty());
         assert_eq!(std::fs::read(ws.inbox_dir()).unwrap(), b"An unrelated existing file");

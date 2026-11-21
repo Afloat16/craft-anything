@@ -1676,7 +1676,12 @@ Gaps found while using the app for real projects.
       and directories remain part of the app fingerprint. Further regressions cover visible-write
       directory-sync failures, staged/save/delivery deletion boundaries, persistent project
       generations, stale display snapshots, failed staging cleanup, retained backup identities,
-      cancelled ownership hashing and private archive publication.
+      cancelled ownership hashing and private archive publication. Review follow-ups retain
+      expired question history, actionable retry cards and independent desktop save notices;
+      nonblocking source probes, durable delivery cleanup, reported partials and final archive
+      cleanup warnings protect the remaining persistence boundaries. Manifest updates reject
+      replacement projects under the deletion guard, and fingerprint classification and hashing
+      share the same opened file.
       — claimed: Afloat16, branch bugfix/r2.9-feed-read-errors-20261120
 - [x] `i18n::trf` filled placeholders with repeated replacements, so a value containing a later
       placeholder was rewritten. It now fills them in one pass over the template: inserted names

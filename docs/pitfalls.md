@@ -941,7 +941,8 @@ and context separately. A CLI answer can change without ending that message; equ
 not permission to append to another writer's message. Commit replayed stream ownership only with a
 visible replacement, and close it when an event ends that stream. A newly introduced question is
 an event boundary even if loading already appended it or another client saved its answer; replay
-must move that row to its original boundary, while repeated Ask events remain no-ops.
+must move that row to its original boundary. A repeated Ask leaves an existing row and stream alone,
+but restores a missing question in the repaired history even after its inbox request expires.
 After atomic rename, a directory-sync failure cannot pretend no bytes were written. Update the
 loaded source and replay state, clear only the written journal, keep reporting the durability
 failure and withhold answer delivery. Reset that outcome flag before the next lock or source check
@@ -958,6 +959,11 @@ the sync for existing directories on retry after failure. Do not perform persist
 do not automatically import retained copies whose contents may overlap a later successful save.
 Serialize and sync archives outside the directory used for completed-copy discovery; partial files
 must not consume its bounded entry or byte budgets. Publish only complete files exclusively.
+Report each retained partial's verified location, preserving the original error and explaining how
+to inspect and move it before retrying. A changed path is unverified, not permission to delete its
+replacement. Once final publication is durable, a private unlink or sync failure is a cleanup warning
+with the completed copy's path, not a claim that the archive failed. A desktop completion must show
+that independent persistence notice even when the build succeeded; preserve its normal lifecycle.
 Saving a reply and withdrawing its request also share the request's file lock: a withdrawn
 request cannot stage a reply, while an accepted submission finishes before timeout or cancellation.
 Acquire and validate the loaded project's guard after the request reservation but before staging
@@ -973,19 +979,28 @@ Open lock-owning request handles for reading and writing: a network filesystem c
 exclusive file lock with a write lock. A staged/delivered receipt survives request withdrawal;
 absence of a request does not prove the saved reply was delivered. Keep a failed delivery's words
 visible for retry or copying to a new request. Before removing a consumed answer, retain its
-delivered receipt; if that write fails, keep the answer file as the remaining evidence.
+delivered receipt and sync its directory before unlinking either file; if persistence fails, keep
+both request and answer while returning the accepted answer. Retained delivery evidence must not
+make the question available for another submission.
 An unreadable answer is not an absent one: propagate its I/O error before persisting a replacement.
 Unreadable delivery evidence means unknown delivery, not failed delivery; keep the saved words
 without suggesting a duplicate submission. Recheck a display snapshot's source after reading a
 receipt, so a later retry's delivered state cannot be attached to the old reply's words. Keep those
 words as unconfirmed until a fresh load; metadata checks do not guarantee a snapshot against
-arbitrary external in-place writes.
+arbitrary external in-place writes. An unrelated saved answer cannot remove a different pending
+question's retry control once its display already says delivery is unconfirmed. Bind that exception
+to the same project identity. Use a nonblocking regular-file probe for the source recheck, since a
+path replaced by a FIFO must not freeze the display. After a successful retry, refresh that question's
+canonical detail instead of leaving the previous reply's warning; do not drain queued workflow events.
 An expired self-check reply is withdrawn; it does not fail the build that completed the check.
 Both the desktop and tools use the engine's same answer transaction and show its remediation.
 A persistence notice is separate from a builder error, so it cannot hide why a build failed.
 Calling a build done checks manifest writability before any feed mutation, then saves its
 conversation entry before changing the manifest; a retry after a failed status write recognizes
-that entry. Recovery backups share a reserved-name list for writing, new-project conflicts,
+that entry. A manifest update must validate its loaded project under the deletion guard before
+merging current fields and writing; adopting the path's current generation first would overwrite a
+replacement project. Keep initial publication separate so a stale save cannot recreate a deleted
+manifest. Recovery backups share a reserved-name list for writing, new-project conflicts,
 source scanning and coding-agent protection. Deletion also verifies a generated ownership
 receipt and the current regular file's bytes; a matching name never owns a legacy personal file
 or directory, and recovery paths are never removed recursively. Discovery is not permission to
@@ -1016,9 +1031,14 @@ destination only after claiming it into a fresh private sibling directory and ve
 identity. A check followed by recursive removal of the public path still has a replacement window;
 preserve an unexpected claimed entry and report its exact location. Fingerprinting must classify
 backup-shaped entries too, rather than excluding personal files and directories by reserved name.
+Hash each classified personal file through the same opened handle, rewinding after an ownership
+read. Reopening its path can hash a generated backup published in that gap as personal app content.
 Reuse a completed damaged-feed backup after replacement
 fails only when both its receipt and current contents match the original source; repeated retries
-must not consume every backup slot for identical bytes.
+must not consume every backup slot for identical bytes. A complete staged raw/receipt pair also
+needs a verified resume path before public publication; ignoring it can permanently consume the
+last free slot. Retain both opened identities through validation and publication, or preserve the
+unverifiable pair and report both exact paths.
 Creation must treat dangling reserved links and metadata errors as existing conflicts.
 When freeing a backup slot, move its associated ownership receipt and retained private identity
 link and receipt together; `pending` also contains completed backups' anchors.

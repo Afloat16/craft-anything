@@ -1051,7 +1051,7 @@ impl Workspace {
         let manifest = Manifest::new(name, request, target)?;
         let root = create_workspace_root(projects_dir, name)?;
         let ws = Workspace { root, manifest };
-        ws.save()?;
+        ws.publish_manifest()?;
         Ok(ws)
     }
 
@@ -1142,7 +1142,7 @@ impl Workspace {
             destination.check_identity()?;
             // The manifest makes the project discoverable, so it is written only after
             // every copied file and all initial settings are complete.
-            copy.save()
+            copy.publish_manifest()
         })();
         if let Err(error) = copied {
             before_cleanup(&destination.root);
@@ -1261,7 +1261,7 @@ impl Workspace {
             }
         }
         let ws = Workspace { root: folder.to_path_buf(), manifest };
-        ws.save()?;
+        ws.publish_manifest()?;
         Ok(ws)
     }
 
@@ -1299,36 +1299,46 @@ impl Workspace {
 
     /// Save the manifest. The fields the person owns (see [`Workspace::set_person`]) are kept as
     /// they are on disk, so a writer holding an older copy (a run that started before the person
-    /// raised the budget) can't undo their change.
+    /// raised the budget) can't undo their change. This acquires the non-reentrant project lock.
     pub fn save(&self) -> Result<(), ToolError> {
-        let mut m = self.manifest.clone();
-        if let Ok(disk) = Workspace::open(&self.root) {
-            m.take_person_fields(&disk.manifest);
-        }
-        self.write_manifest(&m)
+        self.write_manifest(|_| {}).map(|_| ())
     }
 
     /// Change the fields the person owns (the asset budget, whether assets are generated, the
     /// actions always allowed): start from what's on disk, apply `f` and save. This is the only
     /// way they change.
     pub fn set_person(&mut self, f: impl FnOnce(&mut Manifest)) -> Result<(), ToolError> {
-        if let Ok(disk) = Workspace::open(&self.root) {
-            self.manifest.take_person_fields(&disk.manifest);
-        }
-        f(&mut self.manifest);
-        self.write_manifest(&self.manifest)
+        self.manifest = self.write_manifest(f)?;
+        Ok(())
     }
 
-    fn write_manifest(&self, m: &Manifest) -> Result<(), ToolError> {
+    /// Only a new workspace publishes its initial identity without an existing project lock.
+    /// An ordinary save must never recreate a deleted manifest through this path.
+    fn publish_manifest(&self) -> Result<(), ToolError> {
         self.ensure_writable()?;
-        let mut m = m.clone();
-        if let Ok(disk) = Workspace::open(&self.root) {
-            // Identity belongs to project creation, not to a run's cached copy or a
-            // setting update. In particular, a legacy snapshot cannot erase it.
-            m.generation = disk.manifest.generation;
-        }
-        let bytes = serde_json::to_vec_pretty(&m).map_err(|e| ToolError::internal(e.to_string()))?;
+        let bytes = serde_json::to_vec_pretty(&self.manifest).map_err(|e| ToolError::internal(e.to_string()))?;
         write_atomic(&self.root.join(MANIFEST), &bytes)
+    }
+
+    fn write_manifest(&self, change: impl FnOnce(&mut Manifest)) -> Result<Manifest, ToolError> {
+        self.ensure_writable()?;
+        let guard = crate::feed::lock_project(&self.root)?;
+        // A pathname can now name a replacement project. Do not adopt its identity or
+        // merge any fields until the workspace loaded by this caller has been checked.
+        guard.check_workspace(self)?;
+        let disk = Workspace::open(&self.root)?;
+        disk.ensure_writable()?;
+        let mut m = self.manifest.clone();
+        m.take_person_fields(&disk.manifest);
+        change(&mut m);
+        // Creation owns these fields. The checked disk record is the same project;
+        // neither a cached save nor a person-setting closure changes its identity.
+        m.generation = disk.manifest.generation;
+        m.created_ms = disk.manifest.created_ms;
+        let bytes = serde_json::to_vec_pretty(&m).map_err(|e| ToolError::internal(e.to_string()))?;
+        // Keep the guard through the atomic replacement, excluding project deletion.
+        write_atomic(&self.root.join(MANIFEST), &bytes)?;
+        Ok(m)
     }
 
     /// Set the status and note, and save.
@@ -2123,6 +2133,55 @@ mod tests {
     }
 
     #[test]
+    fn stale_manifest_updates_cannot_recreate_or_adopt_a_replacement_project() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("index.html"), b"Keep the app").unwrap();
+        let mut old = Workspace::create_at(directory.path(), "Original", "Old request", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+        old.clone().delete().unwrap();
+
+        assert!(old.save().is_err(), "an update cannot publish a deleted project's initial manifest again");
+        assert!(!old.root.join(MANIFEST).exists());
+        assert!(!old.inbox_dir().exists(), "refusing the missing project does not create a coordination folder");
+
+        let replacement = Workspace::create_at(directory.path(), "Replacement", "New request", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+        let bytes = std::fs::read(replacement.root.join(MANIFEST)).unwrap();
+        assert_eq!(old.save().unwrap_err().code, ErrorCode::FileChanged);
+        assert_eq!(old.rename("A stale rename").unwrap_err().code, ErrorCode::FileChanged);
+        assert_eq!(std::fs::read(replacement.root.join(MANIFEST)).unwrap(), bytes);
+        assert_eq!(std::fs::read(replacement.root.join("index.html")).unwrap(), b"Keep the app");
+    }
+
+    #[test]
+    fn manifest_updates_keep_project_deletion_outside_their_write() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let directory = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(directory.path(), "Original", "Old request", TargetRef::None).unwrap();
+        let deleting = ws.clone();
+        let (start_tx, start_rx) = mpsc::channel();
+        let (deleted_tx, deleted_rx) = mpsc::channel();
+        let mut deleted_during_update = false;
+        std::thread::scope(|scope| {
+            scope.spawn(move || {
+                start_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                deleted_tx.send(deleting.delete()).unwrap();
+            });
+            let mut early = None;
+            ws.set_person(|manifest| {
+                start_tx.send(()).unwrap();
+                early = deleted_rx.recv_timeout(Duration::from_millis(200)).ok();
+                deleted_during_update = early.is_some();
+                manifest.name = "Renamed".into();
+            })
+            .unwrap();
+            early.unwrap_or_else(|| deleted_rx.recv_timeout(Duration::from_secs(5)).unwrap()).unwrap();
+        });
+
+        assert!(!deleted_during_update, "the manifest merge and replacement must share the deletion guard");
+        assert!(!ws.root.exists(), "the completed deletion cannot be undone by a late manifest write");
+    }
+
+    #[test]
     fn slugs_and_names() {
         assert_eq!(slug("  My Cool Site!! "), "my-cool-site");
         assert_eq!(slug("***"), "project");
@@ -2258,6 +2317,9 @@ mod tests {
         assert_eq!(generation.len(), 32);
         assert!(generation.bytes().all(|byte| byte.is_ascii_hexdigit()));
         ws.manifest.generation = None; // A cached manifest cannot erase the saved identity.
+        assert_eq!(ws.set_status(Status::Building, "Working").unwrap_err().code, ErrorCode::FileChanged);
+        assert_eq!(Workspace::open(&ws.root).unwrap().manifest.generation.as_ref(), Some(&generation));
+        ws.reload().unwrap();
         ws.set_status(Status::Building, "Working").unwrap();
         assert_eq!(Workspace::open(&ws.root).unwrap().manifest.generation.as_ref(), Some(&generation));
         ws.set_person(|manifest| manifest.name = "Renamed".into()).unwrap();
@@ -2993,7 +3055,8 @@ mod tests {
             ws.delete().unwrap();
             let mut replacement = Workspace::create_at(&original, "New", "New request", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
             replacement.manifest.created_ms = created_ms;
-            replacement.save().unwrap();
+            // Model a reused timestamp directly; ordinary saves cannot change creation identity.
+            std::fs::write(original.join(MANIFEST), serde_json::to_vec_pretty(&replacement.manifest).unwrap()).unwrap();
             assert_eq!(previous_directory, FileHandle::from_path(&original).unwrap(), "in-place deletion keeps the same directory");
             assert_ne!(replacement.manifest.generation, generation);
             let manifest = std::fs::read(original.join(MANIFEST)).unwrap();
@@ -3020,7 +3083,7 @@ mod tests {
         std::fs::write(root.join("app/index.html"), b"This is now a personal app folder").unwrap();
         let mut replacement = Workspace::create_at(&root, "Replacement", "New request", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
         replacement.manifest.created_ms = old.manifest.created_ms;
-        replacement.save().unwrap();
+        std::fs::write(root.join(MANIFEST), serde_json::to_vec_pretty(&replacement.manifest).unwrap()).unwrap();
         assert!(!old.manifest.app_in_root);
         assert!(replacement.manifest.app_in_root);
         crate::feed::save(&root, &mut crate::feed::load(&replacement)).unwrap();

@@ -2273,6 +2273,142 @@ fn stand_in_app(projects: std::path::PathBuf, runs: &craft_anything_ai::rebuild:
 }
 
 #[test]
+fn a_successful_retry_replaces_the_old_undelivered_question_card() {
+    use craft_anything_ai::rebuild::{RunEvent, StandIns, Step};
+    use craft_anything_engine::inbox::{Answer, Inbox, RequestKind};
+    use craft_anything_engine::workspace::{TargetRef, Workspace};
+    use craft_anything_ui_egui::state::FeedItem;
+
+    for live in [false, true] {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "Colour", "Pick a colour", TargetRef::None).unwrap();
+        let other = Workspace::create(d.path(), "Other", "Another project", TargetRef::None).unwrap();
+        let inbox = Inbox::new(ws.inbox_dir());
+        let id = inbox.post(RequestKind::Question, "Blue or red?", "Choose the colour for the title.", vec![], true, None).unwrap();
+        let runs = StandIns::new();
+        let (dir, r) = (d.path().to_path_buf(), runs.clone());
+        let mut h = harness(move || stand_in_app(dir, &r));
+        h.state_mut().open_workspace(ws.clone());
+        if live {
+            h.state_mut().continue_build();
+        }
+        h.run_steps(2);
+
+        let answer_path = inbox.dir().join(format!("{id}.answer.json"));
+        std::fs::create_dir(&answer_path).unwrap();
+        h.state_mut().answer_request(&id, Answer { text: Some("Blue".into()), ..Default::default() }, "Blue".into());
+        assert!(inbox.pending().iter().any(|request| request.id == id));
+        h.state_mut().open_workspace(other);
+        h.state_mut().open_workspace(ws.clone());
+        h.run_steps(3);
+        h.get_by_label_contains("Your saved reply has not been delivered");
+        assert!(h.state().state.feed.iter().any(|item| matches!(item,
+            FeedItem::Ask { request, answer: None } if request.id == id && request.detail.ends_with("Blue"))));
+
+        if live {
+            assert!(runs.send(&ws.root, RunEvent::Step { step: Step::Build, text: "The queued step stays queued".into() }));
+        }
+        std::fs::remove_dir(&answer_path).unwrap();
+        h.state_mut().answer_request(&id, Answer { text: Some("Red".into()), ..Default::default() }, "Red".into());
+        assert!(h.state().state.feed.iter().any(|item| matches!(item,
+            FeedItem::Ask { request, answer: Some(answer) }
+                if request.id == id && request.detail == "Choose the colour for the title." && answer == "Red")));
+        assert!(
+            !h.state().state.feed.iter().any(|item| matches!(item, FeedItem::Step { text, .. } if text == "The queued step stays queued")),
+            "refreshing the card must not copy unpolled events into the screen"
+        );
+        h.run_steps(3);
+        h.get_by_label("You answered: Red");
+        assert!(h.query_all_by_label_contains("Your saved reply has not been delivered").next().is_none());
+        assert_eq!(
+            h.state().state.feed.iter().filter(|item| matches!(item, FeedItem::Step { text, .. } if text == "The queued step stays queued")).count(),
+            usize::from(live),
+            "the usual poll still applies each queued event once"
+        );
+        assert_eq!(inbox.try_wait(&id, Duration::ZERO, &|| false).unwrap().unwrap().as_text(), "Red");
+    }
+}
+
+#[test]
+fn final_save_notices_stay_visible_for_success_pause_and_failure() {
+    use craft_anything_ai::{
+        AgentEvent,
+        rebuild::{RunEvent, StandIns},
+    };
+    use craft_anything_engine::feed::{FEED_FILE, RECOVERY_ARCHIVE_DIR};
+    use craft_anything_engine::workspace::{Status, TargetRef, Workspace};
+    use craft_anything_ui_egui::state::FeedItem;
+
+    for (ok, paused, status, finished) in
+        [(true, false, Status::Ready, "Ready."), (false, true, Status::Stopped, "Paused."), (false, false, Status::NeedsYou, "The build check failed.")]
+    {
+        for archive_blocked in [false, true] {
+            let d = tempfile::tempdir().unwrap();
+            let mut ws = Workspace::create(d.path(), "Final save", "A notes app", TargetRef::None).unwrap();
+            let runs = StandIns::new();
+            let (dir, r) = (d.path().to_path_buf(), runs.clone());
+            let mut h = harness(move || stand_in_app(dir, &r));
+            h.state_mut().open_workspace(ws.clone());
+            h.state_mut().continue_build();
+            assert!(runs.send(&ws.root, RunEvent::Agent(AgentEvent::TextDelta { text: "Keep the final conversation".into() })));
+            h.run_steps(2);
+            let path = ws.root.join(FEED_FILE);
+            std::fs::remove_file(&path).unwrap();
+            std::fs::create_dir(&path).unwrap();
+            if archive_blocked {
+                std::fs::write(ws.inbox_dir().join(RECOVERY_ARCHIVE_DIR), b"An unrelated file").unwrap();
+            }
+            ws.set_status(status, finished).unwrap();
+            assert!(runs.send(&ws.root, RunEvent::Finished { ok, message: finished.into(), paused }));
+            h.run_steps(3);
+
+            assert!(!h.state().runs.is_running(&ws.root));
+            assert_eq!(h.state().workspace.as_ref().unwrap().manifest.status, status, "the regular completion lifecycle still reloads the build result");
+            assert_eq!(h.state().state.feed.iter().filter(|item| matches!(item, FeedItem::Paused)).count(), usize::from(paused));
+            assert_eq!(
+                h.state().state.feed.iter().filter(|item| matches!(item, FeedItem::Error { message, .. } if message == finished)).count(),
+                usize::from(!ok && !paused),
+                "the save notice neither replaces nor repeats the build result"
+            );
+            let notices: Vec<_> = h
+                .state()
+                .state
+                .feed
+                .iter()
+                .filter_map(|item| match item {
+                    FeedItem::Error { message, remediation, log } if message.starts_with("Couldn't save the project's conversation") => {
+                        Some((message, remediation, log))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(notices.len(), 1, "the final save warning has its own card: {:?}", h.state().state.feed);
+            let (_, remediation, archive) = notices[0];
+            if archive_blocked {
+                assert!(archive.is_none());
+                assert!(remediation.as_ref().unwrap().contains("A complete recovery copy of the unsaved conversation could not be confirmed"));
+            } else {
+                let archive = archive.as_ref().expect("the card keeps the durable recovery path");
+                let snapshot: serde_json::Value = serde_json::from_slice(&std::fs::read(archive).unwrap()).unwrap();
+                assert!(snapshot["items"].as_array().unwrap().iter().any(|item| item["Agent"]["text"] == "Keep the final conversation"));
+                assert!(remediation.as_ref().unwrap().contains("A separate recovery copy was kept"));
+                assert!(h.query_all_by_label("Open log").next().is_some());
+            }
+            h.get_by_label_contains("Couldn't save the project's conversation");
+            assert_eq!(
+                h.state()
+                    .state
+                    .feed
+                    .iter()
+                    .filter(|item| matches!(item, FeedItem::Agent { text, streaming: false } if text == "Keep the final conversation"))
+                    .count(),
+                1
+            );
+        }
+    }
+}
+
+#[test]
 fn a_note_waiting_for_the_builder_can_be_taken_back_into_the_prompt_box() {
     use craft_anything_ai::rebuild::{RunEvent, StandIns};
     use craft_anything_engine::workspace::{TargetRef, Workspace};
