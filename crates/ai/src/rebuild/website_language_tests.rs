@@ -62,3 +62,33 @@ fn website_language_write_failure_keeps_notes_and_refuses_the_check() {
         assert!(if claimed { notes::was_read(&inbox, 71) } else { notes::claim(&inbox).len() == 1 });
     }
 }
+
+#[test]
+fn website_language_changes_invalidate_a_kept_check() {
+    use std::cell::Cell;
+    let dir = tempfile::tempdir().unwrap();
+    let mut ws = Workspace::create(dir.path(), "Site", "Rebuild this website in French", TargetRef::None).unwrap();
+    std::fs::create_dir_all(ws.app_dir()).unwrap();
+    std::fs::write(ws.app_dir().join("index.html"), "<html lang='fr'></html>").unwrap();
+    let website = kind("website");
+    website.record_requests(&mut ws, &[]).unwrap();
+    let worker = check_worker(&ws, false);
+    let calls = Cell::new(0);
+    let check = |ws: &Workspace, round| {
+        worker
+            .checks_unless_unchanged(ws, website.as_ref(), round, || {
+                calls.set(calls.get() + 1);
+                Ok(vec![CheckResult::new(CheckResult::WEB_VISUAL, round, true, format!("{:?}", ws.manifest.website_language))])
+            })
+            .unwrap()
+    };
+    assert!(check(&ws, 1)[0].note.contains("fr"));
+    check(&ws, 2);
+    assert_eq!(calls.get(), 1, "unchanged language keeps the successful round");
+    website.record_requests(&mut ws, &["Translate the site into German"]).unwrap();
+    assert!(check(&ws, 3)[0].note.contains("de"), "the new request must be checked even when the build is unchanged");
+    assert_eq!(calls.get(), 2);
+    website.record_requests(&mut ws, &["Restore the original language"]).unwrap();
+    assert!(check(&ws, 4)[0].note.contains("Original"));
+    assert_eq!(calls.get(), 3, "resetting the language checks again too");
+}

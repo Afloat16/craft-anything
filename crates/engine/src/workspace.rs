@@ -829,6 +829,7 @@ impl Workspace {
             c.allowed_actions = allowed;
             c.questions = questions;
             c.approvals = approvals;
+            c.website_language.clone_from(&m.website_language);
         })?;
         Ok(copy)
     }
@@ -2180,6 +2181,18 @@ mod tests {
         ws.delete().unwrap();
         assert_eq!(std::fs::read_to_string(mine.join("index.html")).unwrap(), "<p>hi</p>");
         assert!(!mine.join(MANIFEST).exists() && !mine.join("inbox").exists() && !mine.join(AGENT_SESSION_FILE).exists());
+    }
+
+    #[test]
+    fn duplicating_a_website_keeps_its_latest_language_choice() {
+        for language in [None, Some(WebsiteLanguage::Requested { tag: "de".into() }), Some(WebsiteLanguage::Original)] {
+            let d = tempfile::tempdir().unwrap();
+            let mut ws = Workspace::create(d.path(), "Site", "Rebuild this website in French", TargetRef::None).unwrap();
+            ws.set_person(|m| m.website_language = language.clone()).unwrap();
+            let copy = ws.duplicate("Site copy").unwrap();
+            assert_eq!(copy.manifest.website_language, language);
+            assert_eq!(Workspace::open(&copy.root).unwrap().manifest.website_language, language, "the copy persists the current choice");
+        }
     }
 
     #[test]
