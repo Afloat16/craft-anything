@@ -1337,3 +1337,11 @@ exclusive-creation checks after selecting a name.
 then a fixed number of frames left the next action outside the settled layout. Wait for the
 background operation to finish and run immediate repaints after scrolling before clicking;
 otherwise a missed click looks like a backend mutation that never completed.
+
+**A builder claim was mistaken for completed request recording.** Handing a note to the builder
+does not prove its requested language reached the project record. Keep version-1 claimed notes
+recoverable until the request state is saved, then mark them recorded before cleanup. Restart
+recovery is at-least-once; legacy claimed notes lack that pending-state evidence. Preserve newer,
+damaged or identity-mismatched claimed/completed records for inspection. Record only a continuous
+read prefix in note-id order: a claim arriving between observations must not let an earlier
+language request overwrite a later one.

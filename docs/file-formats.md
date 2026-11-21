@@ -9,6 +9,7 @@ version up to the current one, then turn the document into Rust types. The step 
 |---|---|---|---|---|
 | `<project>/craft.json` | `engine::workspace` (`Manifest`) | `MANIFEST_VERSION` = 6 (`version`; missing = 0; 3 adds `approvals`, 4 adds the saved builder session's mode `agent_session_deep`, 5 adds the current capture's mode `capture_deep`, 6 adds the person's saved `website_language` choice; a version-3 session and a version-4 capture migrate as Deep) | brought forward, saved as current | opened read-only: saving is refused; close older processes that already opened the project before upgrading it |
 | `<project>/inbox/build-progress.json` | `engine::workspace::progress` (`BuildProgress`; written only by the rebuild run) | `BUILD_PROGRESS_VERSION` = 2 (`version`; missing = 0; 2 adds `checked`, the round kept while nothing it looked at changes) | brought forward; an absent file starts with no counted turns | the build stops and the record is left unchanged |
+| `<project>/inbox/notes/<id>*.json` | `ai::rebuild::notes` (`NoteFile`, JSON Schema derived with `JsonSchema`) | 1 (`{version, id, text, left}`; `left` is the person's `{text, shown, pictures}`) | unversioned waiting notes keep their original words; legacy `.read.json` files remain excluded from replay | not claimed; restart preserves the notes directory beside the inbox instead of clearing it |
 | `config.toml` (`settings::config_dir()`) | `engine::settings` (`Settings`) | `SETTINGS_VERSION` = 2 (`version`; missing = 0; 2 moved `[engines.ghidra] enabled` to `deep_mode`) | brought forward | loaded, never saved over |
 | `<name>.cany/project.toml` | `engine::project` (`ProjectMeta`) | `FORMAT_VERSION` = 1 (`format_version`, required) | brought forward | refused, with "update Craft Anything" |
 | `<project>/transcript.json` | `ai::context` (the API builder's conversation) | `TRANSCRIPT_VERSION` = 2 (`{version, deep, history}`; a version-1 transcript counts as Deep) | read as before; one without `deep` is resumed only in Deep | not resumed; a fresh build replaces it |
@@ -24,8 +25,25 @@ A saved `User` message with pictures is `{text, pictures: [paths]}`, where the p
 copies in the project's `attachments/`; one without pictures stays the plain string earlier
 versions wrote.
 
-Other JSON in a project (`assets.json`, `inbox/` except `inbox/build-progress.json`, `checks/`,
+Other JSON in a project (`assets.json`, `inbox/` except `inbox/build-progress.json` and `inbox/notes/`, `checks/`,
 evidence records) has no version yet; add one the first time its shape changes.
+
+## Waiting builder notes
+
+A version-1 note is first saved as `<id>.json`. The builder's hook claims it by renaming it to
+`<id>.read.json`; that proves hand-over, while recording request state such as the website language
+can still fail. Only after that recording succeeds does the worker rename the file to
+`<id>.recorded.json`, then remove it. A failed completion rename keeps the claimed note and returns
+an error; a completed record left after a cleanup failure is excluded from replay.
+
+Restart reads the full waiting/claimed set before clearing completed records. Version-1 waiting
+and claimed notes with kept original words are recovered in id order. This is at-least-once
+recovery: a builder can receive a previously claimed note again after an interrupted recording.
+Legacy claimed notes carry no evidence that request recording was unfinished, so they retain
+their earlier excluded behavior. An unreadable entry or a newer format preserves the directory
+as `notes-unread-<time>` instead of clearing it. In a live run, only a continuous read prefix of
+the id-ordered queue is recorded, so a claim arriving during the scan cannot apply a newer
+language before an earlier request.
 
 ## Stand-in cached responses
 

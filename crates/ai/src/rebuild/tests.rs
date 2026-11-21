@@ -1909,6 +1909,65 @@ mod picking_up_a_build {
         (ok.unwrap(), feed::load(&Workspace::open(&ws.root).unwrap()))
     }
 
+    #[test]
+    fn a_restarted_run_records_a_previously_claimed_language_note() {
+        use craft_anything_engine::workspace::WebsiteLanguage;
+
+        // Use the real website request recorder, with the existing local builder/check
+        // stand-ins so this restart exercises RebuildRun::start without opening a browser.
+        struct LanguageKind;
+        impl TargetKind for LanguageKind {
+            fn id(&self) -> &'static str {
+                "language-recovery"
+            }
+            fn words(&self) -> KindWords {
+                FlakyKind.words()
+            }
+            fn detect(&self, _: &DetectCx) -> Option<u32> {
+                Some(2000)
+            }
+            fn default_stack(&self, cx: &DetectCx) -> &'static str {
+                FlakyKind.default_stack(cx)
+            }
+            fn goal(&self) -> &'static str {
+                FlakyKind.goal()
+            }
+            fn checks(&self, ws: &Workspace) -> Vec<Box<dyn Check>> {
+                FlakyKind.checks(ws)
+            }
+            fn record_requests(&self, ws: &mut Workspace, requests: &[&str]) -> Result<(), ToolError> {
+                kind("website").record_requests(ws, requests)
+            }
+        }
+
+        let b = bench();
+        let mut ws = Workspace::create(&b.projects, "Site", "Rebuild this website in French", TargetRef::None).unwrap();
+        let website = kind("website");
+        website.record_requests(&mut ws, &[]).unwrap();
+        let mut worker = check_worker(&ws, false);
+        worker.self_check = Some((website, 90.0));
+        let inbox = notes::notes_dir(&ws.inbox_dir());
+        let text = "Translate the site into German";
+        let left = notes::Left { text: text.into(), shown: text.into(), pictures: Vec::new() };
+        notes::hand_over(&inbox, 71, text, Some(&left)).unwrap();
+        worker.notes.lock().unwrap().push(Note { id: 71, text: text.into(), shown: text.into(), pictures: Vec::new(), questions: Vec::new() });
+        assert_eq!(notes::claim(&inbox), [text]);
+        ws.manifest.version = craft_anything_engine::workspace::MANIFEST_VERSION + 1;
+        assert_eq!(worker.relay_read_notes(&mut ws).unwrap_err().code, ErrorCode::NotSupported);
+        assert_eq!(Workspace::open(&ws.root).unwrap().manifest.website_language, Some(WebsiteLanguage::Requested { tag: "fr".into() }));
+        drop(worker);
+
+        let mut opts = RunOptions::default();
+        opts.kinds.register(Arc::new(LanguageKind));
+        let (ok, feed) = try_with(&b, &Workspace::open(&ws.root).unwrap(), opts);
+
+        assert!(ok);
+        assert_eq!(Workspace::open(&ws.root).unwrap().manifest.website_language, Some(WebsiteLanguage::Requested { tag: "de".into() }));
+        assert!(std::fs::read_to_string(&b.prompts).unwrap().contains(text), "the real restarted builder receives the recovered request");
+        assert!(feed.iter().any(|item| matches!(item, feed::FeedItem::User(user) if user.text() == text)));
+        assert!(notes::take_left(&inbox, true).is_empty(), "a successfully recorded request is not left for another restart");
+    }
+
     fn prompts_given(b: &Bench) -> usize {
         std::fs::read_to_string(&b.prompts).unwrap_or_default().matches("===").count()
     }

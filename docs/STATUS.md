@@ -517,7 +517,15 @@ fails its own claim. Layout, screenshots, structure and other health checks rema
 The latest explicit request is saved in `craft.json` version 6, including "restore the original
 language". Follow-ups and delivered notes update it; queued notes do not. A stale worker save
 preserves the saved choice, and a failed choice write keeps the note available and stops the
-check. Version 5 projects migrate without inventing a language choice. Policy, persisted
+check. Version-1 note files distinguish builder hand-over from completed request-state recording:
+a claimed note whose recording failed is recovered by a restarted run, while a completed record
+is excluded even if its cleanup did not finish. Recovery may hand a claimed note to the builder
+again; it is at-least-once, not an exactly-once delivery promise. Legacy claimed notes keep their
+earlier excluded behavior. A live scan records only the id-ordered read prefix, so a concurrent
+claim cannot let a later German request be overwritten by an earlier French request. A real
+restart through `RebuildRun::start` with the local builder stand-in, an interleaved real claim,
+and completion/cleanup failures have dedicated regressions.
+Version 5 projects migrate without inventing a language choice. Policy, persisted
 project, note-delivery and write-failure regressions cover these paths; the original text
 policy fails the translated-page and wrong-declaration regressions. No live browser rebuild
 or translation-quality evaluation is claimed. A captured menu state whose translated label

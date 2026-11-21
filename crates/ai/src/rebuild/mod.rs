@@ -701,14 +701,13 @@ impl Worker {
         if notes.is_empty() {
             return Ok(None);
         }
-        if let Some((kind, _)) = &self.self_check {
-            let requests: Vec<&str> = notes.iter().filter(|n| !n.text.trim().is_empty()).map(|n| n.shown.as_str()).collect();
-            if let Err(error) = kind.record_requests(ws, &requests) {
-                let mut waiting = self.notes.lock().unwrap_or_else(PoisonError::into_inner);
-                notes.append(&mut *waiting);
-                *waiting = notes;
-                return Err(error);
-            }
+        notes.sort_by_key(|note| note.id);
+        let requests: Vec<&str> = notes.iter().filter(|n| !n.text.trim().is_empty()).map(|n| n.shown.as_str()).collect();
+        if let Err(error) = self.record_note_requests(ws, &notes, &requests) {
+            let mut waiting = self.notes.lock().unwrap_or_else(PoisonError::into_inner);
+            notes.append(&mut *waiting);
+            *waiting = notes;
+            return Err(error);
         }
         // They go in this message, so no hook hands them over again.
         let dir = notes::notes_dir(&ws.inbox_dir());
@@ -1430,23 +1429,28 @@ impl Worker {
     /// Notes the builder took at a step of this turn (its hook claimed them): they join the feed
     /// now and aren't sent again after the turn.
     fn relay_read_notes(&mut self, ws: &mut Workspace) -> Result<(), ToolError> {
+        self.relay_read_notes_using(ws, notes::was_read)
+    }
+
+    fn relay_read_notes_using(&mut self, ws: &mut Workspace, mut was_read: impl FnMut(&Path, u64) -> bool) -> Result<(), ToolError> {
         let dir = notes::notes_dir(&ws.inbox_dir());
         let mut read: Vec<Note> = {
             let mut notes = self.notes.lock().unwrap_or_else(PoisonError::into_inner);
-            let (read, waiting) = std::mem::take(&mut *notes).into_iter().partition(|n| notes::was_read(&dir, n.id));
-            *notes = waiting;
-            read
+            notes.sort_by_key(|note| note.id);
+            // Claims happen in another process, outside this mutex. Stop at the first
+            // unread note so a later claim cannot leapfrog its earlier request state.
+            let count = notes.iter().take_while(|note| was_read(&dir, note.id)).count();
+            notes.drain(..count).collect()
         };
-        if let Some((kind, _)) = &self.self_check {
-            let requests: Vec<&str> = read.iter().map(|n| n.shown.as_str()).collect();
-            if !requests.is_empty()
-                && let Err(error) = kind.record_requests(ws, &requests)
-            {
-                let mut waiting = self.notes.lock().unwrap_or_else(PoisonError::into_inner);
-                read.append(&mut *waiting);
-                *waiting = read;
-                return Err(error);
-            }
+        if read.is_empty() {
+            return Ok(());
+        }
+        let requests: Vec<&str> = read.iter().map(|n| n.shown.as_str()).collect();
+        if let Err(error) = self.record_note_requests(ws, &read, &requests) {
+            let mut waiting = self.notes.lock().unwrap_or_else(PoisonError::into_inner);
+            read.append(&mut *waiting);
+            *waiting = read;
+            return Err(error);
         }
         let new_request = read.iter().any(|n| !n.text.trim().is_empty());
         for n in read {
@@ -1460,6 +1464,17 @@ impl Worker {
             self.emit(RunEvent::Note { shown: n.shown, pictures: n.pictures });
         }
         self.reset_progress_after_notes |= new_request;
+        Ok(())
+    }
+
+    fn record_note_requests(&self, ws: &mut Workspace, notes: &[Note], requests: &[&str]) -> Result<(), ToolError> {
+        if let Some((kind, _)) = &self.self_check {
+            kind.record_requests(ws, requests)?;
+        }
+        let dir = notes::notes_dir(&ws.inbox_dir());
+        for note in notes {
+            notes::mark_recorded(&dir, note.id)?;
+        }
         Ok(())
     }
 

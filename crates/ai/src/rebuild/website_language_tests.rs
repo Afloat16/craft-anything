@@ -64,6 +64,80 @@ fn website_language_write_failure_keeps_notes_and_refuses_the_check() {
 }
 
 #[test]
+fn claimed_language_notes_cannot_overtake_an_earlier_unread_observation() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut ws = Workspace::create(directory.path(), "Site", "Rebuild this website in English", TargetRef::None).unwrap();
+    let website = kind("website");
+    website.record_requests(&mut ws, &[]).unwrap();
+    let mut worker = check_worker(&ws, false);
+    worker.self_check = Some((website, 90.0));
+    let inbox = notes::notes_dir(&ws.inbox_dir());
+    for (id, text) in [(71, "Translate the site into French"), (72, "Translate the site into German")] {
+        worker.notes.lock().unwrap().push(note(id, text));
+        notes::hand_over(&inbox, id, text, None).unwrap();
+    }
+    let mut observed = Vec::new();
+
+    worker
+        .relay_read_notes_using(&mut ws, |dir, id| {
+            observed.push(id);
+            let read = notes::was_read(dir, id);
+            if id == 71 {
+                assert!(!read);
+                assert_eq!(notes::claim(dir).len(), 2, "the hook claims both between the two possible observations");
+            }
+            read
+        })
+        .unwrap();
+
+    assert_eq!(observed, [71], "a later claim cannot pass the first unread observation");
+    assert_eq!(worker.notes.lock().unwrap().iter().map(|note| note.id).collect::<Vec<_>>(), [71, 72]);
+    assert_eq!(Workspace::open(&ws.root).unwrap().manifest.website_language, Some(WebsiteLanguage::Requested { tag: "en".into() }));
+    worker.relay_read_notes(&mut ws).unwrap();
+    assert!(worker.notes.lock().unwrap().is_empty());
+    assert_eq!(Workspace::open(&ws.root).unwrap().manifest.website_language, Some(WebsiteLanguage::Requested { tag: "de".into() }));
+}
+
+#[test]
+fn claimed_language_note_recording_mark_failure_keeps_the_batch_retryable() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut ws = Workspace::create(directory.path(), "Site", "Rebuild this website in English", TargetRef::None).unwrap();
+    let website = kind("website");
+    website.record_requests(&mut ws, &[]).unwrap();
+    let mut worker = check_worker(&ws, false);
+    worker.self_check = Some((website, 90.0));
+    let inbox = notes::notes_dir(&ws.inbox_dir());
+    for (id, text) in [(71, "Translate the site into French"), (72, "Translate the site into German")] {
+        worker.notes.lock().unwrap().push(note(id, text));
+        let left = notes::Left { text: text.into(), shown: text.into(), pictures: Vec::new() };
+        notes::hand_over(&inbox, id, text, Some(&left)).unwrap();
+    }
+    assert_eq!(notes::claim(&inbox).len(), 2);
+    std::fs::create_dir(inbox.join("72.recorded.json")).unwrap();
+
+    assert!(worker.relay_read_notes(&mut ws).is_err());
+
+    assert_eq!(worker.notes.lock().unwrap().len(), 2);
+    assert!(inbox.join("71.recorded.json").is_file());
+    assert!(inbox.join("72.read.json").is_file(), "a failed completion mark cannot forget the pending note");
+    std::fs::remove_dir(inbox.join("72.recorded.json")).unwrap();
+    let completed = inbox.join("71.recorded.json");
+    let original = std::fs::read(&completed).unwrap();
+    let mut future: Value = serde_json::from_slice(&original).unwrap();
+    future["version"] = Value::from(99);
+    let future = serde_json::to_vec(&future).unwrap();
+    std::fs::write(&completed, &future).unwrap();
+    assert!(worker.relay_read_notes(&mut ws).is_err(), "a live retry must validate an earlier completion record before cleanup");
+    assert_eq!(std::fs::read(&completed).unwrap(), future);
+    assert!(inbox.join("72.read.json").is_file());
+    std::fs::write(&completed, original).unwrap();
+    worker.relay_read_notes(&mut ws).unwrap();
+    assert!(worker.notes.lock().unwrap().is_empty());
+    assert_eq!(Workspace::open(&ws.root).unwrap().manifest.website_language, Some(WebsiteLanguage::Requested { tag: "de".into() }));
+    assert!(notes::take_left(&inbox, true).is_empty());
+}
+
+#[test]
 fn website_language_changes_invalidate_a_kept_check() {
     use std::cell::Cell;
     let dir = tempfile::tempdir().unwrap();
