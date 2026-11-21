@@ -1654,7 +1654,9 @@ Owner: open · Status: in progress
 
 - [x] Keep an unreadable website study inventory from silently dropping captured pages or
       opened controls from the rebuild check. Distinguish an absent optional route list
-      from a broken record, bound the reads, and preserve the recorded files on failure
+      from a broken record, bound the reads, and preserve the recorded files on failure.
+      Keep the failing check's recovery guidance after its retry; only a missing remediation
+      gets generic retry advice, and cancellation still stops immediately
       — claimed: Afloat16, branch bugfix/r2.7-website-capture-inventories
 
 ### R2.8 Clean room means clean room

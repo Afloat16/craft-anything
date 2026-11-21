@@ -1207,8 +1207,8 @@ impl Worker {
             if e.code == ErrorCode::Cancelled {
                 return e;
             }
-            ToolError::new(e.code, format!("The build is finished, but it couldn't be checked: {}", e.message))
-                .with_remediation("Press Try again to check it again. Nothing needs building again.")
+            let remediation = e.remediation.unwrap_or_else(|| "Press Try again to check it again. Nothing needs building again.".to_string());
+            ToolError::new(e.code, format!("The build is finished, but it couldn't be checked: {}", e.message)).with_remediation(remediation)
         })
     }
 
