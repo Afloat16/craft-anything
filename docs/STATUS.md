@@ -752,10 +752,15 @@ copy only when both its receipt and current bytes match the damaged source. Reco
 provenance survives later manifest updates, and only this run's own errors suppress its failure note.
 The explanation state calculated during replay is installed with the recovered conversation only
 after its guarded save succeeds, including when subsequent answer delivery fails.
+Replay also retains the run's saved stream position across an intervening CLI answer, without
+appending its later deltas to a replaced or separately added external message.
 If the final save still fails, the worker keeps a separate versioned recovery copy before sending
 the completion event. The copy contains the folded conversation and its source context, without raw
 tool-event input or output. Releasing the CLI run or replacing a desktop run leaves that copy on
-disk, and reopening shows its path as a historical notice. Copies are bounded and never imported
+disk, and reopening shows its path as a historical notice. Those notices are display-only and cached
+once when a run opens; writer saves and later archives do not persist them. Unix archive creation
+syncs both parent entries and the archive directory, and retries repeat failed parent syncs.
+Copies are bounded and never imported
 automatically; a failure of both writes explicitly reports that the unsaved conversation was not
 preserved. Polling and dropping a run do not perform I/O.
 Expired staged replies remain visibly undelivered; unreadable delivery evidence is shown as unknown
@@ -769,13 +774,24 @@ quarantine location. In-place duplication holds the feed lock across discovery, 
 manifest publication. It classifies backup-shaped files through the handle it copies, recognizing
 equivalent case spellings only when they are the same file. New or changed unverified entries
 require a retry; stable personal files and directories are retained, and verified recovery copies
-are excluded. A failed copy removes only its newly created destination after checking its identity;
-an external replacement is kept with an error, and no partial project manifest is published.
+are excluded. Private staging and a completed receipt precede public backup publication; after an
+interruption, the pending receipt must also identify the same opened file. Equal personal bytes are
+retained. Read-only legacy sources without an inbox can still be copied when lock creation is denied,
+with the manifest and ownership checks intact. App fingerprints include personal backup-shaped files
+and directories while excluding verified recovery copies. A failed copy claims its destination into
+a private sibling directory and rechecks its identity before removal; an unexpected replacement is
+kept at the reported path, and no partial project manifest is published. Deletion holds the feed
+lock until cleanup completes, removes the manifest before the coordination directory, and causes
+waiting or late feed/archive writers to reject the unavailable project. Loading retains the original
+directory identity and manifest creation time, so an old run also refuses to replay or archive into
+a new project at that path. An acquisition interleaved with deletion may leave empty coordination
+records, but does not write conversation, backup or archive payloads.
 Creation rejects dangling reserved links or propagates metadata errors. Newer read-only manifests are rejected
 before build-finish touches their conversations.
 Regression coverage includes sticky read failures, exact recovery copies and occupied backup names,
 tool/live-run answer delivery, intervening writers, cross-process locking, final-save owner release,
-failed-copy cleanup, case-sensitive personal files, same-file aliases, dangling/looping links and normal saves.
+interrupted publication, read-only sources, claimed copy cleanup, deleted-project writers,
+case-sensitive personal files, same-file aliases, dangling/looping links and normal saves.
 Windows no-sharing and case-insensitive rename regressions are included but have not been run locally. No live desktop or remote
 filesystem run is claimed.
 

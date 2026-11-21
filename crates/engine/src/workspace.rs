@@ -133,6 +133,28 @@ impl<'a> CopyBackups<'a> {
         check_copy_entry(&slot, &metadata)?;
         Ok((reserved == opened).then_some(slot))
     }
+
+    fn owns_open(&self, path: &Path, file: &mut std::fs::File, metadata: &std::fs::Metadata) -> Result<bool, ToolError> {
+        check_copy_entry(path, metadata)?;
+        let slot = self.slot_for(path, file)?;
+        let owned = match &slot {
+            Some(slot) => crate::feed::owns_open_backup(self.root, slot, file)?,
+            None => false,
+        };
+        check_copy_entry(path, metadata)?;
+        if let Some(slot) = &slot {
+            check_copy_entry(slot, metadata)?;
+        }
+        // A recovery copy is written before its receipt. A new or changed unrecognized
+        // entry needs a fresh attempt; losing a receipt cannot turn known recovery into app data.
+        if !owned
+            && let Some(slot) = &slot
+            && (self.owned.iter().any(|path| path == slot) || !self.entries.iter().any(|(path, before)| path == slot && same_copy_entry(before, metadata)))
+        {
+            return Err(copy_changed(path));
+        }
+        Ok(owned)
+    }
 }
 
 /// Recovery may add or replace an entry after discovery. Inspect and copy one open handle;
@@ -140,26 +162,8 @@ impl<'a> CopyBackups<'a> {
 fn copy_personal_backup(backups: &CopyBackups<'_>, from: &Path, to: &Path) -> Result<(), ToolError> {
     use std::io::Read as _;
     let (mut file, metadata) = craft_anything_platform::fs::open_regular_file(from)?;
-    check_copy_entry(from, &metadata)?;
-    let slot = backups.slot_for(from, &file)?;
-    let owned = match &slot {
-        Some(slot) => crate::feed::owns_open_backup(backups.root, slot, &mut file)?,
-        None => false,
-    };
-    check_copy_entry(from, &metadata)?;
-    if let Some(slot) = &slot {
-        check_copy_entry(slot, &metadata)?;
-    }
-    if owned {
+    if backups.owns_open(from, &mut file, &metadata)? {
         return Ok(());
-    }
-    // A recovery copy is written before its receipt. A new or changed unrecognized entry
-    // might be in that window, so do not copy it as personal data until a fresh attempt.
-    // Losing a previously recognized receipt cannot turn known conversation bytes into app content.
-    if let Some(slot) = &slot
-        && (backups.owned.iter().any(|path| path == slot) || !backups.entries.iter().any(|(path, before)| path == slot && same_copy_entry(before, &metadata)))
-    {
-        return Err(copy_changed(from));
     }
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -180,8 +184,8 @@ fn copy_personal_backup(backups: &CopyBackups<'_>, from: &Path, to: &Path) -> Re
 }
 
 fn copy_changed(path: &Path) -> ToolError {
-    ToolError::new(ErrorCode::FileChanged, format!("{} changed while the project was being copied.", path.display()))
-        .with_remediation("Let conversation recovery or edits finish, then retry copying. The original project is unchanged.")
+    ToolError::new(ErrorCode::FileChanged, format!("{} changed while the project's files were being checked.", path.display()))
+        .with_remediation("Let conversation recovery or edits finish, then retry. The original project is unchanged.")
 }
 
 fn check_copy_entry(path: &Path, opened: &std::fs::Metadata) -> Result<(), ToolError> {
@@ -907,17 +911,73 @@ impl CopyDestination {
     }
 
     fn check_identity(&self) -> Result<(), ToolError> {
-        let current = std::fs::symlink_metadata(&self.root).map_err(|error| ToolError::io(self.root.display(), error))?;
+        self.check_identity_at(&self.root)
+    }
+
+    fn check_identity_at(&self, path: &Path) -> Result<(), ToolError> {
+        let current = std::fs::symlink_metadata(path).map_err(|error| ToolError::io(path.display(), error))?;
         if !current.is_dir() || current.file_type().is_symlink() {
-            return Err(copy_changed(&self.root));
+            return Err(copy_changed(path));
         }
-        let current = FileHandle::from_path(&self.root).map_err(|error| ToolError::io(self.root.display(), error))?;
-        if current == self.identity { Ok(()) } else { Err(copy_changed(&self.root)) }
+        let current = FileHandle::from_path(path).map_err(|error| ToolError::io(path.display(), error))?;
+        if current == self.identity { Ok(()) } else { Err(copy_changed(path)) }
     }
 
     fn remove(&self) -> Result<(), ToolError> {
+        self.remove_after_check(|| {})
+    }
+
+    fn remove_after_check(&self, after_check: impl FnOnce()) -> Result<(), ToolError> {
         self.check_identity()?;
-        std::fs::remove_dir_all(&self.root).map_err(|error| ToolError::io(self.root.display(), error))
+        after_check();
+        let parent = self.root.parent().ok_or_else(|| ToolError::invalid("The copy destination has no parent folder."))?;
+        let private = Self::cleanup_directory(parent)?;
+        let claimed = private.join("claimed");
+        if let Err(error) = std::fs::rename(&self.root, &claimed) {
+            let error = ToolError::io(self.root.display(), error);
+            return match std::fs::remove_dir(&private) {
+                Ok(()) => Err(error),
+                Err(cleanup) => Err(error.with_remediation(format!(
+                    "The destination was not claimed. Inspect the private cleanup folder at {} before retrying: {cleanup}",
+                    private.display()
+                ))),
+            };
+        }
+        // The public pathname can be replaced after the first check. Only recurse after
+        // moving its entry into this attempt's private directory and checking that identity.
+        self.check_identity_at(&claimed).map_err(|error| {
+            ToolError::new(error.code, format!("{} The moved entry is preserved at {}.", error.message, claimed.display()))
+                .with_remediation("Inspect the preserved entry and move it to a safe location before retrying. No directory contents were removed.")
+        })?;
+        std::fs::remove_dir_all(&claimed).map_err(|error| {
+            ToolError::io(claimed.display(), error)
+                .with_remediation(format!("Cleanup stopped. Inspect the remaining contents at {} before retrying.", claimed.display()))
+        })?;
+        std::fs::remove_dir(&private).map_err(|error| ToolError::io(private.display(), error))
+    }
+
+    fn cleanup_directory(parent: &Path) -> Result<PathBuf, ToolError> {
+        use std::hash::BuildHasher as _;
+        for _ in 0..16 {
+            let nonce = std::collections::hash_map::RandomState::new().hash_one((std::process::id(), now_ms(), next_counter()));
+            let path = parent.join(format!(".craft-copy-cleanup-{nonce:016x}"));
+            #[cfg(unix)]
+            let builder = {
+                use std::os::unix::fs::DirBuilderExt as _;
+                let mut builder = std::fs::DirBuilder::new();
+                builder.mode(0o700);
+                builder
+            };
+            #[cfg(not(unix))]
+            let builder = std::fs::DirBuilder::new();
+            match builder.create(&path) {
+                Ok(()) => return Ok(path),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(ToolError::io(path.display(), error)),
+            }
+        }
+        Err(ToolError::new(ErrorCode::FileError, "A private folder for cleaning up the unfinished copy could not be created.")
+            .with_remediation("The copy destination was not moved. Inspect it before retrying; the original project is unchanged."))
     }
 }
 
@@ -959,7 +1019,7 @@ impl Workspace {
         let app = self.app_dir();
         // Recovery must publish its backup and receipt together before discovery starts.
         // This guard is not reentrant; no source feed writer runs inside the copy.
-        let _source_feed = if in_place { Some(crate::feed::lock_project(&self.root)?) } else { None };
+        let _source_feed = if in_place { self.lock_copy_source()? } else { None };
         // Fail a discovery read before creating a project that would appear as an empty copy.
         // This is only a preflight: each backup-shaped file is classified again when opened.
         let backups = if in_place { Some(CopyBackups::discover(&self.root)?) } else { None };
@@ -1015,6 +1075,31 @@ impl Workspace {
         Ok(copy)
     }
 
+    fn lock_copy_source(&self) -> Result<Option<crate::feed::ProjectFeedGuard>, ToolError> {
+        match crate::feed::lock_project(&self.root) {
+            Ok(guard) => Ok(Some(guard)),
+            Err(error) if error.code == ErrorCode::NoPermission => {
+                let metadata = std::fs::metadata(&self.root).map_err(|error| ToolError::io(self.root.display(), error))?;
+                if !metadata.is_dir() || !metadata.permissions().readonly() {
+                    return Err(error);
+                }
+                let inbox = self.inbox_dir();
+                match std::fs::symlink_metadata(&inbox) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Ok(_) => return Err(error),
+                    Err(error) => return Err(ToolError::io(inbox.display(), error)),
+                }
+                // A readable legacy project may have no place to create a coordination
+                // file. Do not let that exception hide a changed or unreadable manifest.
+                if Workspace::open(&self.root)?.manifest.created_ms != self.manifest.created_ms {
+                    return Err(copy_changed(&self.root));
+                }
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     /// Delete the project: everything Craft Anything made in its folder (its records, checks and
     /// what was built in app/). The person's own files stay: an app edited in place, and the
     /// files a project started from. A folder left empty is removed. This can't be undone.
@@ -1026,6 +1111,7 @@ impl Workspace {
         if !self.root.join(MANIFEST).is_file() {
             return Err(ToolError::invalid(format!("{} isn't a project folder.", self.root.display())));
         }
+        let _feed = crate::feed::lock_project(&self.root)?;
         let gone = |p: &Path| -> Result<(), ToolError> {
             let r = if p.is_dir() { std::fs::remove_dir_all(p) } else { std::fs::remove_file(p) };
             match r {
@@ -1041,14 +1127,16 @@ impl Workspace {
         if !self.manifest.app_in_root {
             gone(&self.app_dir())?;
         }
-        // craft.json last: a delete that stops part-way leaves a project that can be deleted again.
+        // Keep the coordination inode until craft.json is gone. Waiting writers then see
+        // an unavailable project before they can start another transaction.
         for name in OWN_NAMES {
-            if *name == MANIFEST || crate::feed::DAMAGED_BACKUP_NAMES.contains(name) {
+            if *name == MANIFEST || *name == "inbox" || crate::feed::DAMAGED_BACKUP_NAMES.contains(name) {
                 continue;
             }
             gone(&self.root.join(name))?;
         }
         gone(&self.root.join(MANIFEST))?;
+        gone(&self.inbox_dir())?;
         if std::fs::read_dir(&self.root).is_ok_and(|mut d| d.next().is_none()) {
             let _ = std::fs::remove_dir(&self.root);
         }
@@ -2625,6 +2713,134 @@ mod tests {
     }
 
     #[test]
+    fn duplication_excludes_an_interrupted_staged_backup_without_a_receipt() {
+        for linked in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let original = directory.path().join("original");
+            std::fs::create_dir(&original).unwrap();
+            std::fs::write(original.join("index.html"), b"Keep my app").unwrap();
+            let ws = Workspace::create_at(&original, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+            let pending = original.join("inbox/feed-backups/pending");
+            std::fs::create_dir_all(&pending).unwrap();
+            let staged = pending.join("feed.json.broken");
+            let backup = original.join("feed.json.broken");
+            let bytes = b"Unfinished recovery publication";
+            std::fs::write(&staged, bytes).unwrap();
+            let receipt = serde_json::json!({
+                "format": "craft-anything.feed-backup",
+                "version": 1,
+                "backup": "feed.json.broken",
+                "length": bytes.len(),
+                "sha256": craft_anything_evidence::sha256_hex(bytes)
+            });
+            std::fs::write(pending.join("feed.json.broken.json"), serde_json::to_vec(&receipt).unwrap()).unwrap();
+            if linked {
+                std::fs::hard_link(&staged, &backup).unwrap();
+            } else {
+                std::fs::write(&backup, b"Unfinished recovery publication").unwrap();
+            }
+
+            let copy = ws.duplicate("Copy").unwrap();
+
+            assert_eq!(std::fs::read(copy.app_dir().join("index.html")).unwrap(), b"Keep my app");
+            if linked {
+                assert!(!copy.app_dir().join("feed.json.broken").exists(), "the private staging identity survives an exited publisher");
+            } else {
+                assert_eq!(
+                    std::fs::read(copy.app_dir().join("feed.json.broken")).unwrap(),
+                    b"Unfinished recovery publication",
+                    "equal personal bytes are not the staged file"
+                );
+            }
+            assert_eq!(std::fs::read(&backup).unwrap(), b"Unfinished recovery publication");
+            assert!(!original.join("inbox/feed-backups/feed.json.broken.json").exists());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn duplication_reads_a_non_writable_legacy_source_without_creating_an_inbox() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let directory = tempfile::tempdir().unwrap();
+        let original = directory.path().join("original");
+        std::fs::create_dir(&original).unwrap();
+        std::fs::write(original.join("index.html"), b"Keep my app").unwrap();
+        let ws = Workspace::create_at(&original, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+        assert!(!ws.inbox_dir().exists());
+        std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let probe = original.join("permission-probe");
+        let denied = match std::fs::write(&probe, b"") {
+            Err(error) => error.kind() == std::io::ErrorKind::PermissionDenied,
+            Ok(()) => {
+                std::fs::remove_file(&probe).unwrap();
+                false
+            }
+        };
+        let copied = ws.duplicate("Copy");
+        std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if !denied {
+            return; // Privileged callers can still use the coordinated path.
+        }
+        let copy = copied.unwrap();
+        assert_eq!(std::fs::read(copy.app_dir().join("index.html")).unwrap(), b"Keep my app");
+        assert!(!ws.inbox_dir().exists(), "a read-only copy does not write source coordination records");
+    }
+
+    #[test]
+    fn deleted_in_place_projects_reject_loaded_feed_writers() {
+        let directory = tempfile::tempdir().unwrap();
+        let original = directory.path().join("original");
+        std::fs::create_dir(&original).unwrap();
+        std::fs::write(original.join("index.html"), b"Keep my app").unwrap();
+        let ws = Workspace::create_at(&original, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+        let mut stale = crate::feed::load(&ws);
+        ws.delete().unwrap();
+        stale.push(crate::feed::FeedItem::User(crate::feed::UserItem::Text("Late conversation".into())));
+
+        assert!(crate::feed::save(&original, &mut stale).is_err());
+
+        assert!(!original.join(crate::feed::FEED_FILE).exists());
+        assert!(!original.join("inbox").exists());
+        assert_eq!(std::fs::read(original.join("index.html")).unwrap(), b"Keep my app");
+    }
+
+    #[test]
+    fn project_deletion_waits_for_an_active_feed_transaction() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let directory = tempfile::tempdir().unwrap();
+        let original = directory.path().join("original");
+        std::fs::create_dir(&original).unwrap();
+        std::fs::write(original.join("index.html"), b"Keep my app").unwrap();
+        let ws = Workspace::create_at(&original, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+        let (holding_tx, holding_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (deleted_tx, deleted_rx) = mpsc::channel();
+        let writer_root = original.clone();
+        let mut finished_while_writing = false;
+        std::thread::scope(|scope| {
+            scope.spawn(move || {
+                let _writer = crate::feed::lock_project(&writer_root).unwrap();
+                holding_tx.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                std::fs::write(writer_root.join(crate::feed::FEED_FILE), br#"{"version":6,"items":[]}"#).unwrap();
+            });
+            holding_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            scope.spawn(move || deleted_tx.send(ws.delete()).unwrap());
+            let early = deleted_rx.recv_timeout(Duration::from_millis(200));
+            finished_while_writing = early.is_ok();
+            release_tx.send(()).unwrap();
+            early.unwrap_or_else(|_| deleted_rx.recv_timeout(Duration::from_secs(5)).unwrap()).unwrap();
+        });
+
+        assert!(!finished_while_writing, "deletion cannot finish while a feed writer still owns its transaction");
+        assert!(!original.join(crate::feed::FEED_FILE).exists());
+        assert!(!original.join(MANIFEST).exists());
+        assert!(!original.join("inbox").exists());
+        assert_eq!(std::fs::read(original.join("index.html")).unwrap(), b"Keep my app");
+    }
+
+    #[test]
     fn duplication_excludes_backups_created_after_discovery() {
         let directory = tempfile::tempdir().unwrap();
         let original = directory.path().join("original");
@@ -2741,6 +2957,26 @@ mod tests {
         let copy = ws.duplicate("Copy").unwrap();
         assert_eq!(copy.root, directory.path().join("copy-2"));
         assert_eq!(std::fs::read(copy.app_dir().join("index.html")).unwrap(), b"Keep my app");
+    }
+
+    #[test]
+    fn copy_cleanup_preserves_a_replacement_after_identity_validation() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = CopyDestination::create(directory.path(), "Copy").unwrap();
+        let displaced = directory.path().join("displaced-copy");
+        let result = destination.remove_after_check(|| {
+            std::fs::rename(&destination.root, &displaced).unwrap();
+            std::fs::create_dir(&destination.root).unwrap();
+            std::fs::write(destination.root.join("personal.txt"), b"Keep this replacement").unwrap();
+        });
+
+        assert!(result.is_err(), "cleanup cannot remove a replacement using the earlier pathname check");
+        assert!(displaced.is_dir());
+        let kept = std::fs::read_dir(directory.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|entry| entry.path().join("personal.txt").is_file() || entry.path().join("claimed/personal.txt").is_file());
+        assert!(kept, "the replacement survives at its original or explicitly reported private location");
     }
 
     #[test]

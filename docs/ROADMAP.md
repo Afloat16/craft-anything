@@ -1669,6 +1669,11 @@ Gaps found while using the app for real projects.
       remaining retryable. Regressions cover sticky read errors, backup collisions/failure,
       intervening writers, answer retries and symlinks; a Windows no-sharing case is included
       but has not been run locally.
+      Follow-up coverage keeps archive notices display-only, preserves the run's stream through
+      CLI answers, syncs recovery parents, classifies interrupted private backup publication,
+      claims failed-copy cleanup before deleting, retains read-only source duplication and
+      coordinates project deletion with feed/archive writers. Personal backup-shaped files
+      and directories remain part of the app fingerprint.
       — claimed: Afloat16, branch bugfix/r2.9-feed-read-errors-20261120
 - [x] `i18n::trf` filled placeholders with repeated replacements, so a value containing a later
       placeholder was rewritten. It now fills them in one pass over the template: inserted names

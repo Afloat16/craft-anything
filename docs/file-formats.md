@@ -20,7 +20,8 @@ version up to the current one, then turn the document into Rust types. The step 
 | `<folder>/standin.json` | `engine::tools::standin_tools` (`analysis::standin::StandIn`; written only by `web_standin_build`) | `STANDIN_VERSION` = 1 (`version`, required) | brought forward | refused, with "update Craft Anything", and never written over |
 | `<project>/feed.json` | `ai::rebuild::feed` (written by the run) | `FEED_VERSION` = 6 (`{version, items, recovery?}`; a bare list = 0; 4 adds `PlanDismissed`; 5 marks open steps stopped at a run's end; 6 retains the manifest projection used during recovery) | read as before, saved as current | never written over; the conversation is rebuilt from the project for display |
 | `<project>/inbox/<id>.delivery.json` | `engine::inbox::delivery` | 1 (`format`, `version`, `id`, `state`; staged or delivered) | absent records leave existing feed answers compatible | unrecognized records are preserved and block a new recorded submission |
-| `<project>/inbox/feed-backups/<backup-name>.json` | `engine::feed::backups` | 1 (`format`, `version`, `backup`, `length`, `sha256`) | no receipt means no ownership of a backup-shaped path | unrecognized records are preserved during recovery and never authorize backup deletion; deleting a project clears its inbox records but keeps unverified backup-shaped entries |
+| `<project>/inbox/feed-backups/<backup-name>.json` | `engine::feed::backups` | 1 (`format`, `version`, `backup`, `length`, `sha256`) | absent or unrecognized records establish no ownership | unrecognized records are preserved during recovery and never authorize backup deletion; deleting a project clears its inbox records but keeps unverified backup-shaped entries |
+| `<project>/inbox/feed-backups/pending/<backup-name>` and `<backup-name>.json` | `engine::feed::backups` | raw source bytes and a version-1 ownership receipt | no earlier format | an interrupted publication is owned only when the receipt matches and the opened root-level file is the same file as the staged copy; matching bytes in a separate file remain personal |
 | `<project>/inbox/feed-recovery/conversation-<millis>-<pid>-<counter>.recovery.json` | `engine::feed::recovery`, requested by the run worker | 1 (`version`, folded `items`, `metadata` with format, source identity and recovery details) | no earlier format | unknown or invalid records are retained without automatic import or removal |
 
 A saved `User` message with pictures is `{text, pictures: [paths]}`, where the pictures are the
@@ -54,20 +55,29 @@ Only a path confirmed absent without following symlinks can be created without i
 version. A fallback remembers that the original wasn't loaded, even if the file becomes readable
 later. A live writer may load an actually decoded replacement and replay its unsaved events; a missing, unreadable, damaged or newer replacement cannot clear the original guard. Every application feed save compares its loaded source while holding a project-scoped operating-system lock through replacement. An originally absent path must still be absent. A mismatch retains the old writer and unsaved events for a fresh load; ordinary answer transactions load and apply their reply under the same lock. Version 6 records the damaged source's SHA-256 and the exact manifest request, checks, reply and failure note that produced a recovery prefix. Only a writer that observed that same damaged source can consume its projection; a temporary read failure cannot authorize removing old history. Later manifest updates cannot change the recorded origin. Older feeds have no recovery provenance; matching text alone never establishes it. Readable bytes that cannot be parsed are copied
 exactly to an unused `feed.json.broken` (then `.broken.1` through `.broken.15`) before replacement.
-Existing backups are never replaced. A private ownership receipt records each generated copy's name, length and digest. If replacement fails after a complete backup, a retry reuses that copy only when its receipt and current bytes both match the damaged source. When all backup slots are occupied, move a backup and its associated receipt together before retrying. Project deletion first moves each selected backup into a fresh `.craft-backup-quarantine-*` folder beside the project records, then verifies the claimed regular file against its receipt before unlinking it. A changed entry is restored without replacing another path, or retained in that folder with an error explaining where it is. That folder is outside the records deleted with the project and is never cleaned recursively. Legacy personal files or directories with backup-shaped names survive deletion and are included when duplicating an in-place project; verified generated copies are excluded. A failed backup or receipt stops the save and leaves the source intact;
+Existing backups are never replaced. Recovery completes and syncs raw bytes and a version-1 receipt inside the private `inbox/feed-backups/pending/` directory before publishing a root-level hard link. The final receipt records that copy's name, length and digest; once it is synced, the pending records are removed. A process interruption before the final receipt leaves both a complete private receipt and same-file identity proof for the public backup. Neither a name nor equal bytes in a separate personal file establish that pending ownership. A failed hard link leaves the private copy and original conversation intact. If replacement fails after a complete backup, a retry reuses that copy only when its ownership proof and current bytes both match the damaged source. When all backup slots are occupied, move a backup and its associated records, including any interrupted pending copy, together before retrying. Project deletion first moves each selected backup into a fresh `.craft-backup-quarantine-*` folder beside the project records, then verifies the claimed regular file against its ownership proof before unlinking it. A changed entry is restored without replacing another path, or retained in that folder with an error explaining where it is. That folder is outside the records deleted with the project and is never cleaned recursively. Legacy personal files or directories with backup-shaped names survive deletion, are included when duplicating an in-place project and contribute to its app fingerprint; verified generated copies are excluded. A failed backup or receipt stops the save and leaves the source intact;
 the recovered conversation names the backup. A newer format is left in place without recovery.
 
 The empty `inbox/feed.lock` coordination file remains in place after each transaction. Lock waits
 are bounded to five seconds; request locks precede this feed lock, never the other way around.
+Deletion holds the same lock, removes `craft.json` before removing `inbox/`, and retains its guard
+through final directory cleanup. Writers check that the project exists before creating coordination
+entries and recheck the root directory identity and manifest creation time after acquiring the lock.
+Loaded writers retain their original root identity and manifest creation time; replay and separate
+recovery archives reject a different project later created at the same path. They do not write
+conversation, backup or archive payloads after deletion. A lock acquisition that starts just before
+deletion can leave an empty coordination directory or file; it still fails the check under the lock.
 In-place duplication holds the same lock from backup discovery through manifest publication, so
-application recovery cannot expose a backup while its receipt is pending. Each backup-shaped file
+application recovery cannot change ownership during the copy. A readable legacy source with no
+inbox can be copied without creating one only when its read-only root actually denies lock creation;
+manifest and backup classification checks still apply. Each backup-shaped file
 is classified through the opened handle that will be copied. Equivalent case spellings count as
 the reserved slot only when they identify the same file; a distinct personal file is retained.
 A new or changed unverified entry requires a retry. Losing a receipt also cannot turn a previously
 verified recovery copy into personal app content during the same copy. The destination manifest
-is published after copying succeeds. A failed attempt removes its new destination only after
-checking that the directory still has the identity held by that attempt; a replacement is left
-alone with an error. This coordination does not make a directory copy an atomic filesystem snapshot
+is published after copying succeeds. A failed attempt first claims its destination into a fresh private
+`.craft-copy-cleanup-*` folder beside it, then checks the held directory identity before recursive
+removal. An unexpected replacement is preserved at the reported claimed path. This coordination does not make a directory copy an atomic filesystem snapshot
 against external programs that do not take the lock.
 
 If a run's final feed save fails, its worker attempts a separate recovery copy before sending the
@@ -75,16 +85,24 @@ If a run's final feed save fails, its worker attempts a separate recovery copy b
 SHA-256 where available, and details containing the pending-event count, original manifest history
 and save error. Raw tool-event parameters and results are not serialized. Each copy is exclusively
 created, uses mode `0600` on Unix, and is synced before it is reported as kept; Unix also syncs its
-directory. A record is limited to 64 MiB and name reservation to 64 attempts. An error keeping the
+directory and each parent entry, including on a retry after a failed parent sync. A record is limited to 64 MiB and name reservation to 64 attempts. An error keeping the
 copy is reported without claiming the unsaved conversation reached disk. Polling and dropping a
 run do not perform persistence I/O.
 
-Loading a project discovers at most 256 recovery-directory entries, reads at most 64 MiB in total
-and adds at most 16 historical notices for recognized records. Each notice names its exact path
-and is deduplicated against that path. These notices do not claim the current feed is unsaved and
+Display loading discovers at most 256 recovery-directory entries, reads at most 64 MiB in total
+and adds at most 16 historical notices for recognized records. A live run caches these notices
+when it opens. Writer loads, saved conversations and later recovery snapshots exclude them;
+legacy saved notices are removed only when their full generated Error shape and archive path match.
+Each notice names its exact path and is deduplicated against that path. These notices do not claim the current feed is unsaved and
 do not explain a new run's failure. Unknown versions, invalid or oversized files and links are
 left alone. Recovery copies are never automatically replayed, overwritten or cleaned up; inspect
 their conversation before deciding what to restore, since it may overlap the current feed.
+
+Within a live run, replay also retains the position and saved context of its active streamed message.
+An intervening saved answer and the display-only clearing of streaming flags do not split its next
+text delta into another message. A replaced or separately appended external message does not become
+that stream merely because its text is equal. This context stays in memory and is committed with the
+replayed feed only after the guarded save succeeds; it adds no persisted feed fields.
 
 Answers are saved in the conversation before they are delivered through the inbox. A save failure
 returns an error and leaves the question pending. A delivery failure also leaves it available for

@@ -918,6 +918,13 @@ also reject stale loaded sources, including a file created after an absent snaps
 an ordinary answer while holding that lock. Keep request-before-feed lock order, bounded waits and
 a persistent coordination file. Another client's intervening answer must yield FileChanged and
 retain the journal for a new load; a second successful decode alone does not make the stale replay current.
+Deletion must hold that same lock, remove the manifest before the inbox and retain the guard through
+cleanup. Check project liveness before creating a lock and again after acquiring it; otherwise an old
+waiter or a late archive writer can recreate records in a deleted in-place project.
+Bind the loaded writer and its recovery snapshot to their original directory identity and manifest
+creation time too: checking only at lock acquisition would accept a new project at the old path.
+Do not turn cleanup of an empty coordination entry into another unsafe public-path unlink; a
+creation interleaved with deletion may leave empty coordination records while refusing all payloads.
 The manifest may already project a pending check, completed reply or failure into that history.
 Save that projection and its damaged source digest with the recovery rather than guessing from a
 manifest that may have advanced. A temporary read failure or a different damaged source does not
@@ -929,11 +936,19 @@ An external tail error cannot explain this run's failure. Track which errors the
 and use the same rule when replaying and checking whether a projected failure will be recreated.
 Install that replayed explanation state with the feed only after the guarded recovery commit succeeds;
 discarding it can append a duplicate Finished error after a replay skips an already present question.
+Loading clears streaming flags for display, so replay must retain this run's saved stream position
+and context separately. A CLI answer can change without ending that message; equal external text is
+not permission to append to another writer's message. Commit replayed stream ownership only with a
+successful save, and close it when an event ends that stream.
 A failed final save cannot leave the only pending conversation in a run that is about to be dropped
 or replaced. Keep an explicit recovery copy on the worker before publishing Finished, and report
 both failures honestly if that copy also cannot be written. Keep the folded feed and source context,
 not raw tool events that may contain input absent from the conversation. Historical recovery notices
-must not explain a new run's failure. Do not perform persistence I/O in polling or destructors, and
+must not explain a new run's failure or enter writer loads, saves, or later recovery snapshots.
+Cache display notices once when opening a run. Migrate legacy notices only by their complete
+generated Error shape and archive path, preserving ordinary errors and same-text user or agent words.
+Sync every newly created recovery directory's parent before reporting a durable copy, and repeat
+the sync for existing directories on retry after failure. Do not perform persistence I/O in polling or destructors, and
 do not automatically import retained copies whose contents may overlap a later successful save.
 Saving a reply and withdrawing its request also share the request's file lock: a withdrawn
 request cannot stage a reply, while an accepted submission finishes before timeout or cancellation.
@@ -963,21 +978,27 @@ verify that claimed file, then unlink it. Preserve unexpected contents without o
 new public entry, and never recursively clean a quarantine folder on error or on a later delete.
 Copy legacy personal entries under reserved backup names; only verified generated copies are
 excluded. Preflight ownership reads before creating the destination, then classify the file handle
-actually used for copying. A discovered pathname is not a stable identity, and recovery can publish
-backup bytes before its receipt. Require a retry for newly observed or changed unverified entries;
+actually used for copying. Complete raw bytes and a receipt in private staging before exposing a
+public backup name. A process can exit between publication and the final receipt even with a lock;
+pending ownership must validate both that receipt and the staged file's identity. Equal personal
+bytes in a separate file remain personal. Require a retry for newly observed or changed unverified entries;
 do not silently skip personal replacements or copy a new recovery file through that publication gap.
 A missing or unrecognized receipt cannot reclassify an already known recovery copy as personal
 content during that same copy attempt. Hold the source feed lock across discovery and copying,
-so a backup already present before discovery cannot be mistaken for personal content while its
-receipt is still being written. Match case variants by the opened file's identity, not by lowercasing
+so recovery cannot change ownership during copying. A readable read-only legacy source with no inbox
+can use a read-only copy path only after actual permission denial; keep manifest and ownership checks,
+and never swallow lock timeouts or unreadable records. Match case variants by the opened file's identity, not by lowercasing
 all names: a case-sensitive filesystem can hold a distinct personal file with that spelling.
 Publish a duplicate's manifest only after the copy succeeds. On failure, remove the newly created
-destination only while its held directory identity still matches, so a retry can use the same name
-without deleting an unrelated replacement. Reuse a completed damaged-feed backup after replacement
+destination only after claiming it into a fresh private sibling directory and verifying the claimed
+identity. A check followed by recursive removal of the public path still has a replacement window;
+preserve an unexpected claimed entry and report its exact location. Fingerprinting must classify
+backup-shaped entries too, rather than excluding personal files and directories by reserved name.
+Reuse a completed damaged-feed backup after replacement
 fails only when both its receipt and current contents match the original source; repeated retries
 must not consume every backup slot for identical bytes.
 Creation must treat dangling reserved links and metadata errors as existing conflicts.
-When freeing a backup slot, move its associated ownership receipt too if one exists.
+When freeing a backup slot, move its associated ownership receipt and interrupted pending records too if present.
 And "not found" wasn't that either: reading a link whose target is missing answers "not found"
 too, so such a config.toml was a first start and the next save put a file where the link was. A
 read's error describes the end of the path it followed, not the path: before treating "not

@@ -27,15 +27,24 @@ fn valid_name(name: &str) -> bool {
 /// Receipt paths stay inside directories already owned by the app. A pre-existing link or
 /// non-directory is never followed to store or discover ownership outside the project.
 fn directory(root: &Path, create: bool) -> Result<Option<PathBuf>, ToolError> {
+    directory_for(root, create, false)
+}
+
+fn directory_for(root: &Path, create: bool, pending: bool) -> Result<Option<PathBuf>, ToolError> {
     let mut path = root.to_path_buf();
-    for name in ["inbox", "feed-backups"] {
+    let names: &[&str] = if pending { &["inbox", "feed-backups", "pending"] } else { &["inbox", "feed-backups"] };
+    for name in names {
+        let parent = path.clone();
         path.push(name);
         let metadata = match std::fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound && !create => return Ok(None),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                match std::fs::create_dir(&path) {
-                    Ok(()) => craft_anything_platform::fs::set_private_dir(&path)?,
+                let mut builder = std::fs::DirBuilder::new();
+                #[cfg(unix)]
+                std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+                match builder.create(&path) {
+                    Ok(()) => {}
                     Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
                     Err(error) => return Err(ToolError::io(path.display(), error)),
                 }
@@ -49,6 +58,9 @@ fn directory(root: &Path, create: bool) -> Result<Option<PathBuf>, ToolError> {
             }
             return Err(ToolError::invalid(format!("{} isn't a regular recovery-record folder.", path.display()))
                 .with_remediation("Keep the existing entry in a safe location and restore the project's inbox folder before retrying."));
+        }
+        if create {
+            super::recovery::sync_directory(&parent)?;
         }
     }
     Ok(Some(path))
@@ -135,9 +147,146 @@ pub(crate) fn owns_open_backup(root: &Path, path: &Path, file: &mut std::fs::Fil
     if path != root.join(name) {
         return Ok(false);
     }
-    let Some(directory) = directory(root, false)? else { return Ok(false) };
-    let Some(receipt) = read_receipt(&directory.join(format!("{name}.json")), name)? else { return Ok(false) };
-    matches_open_file(path, file, &receipt)
+    let Some(proof) = ownership(root, name)? else { return Ok(false) };
+    matches_owned_file(path, file, &proof)
+}
+
+struct Ownership {
+    receipt: Receipt,
+    staged: Option<PathBuf>,
+}
+
+fn ownership(root: &Path, name: &str) -> Result<Option<Ownership>, ToolError> {
+    let Some(directory) = directory(root, false)? else { return Ok(None) };
+    if let Some(receipt) = read_receipt(&directory.join(format!("{name}.json")), name)? {
+        return Ok(Some(Ownership { receipt, staged: None }));
+    }
+    let Some(pending) = directory_for(root, false, true)? else { return Ok(None) };
+    Ok(read_receipt(&pending.join(format!("{name}.json")), name)?.map(|receipt| Ownership { receipt, staged: Some(pending.join(name)) }))
+}
+
+fn matches_owned_file(path: &Path, file: &mut std::fs::File, proof: &Ownership) -> Result<bool, ToolError> {
+    if let Some(staged) = &proof.staged {
+        let metadata = match std::fs::symlink_metadata(staged) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(ToolError::io(staged.display(), error)),
+        };
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Ok(false);
+        }
+        let (staged_file, _) = craft_anything_platform::fs::open_regular_file(staged)?;
+        let staged_handle = same_file::Handle::from_file(staged_file).map_err(|error| ToolError::io(staged.display(), error))?;
+        let opened = same_file::Handle::from_file(file.try_clone().map_err(|error| ToolError::io(path.display(), error))?)
+            .map_err(|error| ToolError::io(path.display(), error))?;
+        if staged_handle != opened || std::fs::symlink_metadata(staged).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+            return Ok(false);
+        }
+    }
+    matches_open_file(path, file, &proof.receipt)
+}
+
+fn matches_owned_path(path: &Path, proof: &Ownership) -> Result<bool, ToolError> {
+    if proof.staged.is_none() {
+        return matches_file(path, &proof.receipt);
+    }
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(ToolError::io(path.display(), error)),
+    };
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Ok(false);
+    }
+    let (mut file, _) = craft_anything_platform::fs::open_regular_file(path)?;
+    let identity = same_file::Handle::from_file(file.try_clone().map_err(|error| ToolError::io(path.display(), error))?)
+        .map_err(|error| ToolError::io(path.display(), error))?;
+    if !matches_owned_file(path, &mut file, proof)? {
+        return Ok(false);
+    }
+    let current = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(ToolError::io(path.display(), error)),
+    };
+    if !current.is_file() || current.file_type().is_symlink() {
+        return Ok(false);
+    }
+    let (current, _) = craft_anything_platform::fs::open_regular_file(path)?;
+    Ok(same_file::Handle::from_file(current).map_err(|error| ToolError::io(path.display(), error))? == identity)
+}
+
+fn receipt(backup: &Path, bytes: &[u8]) -> Result<Receipt, ToolError> {
+    let name =
+        backup.file_name().and_then(|name| name.to_str()).filter(|name| valid_name(name)).ok_or_else(|| ToolError::invalid("Unknown recovery-copy name."))?;
+    Ok(Receipt {
+        format: FORMAT.into(),
+        version: VERSION,
+        backup: name.into(),
+        length: u64::try_from(bytes.len()).map_err(|_| ToolError::new(ErrorCode::OverLimit, "The recovery copy is too large to record."))?,
+        sha256: sha256_hex(bytes),
+    })
+}
+
+fn record_conflict(path: &Path) -> ToolError {
+    ToolError::new(ErrorCode::FileChanged, format!("The existing recovery record at {} cannot be replaced.", path.display()))
+        .with_remediation("Move the existing recovery record to a safe location, then retry. The original conversation is unchanged.")
+}
+
+/// Complete a private copy and its receipt before exposing a root-level name. A hard link
+/// publishes without replacing a legacy entry and leaves identity proof if the process exits
+/// before the ordinary receipt is complete. Neither raw bytes nor a matching name alone own it.
+pub(super) fn publish(root: &Path, backup: &Path, bytes: &[u8]) -> Result<bool, ToolError> {
+    publish_using(root, backup, bytes, || Ok(()))
+}
+
+fn publish_using(root: &Path, backup: &Path, bytes: &[u8], after_publish: impl FnOnce() -> Result<(), ToolError>) -> Result<bool, ToolError> {
+    let receipt = receipt(backup, bytes)?;
+    if backup != root.join(&receipt.backup) {
+        return Err(ToolError::invalid("A recovery copy must be beside the project's conversation."));
+    }
+    let records = directory(root, true)?.ok_or_else(|| ToolError::internal("The recovery-record folder wasn't created."))?;
+    let final_record = records.join(format!("{}.json", receipt.backup));
+    match std::fs::symlink_metadata(&final_record) {
+        Ok(_) if read_receipt(&final_record, &receipt.backup)?.as_ref() != Some(&receipt) => return Err(record_conflict(&final_record)),
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(ToolError::io(final_record.display(), error)),
+    }
+    let pending = directory_for(root, true, true)?.ok_or_else(|| ToolError::internal("The recovery staging folder wasn't created."))?;
+    let staged = pending.join(&receipt.backup);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = match options.open(&staged) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(false),
+        Err(error) => return Err(ToolError::io(staged.display(), error)),
+    };
+    file.write_all(bytes).and_then(|()| file.sync_all()).map_err(|error| ToolError::io(staged.display(), error))?;
+    drop(file);
+    write_receipt(&pending, &receipt)?;
+    match std::fs::hard_link(&staged, backup) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            clear_pending(&pending, &receipt.backup)?;
+            return Ok(false);
+        }
+        Err(error) => return Err(ToolError::io(backup.display(), error)),
+    }
+    super::recovery::sync_directory(root)?;
+    after_publish()?;
+    record(root, backup, bytes)?;
+    clear_pending(&pending, &receipt.backup)?;
+    Ok(true)
+}
+
+fn clear_pending(directory: &Path, name: &str) -> Result<(), ToolError> {
+    for path in [directory.join(name), directory.join(format!("{name}.json"))] {
+        std::fs::remove_file(&path).map_err(|error| ToolError::io(path.display(), error))?;
+    }
+    super::recovery::sync_directory(directory)
 }
 
 /// Record a newly created, complete recovery copy. Per-copy receipts avoid a shared registry
@@ -148,18 +297,17 @@ pub(super) fn record(root: &Path, backup: &Path, bytes: &[u8]) -> Result<(), Too
     if backup != root.join(name).as_path() {
         return Err(ToolError::invalid("A recovery copy must be beside the project's conversation."));
     }
-    let receipt = Receipt {
-        format: FORMAT.into(),
-        version: VERSION,
-        backup: name.into(),
-        length: u64::try_from(bytes.len()).map_err(|_| ToolError::new(ErrorCode::OverLimit, "The recovery copy is too large to record."))?,
-        sha256: sha256_hex(bytes),
-    };
+    let receipt = receipt(backup, bytes)?;
     if !matches_backup(root, &receipt)? {
         return Err(ToolError::new(ErrorCode::FileChanged, "The recovery copy changed before it could be recorded.")
             .with_remediation("Reopen the project before retrying. The original conversation is unchanged."));
     }
     let directory = directory(root, true)?.ok_or_else(|| ToolError::internal("The recovery-record folder wasn't created."))?;
+    write_receipt(&directory, &receipt)
+}
+
+fn write_receipt(directory: &Path, receipt: &Receipt) -> Result<(), ToolError> {
+    let name = &receipt.backup;
     let path = directory.join(format!("{name}.json"));
     let json = serde_json::to_vec(&receipt).map_err(|error| ToolError::internal(error.to_string()))?;
     let mut options = std::fs::OpenOptions::new();
@@ -172,11 +320,10 @@ pub(super) fn record(root: &Path, backup: &Path, bytes: &[u8]) -> Result<(), Too
     let mut file = match options.open(&path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            if read_receipt(&path, name)?.as_ref() == Some(&receipt) {
-                return Ok(());
+            if read_receipt(&path, name)?.as_ref() == Some(receipt) {
+                return super::recovery::sync_directory(directory);
             }
-            return Err(ToolError::new(ErrorCode::FileChanged, format!("The existing recovery record at {} cannot be replaced.", path.display()))
-                .with_remediation("Move the existing recovery record to a safe location, then retry. The original conversation is unchanged."));
+            return Err(record_conflict(&path));
         }
         Err(error) => return Err(ToolError::io(path.display(), error)),
     };
@@ -186,17 +333,16 @@ pub(super) fn record(root: &Path, backup: &Path, bytes: &[u8]) -> Result<(), Too
         let _ = std::fs::remove_file(&path);
         return Err(ToolError::io(path.display(), error));
     }
-    Ok(())
+    super::recovery::sync_directory(directory)
 }
 
 /// Return only regular, unchanged recovery files with a recognized receipt for this exact name.
 /// Missing, malformed or newer receipts establish no ownership and leave legacy files alone.
 pub(crate) fn owned_backups(root: &Path) -> Result<Vec<PathBuf>, ToolError> {
-    let Some(directory) = directory(root, false)? else { return Ok(Vec::new()) };
     let mut owned = Vec::new();
     for name in super::DAMAGED_BACKUP_NAMES {
-        if let Some(receipt) = read_receipt(&directory.join(format!("{name}.json")), name)?
-            && matches_backup(root, &receipt)?
+        if let Some(proof) = ownership(root, name)?
+            && matches_owned_path(&root.join(name), &proof)?
         {
             owned.push(root.join(name));
         }
@@ -207,14 +353,13 @@ pub(crate) fn owned_backups(root: &Path) -> Result<Vec<PathBuf>, ToolError> {
 /// A later feed replacement can fail after recovery has published a complete copy. Reuse
 /// only a recognized receipt and unchanged file that both match this exact damaged source.
 pub(super) fn matching_copy(root: &Path, bytes: &[u8]) -> Result<Option<PathBuf>, ToolError> {
-    let Some(directory) = directory(root, false)? else { return Ok(None) };
     let length = u64::try_from(bytes.len()).map_err(|_| ToolError::new(ErrorCode::OverLimit, "The recovery copy is too large to verify."))?;
     let source = sha256_hex(bytes);
     for name in super::DAMAGED_BACKUP_NAMES {
-        if let Some(receipt) = read_receipt(&directory.join(format!("{name}.json")), name)?
-            && receipt.length == length
-            && receipt.sha256 == source
-            && matches_backup(root, &receipt)?
+        if let Some(proof) = ownership(root, name)?
+            && proof.receipt.length == length
+            && proof.receipt.sha256 == source
+            && matches_owned_path(&root.join(name), &proof)?
         {
             return Ok(Some(root.join(name)));
         }
@@ -290,7 +435,6 @@ pub(crate) fn remove_owned_backups(root: &Path, candidates: &[PathBuf]) -> Resul
 }
 
 fn remove_after_claim(root: &Path, candidates: &[PathBuf], mut after_claim: impl FnMut(&Path, &Path)) -> Result<(), ToolError> {
-    let Some(receipts) = directory(root, false)? else { return Ok(()) };
     for original in candidates {
         let Some(name) = original.file_name().and_then(|name| name.to_str()).filter(|name| valid_name(name)) else {
             return Err(ToolError::invalid("Unknown recovery-copy name."));
@@ -298,7 +442,7 @@ fn remove_after_claim(root: &Path, candidates: &[PathBuf], mut after_claim: impl
         if original.as_path() != root.join(name).as_path() {
             return Err(ToolError::invalid("A recovery copy must be beside the project's conversation."));
         }
-        let Some(receipt) = read_receipt(&receipts.join(format!("{name}.json")), name)? else { continue };
+        let Some(proof) = ownership(root, name)? else { continue };
         let private = quarantine(root)?;
         let claimed = private.join(name);
         match std::fs::rename(original, &claimed) {
@@ -313,7 +457,7 @@ fn remove_after_claim(root: &Path, candidates: &[PathBuf], mut after_claim: impl
             }
         }
         after_claim(original, &claimed);
-        match matches_file(&claimed, &receipt) {
+        match matches_owned_path(&claimed, &proof) {
             Ok(true) => {
                 std::fs::remove_file(&claimed).map_err(|error| {
                     ToolError::io(claimed.display(), error)
@@ -335,6 +479,53 @@ fn remove_after_claim(root: &Path, candidates: &[PathBuf], mut after_claim: impl
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn publication_finishes_private_proof_before_exposing_a_backup() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let backup = root.join("feed.json.broken");
+        let pending = root.join("inbox/feed-backups/pending");
+        let final_record = root.join("inbox/feed-backups/feed.json.broken.json");
+        assert!(
+            publish_using(root, &backup, b"complete original", || {
+                assert_eq!(std::fs::read(&backup).unwrap(), b"complete original");
+                assert_eq!(std::fs::read(pending.join("feed.json.broken")).unwrap(), b"complete original");
+                assert!(read_receipt(&pending.join("feed.json.broken.json"), "feed.json.broken").unwrap().is_some());
+                assert!(!final_record.exists());
+                assert_eq!(owned_backups(root).unwrap(), vec![backup.clone()]);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt as _;
+                    assert_eq!(std::fs::metadata(&backup).unwrap().permissions().mode() & 0o777, 0o600);
+                    assert_eq!(std::fs::metadata(&pending).unwrap().permissions().mode() & 0o777, 0o700);
+                }
+                Ok(())
+            })
+            .unwrap()
+        );
+        assert!(final_record.is_file());
+        assert_eq!(std::fs::read_dir(&pending).unwrap().count(), 0);
+        assert_eq!(owned_backups(root).unwrap(), vec![backup]);
+    }
+
+    #[test]
+    fn interrupted_publication_requires_the_staged_file_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let backup = root.join("feed.json.broken");
+        let error = publish_using(root, &backup, b"complete original", || Err(ToolError::internal("interrupted before final receipt"))).unwrap_err();
+        assert!(error.message.contains("interrupted"));
+        assert!(!root.join("inbox/feed-backups/feed.json.broken.json").exists());
+        assert_eq!(matching_copy(root, b"complete original").unwrap(), Some(backup.clone()));
+        let retained = root.join("retained-original");
+        std::fs::rename(&backup, &retained).unwrap();
+        std::fs::write(&backup, b"complete original").unwrap();
+        assert!(owned_backups(root).unwrap().is_empty(), "equal personal bytes in a different file are not the pending copy");
+        assert!(matching_copy(root, b"complete original").unwrap().is_none());
+        assert_eq!(std::fs::read(&backup).unwrap(), b"complete original");
+        assert_eq!(std::fs::read(&retained).unwrap(), b"complete original");
+    }
 
     #[test]
     fn a_reusable_copy_requires_its_receipt_source_and_current_contents() {

@@ -16,6 +16,8 @@ const SUFFIX: &str = ".recovery.json";
 const MAX_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ENTRIES: usize = 256;
 const MAX_NOTICES: usize = 16;
+const NOTICE_MESSAGE: &str = "An earlier run kept a separate conversation recovery copy.";
+const NOTICE_REMEDIATION: &str = "Open the copy to inspect its conversation. It has not been imported automatically, and may overlap the saved conversation.";
 
 /// Version 1: the complete folded conversation, its loaded source's identity, and the
 /// caller's recovery context. `metadata` contains `format`, `source` and `details`; source
@@ -28,6 +30,8 @@ pub struct RecoverySnapshot {
     pub version: u32,
     pub items: Vec<FeedItem>,
     pub metadata: Value,
+    #[serde(skip)]
+    project: Option<Result<std::sync::Arc<super::transaction::ProjectIdentity>, ToolError>>,
 }
 
 impl RecoverySnapshot {
@@ -41,7 +45,12 @@ impl RecoverySnapshot {
         } else {
             json!({"state": "missing"})
         };
-        Self { version: VERSION, items: feed.to_vec(), metadata: json!({"format": FORMAT, "source": source, "details": details}) }
+        Self {
+            version: VERSION,
+            items: feed.to_vec(),
+            metadata: json!({"format": FORMAT, "source": source, "details": details}),
+            project: Some(feed.project.clone()),
+        }
     }
 
     fn recognized(&self) -> bool {
@@ -62,8 +71,13 @@ impl RecoverySnapshot {
 }
 
 fn directory(root: &Path, create: bool) -> Result<Option<PathBuf>, ToolError> {
+    directory_using(root, create, sync_directory)
+}
+
+fn directory_using(root: &Path, create: bool, mut sync: impl FnMut(&Path) -> Result<(), ToolError>) -> Result<Option<PathBuf>, ToolError> {
     let mut path = root.to_path_buf();
     for name in ["inbox", RECOVERY_ARCHIVE_DIR] {
+        let parent = path.clone();
         path.push(name);
         let metadata = match std::fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
@@ -84,8 +98,22 @@ fn directory(root: &Path, create: bool) -> Result<Option<PathBuf>, ToolError> {
         if !metadata.is_dir() || metadata.file_type().is_symlink() {
             return Err(ToolError::invalid(format!("{} isn't a regular conversation-recovery folder.", path.display())));
         }
+        if create {
+            // A previous attempt may have created this entry and failed before its parent was synced.
+            sync(&parent)?;
+        }
     }
     Ok(Some(path))
+}
+
+#[cfg(unix)]
+pub(super) fn sync_directory(path: &Path) -> Result<(), ToolError> {
+    std::fs::File::open(path).and_then(|file| file.sync_all()).map_err(|error| ToolError::io(path.display(), error))
+}
+
+#[cfg(not(unix))]
+pub(super) fn sync_directory(_path: &Path) -> Result<(), ToolError> {
+    Ok(())
 }
 
 struct CappedWriter<'a> {
@@ -110,13 +138,22 @@ impl std::io::Write for CappedWriter<'_> {
 }
 
 /// Keep a distinct owner-private copy, bounded to 64 MiB. Success means the complete file was
-/// synced, and on Unix its directory was synced too. Even a partial failed write is left alone;
-/// it cannot be mistaken for a complete record by discovery. Never touches the main feed.
+/// synced, and on Unix its directory and ancestor directory entries were synced too. Even a
+/// partial failed write is left alone; discovery cannot mistake it for a complete record.
+/// Never touches the main feed.
 pub fn write_recovery_snapshot(root: &Path, snapshot: &RecoverySnapshot) -> Result<PathBuf, ToolError> {
+    write_recovery_snapshot_using(root, snapshot, sync_directory)
+}
+
+fn write_recovery_snapshot_using(root: &Path, snapshot: &RecoverySnapshot, mut sync: impl FnMut(&Path) -> Result<(), ToolError>) -> Result<PathBuf, ToolError> {
     if !snapshot.recognized() {
         return Err(ToolError::new(ErrorCode::NotSupported, "This conversation recovery-copy format isn't supported."));
     }
-    let directory = directory(root, true)?.ok_or_else(|| ToolError::internal("The conversation-recovery folder wasn't created."))?;
+    let _guard = super::lock_project(root)?;
+    if let Some(project) = &snapshot.project {
+        project.as_ref().map_err(Clone::clone)?.check(root)?;
+    }
+    let directory = directory_using(root, true, &mut sync)?.ok_or_else(|| ToolError::internal("The conversation-recovery folder wasn't created."))?;
     static NEXT: AtomicU64 = AtomicU64::new(0);
     for _ in 0..64 {
         let name = format!("conversation-{}-{}-{}{SUFFIX}", crate::inbox::now_ms(), std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed));
@@ -132,12 +169,36 @@ pub fn write_recovery_snapshot(root: &Path, snapshot: &RecoverySnapshot) -> Resu
         };
         serde_json::to_writer(CappedWriter { file: &mut file, remaining: MAX_BYTES }, snapshot).map_err(|error| ToolError::io(path.display(), error.into()))?;
         file.sync_all().map_err(|error| ToolError::io(path.display(), error))?;
-        #[cfg(unix)]
-        std::fs::File::open(&directory).and_then(|file| file.sync_all()).map_err(|error| ToolError::io(directory.display(), error))?;
+        sync(&directory)?;
         return Ok(path);
     }
     Err(ToolError::new(ErrorCode::FileError, "Couldn't reserve a new conversation recovery copy.")
         .with_remediation("Keep the existing recovery copies and retry."))
+}
+
+fn recovery_filename(path: &Path) -> bool {
+    path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.starts_with("conversation-") && name.ends_with(SUFFIX))
+}
+
+/// Earlier writers saved these display rows as errors. Match their complete generated shape,
+/// including paths from before a project move, without removing ordinary errors with a log.
+pub(super) fn is_recovery_notice(item: &FeedItem) -> bool {
+    let FeedItem::Error { message, remediation: Some(remediation), log: Some(path) } = item else { return false };
+    message == NOTICE_MESSAGE
+        && remediation == NOTICE_REMEDIATION
+        && recovery_filename(path)
+        && path.parent().is_some_and(|directory| {
+            directory.file_name().is_some_and(|name| name == RECOVERY_ARCHIVE_DIR)
+                && directory.parent().and_then(Path::file_name).is_some_and(|name| name == "inbox")
+        })
+}
+
+/// Read historical recovery notices for a display snapshot. Call when loading a view, not
+/// while polling it, and keep the returned rows separate from the feed passed to `save`.
+pub fn recovery_notices(root: &Path) -> Vec<FeedItem> {
+    let mut items = Vec::new();
+    append_recovery_notices(root, &mut items);
+    items
 }
 
 fn read_snapshot(path: &Path, remaining: &mut u64) -> Option<RecoverySnapshot> {
@@ -184,7 +245,7 @@ pub(super) fn append_recovery_notices(root: &Path, items: &mut Vec<FeedItem>) {
             break;
         }
         let path = entry.path();
-        if !path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.starts_with("conversation-") && name.ends_with(SUFFIX)) {
+        if !recovery_filename(&path) {
             continue;
         }
         if read_snapshot(&path, &mut remaining).is_none() {
@@ -192,13 +253,7 @@ pub(super) fn append_recovery_notices(root: &Path, items: &mut Vec<FeedItem>) {
         }
         shown += 1;
         if !items.iter().any(|item| matches!(item, FeedItem::Error { log: Some(saved), .. } if saved == &path)) {
-            items.push(FeedItem::Error {
-                message: "An earlier run kept a separate conversation recovery copy.".into(),
-                remediation: Some(
-                    "Open the copy to inspect its conversation. It has not been imported automatically, and may overlap the saved conversation.".into(),
-                ),
-                log: Some(path),
-            });
+            items.push(FeedItem::Error { message: NOTICE_MESSAGE.into(), remediation: Some(NOTICE_REMEDIATION.into()), log: Some(path) });
         }
     }
 }
@@ -206,7 +261,8 @@ pub(super) fn append_recovery_notices(root: &Path, items: &mut Vec<FeedItem>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::feed::{FEED_FILE, UserItem, load};
+    use crate::feed::{FEED_FILE, FEED_VERSION, Saved, UserItem, for_display, load, record_answer, save};
+    use crate::inbox::{Inbox, RequestKind};
     use crate::workspace::{TargetRef, Workspace};
 
     #[test]
@@ -290,5 +346,159 @@ mod tests {
             assert!(write_recovery_snapshot(&ws.root, &snapshot).is_err());
             assert_eq!(std::fs::read_dir(external).unwrap().count(), 0);
         }
+    }
+
+    #[test]
+    fn answering_a_question_does_not_persist_recovery_notices() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let snapshot = RecoverySnapshot::from_loaded(&load(&ws), json!({}));
+        let archive = write_recovery_snapshot(&ws.root, &snapshot).unwrap();
+        assert_eq!(for_display(&ws).iter().filter(|item| is_recovery_notice(item)).count(), 1);
+
+        let inbox = Inbox::new(ws.inbox_dir());
+        let id = inbox.post(RequestKind::Question, "Which colour?", "", vec![], true, None).unwrap();
+        let request = inbox.pending().into_iter().find(|request| request.id == id).unwrap();
+        record_answer(&ws, &request, "Blue").unwrap();
+        let saved: Saved = serde_json::from_slice(&std::fs::read(ws.root.join(FEED_FILE)).unwrap()).unwrap();
+        assert!(saved.items.iter().all(|item| !is_recovery_notice(item)));
+        assert!(load(&ws).iter().all(|item| !is_recovery_notice(item)));
+        assert!(saved.items.iter().any(|item| matches!(item, FeedItem::Ask { answer: Some(answer), .. } if answer == "Blue")));
+
+        let retained = d.path().join("retained-conversation.json");
+        std::fs::rename(&archive, &retained).unwrap();
+        assert!(for_display(&ws).iter().all(|item| !is_recovery_notice(item)));
+        assert_eq!(serde_json::from_slice::<RecoverySnapshot>(&std::fs::read(retained).unwrap()).unwrap().items, snapshot.items);
+    }
+
+    #[test]
+    fn legacy_saved_notices_are_removed_without_losing_ordinary_errors() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let archive = ws.inbox_dir().join(RECOVERY_ARCHIVE_DIR).join("conversation-1-2-3.recovery.json");
+        let notice = FeedItem::Error {
+            message: NOTICE_MESSAGE.into(),
+            remediation: Some(NOTICE_REMEDIATION.into()),
+            log: Some(d.path().join("previous-project").join("inbox").join(RECOVERY_ARCHIVE_DIR).join("conversation-1-2-3.recovery.json")),
+        };
+        let expected = vec![
+            FeedItem::User(UserItem::Text(NOTICE_MESSAGE.into())),
+            FeedItem::Agent { text: NOTICE_MESSAGE.into(), streaming: false },
+            FeedItem::Error { message: "The builder stopped.".into(), remediation: Some(NOTICE_REMEDIATION.into()), log: Some(archive.clone()) },
+            FeedItem::Error { message: NOTICE_MESSAGE.into(), remediation: Some("Inspect the builder's failure.".into()), log: Some(archive.clone()) },
+            FeedItem::Error { message: NOTICE_MESSAGE.into(), remediation: Some(NOTICE_REMEDIATION.into()), log: Some(ws.root.join("build.log")) },
+            FeedItem::Error {
+                message: NOTICE_MESSAGE.into(),
+                remediation: Some(NOTICE_REMEDIATION.into()),
+                log: Some(ws.inbox_dir().join(RECOVERY_ARCHIVE_DIR).join("personal.json")),
+            },
+        ];
+        let mut old_items = vec![notice];
+        old_items.extend(expected.clone());
+        let old = Saved { version: FEED_VERSION, items: old_items, recovery: None };
+        let path = ws.root.join(FEED_FILE);
+        std::fs::write(&path, serde_json::to_vec(&old).unwrap()).unwrap();
+
+        let mut loaded = load(&ws);
+        assert_eq!(loaded.to_vec(), expected);
+        assert_eq!(for_display(&ws), expected);
+        save(&ws.root, &mut loaded).unwrap();
+        let saved: Saved = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(saved.items, expected);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recovery_creation_syncs_both_parent_entries_and_the_archive_directory() {
+        let d = tempfile::tempdir().unwrap();
+        let root = Workspace::create(d.path(), "Project", "Test", TargetRef::None).unwrap().root;
+        let snapshot = RecoverySnapshot {
+            version: VERSION,
+            items: vec![],
+            metadata: json!({"format": FORMAT, "source": {"state": "missing"}, "details": {}}),
+            project: None,
+        };
+        let mut synced = Vec::new();
+        let archive = write_recovery_snapshot_using(&root, &snapshot, |path| {
+            synced.push(path.to_path_buf());
+            sync_directory(path)
+        })
+        .unwrap();
+        assert_eq!(synced, vec![root.clone(), root.join("inbox"), root.join("inbox").join(RECOVERY_ARCHIVE_DIR)]);
+        assert!(archive.is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parent_sync_failures_stop_archiving_and_are_retried_for_existing_directories() {
+        for failed_component in [None, Some("inbox")] {
+            let d = tempfile::tempdir().unwrap();
+            let root = Workspace::create(d.path(), "Project", "Test", TargetRef::None).unwrap().root;
+            let snapshot = RecoverySnapshot {
+                version: VERSION,
+                items: vec![],
+                metadata: json!({"format": FORMAT, "source": {"state": "missing"}, "details": {}}),
+                project: None,
+            };
+            let failed = failed_component.map_or_else(|| root.clone(), |name| root.join(name));
+            for _ in 0..2 {
+                let error = write_recovery_snapshot_using(&root, &snapshot, |path| {
+                    if path == failed.as_path() {
+                        Err(ToolError::io(path.display(), std::io::Error::other("injected parent synchronization failure")))
+                    } else {
+                        sync_directory(path)
+                    }
+                })
+                .unwrap_err();
+                assert!(error.message.contains("injected parent synchronization failure"));
+                let archive = root.join("inbox").join(RECOVERY_ARCHIVE_DIR);
+                assert!(!archive.exists() || std::fs::read_dir(archive).unwrap().next().is_none());
+            }
+            let mut synced = Vec::new();
+            let archive = write_recovery_snapshot_using(&root, &snapshot, |path| {
+                synced.push(path.to_path_buf());
+                sync_directory(path)
+            })
+            .unwrap();
+            assert_eq!(synced, vec![root.clone(), root.join("inbox"), root.join("inbox").join(RECOVERY_ARCHIVE_DIR)]);
+            assert!(archive.is_file());
+        }
+    }
+
+    #[test]
+    fn recovery_does_not_recreate_a_deleted_projects_inbox() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "Project", "Test", TargetRef::None).unwrap();
+        let root = ws.root.clone();
+        let personal = root.join("personal.txt");
+        std::fs::write(&personal, b"Keep these words").unwrap();
+        let snapshot = RecoverySnapshot::from_loaded(&load(&ws), json!({}));
+        ws.delete().unwrap();
+        assert!(write_recovery_snapshot(&root, &snapshot).is_err());
+        assert!(!root.join("inbox").exists());
+        assert_eq!(std::fs::read(personal).unwrap(), b"Keep these words");
+    }
+
+    #[test]
+    fn loaded_writers_and_archives_reject_a_recreated_project_at_the_same_path() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "Project", "Old project", TargetRef::None).unwrap();
+        let root = ws.root.clone();
+        let created_ms = ws.manifest.created_ms;
+        let personal = root.join("personal.txt");
+        std::fs::write(&personal, b"Keep these words").unwrap();
+        let mut old = load(&ws);
+        let snapshot = RecoverySnapshot::from_loaded(&old, json!({}));
+        ws.delete().unwrap();
+        let mut new = Workspace::create_at(&root, "New project", "New words", TargetRef::None, Some(crate::workspace::ExistingFiles::Edit)).unwrap();
+        new.manifest.created_ms = created_ms.saturating_add(1);
+        new.save().unwrap();
+        old.push(FeedItem::User(UserItem::Text("Stale words".into())));
+        assert_eq!(save(&root, &mut old).unwrap_err().code, ErrorCode::FileChanged);
+        assert_eq!(write_recovery_snapshot(&root, &snapshot).unwrap_err().code, ErrorCode::FileChanged);
+        assert!(!root.join(FEED_FILE).exists());
+        assert!(!root.join("inbox").join(RECOVERY_ARCHIVE_DIR).exists());
+        assert_eq!(load(&new).to_vec(), vec![FeedItem::User(UserItem::Text("New words".into()))]);
+        assert_eq!(std::fs::read(personal).unwrap(), b"Keep these words");
     }
 }

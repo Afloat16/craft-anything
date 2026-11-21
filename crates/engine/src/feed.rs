@@ -8,7 +8,6 @@ use craft_anything_evidence::{ErrorCode, ToolError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
-use std::io::Write as _;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 
@@ -16,7 +15,7 @@ mod backups;
 mod recovery;
 mod transaction;
 pub(crate) use backups::{owned_backups, owns_open_backup, remove_owned_backups};
-pub use recovery::{RECOVERY_ARCHIVE_DIR, RecoverySnapshot, write_recovery_snapshot};
+pub use recovery::{RECOVERY_ARCHIVE_DIR, RecoverySnapshot, recovery_notices, write_recovery_snapshot};
 pub use transaction::{ProjectFeedGuard, lock_project};
 
 /// Where the conversation is kept in the project folder.
@@ -233,9 +232,19 @@ pub struct LoadedFeed {
     damaged: Option<Vec<u8>>,
     decoded_source: Option<String>,
     recovery: Option<RecoveryProjection>,
+    project: Result<std::sync::Arc<transaction::ProjectIdentity>, ToolError>,
 }
 
 impl LoadedFeed {
+    /// A repaired conversation belongs to this writer only while its original project
+    /// directory and manifest creation time remain the same.
+    pub fn is_same_project(&self, other: &LoadedFeed) -> bool {
+        match (&self.project, &other.project) {
+            (Ok(own), Ok(other)) => own.same(other),
+            _ => false,
+        }
+    }
+
     /// Whether loading found no read or decoding error. A confirmed absent file also starts
     /// a new conversation; recovery callers use `was_decoded` to require saved contents.
     pub fn is_readable(&self) -> bool {
@@ -327,20 +336,17 @@ fn read_previous(path: &Path) -> Result<Option<Vec<u8>>, ToolError> {
 /// The feed for a project: what was saved, else rebuilt from its manifest. Questions still
 /// waiting in its inbox are always there.
 pub fn load(ws: &Workspace) -> LoadedFeed {
-    let mut feed = load_inner(ws);
-    // These are retained recovery records, not an automatic replay or a claim that the
-    // current feed failed. Reading notices never changes the saved-source guard.
-    recovery::append_recovery_notices(&ws.root, &mut feed.items);
-    feed
+    load_inner(ws)
 }
 
 fn load_inner(ws: &Workspace) -> LoadedFeed {
+    let project = transaction::ProjectIdentity::from_workspace(ws).map(std::sync::Arc::new);
     let saved = read_previous(&ws.root.join(FEED_FILE)).and_then(|bytes| match bytes {
         Some(bytes) if newer_version(&bytes) => Err(newer_error()),
         bytes => Ok(bytes),
     });
     let saved = match saved {
-        Ok(None) => return LoadedFeed { items: history(ws), not_loaded: None, damaged: None, decoded_source: None, recovery: None },
+        Ok(None) => return LoadedFeed { items: history(ws), not_loaded: None, damaged: None, decoded_source: None, recovery: None, project },
         Err(error) => {
             let error = if error.remediation.is_some() {
                 error
@@ -353,7 +359,7 @@ fn load_inner(ws: &Workspace) -> LoadedFeed {
                 remediation: error.remediation.clone(),
                 log: None,
             });
-            return LoadedFeed { items, not_loaded: Some(error), damaged: None, decoded_source: None, recovery: None };
+            return LoadedFeed { items, not_loaded: Some(error), damaged: None, decoded_source: None, recovery: None, project };
         }
         Ok(Some(bytes)) => match decode(&bytes) {
             Some(saved) => (saved, craft_anything_evidence::sha256_hex(&bytes)),
@@ -365,12 +371,13 @@ fn load_inner(ws: &Workspace) -> LoadedFeed {
                     log: None,
                 });
                 let recovery = Some(RecoveryProjection::from_workspace(ws, &bytes));
-                return LoadedFeed { items, not_loaded: None, damaged: Some(bytes), decoded_source: None, recovery };
+                return LoadedFeed { items, not_loaded: None, damaged: Some(bytes), decoded_source: None, recovery, project };
             }
         },
     };
     let (saved, decoded_source) = saved;
     let mut feed = saved.items;
+    feed.retain(|item| !recovery::is_recovery_notice(item));
     // Nothing is streaming any more after a restart.
     for item in &mut feed {
         if let FeedItem::Agent { streaming, .. } = item {
@@ -379,7 +386,7 @@ fn load_inner(ws: &Workspace) -> LoadedFeed {
     }
     let shown: HashSet<String> = feed.iter().filter_map(|i| if let FeedItem::Ask { request, .. } = i { Some(request.id.clone()) } else { None }).collect();
     feed.extend(Inbox::new(ws.inbox_dir()).pending().into_iter().filter(|r| !shown.contains(&r.id)).map(|request| FeedItem::Ask { request, answer: None }));
-    LoadedFeed { items: feed, not_loaded: None, damaged: None, decoded_source: Some(decoded_source), recovery: saved.recovery }
+    LoadedFeed { items: feed, not_loaded: None, damaged: None, decoded_source: Some(decoded_source), recovery: saved.recovery, project }
 }
 
 /// A read-only conversation view, including retryable questions whose answer was saved but
@@ -388,6 +395,7 @@ fn load_inner(ws: &Workspace) -> LoadedFeed {
 pub fn for_display(ws: &Workspace) -> Vec<FeedItem> {
     let mut items = load(ws).into_items();
     show_pending(&mut items, &Inbox::new(ws.inbox_dir()));
+    items.extend(recovery_notices(&ws.root));
     items
 }
 
@@ -489,11 +497,9 @@ fn save_locked_using(
     if let Some(error) = &feed.not_loaded {
         return Err(error.clone());
     }
+    guard.check_project()?;
     let root = &guard.root;
-    if !root.is_dir() {
-        return Err(ToolError::new(ErrorCode::FileError, "The project's folder isn't available, so its conversation wasn't saved.")
-            .with_remediation("Restore the project folder, then reopen the project before retrying."));
-    }
+    feed.project.as_ref().map_err(Clone::clone)?.check(root)?;
     let path = root.join(FEED_FILE);
     let previous = read_previous(&path)?;
     if previous.as_deref().is_some_and(newer_version) {
@@ -553,36 +559,21 @@ fn keep_damaged(root: &Path, bytes: &[u8]) -> Result<PathBuf, ToolError> {
         return Ok(backup);
     }
     for backup in damaged_backups(root) {
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt as _;
-            options.mode(0o600);
-        }
-        let mut file = match options.open(&backup) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+        match std::fs::symlink_metadata(&backup) {
+            Ok(_) => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(ToolError::io(backup.display(), error)),
-        };
-        let result = file.write_all(bytes).and_then(|()| file.sync_all());
-        drop(file);
-        if let Err(error) = result {
-            let _ = std::fs::remove_file(&backup);
-            return Err(ToolError::io(backup.display(), error));
         }
-        if let Err(error) = backups::record(root, &backup, bytes) {
-            let _ = std::fs::remove_file(&backup);
-            return Err(error);
+        if backups::publish(root, &backup, bytes)? {
+            return Ok(backup);
         }
-        return Ok(backup);
     }
     Err(ToolError::new(
         ErrorCode::FileError,
-        format!("The conversation wasn't saved: all {} backup names beside feed.json are already in use.", DAMAGED_BACKUP_NAMES.len()),
+        format!("The conversation wasn't saved: all {} conversation recovery slots are already in use.", DAMAGED_BACKUP_NAMES.len()),
     )
     .with_remediation(
-        "Move an earlier .broken backup and, if present, its matching inbox/feed-backups/<backup-name>.json ownership record to another safe location, then retry. The original conversation is unchanged.",
+        "Move an earlier .broken backup and its matching inbox/feed-backups/<backup-name>.json ownership record, including any interrupted copy in inbox/feed-backups/pending, to another safe location, then retry. The original conversation is unchanged.",
     ))
 }
 
@@ -624,7 +615,8 @@ mod tests {
         let previous = read_previous(&root.join(FEED_FILE))?;
         let damaged = previous.as_ref().filter(|bytes| decode(bytes).is_none()).cloned();
         let decoded_source = previous.as_ref().filter(|bytes| decode(bytes).is_some()).map(|bytes| craft_anything_evidence::sha256_hex(bytes));
-        super::save(root, &mut LoadedFeed { items: items.to_vec(), not_loaded: None, damaged, decoded_source, recovery: None })
+        let project = transaction::ProjectIdentity::from_workspace(&Workspace::open(root)?).map(std::sync::Arc::new);
+        super::save(root, &mut LoadedFeed { items: items.to_vec(), not_loaded: None, damaged, decoded_source, recovery: None, project })
     }
 
     fn question(ws: &Workspace, title: &str) -> Request {
@@ -1215,7 +1207,8 @@ mod tests {
     fn assert_unreadable_feed_is_preserved(version: u32) {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(FEED_FILE);
+        let ws = Workspace::create(dir.path(), "Project", "Test", TargetRef::None).unwrap();
+        let path = ws.root.join(FEED_FILE);
         let original = serde_json::to_vec(&serde_json::json!({
             "version": version,
             "items": [{"User": "Keep the saved conversation"}],
@@ -1227,16 +1220,16 @@ mod tests {
             return;
         }
         let replacement = [FeedItem::User(UserItem::Text("New message".into()))];
-        let saved = save(dir.path(), &replacement);
+        let saved = save(&ws.root, &replacement);
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), original, "save must not replace a feed it could not read");
         assert_eq!(saved.unwrap_err().code, ErrorCode::NoPermission);
         // Restoring access allows a normal save, but never a downgrade from a newer version.
         if version > FEED_VERSION {
-            assert_eq!(save(dir.path(), &replacement).unwrap_err().code, ErrorCode::NotSupported);
+            assert_eq!(save(&ws.root, &replacement).unwrap_err().code, ErrorCode::NotSupported);
             assert_eq!(std::fs::read(&path).unwrap(), original);
         } else {
-            save(dir.path(), &replacement).unwrap();
+            save(&ws.root, &replacement).unwrap();
             let saved: Saved = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
             assert_eq!(saved.items, replacement);
         }
@@ -1287,14 +1280,15 @@ mod tests {
     #[test]
     fn save_leaves_a_dangling_feed_symlink() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(FEED_FILE);
+        let ws = Workspace::create(dir.path(), "Project", "Test", TargetRef::None).unwrap();
+        let path = ws.root.join(FEED_FILE);
         let target = Path::new("missing-feed.json");
         std::os::unix::fs::symlink(target, &path).unwrap();
         assert_eq!(std::fs::read(&path).unwrap_err().kind(), std::io::ErrorKind::NotFound);
-        let saved = save(dir.path(), &[FeedItem::Paused]);
+        let saved = save(&ws.root, &[FeedItem::Paused]);
         assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink(), "save replaced the dangling link");
         assert_eq!(std::fs::read_link(&path).unwrap(), target);
-        assert!(!dir.path().join(target).exists());
+        assert!(!ws.root.join(target).exists());
         assert_eq!(saved.unwrap_err().code, ErrorCode::NotFound);
     }
 
@@ -1302,10 +1296,11 @@ mod tests {
     #[test]
     fn save_leaves_a_looping_feed_symlink() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(FEED_FILE);
+        let ws = Workspace::create(dir.path(), "Project", "Test", TargetRef::None).unwrap();
+        let path = ws.root.join(FEED_FILE);
         std::os::unix::fs::symlink(FEED_FILE, &path).unwrap();
         assert!(std::fs::read(&path).is_err());
-        let saved = save(dir.path(), &[FeedItem::Paused]);
+        let saved = save(&ws.root, &[FeedItem::Paused]);
         assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink(), "save replaced the looping link");
         assert_eq!(std::fs::read_link(&path).unwrap(), Path::new(FEED_FILE));
         assert_eq!(saved.unwrap_err().code, ErrorCode::FileError);
@@ -1314,15 +1309,16 @@ mod tests {
     #[test]
     fn save_creates_absent_feeds_and_recovers_readable_malformed_json() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(FEED_FILE);
+        let ws = Workspace::create(dir.path(), "Project", "Test", TargetRef::None).unwrap();
+        let path = ws.root.join(FEED_FILE);
         let conversation = [FeedItem::User(UserItem::Text("Keep building".into()))];
         assert_eq!(std::fs::symlink_metadata(&path).unwrap_err().kind(), std::io::ErrorKind::NotFound);
-        save(dir.path(), &conversation).unwrap();
+        save(&ws.root, &conversation).unwrap();
         let saved: Saved = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(saved.items, conversation);
         // A readable parse failure can recover only after its exact bytes have been kept.
         std::fs::write(&path, b"{\"version\":").unwrap();
-        save(dir.path(), &conversation).unwrap();
+        save(&ws.root, &conversation).unwrap();
         let saved: Saved = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(saved.version, FEED_VERSION);
         assert_eq!(std::fs::read(path.with_extension("json.broken")).unwrap(), b"{\"version\":");

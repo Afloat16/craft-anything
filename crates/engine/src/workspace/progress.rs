@@ -1,7 +1,7 @@
 //! File progress kept between builder turns and runs. File contents, rather than timestamps,
 //! decide whether the app changed; a successful write of identical bytes is not progress.
 
-use super::{OWN_NAMES, Workspace, rebuilt};
+use super::{CopyBackups, OWN_NAMES, Workspace, rebuilt};
 use crate::CancelToken;
 use craft_anything_evidence::{ErrorCode, ToolError};
 use schemars::JsonSchema;
@@ -342,16 +342,27 @@ fn fingerprint_tree(
             format!("Can't check build progress: {} is nested more than {MAX_DEPTH} folders deep.", dir.display()),
         ));
     }
+    let backups = if ws.manifest.app_in_root && dir == root { Some(CopyBackups::discover(root)?) } else { None };
     let mut entries = Vec::new();
     for entry in std::fs::read_dir(dir).map_err(|e| ToolError::io(dir.display(), e))? {
         stop.check()?;
         let entry = entry.map_err(|e| ToolError::io(dir.display(), e))?;
         let path = entry.path();
         let name = entry.file_name();
-        if name == ".git" || (ws.manifest.app_in_root && dir == root && OWN_NAMES.iter().any(|n| name == *n)) {
+        let backup_name = name.to_str().is_some_and(|name| crate::feed::DAMAGED_BACKUP_NAMES.iter().any(|slot| name.eq_ignore_ascii_case(slot)));
+        if name == ".git" || (backups.is_some() && !backup_name && OWN_NAMES.iter().any(|n| name == *n)) {
             continue;
         }
         let kind = entry.file_type().map_err(|e| ToolError::io(path.display(), e))?;
+        if backup_name
+            && kind.is_file()
+            && let Some(backups) = &backups
+        {
+            let (mut file, metadata) = craft_anything_platform::fs::open_regular_file(&path)?;
+            if backups.owns_open(&path, &mut file, &metadata)? {
+                continue;
+            }
+        }
         if kind.is_dir() && rebuilt(&path) {
             continue;
         }
@@ -488,6 +499,84 @@ mod tests {
     fn modified(path: &Path, seconds: u64) {
         let time = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(seconds);
         std::fs::File::options().write(true).open(path).unwrap().set_times(std::fs::FileTimes::new().set_modified(time)).unwrap();
+    }
+
+    #[test]
+    fn fingerprints_include_personal_backup_names_but_exclude_verified_recovery() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("original");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("index.html"), b"The app").unwrap();
+        let ws = Workspace::create_at(&root, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+        let personal = root.join("feed.json.broken.1");
+        std::fs::create_dir(&personal).unwrap();
+        std::fs::write(personal.join("style.css"), b"body { color: red; }").unwrap();
+        std::fs::write(root.join("feed.json.broken.2"), b"Personal app content").unwrap();
+        let initial = fingerprint(&ws);
+        std::fs::write(personal.join("style.css"), b"body { color: blue; }").unwrap();
+        let styled = fingerprint(&ws);
+        assert_ne!(styled, initial, "personal directories at reserved names are app inputs");
+        std::fs::write(root.join("feed.json.broken.2"), b"Changed personal app content").unwrap();
+        let changed = fingerprint(&ws);
+        assert_ne!(changed, styled, "personal files at reserved names are app inputs");
+        std::fs::write(root.join(crate::feed::FEED_FILE), b"Damaged conversation").unwrap();
+        crate::feed::save(&root, &mut crate::feed::load(&ws)).unwrap();
+        assert_eq!(fingerprint(&ws), changed, "a verified recovery copy is not an app edit");
+    }
+
+    #[test]
+    fn fingerprints_distinguish_staged_recovery_identity_from_equal_personal_bytes() {
+        for linked in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            std::fs::write(directory.path().join("index.html"), b"The app").unwrap();
+            let ws = Workspace::create_at(directory.path(), "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+            let initial = fingerprint(&ws);
+            let pending = ws.root.join("inbox/feed-backups/pending");
+            std::fs::create_dir_all(&pending).unwrap();
+            let staged = pending.join("feed.json.broken");
+            let backup = ws.root.join("feed.json.broken");
+            let bytes = b"Unfinished recovery publication";
+            std::fs::write(&staged, bytes).unwrap();
+            let receipt = serde_json::json!({
+                "format": "craft-anything.feed-backup",
+                "version": 1,
+                "backup": "feed.json.broken",
+                "length": bytes.len(),
+                "sha256": craft_anything_evidence::sha256_hex(bytes)
+            });
+            std::fs::write(pending.join("feed.json.broken.json"), serde_json::to_vec(&receipt).unwrap()).unwrap();
+            if linked {
+                std::fs::hard_link(&staged, &backup).unwrap();
+            } else {
+                std::fs::write(&backup, bytes).unwrap();
+            }
+
+            let mut cache = AppFingerprintCache::default();
+            let scanned = cache.scan(&ws, &CancelToken::default()).unwrap();
+            assert_eq!(scanned, fingerprint(&ws), "cached and fresh scans classify recovery identically");
+            assert_eq!(scanned == initial, linked, "only the actual staged recovery file is excluded");
+        }
+    }
+
+    #[test]
+    fn fingerprints_keep_a_distinct_case_sensitive_personal_backup_name() {
+        use std::io::Write as _;
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("index.html"), b"The app").unwrap();
+        let ws = Workspace::create_at(directory.path(), "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+        let bytes = b"Damaged conversation";
+        std::fs::write(ws.root.join(crate::feed::FEED_FILE), bytes).unwrap();
+        crate::feed::save(&ws.root, &mut crate::feed::load(&ws)).unwrap();
+        let initial = fingerprint(&ws);
+        let mut personal = match std::fs::OpenOptions::new().write(true).create_new(true).open(ws.root.join("FEED.JSON.BROKEN")) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return,
+            Err(error) => panic!("could not create the independent personal file: {error}"),
+        };
+        personal.write_all(bytes).unwrap();
+        drop(personal);
+
+        assert_ne!(fingerprint(&ws), initial, "matching letters and bytes do not own a distinct personal file");
     }
 
     #[test]
