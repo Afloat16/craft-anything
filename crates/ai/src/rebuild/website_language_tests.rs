@@ -76,19 +76,22 @@ fn website_language_changes_invalidate_a_kept_check() {
     let calls = Cell::new(0);
     let check = |ws: &Workspace, round| {
         worker
-            .checks_unless_unchanged(ws, website.as_ref(), round, || {
+            .checks_unless_unchanged(ws, website.as_ref(), round, |current| {
                 calls.set(calls.get() + 1);
-                Ok(vec![CheckResult::new(CheckResult::WEB_VISUAL, round, true, format!("{:?}", ws.manifest.website_language))])
+                Ok(vec![CheckResult::new(CheckResult::WEB_VISUAL, round, true, format!("{:?}", current.manifest.website_language))])
             })
             .unwrap()
     };
     assert!(check(&ws, 1)[0].note.contains("fr"));
     check(&ws, 2);
     assert_eq!(calls.get(), 1, "unchanged language keeps the successful round");
-    website.record_requests(&mut ws, &["Translate the site into German"]).unwrap();
+    let mut other = Workspace::open(&ws.root).unwrap();
+    website.record_requests(&mut other, &["Translate the site into German"]).unwrap();
+    ws.save().unwrap();
+    assert_eq!(ws.manifest.website_language, Some(WebsiteLanguage::Requested { tag: "fr".into() }), "the run's handle is still stale");
     assert!(check(&ws, 3)[0].note.contains("de"), "the new request must be checked even when the build is unchanged");
     assert_eq!(calls.get(), 2);
-    website.record_requests(&mut ws, &["Restore the original language"]).unwrap();
-    assert!(check(&ws, 4)[0].note.contains("Original"));
+    website.record_requests(&mut other, &["Restore the original language"]).unwrap();
+    assert!(check(&ws, self_check::SELF_CHECK_ROUND)[0].note.contains("Original"));
     assert_eq!(calls.get(), 3, "resetting the language checks again too");
 }

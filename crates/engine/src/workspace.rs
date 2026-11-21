@@ -822,6 +822,7 @@ impl Workspace {
         copy.save()?;
         let (budget, generate, builder, allowed, questions, approvals) =
             (m.asset_budget_usd, m.generate_assets, m.builder.clone(), m.allowed_actions.clone(), m.questions, m.approvals.clone());
+        let language = Workspace::open(&self.root)?.manifest.website_language;
         copy.set_person(|c| {
             c.asset_budget_usd = budget;
             c.generate_assets = generate;
@@ -829,7 +830,7 @@ impl Workspace {
             c.allowed_actions = allowed;
             c.questions = questions;
             c.approvals = approvals;
-            c.website_language.clone_from(&m.website_language);
+            c.website_language = language;
         })?;
         Ok(copy)
     }
@@ -2188,7 +2189,11 @@ mod tests {
         for language in [None, Some(WebsiteLanguage::Requested { tag: "de".into() }), Some(WebsiteLanguage::Original)] {
             let d = tempfile::tempdir().unwrap();
             let mut ws = Workspace::create(d.path(), "Site", "Rebuild this website in French", TargetRef::None).unwrap();
-            ws.set_person(|m| m.website_language = language.clone()).unwrap();
+            ws.set_person(|m| m.website_language = Some(WebsiteLanguage::Requested { tag: "fr".into() })).unwrap();
+            let mut other = Workspace::open(&ws.root).unwrap();
+            other.set_person(|m| m.website_language = language.clone()).unwrap();
+            ws.save().unwrap();
+            assert_eq!(ws.manifest.website_language, Some(WebsiteLanguage::Requested { tag: "fr".into() }), "the copying handle is still stale");
             let copy = ws.duplicate("Site copy").unwrap();
             assert_eq!(copy.manifest.website_language, language);
             assert_eq!(Workspace::open(&copy.root).unwrap().manifest.website_language, language, "the copy persists the current choice");

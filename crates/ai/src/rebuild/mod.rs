@@ -1206,7 +1206,7 @@ impl Worker {
     /// an error couldn't look at all (a browser that went away), which says nothing about the
     /// build, so it gets a second go before the run stops, and the run says what is really wrong.
     fn checks_with_a_retry(&self, ws: &Workspace, kind: &dyn kinds::TargetKind, round: u32) -> Result<Vec<CheckResult>, ToolError> {
-        self.checks_unless_unchanged(ws, kind, round, || self.checks_with_a_retry_now(ws, kind, round))
+        self.checks_unless_unchanged(ws, kind, round, |current| self.checks_with_a_retry_now(current, kind, round))
     }
 
     fn checks_with_a_retry_now(&self, ws: &Workspace, kind: &dyn kinds::TargetKind, round: u32) -> Result<Vec<CheckResult>, ToolError> {

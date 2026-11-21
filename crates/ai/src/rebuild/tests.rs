@@ -2991,7 +2991,7 @@ fn a_check_that_worked_stands_while_nothing_it_looks_at_changes() {
     let runs = Cell::new(0);
     let worked = Cell::new(true);
     let check = |ws: &Workspace, round| {
-        w.checks_unless_unchanged(ws, &SheetKind, round, || {
+        w.checks_unless_unchanged(ws, &SheetKind, round, |_| {
             runs.set(runs.get() + 1);
             Ok(vec![CheckResult::new(CheckResult::BUILD, round, worked.get(), "built")])
         })
@@ -3016,7 +3016,7 @@ fn a_check_that_worked_stands_while_nothing_it_looks_at_changes() {
     assert_eq!(runs.get(), 3);
     let deep = check_worker(&ws, true);
     *deep.kept_checks.lock().unwrap_or_else(PoisonError::into_inner) = std::mem::take(&mut *w.kept_checks.lock().unwrap_or_else(PoisonError::into_inner));
-    deep.checks_unless_unchanged(&ws, &SheetKind, 5, || {
+    deep.checks_unless_unchanged(&ws, &SheetKind, 5, |_| {
         runs.set(runs.get() + 1);
         Ok(vec![CheckResult::new(CheckResult::BUILD, 5, true, "built")])
     })
@@ -3039,7 +3039,7 @@ fn a_check_that_worked_stands_while_nothing_it_looks_at_changes() {
     let progress = BuildProgress { checked: saved.clone(), ..BuildProgress::default() };
     let next_run = check_worker(&ws, false);
     *next_run.kept_checks.lock().unwrap_or_else(PoisonError::into_inner) = kept_check::KeptChecks::from_saved(&progress, &ws);
-    let again = next_run.checks_unless_unchanged(&ws, &SheetKind, 9, || panic!("an unchanged build isn't checked again")).unwrap();
+    let again = next_run.checks_unless_unchanged(&ws, &SheetKind, 9, |_| panic!("an unchanged build isn't checked again")).unwrap();
     assert_eq!((again[0].round, again[0].note.as_str()), (9, "built"));
     // A copy of the project, with the same files, checks its own build.
     let other = tempfile::tempdir().unwrap();
@@ -3050,7 +3050,7 @@ fn a_check_that_worked_stands_while_nothing_it_looks_at_changes() {
     std::fs::copy(ws.reference_dir().join("look.png"), copy.reference_dir().join("look.png")).unwrap();
     let copied = Cell::new(false);
     next_run
-        .checks_unless_unchanged(&copy, &SheetKind, 10, || {
+        .checks_unless_unchanged(&copy, &SheetKind, 10, |_| {
             copied.set(true);
             Ok(Vec::new())
         })
