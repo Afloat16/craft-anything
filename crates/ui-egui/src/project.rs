@@ -358,7 +358,7 @@ impl CraftApp {
             let (message, shown) = (join(|n| &n.text), join(|n| &n.shown));
             let pictures: Vec<PathBuf> = left.iter().flat_map(|n| n.pictures.clone()).collect();
             let carried_note_ids = left.iter().map(|note| note.id).collect();
-            let request_parts = left.iter().map(|note| note.shown.clone()).collect();
+            let request_parts = left.clone();
             if open.as_ref() == Some(&root) {
                 if let Some(ws) = self.workspace.as_mut() {
                     let _ = ws.reload();
@@ -2195,8 +2195,7 @@ impl CraftApp {
         let files = match files {
             Ok(f) => f,
             Err(e) => {
-                self.state.project_input = text;
-                self.state.project_attachments = attachments;
+                self.restore_draft(text, attachments);
                 return self.toast(format!("{} {}", tr("Couldn't attach the pictures:"), e), true);
             }
         };
@@ -2208,8 +2207,7 @@ impl CraftApp {
                 let id = match run.add_note(message, shown, files.clone()) {
                     Ok(id) => id,
                     Err(error) => {
-                        self.state.project_input = text;
-                        self.state.project_attachments = attachments;
+                        self.restore_draft(text, attachments);
                         return self.toast(error.for_people(), true);
                     }
                 };
@@ -2227,16 +2225,18 @@ impl CraftApp {
     pub fn unsend(&mut self, id: u64) {
         let Some(note) = self.open_run().and_then(|r| r.unsend(id)) else { return };
         let (text, attachments) = self.drafts.remove(&id).map_or((note.shown, Vec::new()), |d| (d.text, d.attachments));
+        self.restore_draft(text, attachments);
+    }
+
+    fn restore_draft(&mut self, text: String, attachments: Vec<PathBuf>) {
         let input = &mut self.state.project_input;
         *input = if input.trim().is_empty() { text } else { format!("{text}\n{input}") };
-        // These were saved with the note, so put them back as they were. Size is checked again
-        // only when the message is sent.
         self.restore_attachments(attachments);
     }
 
     /// Start another run on the open project: with a message (already shown in the app's feed;
     /// `shown` puts it in the saved one, with `pictures`), or none to try again.
-    fn resume(&mut self, message: Option<String>, shown: Option<String>, pictures: Vec<PathBuf>, carried_note_ids: Vec<u64>, request_parts: Vec<String>) {
+    fn resume(&mut self, message: Option<String>, shown: Option<String>, pictures: Vec<PathBuf>, carried_note_ids: Vec<u64>, request_parts: Vec<Note>) {
         let Some(ws) = self.workspace.clone() else { return };
         let ws = Workspace::open(&ws.root).unwrap_or(ws);
         let Some(backend) = self.builder_backend(ws.manifest.builder.as_deref()) else { return self.need_builder(false) };
@@ -2273,6 +2273,31 @@ mod tests {
         assert!(app.open_run().unwrap().waiting().is_empty());
         assert!(app.state.toasts.iter().any(|(message, error)| *error && message.contains("no space for a later note")));
         assert_eq!(std::fs::read(&occupied).unwrap(), b"Keep this unrecognized record");
+    }
+
+    #[test]
+    fn failed_async_delivery_restores_the_old_draft_ahead_of_the_new_one() {
+        for copy_failed in [false, true] {
+            let d = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(d.path(), "Notes", "A notes app", TargetRef::None).unwrap();
+            let runs = rebuild::StandIns::new();
+            let mut app = crate::demo::app(crate::demo::engine(craft_anything_engine::Mode::Beginner, true));
+            app.runs = rebuild::RunSet::new(1).with_starter(runs.starter());
+            app.open_workspace(ws.clone());
+            app.runs.start(&app.hub, ws.clone(), RunOptions::default()).unwrap();
+            let dir = rebuild::notes::notes_dir(&ws.inbox_dir());
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("18446744073709551615.json"), b"reserved").unwrap();
+            let old = d.path().join("old.png");
+            let new = d.path().join("new.png");
+            app.state.project_input = "The newer draft".into();
+            app.state.project_attachments = vec![new.clone(), old.clone()];
+            let result = if copy_failed { Err("the copy failed".into()) } else { Ok(vec![ws.root.join("copied.png")]) };
+            app.deliver(ws.root.clone(), "The earlier draft".into(), vec![old.clone()], result);
+            assert_eq!(app.state.project_input, "The earlier draft\nThe newer draft");
+            assert_eq!(app.state.project_attachments, [new, old]);
+            assert!(app.open_run().unwrap().waiting().is_empty());
+        }
     }
 
     #[test]

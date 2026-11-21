@@ -1,8 +1,8 @@
 //! Notes the person adds while the builder works, handed over at the builder's next step instead
 //! of after its whole turn. The run writes each one to `inbox/notes/<id>.json`; a coding agent
 //! that runs a command after every tool call (Claude Code's PostToolUse hook, running
-//! `craft-anything-cli builder-notes <dir>`) claims what's there by renaming it to
-//! `<id>.read.json` and gives the text to the model. That is the one moment a note changes hands,
+//! `craft-anything-cli builder-notes <dir>`) claims what's there with a no-replace link to
+//! `<id>.read.json`, removes the waiting name and gives the text to the model. That is the one moment a note changes hands,
 //! so "take back" works until then. The run records the request's state before renaming that file
 //! to `<id>.recorded.json` and forgetting it; a claimed version-1 note is still recoverable until
 //! that recording completes. A restart may hand it over again, so this is at-least-once recovery.
@@ -135,6 +135,10 @@ pub(super) fn reserve_ids(dir: &Path) -> Result<(), ToolError> {
     IDS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).reserve(&used)
 }
 
+pub(super) fn reserve_after(id: u64) -> Result<(), ToolError> {
+    IDS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).reserve(&BTreeSet::from([id]))
+}
+
 pub(super) fn new_id() -> Result<u64, ToolError> {
     IDS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).allocate()
 }
@@ -179,7 +183,11 @@ fn left(dir: &Path) -> std::io::Result<Vec<LeftNote>> {
     files.sort_unstable_by_key(|(id, _, _)| *id);
     let mut notes: BTreeMap<u64, LeftNote> = BTreeMap::new();
     let mut completed = BTreeSet::new();
+    let mut active = BTreeSet::new();
     for (id, path, state) in files {
+        if state != State::Recorded {
+            active.insert(id);
+        }
         if !std::fs::symlink_metadata(&path)?.file_type().is_file() {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "the note isn't a regular file"));
         }
@@ -207,7 +215,7 @@ fn left(dir: &Path) -> std::io::Result<Vec<LeftNote>> {
             if state == State::Waiting { note.waiting = Some(bytes) } else { note.read = Some(bytes) }
         }
     }
-    if notes.keys().any(|id| completed.contains(id)) {
+    if active.iter().any(|id| completed.contains(id)) {
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "a completed note also has a waiting or claimed record"));
     }
     Ok(notes.into_values().collect())
@@ -289,9 +297,30 @@ fn restore_using(dir: &Path, note: &LeftNote, text: &str, carried: bool, after_p
     Ok(())
 }
 
+/// Keep a note out of the hook while a follow-up prompt waits for its builder turn.
+pub(super) fn carry_for_prompt(dir: &Path, id: u64, left: &Left) -> Result<(), ToolError> {
+    let mut batch = take_left(dir)?;
+    let note = match batch.iter().position(|note| note.id == id) {
+        Some(index) => batch.swap_remove(index),
+        None => {
+            for path in [pending(dir, id), read(dir, id), recorded(dir, id)] {
+                unchanged(&path, None)?;
+            }
+            hand_over(dir, id, &left.text, Some(left))?;
+            take_left(dir)?.into_iter().find(|note| note.id == id).ok_or_else(|| ToolError::invalid("The waiting note changed before delivery."))?
+        }
+    };
+    if &note.left != left {
+        return Err(ToolError::invalid("The waiting note changed before delivery; its records were kept."));
+    }
+    restore(dir, &note, &left.text, true)
+}
+
 /// Take a note back before the builder read it: true when it was still waiting.
 pub fn take_back(dir: &Path, id: u64) -> bool {
-    std::fs::remove_file(pending(dir, id)).is_ok()
+    // A claimer can have published its read link just before the waiting name is removed.
+    // The caller holds the queue lock, so completion cannot erase that evidence meanwhile.
+    std::fs::remove_file(pending(dir, id)).is_ok() && !was_read(dir, id)
 }
 
 /// The builder has read the note (it was claimed).
@@ -355,11 +384,20 @@ pub fn claim(dir: &Path) -> Vec<String> {
     ids.sort_unstable();
     ids.into_iter()
         .filter_map(|id| {
+            // An occupied completion name is not a waiting note, even if it is unreadable.
+            if !matches!(std::fs::symlink_metadata(recorded(dir, id)), Err(error) if error.kind() == std::io::ErrorKind::NotFound) {
+                return None;
+            }
             let (_, file) = std::fs::read(pending(dir, id)).ok().and_then(|bytes| decode(&bytes).ok().flatten())?;
             if file.id != id {
                 return None;
             }
-            std::fs::rename(pending(dir, id), read(dir, id)).ok()?;
+            std::fs::hard_link(pending(dir, id), read(dir, id)).ok()?;
+            // The read link owns delivery. Keep the old durable name if syncing the new
+            // link fails; a later hook cannot replace the read link or deliver it again.
+            if sync_directory(dir).is_ok() {
+                let _ = std::fs::remove_file(pending(dir, id));
+            }
             Some(file.text)
         })
         .collect()
@@ -390,6 +428,62 @@ mod tests {
 
     fn left_words(dir: &Path) -> std::io::Result<Vec<Left>> {
         left(dir).map(|notes| notes.into_iter().map(|note| note.left).collect())
+    }
+
+    #[test]
+    fn a_claim_preserves_an_occupied_read_record() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = notes_dir(d.path());
+        hand_over(&dir, 71, "waiting", None).unwrap();
+        let waiting = std::fs::read(pending(&dir, 71)).unwrap();
+        std::fs::write(read(&dir, 71), b"Keep this newer or damaged read record").unwrap();
+        assert!(claim(&dir).is_empty());
+        assert_eq!(std::fs::read(pending(&dir, 71)).unwrap(), waiting);
+        assert_eq!(std::fs::read(read(&dir, 71)).unwrap(), b"Keep this newer or damaged read record");
+    }
+
+    #[test]
+    fn a_completed_id_blocks_even_a_note_without_recovery_words() {
+        for (claimed, legacy) in [(false, false), (true, false), (false, true), (true, true)] {
+            let d = tempfile::tempdir().unwrap();
+            let dir = notes_dir(d.path());
+            hand_over(&dir, 71, "already recorded", None).unwrap();
+            assert_eq!(claim(&dir), ["already recorded"]);
+            mark_recorded(&dir, 71).unwrap();
+            hand_over(&dir, 71, "must not be delivered again", None).unwrap();
+            let active = if claimed {
+                std::fs::rename(pending(&dir, 71), read(&dir, 71)).unwrap();
+                read(&dir, 71)
+            } else {
+                pending(&dir, 71)
+            };
+            if legacy {
+                let mut value: Value = serde_json::from_slice(&std::fs::read(&active).unwrap()).unwrap();
+                value.as_object_mut().unwrap().remove("version");
+                value["left"] = serde_json::json!({"text": "legacy words", "shown": "legacy words", "pictures": []});
+                std::fs::write(&active, serde_json::to_vec(&value).unwrap()).unwrap();
+            }
+            let before = std::fs::read(&active).unwrap();
+            let completed = std::fs::read(recorded(&dir, 71)).unwrap();
+            assert!(take_left(&dir).unwrap_err().message.contains("completed note"));
+            assert!(claim(&dir).is_empty());
+            assert_eq!(std::fs::read(&active).unwrap(), before);
+            assert_eq!(std::fs::read(recorded(&dir, 71)).unwrap(), completed);
+            std::fs::remove_file(active).unwrap();
+            assert!(take_left(&dir).unwrap().is_empty(), "a lone completed record does not stop startup");
+        }
+    }
+
+    #[test]
+    fn a_published_claim_is_not_retractable_before_waiting_cleanup() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = notes_dir(d.path());
+        hand_over(&dir, 71, "already claimed", None).unwrap();
+        std::fs::hard_link(pending(&dir, 71), read(&dir, 71)).unwrap();
+        assert!(!take_back(&dir, 71), "removing the waiting name cannot retract the published claim");
+        assert!(was_read(&dir, 71));
+        assert!(claim(&dir).is_empty());
+        assert!(std::fs::read_to_string(read(&dir, 71)).unwrap().contains("already claimed"));
     }
 
     #[test]

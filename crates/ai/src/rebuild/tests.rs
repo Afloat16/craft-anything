@@ -561,7 +561,7 @@ fn notes_added_while_it_works_reach_the_agent_at_its_next_step() {
     let mut first = note(1, "Make it faster");
     first.questions = vec![asked];
     notes.lock().unwrap().extend([first, note(2, "A blue sky")]);
-    let (p, more) = w.added(&mut ws, true, true).unwrap().unwrap();
+    let NotePrompt { prompt: p, questions: more, .. } = w.added(&mut ws, true, true).unwrap().unwrap();
     assert!(p.contains("where is the score kept") && p.contains("- Make it faster (pictures: a.png)\n- A blue sky"), "{p}");
     assert_eq!(more.len(), 1, "the question is marked told after the turn");
     assert!(notes.lock().unwrap().is_empty(), "each note goes in once");
@@ -1932,6 +1932,9 @@ mod picking_up_a_build {
         fn record_requests(&self, ws: &mut Workspace, requests: &[&str]) -> Result<(), ToolError> {
             kind("website").record_requests(ws, requests)
         }
+        fn record_ordered_requests(&self, ws: &mut Workspace, requests: &[(u64, &str)]) -> Result<(), ToolError> {
+            kind("website").record_ordered_requests(ws, requests)
+        }
     }
 
     #[test]
@@ -2000,6 +2003,96 @@ mod picking_up_a_build {
     }
 
     #[test]
+    fn a_prepared_followup_note_survives_an_error_before_its_builder_turn() {
+        let b = bench();
+        let mut ws = Workspace::create(&b.projects, "Site", "Build the website in English", TargetRef::None).unwrap();
+        let dir = notes::notes_dir(&ws.inbox_dir());
+        let text = "Build the website in French";
+        let left = notes::Left { text: text.into(), shown: text.into(), pictures: Vec::new() };
+        notes::hand_over(&dir, 71, text, Some(&left)).unwrap();
+        let mut worker = check_worker(&ws, false);
+        worker.self_check = Some((kind("website"), 90.0));
+        worker.notes.lock().unwrap().push(Note { id: 71, text: text.into(), shown: text.into(), pictures: Vec::new(), questions: Vec::new() });
+        let NotePrompt { prompt, note_ids: ids, .. } = worker.added(&mut ws, false, true).unwrap().unwrap();
+        assert!(prompt.contains(text));
+        assert_eq!(ids, [71]);
+        assert!(dir.join("71.read.json").is_file(), "preparing a prompt is not successful delivery");
+        assert!(!dir.join("71.recorded.json").exists());
+        assert!(notes::claim(&dir).is_empty(), "the hook cannot also deliver the carried prompt");
+        let progress = ws.root.join(craft_anything_engine::workspace::progress::BUILD_PROGRESS_FILE);
+        std::fs::create_dir_all(&progress).unwrap();
+        assert!(BuildProgress::default().save(&ws.root).is_err());
+        drop(worker);
+        assert_eq!(notes::take_left(&dir).unwrap().len(), 1);
+        std::fs::remove_dir(progress).unwrap();
+        let mut opts = RunOptions::default();
+        opts.kinds.register(Arc::new(LanguageKind));
+        let (ok, feed) = try_with(&b, &Workspace::open(&ws.root).unwrap(), opts);
+        assert!(ok, "{feed:?}");
+        assert!(std::fs::read_to_string(&b.prompts).unwrap().contains(text));
+        assert!(notes::take_left(&dir).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_recovered_older_note_keeps_the_newer_saved_language_after_restart() {
+        use craft_anything_engine::workspace::WebsiteLanguage;
+        let b = bench();
+        let mut ws = Workspace::create(&b.projects, "Site", "Build the website in English", TargetRef::None).unwrap();
+        let dir = notes::notes_dir(&ws.inbox_dir());
+        let website = kind("website");
+        let old = "Build the website in German";
+        let new = "Build the website in French";
+        let left = notes::Left { text: old.into(), shown: old.into(), pictures: Vec::new() };
+        notes::hand_over(&dir, 71, old, Some(&left)).unwrap();
+        assert_eq!(notes::claim(&dir), [old]);
+        website.record_ordered_requests(&mut ws, &[(71, old)]).unwrap();
+        let mut worker = check_worker(&ws, false);
+        worker.self_check = Some((website, 90.0));
+        let left = notes::Left { text: new.into(), shown: new.into(), pictures: Vec::new() };
+        notes::hand_over(&dir, 72, new, Some(&left)).unwrap();
+        worker.notes.lock().unwrap().push(Note { id: 72, text: new.into(), shown: new.into(), pictures: Vec::new(), questions: Vec::new() });
+        assert_eq!(notes::claim(&dir), [new]);
+        worker.relay_read_notes(&mut ws).unwrap();
+        assert!(dir.join("71.read.json").exists());
+        drop(worker);
+
+        let mut opts = RunOptions::default();
+        opts.kinds.register(Arc::new(LanguageKind));
+        let (ok, feed) = try_with(&b, &Workspace::open(&ws.root).unwrap(), opts);
+        assert!(ok, "{feed:?}");
+        assert_eq!(Workspace::open(&ws.root).unwrap().manifest.website_language, Some(WebsiteLanguage::Requested { tag: "fr".into() }));
+        assert!(std::fs::read_to_string(&b.prompts).unwrap().contains(old), "the builder still receives the recoverable older note");
+        assert!(notes::take_left(&dir).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_recovered_note_keeps_its_place_between_carried_request_parts() {
+        use craft_anything_engine::workspace::WebsiteLanguage;
+        let b = bench();
+        let ws = Workspace::create(&b.projects, "Site", "Build the website in English", TargetRef::None).unwrap();
+        let dir = notes::notes_dir(&ws.inbox_dir());
+        let words = ["Build the website in German", "Build the website in French", "Make the header blue"];
+        let mut carried = Vec::new();
+        for (id, text) in (71..).zip(words) {
+            let left = notes::Left { text: text.into(), shown: text.into(), pictures: Vec::new() };
+            notes::hand_over(&dir, id, text, Some(&left)).unwrap();
+            if id != 72 {
+                carried.push(Note { id, text: text.into(), shown: text.into(), pictures: Vec::new(), questions: Vec::new() });
+            }
+        }
+        let joined = [words[0], words[2]].join("\n\n");
+        let mut opts =
+            RunOptions { message: Some(joined.clone()), shown: Some(joined), carried_note_ids: vec![71, 73], request_parts: carried, ..RunOptions::default() };
+        opts.kinds.register(Arc::new(LanguageKind));
+        let (ok, feed) = try_with(&b, &ws, opts);
+        assert!(ok, "{feed:?}");
+        assert_eq!(Workspace::open(&ws.root).unwrap().manifest.website_language, Some(WebsiteLanguage::Requested { tag: "fr".into() }));
+        assert!(std::fs::read_to_string(&b.prompts).unwrap().contains(&words.join("\n\n")), "the actual initial prompt follows the original note order");
+        assert_eq!(prompts_given(&b), 1);
+        assert!(notes::take_left(&dir).unwrap().is_empty());
+    }
+
+    #[test]
     fn carried_note_records_survive_failure_before_any_builder_turn() {
         struct RefusesRequest;
         impl TargetKind for RefusesRequest {
@@ -2035,7 +2128,7 @@ mod picking_up_a_build {
             message: Some(text.into()),
             shown: Some(text.into()),
             carried_note_ids: vec![71],
-            request_parts: vec![text.into()],
+            request_parts: vec![Note { id: 71, text: text.into(), shown: text.into(), pictures: Vec::new(), questions: Vec::new() }],
             ..RunOptions::default()
         };
         opts.kinds.register(Arc::new(RefusesRequest));
@@ -2104,7 +2197,7 @@ mod picking_up_a_build {
                     message: Some(text.into()),
                     shown: Some(text.into()),
                     carried_note_ids: vec![71],
-                    request_parts: vec![text.into()],
+                    request_parts: vec![Note { id: 71, text: text.into(), shown: text.into(), pictures: Vec::new(), questions: Vec::new() }],
                     ..RunOptions::default()
                 };
                 opts.kinds.register(Arc::new(LanguageKind));
@@ -4188,8 +4281,10 @@ fn a_note_the_builder_took_at_a_step_joins_the_feed_and_isnt_sent_again() {
         reset_progress_after_notes: false,
     };
     let dir = notes::notes_dir(&ws.inbox_dir());
-    notes::hand_over(&dir, 1, "make the header blue", None).unwrap();
-    notes::hand_over(&dir, 2, "add a footer", None).unwrap();
+    for (id, text) in [(1, "make the header blue"), (2, "add a footer")] {
+        let left = notes::Left { text: text.into(), shown: text.into(), pictures: Vec::new() };
+        notes::hand_over(&dir, id, text, Some(&left)).unwrap();
+    }
     // The agent's hook takes the first one at a step; the second comes in after it.
     std::fs::rename(dir.join("2.json"), dir.join("2.wait")).unwrap();
     assert_eq!(notes::claim(&dir), ["make the header blue"]);
@@ -4200,7 +4295,7 @@ fn a_note_the_builder_took_at_a_step_joins_the_feed_and_isnt_sent_again() {
     assert_eq!(shown, ["make the header blue"], "it joins the feed as soon as the builder took it");
     assert!(!notes::was_read(&dir, 1), "its files are gone");
     // After the turn, only the note nobody took is sent, and no hook can hand it over again.
-    let (follow, _) = w.added(&mut ws, true, true).unwrap().unwrap();
+    let NotePrompt { prompt: follow, .. } = w.added(&mut ws, true, true).unwrap().unwrap();
     assert!(follow.contains("add a footer") && !follow.contains("make the header blue"), "{follow}");
     assert!(notes::claim(&dir).is_empty());
 }

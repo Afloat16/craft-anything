@@ -1357,7 +1357,14 @@ claimed through startup and failed turns, rather than being offered to the hook 
 
 **A combined message erased request order and boundaries.** Only note ids actually joined by
 the caller are already carried. Prepend older recovered words before a genuinely new message,
-and pass the original shown requests separately to the policy recorder: a quoted observation
-must not prevent a later language request from being recognized. Once a hook has delivered a
+merge recovered parts between carried parts by their persistent ids, and pass the original
+shown requests separately to the policy recorder: a quoted observation must not prevent a later
+language request from being recognized. Save the latest explicit request id with the choice, so
+replaying an older request after a restart cannot undo it. Once a hook has delivered a
 nonempty note, set the pending progress reset before any fallible request/completion recording;
 an after-turn note whose recording failed has not yet been sent and must not claim consumption.
+
+**Preparing a follow-up prompt was mistaken for delivery.** A progress save or process exit can
+stop the run before its next builder turn. Keep those notes claimed and recoverable until the
+turn succeeds; use a no-replace claim so another hook preserves an occupied read record. A
+completed id must block every active record, not only those with words eligible for recovery.

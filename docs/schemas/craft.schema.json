@@ -176,6 +176,15 @@
           "type": "null"
         }
       ]
+    },
+    "website_language_request_id": {
+      "description": "The latest explicit language request's persistent id, saved with its choice.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
     }
   },
   "required": [

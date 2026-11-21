@@ -26,9 +26,10 @@ fn website_language_follows_delivered_notes_and_survives_restart() {
     // A following turn consumes these together, in delivery order; the final explicit request wins.
     for (id, text) in [(72, "Translate the site into Italian"), (73, "Restore the original language"), (74, "Make the header blue")] {
         worker.notes.lock().unwrap().push(note(id, text));
-        notes::hand_over(&inbox, id, text, None).unwrap();
+        let left = notes::Left { text: text.into(), shown: text.into(), pictures: Vec::new() };
+        notes::hand_over(&inbox, id, text, Some(&left)).unwrap();
     }
-    let (prompt, _) = worker.added(&mut ws, false, true).unwrap().unwrap();
+    let NotePrompt { prompt, .. } = worker.added(&mut ws, false, true).unwrap().unwrap();
     assert!(prompt.contains("Restore the original language"));
     assert!(notes::claim(&inbox).is_empty(), "a hook cannot deliver the same notes again");
     ws.reload().unwrap();

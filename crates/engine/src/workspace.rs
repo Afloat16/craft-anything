@@ -81,11 +81,11 @@ fn copy_tree(from: &Path, to: &Path, skip: &dyn Fn(&Path) -> bool, depth: usize)
 }
 
 /// The current `craft.json` format version. Bumping it means appending a step to [`MANIFEST_STEPS`].
-pub const MANIFEST_VERSION: u32 = 6;
+pub const MANIFEST_VERSION: u32 = 7;
 
 /// The steps that bring an older `craft.json` forward; step `i` goes from version `i` to `i + 1`.
 const MANIFEST_STEPS: &[versioned::Step<Value>] =
-    &[manifest_v0_to_v1, manifest_v1_to_v2, manifest_v2_to_v3, manifest_v3_to_v4, manifest_v4_to_v5, manifest_v5_to_v6];
+    &[manifest_v0_to_v1, manifest_v1_to_v2, manifest_v2_to_v3, manifest_v3_to_v4, manifest_v4_to_v5, manifest_v5_to_v6, manifest_v6_to_v7];
 const _: () = assert!(MANIFEST_STEPS.len() == MANIFEST_VERSION as usize, "one step per craft.json version");
 
 /// Version 0 (no `version` field) has the same shape as version 1; only the number is new.
@@ -134,6 +134,12 @@ fn manifest_v4_to_v5(doc: &mut Value) -> Result<(), String> {
 /// version are read-only, so they cannot drop it and revive the initial request's language.
 /// An older process that already opened version 5 must be closed before this version is saved.
 fn manifest_v5_to_v6(doc: &mut Value) -> Result<(), String> {
+    if doc.is_object() { Ok(()) } else { Err("the manifest isn't a JSON object".into()) }
+}
+
+/// Version 7 keeps the request order with the language choice, so an older pending note
+/// cannot replace a newer choice after a restart. Version 6 has no ordering evidence.
+fn manifest_v6_to_v7(doc: &mut Value) -> Result<(), String> {
     if doc.is_object() { Ok(()) } else { Err("the manifest isn't a JSON object".into()) }
 }
 
@@ -419,6 +425,9 @@ pub struct Manifest {
     /// None predates this record or means no language was explicitly requested.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub website_language: Option<WebsiteLanguage>,
+    /// The latest explicit language request's persistent id, saved with its choice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub website_language_request_id: Option<u64>,
     pub target: TargetRef,
     /// The stack chosen for the build ("React + TypeScript (Vite)", "Rust + Bevy"…).
     #[serde(default)]
@@ -516,6 +525,7 @@ impl Manifest {
             name: name.trim().to_string(),
             request: request.trim().to_string(),
             website_language: None,
+            website_language_request_id: None,
             target,
             stack: String::new(),
             status: Status::New,
@@ -564,6 +574,7 @@ impl Manifest {
         self.approvals.clone_from(&other.approvals);
         self.name.clone_from(&other.name);
         self.website_language.clone_from(&other.website_language);
+        self.website_language_request_id = other.website_language_request_id;
     }
 }
 
@@ -1887,7 +1898,8 @@ mod tests {
         assert_eq!(Workspace::list(dir.path().parent().unwrap()).iter().filter(|w| w.root == dir.path()).count(), 1, "still listed");
 
         // A newer manifest whose shape this build can't read at all is refused, in plain words.
-        std::fs::write(dir.path().join(MANIFEST), r#"{"version": 7, "name": {"parts": []}}"#).unwrap();
+        let unreadable = serde_json::json!({"version": MANIFEST_VERSION + 1, "name": {"parts": []}});
+        std::fs::write(dir.path().join(MANIFEST), serde_json::to_vec(&unreadable).unwrap()).unwrap();
         let err = Workspace::open(dir.path()).unwrap_err();
         assert_eq!(err.code, ErrorCode::NotSupported);
         assert!(err.message.contains("newer Craft Anything") && err.remediation.is_some());
@@ -2016,6 +2028,15 @@ mod tests {
         assert_eq!(roots(&[many.clone(), own.clone(), a.root.clone(), d.path().join("gone")]), all);
         assert_eq!(roots(std::slice::from_ref(&many)), [a.root.clone(), b.root.clone()]);
         assert_eq!(Workspace::list(&many).len(), 2);
+    }
+
+    #[test]
+    fn a_version_6_language_choice_migrates_without_inventing_request_order() {
+        let old = br#"{"version":6,"name":"Old","request":"A website","target":{"kind":"none"},"created_ms":1,"updated_ms":1,"website_language":{"kind":"requested","tag":"fr"}}"#;
+        let manifest = read_manifest(old).unwrap();
+        assert_eq!(manifest.version, MANIFEST_VERSION);
+        assert_eq!(manifest.website_language, Some(WebsiteLanguage::Requested { tag: "fr".into() }));
+        assert_eq!(manifest.website_language_request_id, None);
     }
 
     #[test]

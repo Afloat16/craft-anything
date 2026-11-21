@@ -137,17 +137,44 @@ fn requested(text: &str) -> Option<WebsiteLanguage> {
 }
 
 pub(super) fn record(ws: &mut Workspace, requests: &[&str]) -> Result<(), ToolError> {
-    // A worker may have waited while an earlier run changed the person's choice.
-    let saved = Workspace::open(&ws.root)?.manifest.website_language;
+    let saved = Workspace::open(&ws.root)?.manifest.website_language_request_id.unwrap_or(0);
+    let requests = requests
+        .iter()
+        .enumerate()
+        .map(|(offset, text)| {
+            let id = saved
+                .checked_add(offset as u64)
+                .and_then(|id| id.checked_add(1))
+                .ok_or_else(|| ToolError::invalid("The website-language request ids have no space for a later request."))?;
+            Ok((id, *text))
+        })
+        .collect::<Result<Vec<_>, ToolError>>()?;
+    record_ordered(ws, &requests)
+}
+
+pub(super) fn record_ordered(ws: &mut Workspace, requests: &[(u64, &str)]) -> Result<(), ToolError> {
+    let current = Workspace::open(&ws.root)?.manifest;
+    let saved = current.website_language;
+    let order = current.website_language_request_id;
     let initial = saved.clone().or_else(|| requested(&ws.manifest.request));
-    let next = requests.iter().filter_map(|text| requested(text)).next_back().or(initial);
-    if next != saved {
-        if let Err(error) = ws.set_person(|m| m.website_language = next) {
+    let latest = requests
+        .iter()
+        .filter(|(id, _)| order.is_none_or(|saved| *id > saved))
+        .filter_map(|(id, text)| requested(text).map(|choice| (*id, choice)))
+        .max_by_key(|(id, _)| *id);
+    let (next, next_order) = latest.map_or((initial, order), |(id, choice)| (Some(choice), Some(id)));
+    if next != saved || next_order != order {
+        if let Err(error) = ws.set_person(|m| {
+            m.website_language = next;
+            m.website_language_request_id = next_order;
+        }) {
             ws.manifest.website_language = saved;
+            ws.manifest.website_language_request_id = order;
             return Err(error);
         }
     } else {
         ws.manifest.website_language = next;
+        ws.manifest.website_language_request_id = next_order;
     }
     Ok(())
 }
@@ -299,6 +326,24 @@ mod tests {
     }
 
     #[test]
+    fn saved_request_order_survives_equal_choices_old_writers_and_original_reset() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(dir.path(), "site", "Rebuild this website in English", TargetRef::None).unwrap();
+        let stale = Workspace::open(&ws.root).unwrap();
+        record_ordered(&mut ws, &[(71, "Build the website in French")]).unwrap();
+        record_ordered(&mut ws, &[(73, "Build the website in French")]).unwrap();
+        stale.save().unwrap();
+        let mut restarted = Workspace::open(&ws.root).unwrap();
+        record_ordered(&mut restarted, &[(72, "Build the website in German")]).unwrap();
+        assert_eq!(restarted.manifest.website_language, Some(french()));
+        assert_eq!(restarted.manifest.website_language_request_id, Some(73));
+        record_ordered(&mut restarted, &[(74, "Restore the original language")]).unwrap();
+        record_ordered(&mut restarted, &[(73, "Build the website in French")]).unwrap();
+        assert_eq!(Workspace::open(&ws.root).unwrap().manifest.website_language, Some(WebsiteLanguage::Original));
+        assert_eq!(Workspace::open(&ws.root).unwrap().manifest.website_language_request_id, Some(74));
+    }
+
+    #[test]
     fn website_language_survives_followups_old_writers_and_original_reset() {
         let dir = tempfile::tempdir().unwrap();
         let mut ws = Workspace::create(dir.path(), "site", "Rebuild this website in French", TargetRef::None).unwrap();
@@ -317,8 +362,9 @@ mod tests {
         let mut old = serde_json::to_value(&ws.manifest).unwrap();
         old["version"] = 5.into();
         old.as_object_mut().unwrap().remove("website_language");
+        old.as_object_mut().unwrap().remove("website_language_request_id");
         let upgraded = craft_anything_engine::workspace::read_manifest(&serde_json::to_vec(&old).unwrap()).unwrap();
-        assert_eq!(upgraded.version, 6);
+        assert_eq!(upgraded.version, craft_anything_engine::workspace::MANIFEST_VERSION);
         assert_eq!(upgraded.website_language, None);
     }
 }

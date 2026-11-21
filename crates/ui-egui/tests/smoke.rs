@@ -2307,7 +2307,7 @@ fn finished_notes_carry_their_ids_and_request_boundaries_to_the_next_run() {
     assert_eq!(observed.len(), 2);
     assert!(observed[0].carried_note_ids.is_empty() && observed[0].request_parts.is_empty());
     assert_eq!(observed[1].carried_note_ids, ids, "only the ids actually joined by take_notes are carried");
-    assert_eq!(observed[1].request_parts, parts);
+    assert_eq!(observed[1].request_parts.iter().map(|part| (part.id, part.shown.as_str())).collect::<Vec<_>>(), ids.into_iter().zip(parts).collect::<Vec<_>>());
     assert_eq!(observed[1].message.as_deref(), Some(parts.join("\n\n").as_str()));
     assert_eq!(observed[1].shown, observed[1].message);
 }

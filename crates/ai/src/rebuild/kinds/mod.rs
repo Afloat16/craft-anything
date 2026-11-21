@@ -128,6 +128,11 @@ pub trait TargetKind: Send + Sync {
     fn record_requests(&self, _ws: &mut Workspace, _requests: &[&str]) -> Result<(), ToolError> {
         Ok(())
     }
+    /// The stable order of requests, including notes recovered after a later request was saved.
+    fn record_ordered_requests(&self, ws: &mut Workspace, requests: &[(u64, &str)]) -> Result<(), ToolError> {
+        let texts: Vec<_> = requests.iter().map(|(_, text)| *text).collect();
+        self.record_requests(ws, &texts)
+    }
     /// The result can't be photographed from outside, so the builder screenshots its own.
     fn self_screenshots(&self) -> bool {
         true

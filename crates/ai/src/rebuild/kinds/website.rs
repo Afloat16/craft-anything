@@ -224,6 +224,10 @@ impl TargetKind for WebsiteKind {
         super::website_language::record(ws, requests)
     }
 
+    fn record_ordered_requests(&self, ws: &mut Workspace, requests: &[(u64, &str)]) -> Result<(), ToolError> {
+        super::website_language::record_ordered(ws, requests)
+    }
+
     fn checks(&self, ws: &Workspace) -> Vec<Box<dyn Check>> {
         // A site made from a request alone has nothing to compare with: it must build.
         if matches!(ws.manifest.target, TargetRef::Website { .. }) { vec![Box::new(WebVisualCheck)] } else { vec![Box::new(BuildCheck)] }

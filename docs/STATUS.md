@@ -514,8 +514,9 @@ phrasing is not inferred. Matching is case-insensitive at subtag boundaries: `fr
 translation quality. Missing capture evidence is unknown, and an absent or wrong declaration
 fails its own claim. Layout, screenshots, structure and other health checks remain.
 
-The latest explicit request is saved in `craft.json` version 6, including "restore the original
-language". Follow-ups and delivered notes update it; queued notes do not. A stale worker save
+The latest explicit request and its persistent request id are saved together in `craft.json`
+version 7, including "restore the original language". A recovered older request can still reach
+the builder but cannot replace a newer saved choice. Follow-ups and notes prepared for delivery update it; retractable queued notes do not. A stale worker save
 preserves the saved choice, and a failed choice write keeps the note available and stops the
 check. Version-1 note files distinguish builder hand-over from completed request-state recording:
 a claimed note whose recording failed is recovered by a restarted run, while a completed record
@@ -529,16 +530,22 @@ Restart inspects the complete note batch without removing it. Recovered notes ke
 their current-mode waiting copies are synced before old claimed copies are removed, and the
 entire queue is installed before the worker starts. Unknown or unreadable batches stop startup
 and stay at their original paths. Legacy waiting records are upgraded before becoming carried
-claimed records; genuine legacy claimed records keep their earlier exclusion. New ids follow every existing numeric record name and refuse
+claimed records; genuine legacy claimed records keep their earlier exclusion. New ids follow every existing numeric record name and the saved language-request id, and refuse
 overflow. The desktop explicitly identifies notes joined into its next message; those records
-remain recoverable until that initial builder turn succeeds. An unrelated follow-up carries
+remain recoverable until that initial builder turn succeeds. A prepared follow-up prompt keeps
+its records claimed through intervening progress-save failures and until its builder turn succeeds.
+Hooks cannot overwrite occupied read records or claim completed ids; startup rejects every
+active/completed id collision, even without recoverable words. An unrelated follow-up carries
 older waiting words before the new request instead of deleting them or delivering them later
-out of order. Original request boundaries are retained for policy recording, including when
-an older observation contains quoted text. A claimed nonempty note resets the unchanged-turn
+out of order. Original request ids and boundaries are retained for policy recording and prompt construction,
+so recovered notes keep their place between carried requests, including when an older observation
+contains quoted text. Async delivery failures prepend the earlier draft and restore its attachments
+without replacing a newer draft. A claimed nonempty note resets the unchanged-turn
 allowance even if saving its request state or completion mark fails; notes not yet delivered
 do not claim that reset. File handoff is at-least-once; it is not a transaction with an external
 model's processing, and directory syncing follows the host platform's supported operations.
-Version 5 projects migrate without inventing a language choice. Policy, persisted
+Version 5 projects migrate without inventing a language choice; version 6 choices migrate without
+inventing historical request ids. Policy, persisted
 project, note-delivery and write-failure regressions cover these paths; the original text
 policy fails the translated-page and wrong-declaration regressions. No live browser rebuild
 or translation-quality evaluation is claimed. A captured menu state whose translated label

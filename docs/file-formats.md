@@ -7,7 +7,7 @@ version up to the current one, then turn the document into Rust types. The step 
 
 | File | Owner | Current version | Older files | Newer files |
 |---|---|---|---|---|
-| `<project>/craft.json` | `engine::workspace` (`Manifest`) | `MANIFEST_VERSION` = 6 (`version`; missing = 0; 3 adds `approvals`, 4 adds the saved builder session's mode `agent_session_deep`, 5 adds the current capture's mode `capture_deep`, 6 adds the person's saved `website_language` choice; a version-3 session and a version-4 capture migrate as Deep) | brought forward, saved as current | opened read-only: saving is refused; close older processes that already opened the project before upgrading it |
+| `<project>/craft.json` | `engine::workspace` (`Manifest`) | `MANIFEST_VERSION` = 7 (`version`; missing = 0; 3 adds `approvals`, 4 adds the saved builder session's mode `agent_session_deep`, 5 adds the current capture's mode `capture_deep`, 6 adds the person's saved `website_language` choice, 7 saves `website_language_request_id` with that choice; a version-3 session and a version-4 capture migrate as Deep) | brought forward, saved as current | opened read-only: saving is refused; close older processes that already opened the project before upgrading it |
 | `<project>/inbox/build-progress.json` | `engine::workspace::progress` (`BuildProgress`; written only by the rebuild run) | `BUILD_PROGRESS_VERSION` = 2 (`version`; missing = 0; 2 adds `checked`, the round kept while nothing it looked at changes) | brought forward; an absent file starts with no counted turns | the build stops and the record is left unchanged |
 | `<project>/inbox/notes/<id>*.json` | `ai::rebuild::notes` (`NoteFile`, JSON Schema derived with `JsonSchema`) | 1 (`{version, id, text, left}`; `left` is the person's `{text, shown, pictures}`) | unversioned waiting notes keep their original words; legacy `.read.json` files remain excluded from replay | not claimed; restart preserves the notes directory beside the inbox instead of clearing it |
 | `config.toml` (`settings::config_dir()`) | `engine::settings` (`Settings`) | `SETTINGS_VERSION` = 2 (`version`; missing = 0; 2 moved `[engines.ghidra] enabled` to `deep_mode`) | brought forward | loaded, never saved over |
@@ -36,14 +36,27 @@ can still fail. Only after that recording succeeds does the worker rename the fi
 `<id>.recorded.json`, then remove it. A failed completion rename keeps the claimed note and returns
 an error; a completed record left after a cleanup failure is excluded from replay.
 
-Restart reads the full waiting/claimed set before clearing completed records. Version-1 waiting
-and claimed notes with kept original words are recovered in id order. This is at-least-once
-recovery: a builder can receive a previously claimed note again after an interrupted recording.
-Legacy claimed notes carry no evidence that request recording was unfinished, so they retain
-their earlier excluded behavior. An unreadable entry or a newer format preserves the directory
-as `notes-unread-<time>` instead of clearing it. In a live run, only a continuous read prefix of
-the id-ordered queue is recorded, so a claim arriving during the scan cannot apply a newer
-language before an earlier request.
+Restart validates the full waiting/claimed/completed set before changing any record. Version-1
+waiting and claimed notes with kept original words are recovered in id order. An active and a
+completed record sharing an id stop startup even if the active record has no recovery words;
+the live hook also refuses to claim that collision. A lone completed record does not replay.
+Unreadable entries or newer formats stop startup with the directory unchanged. Legacy claimed
+notes carry no evidence that request recording was unfinished, so they remain excluded.
+
+The initial message carries each note's id and original request boundaries. Recovered notes are
+merged between those parts in id order, before an unrelated new message. The language choice
+and the id of its latest explicit request are saved together in `craft.json`. A delayed older
+note can still reach the builder after a restart, but it cannot replace a newer saved language
+choice. New request ids advance beyond that saved id and all occupied note filenames; exhaustion
+returns an error. Version-6 language choices have no ordering evidence and migrate without an
+invented id; the next explicit request establishes their ordering record.
+
+Recovery remains at-least-once: a builder can receive a previously claimed note again after an
+interrupted recording. Carried initial notes and notes prepared for a follow-up prompt remain
+claimed until their builder turn succeeds; a failed intervening progress save leaves them
+recoverable. Claiming uses a no-replace link so an existing read record is preserved for inspection.
+In a live run, only a continuous read prefix of the id-ordered queue is recorded, so a claim
+arriving during a scan cannot apply a newer language before an earlier request.
 
 ## Stand-in cached responses
 

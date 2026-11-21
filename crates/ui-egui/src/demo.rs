@@ -246,6 +246,7 @@ fn workspace(slug: &str, name: &str, request: &str, target: TargetRef, status: S
             not_working_checks: 0,
             decompiled: false,
             website_language: None,
+            website_language_request_id: None,
         },
     }
 }

@@ -135,9 +135,9 @@ pub struct RunOptions {
     /// Persistent note ids the caller explicitly included in `message` (the desktop's
     /// finished-run handoff). A different follow-up message does not acknowledge old notes.
     pub carried_note_ids: Vec<u64>,
-    /// Original request boundaries when a caller joins several notes into one message.
+    /// Original requests, including their ids and words, when a caller joins several notes.
     /// Empty keeps the ordinary single `shown`/`message` request.
-    pub request_parts: Vec<String>,
+    pub request_parts: Vec<Note>,
     /// Pick up a build whose last run stopped part-way (paused, the app closed, the computer
     /// stopped): Study isn't repeated when it was done, and an agent with a saved session is
     /// told to carry on rather than given the brief again. A run with no message on a project
@@ -196,6 +196,14 @@ pub struct Note {
     /// they're marked told when the builder reads the note or when the after-turn path sends it.
     /// The raw note text stays in [`text`](Self::text), so a later run filters them by its mode.
     pub questions: Vec<AskedQuestion>,
+}
+
+/// A prepared follow-up and the records kept until its builder turn succeeds.
+#[derive(Debug)]
+struct NotePrompt {
+    prompt: String,
+    questions: Vec<AskedQuestion>,
+    note_ids: Vec<u64>,
 }
 
 /// The note text with the latest Just-ask answers this mode may show. `skip` holds answers an
@@ -326,7 +334,10 @@ impl RebuildRun {
         let inbox = Inbox::new(ws.inbox_dir());
         let dir = notes::notes_dir(&ws.inbox_dir());
         let left = notes::take_left(&dir)?;
-        prepend_older_notes(&mut opts, &left);
+        if let Some(id) = ws.manifest.website_language_request_id {
+            notes::reserve_after(id)?;
+        }
+        prepend_older_notes(&mut opts, &left)?;
         let mut waiting: Vec<Note> = Vec::new();
         let mut carried = Vec::new();
         // Install every durable takeover and its queue entry before the worker can finish or
@@ -417,6 +428,10 @@ impl RebuildRun {
     pub fn add_note(&self, text: String, shown: String, pictures: Vec<PathBuf>) -> Result<u64, ToolError> {
         let dir = notes::notes_dir(self.inbox.dir());
         notes::reserve_ids(&dir)?;
+        let ws = Workspace::open(&self.root)?;
+        if let Some(id) = ws.manifest.website_language_request_id {
+            notes::reserve_after(id)?;
+        }
         let id = notes::new_id()?;
         let mut file_text = text.clone();
         let mut questions = Vec::new();
@@ -426,9 +441,7 @@ impl RebuildRun {
                 let notes = self.notes.lock().unwrap_or_else(PoisonError::into_inner);
                 notes.iter().flat_map(|n| n.questions.iter().cloned()).collect()
             };
-            if let Ok(ws) = Workspace::open(&self.root) {
-                (file_text, questions) = note_with_just_asked(file_text, &ws, self.clean_room, &waiting);
-            }
+            (file_text, questions) = note_with_just_asked(file_text, &ws, self.clean_room, &waiting);
         }
         // Also left for an agent that takes notes at its next step; without it, after the turn.
         // The in-memory note keeps the raw text: if a later run takes it, that run filters the
@@ -722,23 +735,26 @@ impl Worker {
 
     /// The prompt for notes the person added while the agent worked, if there are any, and the
     /// Just-ask answers it carries so they're marked told once the turn finishes.
-    fn added(&self, ws: &mut Workspace, deep: bool, sees_pictures: bool) -> Result<Option<(String, Vec<AskedQuestion>)>, ToolError> {
+    fn added(&self, ws: &mut Workspace, deep: bool, sees_pictures: bool) -> Result<Option<NotePrompt>, ToolError> {
         let mut notes = std::mem::take(&mut *self.notes.lock().unwrap_or_else(PoisonError::into_inner));
         if notes.is_empty() {
             return Ok(None);
         }
         notes.sort_by_key(|note| note.id);
-        let requests: Vec<&str> = notes.iter().filter(|n| !n.text.trim().is_empty()).map(|n| n.shown.as_str()).collect();
-        if let Err(error) = self.record_note_requests(ws, &notes, &requests) {
+        let dir = notes::notes_dir(&ws.inbox_dir());
+        let mut prepare = || {
+            self.record_request_texts(ws, &notes)?;
+            for note in notes.iter().filter(|note| !note.text.trim().is_empty()) {
+                let left = notes::Left { text: note.text.clone(), shown: note.shown.clone(), pictures: note.pictures.clone() };
+                notes::carry_for_prompt(&dir, note.id, &left)?;
+            }
+            Ok(())
+        };
+        if let Err(error) = prepare() {
             let mut waiting = self.notes.lock().unwrap_or_else(PoisonError::into_inner);
             notes.append(&mut *waiting);
             *waiting = notes;
             return Err(error);
-        }
-        // They go in this message, so no hook hands them over again.
-        let dir = notes::notes_dir(&ws.inbox_dir());
-        for n in &notes {
-            notes::forget(&dir, n.id);
         }
         notes.retain(|n| !n.text.trim().is_empty());
         if notes.is_empty() {
@@ -757,8 +773,9 @@ impl Worker {
         let mut questions = attached;
         questions.extend(extra);
         let context = just_asked(&questions);
+        let note_ids = notes.iter().map(|note| note.id).collect();
         let texts: Vec<String> = notes.into_iter().map(|n| n.text).collect();
-        Ok(Some((context + &added_prompt(&texts) + &pictures_reminder(ws, sees_pictures), questions)))
+        Ok(Some(NotePrompt { prompt: context + &added_prompt(&texts) + &pictures_reminder(ws, sees_pictures), questions, note_ids }))
     }
 
     /// Decides an ACP builder's permission requests with the same policy Claude Code's approval
@@ -890,10 +907,8 @@ impl Worker {
         self.self_check = Some((kind.clone(), opts.good_enough));
         let kind = kind.as_ref();
         // Attachment paths added to the builder's message aren't instructions from the person.
-        let request = opts.message.as_deref().map(|message| opts.shown.as_deref().unwrap_or(message));
-        let requests =
-            if opts.request_parts.is_empty() { request.into_iter().collect::<Vec<_>>() } else { opts.request_parts.iter().map(String::as_str).collect() };
-        kind.record_requests(ws, &requests)?;
+        let requests: Vec<_> = opts.request_parts.iter().map(|note| (note.id, note.shown.as_str())).collect();
+        kind.record_ordered_requests(ws, &requests)?;
         self.editor = self.find_editor(&ws.manifest.stack)?;
         // A new build whose stack's program is missing would learn so only at its first check,
         // after a whole turn (#1837). A project already in app/ isn't stopped: the person may
@@ -1025,7 +1040,7 @@ impl Worker {
                 }
                 let reply = match reply {
                     Ok(reply) => {
-                        // These notes were explicitly in the initial prompt. Keep their read
+                        // These notes were explicitly carried in this prompt. Keep their read
                         // records through startup and failed turns; only a successful delivery
                         // and the request-state save above allow completion acknowledgement.
                         let dir = notes::notes_dir(&ws.inbox_dir());
@@ -1084,12 +1099,13 @@ impl Worker {
                     progress.save(&ws.root)?;
                 }
                 // What the person added while the agent worked goes in before anything else.
-                if let Some((p, more)) = self.added(ws, deep, sees_pictures)? {
-                    asked.extend(more);
+                if let Some(added) = self.added(ws, deep, sees_pictures)? {
+                    carried_note_ids.extend(added.note_ids);
+                    asked.extend(added.questions);
                     progress.reset();
                     progress.save(&ws.root)?;
                     ws.manifest.not_working_checks = 0;
-                    prompt = p;
+                    prompt = added.prompt;
                     continue;
                 }
                 if !reminded && needs_decompile_reminder(deep, &ws.manifest) {
@@ -1114,12 +1130,13 @@ impl Worker {
             for c in &checks {
                 self.emit(RunEvent::Checked(c.clone()));
             }
-            if let Some((p, more)) = self.added(ws, deep, sees_pictures)? {
-                asked.extend(more);
+            if let Some(added) = self.added(ws, deep, sees_pictures)? {
+                carried_note_ids.extend(added.note_ids);
+                asked.extend(added.questions);
                 progress.reset();
                 progress.save(&ws.root)?;
                 ws.manifest.not_working_checks = 0;
-                prompt = p;
+                prompt = added.prompt;
                 continue;
             }
             let kind_checks = kind.checks(ws);
@@ -1489,8 +1506,7 @@ impl Worker {
         // The hook has already delivered these instructions. Even a request-state or
         // completion-mark failure must leave the next attempt a fresh progress allowance.
         self.reset_progress_after_notes |= read.iter().any(|n| !n.text.trim().is_empty());
-        let requests: Vec<&str> = read.iter().map(|n| n.shown.as_str()).collect();
-        if let Err(error) = self.record_note_requests(ws, &read, &requests) {
+        if let Err(error) = self.record_note_requests(ws, &read) {
             let mut waiting = self.notes.lock().unwrap_or_else(PoisonError::into_inner);
             read.append(&mut *waiting);
             *waiting = read;
@@ -1509,10 +1525,16 @@ impl Worker {
         Ok(())
     }
 
-    fn record_note_requests(&self, ws: &mut Workspace, notes: &[Note], requests: &[&str]) -> Result<(), ToolError> {
+    fn record_request_texts(&self, ws: &mut Workspace, notes: &[Note]) -> Result<(), ToolError> {
         if let Some((kind, _)) = &self.self_check {
-            kind.record_requests(ws, requests)?;
+            let requests: Vec<_> = notes.iter().filter(|note| !note.text.trim().is_empty()).map(|note| (note.id, note.shown.as_str())).collect();
+            kind.record_ordered_requests(ws, &requests)?;
         }
+        Ok(())
+    }
+
+    fn record_note_requests(&self, ws: &mut Workspace, notes: &[Note]) -> Result<(), ToolError> {
+        self.record_request_texts(ws, notes)?;
         let dir = notes::notes_dir(&ws.inbox_dir());
         for note in notes {
             notes::mark_recorded(&dir, note.id)?;
@@ -1529,32 +1551,55 @@ impl Worker {
     }
 }
 
-/// An unrelated new message does not discard older notes or let a delayed old language choice
-/// overwrite it. Explicitly prepend older words and pictures before treating those ids as carried.
-fn prepend_older_notes(opts: &mut RunOptions, left: &[notes::LeftNote]) {
-    let Some(message) = &opts.message else { return };
+/// Keep each original request's position when recovered notes join a carried initial message.
+fn prepend_older_notes(opts: &mut RunOptions, left: &[notes::LeftNote]) -> Result<(), ToolError> {
+    let Some(message) = opts.message.as_deref().filter(|message| !message.trim().is_empty()) else { return Ok(()) };
+    let show = opts.shown.is_some() || !left.is_empty() || !opts.request_parts.is_empty();
     let last_carried = opts.carried_note_ids.iter().copied().max();
-    let older: Vec<_> = left.iter().filter(|note| !opts.carried_note_ids.contains(&note.id) && last_carried.is_none_or(|last| note.id < last)).collect();
-    if older.is_empty() {
-        return;
+    if let Some(id) = last_carried {
+        notes::reserve_after(id)?;
     }
-    let join =
-        |part: fn(&notes::Left) -> &str, last: &str| older.iter().map(|note| part(&note.left)).chain(std::iter::once(last)).collect::<Vec<_>>().join("\n\n");
-    let shown = join(|note| &note.shown, opts.shown.as_deref().unwrap_or(message));
-    let mut requests: Vec<_> = older.iter().map(|note| note.left.shown.clone()).collect();
-    if opts.request_parts.is_empty() {
-        requests.push(opts.shown.as_deref().unwrap_or(message).to_string());
-    } else {
-        requests.append(&mut opts.request_parts);
+    let mut parts = std::collections::BTreeMap::new();
+    for note in &opts.request_parts {
+        if !opts.carried_note_ids.contains(&note.id) || parts.insert(note.id, note.clone()).is_some() {
+            return Err(ToolError::invalid("The carried requests have inconsistent note identities; their records were kept."));
+        }
     }
-    let message = join(|note| &note.text, message);
-    let mut pictures: Vec<_> = older.iter().flat_map(|note| note.left.pictures.iter().cloned()).collect();
-    pictures.append(&mut opts.shown_pictures);
-    opts.shown_pictures = pictures;
-    opts.message = Some(message);
-    opts.shown = Some(shown);
-    opts.request_parts = requests;
-    opts.carried_note_ids.extend(older.iter().map(|note| note.id));
+    for note in left.iter().filter(|note| last_carried.is_none_or(|last| note.id <= last)) {
+        if let Some(part) = parts.get(&note.id) {
+            if part.text != note.left.text || part.shown != note.left.shown || part.pictures != note.left.pictures {
+                return Err(ToolError::invalid("A carried request changed before the build started; its records were kept."));
+            }
+        } else {
+            parts.insert(
+                note.id,
+                Note { id: note.id, text: note.left.text.clone(), shown: note.left.shown.clone(), pictures: note.left.pictures.clone(), questions: Vec::new() },
+            );
+        }
+    }
+    if opts.carried_note_ids.iter().any(|id| !parts.contains_key(id)) {
+        return Err(ToolError::invalid("A carried request's original words are missing; its records were kept."));
+    }
+    opts.carried_note_ids = parts.keys().copied().collect();
+    if last_carried.is_none() {
+        let id = notes::new_id()?;
+        parts.insert(
+            id,
+            Note {
+                id,
+                text: message.into(),
+                shown: opts.shown.as_deref().unwrap_or(message).into(),
+                pictures: opts.shown_pictures.clone(),
+                questions: Vec::new(),
+            },
+        );
+    }
+    let parts: Vec<_> = parts.into_values().collect();
+    opts.message = Some(parts.iter().map(|note| note.text.as_str()).collect::<Vec<_>>().join("\n\n"));
+    opts.shown = show.then(|| parts.iter().map(|note| note.shown.as_str()).collect::<Vec<_>>().join("\n\n"));
+    opts.shown_pictures = parts.iter().flat_map(|note| note.pictures.iter().cloned()).collect();
+    opts.request_parts = parts;
+    Ok(())
 }
 
 /// Notes an earlier run left are a request the person made, as a message is: they start the counts
