@@ -143,7 +143,7 @@ pub(super) fn new_id() -> Result<u64, ToolError> {
     IDS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).allocate()
 }
 
-fn sync_directory(dir: &Path) -> Result<(), ToolError> {
+pub(super) fn sync_directory(dir: &Path) -> Result<(), ToolError> {
     #[cfg(unix)]
     std::fs::File::open(dir).and_then(|file| file.sync_all()).map_err(|error| ToolError::io(dir.display(), error))?;
     #[cfg(not(unix))]
@@ -152,15 +152,31 @@ fn sync_directory(dir: &Path) -> Result<(), ToolError> {
 }
 
 /// Leave a note for the builder's next step: `text` is what the agent's hook hands over.
+/// Recovery requires every persistence step to succeed. An error can leave this same id
+/// published; retain it for retry instead of allocating another id for the same request.
 pub fn hand_over(dir: &Path, id: u64, text: &str, left: Option<&Left>) -> Result<(), craft_anything_evidence::ToolError> {
+    match publish(dir, id, text, left, sync_directory)?.persistence_warning {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
+pub(super) struct Published {
+    pub persistence_warning: Option<ToolError>,
+}
+
+/// Publication lets an independent hook claim the note, even before the last directory sync
+/// returns. Report that sync separately: a new sender cannot safely retry an already visible id.
+/// Recovery callers keep using hand_over(), which requires every persistence step to succeed.
+pub(super) fn publish(dir: &Path, id: u64, text: &str, left: Option<&Left>, sync: impl Fn(&Path) -> Result<(), ToolError>) -> Result<Published, ToolError> {
     std::fs::create_dir_all(dir).map_err(|e| craft_anything_evidence::ToolError::io(dir.display(), e))?;
     if let Some(parent) = dir.parent() {
-        sync_directory(parent)?;
+        sync(parent)?;
     }
     let bytes = serde_json::to_vec(&NoteFile { version: VERSION, id, text: text.into(), left: left.cloned() })
         .map_err(|e| craft_anything_evidence::ToolError::internal(e.to_string()))?;
     craft_anything_engine::project::write_atomic(&pending(dir, id), &bytes)?;
-    sync_directory(dir)
+    Ok(Published { persistence_warning: sync(dir).err() })
 }
 
 /// The notes an earlier run left waiting (the app closed before the builder took them, #1620),

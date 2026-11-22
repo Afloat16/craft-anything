@@ -165,6 +165,7 @@ const PLUMBING: &[(&str, &str)] = &[
     ("attach_checked", "part of pictures_checked"), ("add_pictures_checked", "part of pictures_checked"),
     ("show_picture_refused", "a job's refusal"), ("restore_attachments", "restores draft pictures after unsend or failed delivery"),
     ("restore_draft", "restores local input and pictures after unsend or failed delivery; it does not send or save a request"),
+    ("note_added", "handles the note result: restores a rejected draft or keeps an accepted id and shows its persistence warning; rebuild_note returns the same warning"),
     ("settings_changed", "marks settings dirty; each setting has its row"), ("flush_settings", "saves settings"),
     ("refresh_view", "redraw data"), ("resolve_chat_evidence", "redraw data"), ("mark_dirty", "redraw data"),
     ("poll_conversation", "polling"), ("allow_for_project", "part of answer_consent"),

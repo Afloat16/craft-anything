@@ -626,7 +626,9 @@ fn a_note_written_for_the_hook_carries_its_answers() {
         started: Instant::now(),
         activity,
     };
-    let id = run.add_note("make it blue".into(), "make it blue".into(), Vec::new()).unwrap();
+    let added = run.add_note("make it blue".into(), "make it blue".into(), Vec::new()).unwrap();
+    let id = added.id;
+    assert_eq!(tools::note_output(added, run.queued()).to_json()["result"], json!({"id": id, "queued": 1}), "ordinary success keeps the existing tool result");
     let note = run.waiting().pop().unwrap();
     assert_eq!(note.text, "make it blue", "the in-memory text stays raw for a later run's mode");
     assert_eq!(note.questions.len(), 1);
@@ -676,7 +678,7 @@ fn a_note_that_cannot_be_saved_is_not_accepted_for_handoff() {
     assert!(run.take_notes().is_empty(), "the next run must not receive a memory-only handoff");
 
     std::fs::remove_file(&dir).unwrap();
-    let id = run.add_note(text.into(), text.into(), pictures.clone()).unwrap();
+    let id = run.add_note(text.into(), text.into(), pictures.clone()).unwrap().id;
     let handed = run.take_notes();
     let saved = notes::take_left(&dir).unwrap();
     assert_eq!(handed.len(), 1);
@@ -684,6 +686,76 @@ fn a_note_that_cannot_be_saved_is_not_accepted_for_handoff() {
     assert_eq!(handed[0].id, id);
     assert_eq!(saved[0].id, id, "the accepted handoff retains its durable identity");
     assert_eq!(saved[0].left, notes::Left { text: text.into(), shown: text.into(), pictures });
+}
+
+#[test]
+fn note_sync_failures_preserve_the_publication_boundary() {
+    for (fail_parent, claim_during_sync) in [(true, false), (false, false), (false, true)] {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "Notes", "Build a notes app", TargetRef::None).unwrap();
+        let (_tx, rx) = std::sync::mpsc::channel();
+        let feed = Arc::new(Mutex::new(feed::FeedLog::open(&ws)));
+        let activity = feed.lock().unwrap_or_else(PoisonError::into_inner).activity();
+        let run = RebuildRun {
+            rx,
+            stop: CancelToken::default(),
+            inbox: Inbox::new(ws.inbox_dir()),
+            running: Arc::new(AtomicBool::new(true)),
+            preview: Arc::default(),
+            notes: Arc::default(),
+            clean_room: true,
+            feed,
+            root: ws.root.clone(),
+            started: Instant::now(),
+            activity,
+        };
+        let dir = notes::notes_dir(&ws.inbox_dir());
+        let text = "Build the website in French";
+        let pictures = vec![ws.root.join("reference.png")];
+        let result = run.add_note_syncing(text.into(), text.into(), pictures.clone(), |directory| {
+            if fail_parent || directory == dir {
+                if !fail_parent {
+                    assert_eq!(notes::take_left(&dir).unwrap().len(), 1, "the record was actually published before the failure");
+                    if claim_during_sync {
+                        assert_eq!(notes::claim(&dir), [text], "the hook can deliver before the last sync returns");
+                    }
+                }
+                return Err(ToolError::io(directory.display(), std::io::Error::other("injected note directory sync failure")));
+            }
+            notes::sync_directory(directory)
+        });
+        if fail_parent {
+            assert_eq!(result.unwrap_err().code, ErrorCode::FileError);
+            assert!(run.waiting().is_empty());
+            assert!(run.take_notes().is_empty());
+            assert!(notes::take_left(&dir).unwrap().is_empty());
+            assert!(notes::claim(&dir).is_empty(), "a rejected pre-publication note cannot be delivered");
+            continue;
+        }
+
+        let added = result.expect("a visible note is accepted even when its last sync fails");
+        let id = added.id;
+        let warning = added.persistence_warning.as_ref().expect("persistence failure is visible, not a plain success");
+        assert_eq!(warning.code, ErrorCode::FileError);
+        assert!(!warning.retryable, "an accepted note must not be submitted again automatically");
+        assert!(warning.message.contains("injected note directory sync failure"));
+        assert!(warning.remediation.as_deref().unwrap().contains("Do not resend"));
+        let output = tools::note_output(added, run.queued()).to_json();
+        assert_eq!(output["result"]["id"], json!(id));
+        assert_eq!(output["result"]["queued"], json!(1));
+        assert!(output["result"]["persistence_warning"]["message"].as_str().unwrap().contains("injected note directory sync failure"));
+        assert_eq!(output["result"]["persistence_warning"]["retryable"], json!(false));
+
+        let claimed = notes::claim(&dir);
+        assert_eq!(claimed, if claim_during_sync { Vec::<String>::new() } else { vec![text.into()] });
+        assert!(notes::claim(&dir).is_empty(), "the hook cannot claim the same record twice");
+        let handed = run.take_notes();
+        let saved = notes::take_left(&dir).unwrap();
+        assert_eq!(handed.len(), 1);
+        assert_eq!(saved.len(), 1);
+        assert_eq!((handed[0].id, saved[0].id), (id, id));
+        assert_eq!(saved[0].left, notes::Left { text: text.into(), shown: text.into(), pictures });
+    }
 }
 
 #[test]

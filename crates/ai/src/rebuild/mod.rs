@@ -96,6 +96,14 @@ pub enum RunEvent {
     },
 }
 
+/// An accepted note. A warning means it was published and may already have been read, but the
+/// final directory sync failed. Keep its id and show the warning instead of submitting it again.
+#[derive(Debug)]
+pub struct AddedNote {
+    pub id: u64,
+    pub persistence_warning: Option<ToolError>,
+}
+
 /// Called after each event a run sends, so a window draws it at once instead of checking on a
 /// timer.
 #[derive(Clone, Default)]
@@ -419,13 +427,23 @@ impl RebuildRun {
 
     /// Add something while it works; the agent reads it at its next step, and only then does it
     /// join the feed (as `shown`, with `pictures`). Returns its id, to take it back with `unsend`
-    /// until then.
+    /// until then, and any persistence warning for an already published note.
     ///
     /// The hand-over file also carries the latest Just-ask answers this mode may show, so a
     /// hand-over that bypasses the next message (Claude Code's tool hook) still has the context.
     /// The in-memory text stays raw, and the answers are marked told only when the note is read or
     /// sent.
-    pub fn add_note(&self, text: String, shown: String, pictures: Vec<PathBuf>) -> Result<u64, ToolError> {
+    pub fn add_note(&self, text: String, shown: String, pictures: Vec<PathBuf>) -> Result<AddedNote, ToolError> {
+        self.add_note_syncing(text, shown, pictures, notes::sync_directory)
+    }
+
+    fn add_note_syncing(
+        &self,
+        text: String,
+        shown: String,
+        pictures: Vec<PathBuf>,
+        sync: impl Fn(&Path) -> Result<(), ToolError>,
+    ) -> Result<AddedNote, ToolError> {
         let dir = notes::notes_dir(self.inbox.dir());
         notes::reserve_ids(&dir)?;
         let ws = Workspace::open(&self.root)?;
@@ -443,14 +461,17 @@ impl RebuildRun {
             };
             (file_text, questions) = note_with_just_asked(file_text, &ws, self.clean_room, &waiting);
         }
-        // Save the handover before accepting the note, so a failed save lets the caller restore
-        // the draft instead of carrying a memory-only request into another run.
+        // Reject failures before publication, so the caller can restore the draft. Once visible
+        // to the independent hook, keep the accepted id even if the final sync reports a warning.
         // The in-memory note keeps the raw text: if a later run takes it, that run filters the
         // answers by its own mode instead of inheriting this run's.
         let left = notes::Left { text: text.clone(), shown: shown.clone(), pictures: pictures.clone() };
-        notes::hand_over(&dir, id, &file_text, Some(&left))?;
+        let published = notes::publish(&dir, id, &file_text, Some(&left), sync)?;
         self.notes.lock().unwrap_or_else(PoisonError::into_inner).push(Note { id, text, shown, pictures, questions });
-        Ok(id)
+        let persistence_warning = published.persistence_warning.map(|error| {
+            error.with_remediation("The note was accepted and may already have been read. Do not resend it; saving it across a restart could not be confirmed.")
+        });
+        Ok(AddedNote { id, persistence_warning })
     }
 
     /// The notes still waiting for the agent, oldest first.

@@ -1373,3 +1373,10 @@ completed id must block every active record, not only those with words eligible 
 into a later run without a recoverable file, then disappear when that run fails. Propagate the
 initial handover error before enqueueing, so the caller restores the draft. A successful retry
 keeps the same id in its queue entry and durable record.
+
+**A published note was reported as rejected after a directory-sync failure.** The hook can
+already claim a note after its atomic publication, before the final sync returns. A new send
+therefore keeps that accepted id and queue entry, and reports an explicit persistence warning
+to the desktop and automation instead of restoring the draft for a duplicate send. Failures
+before publication still reject the send. This warning does not promise crash durability;
+recovery of an existing note still requires every persistence step to succeed.

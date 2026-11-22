@@ -12,6 +12,7 @@ use craft_anything_ai::AgentEvent;
 use craft_anything_ai::rebuild::activity::{Action, ActivityNow, LineKind};
 use craft_anything_ai::rebuild::feed::{self, apply};
 use craft_anything_ai::rebuild::{self, AppKind, KindRegistry, KindWords, Note, RebuildRun, RunEvent, RunOptions, Started, Step, Stopped, TargetKind};
+use craft_anything_engine::evidence::ToolError;
 use craft_anything_engine::inbox::{Answer, Inbox, Request, RequestKind};
 use craft_anything_engine::workspace::{CheckResult, Status, TargetRef, Workspace, suggest_name};
 use egui::{Color32, RichText, Ui, Vec2};
@@ -2204,18 +2205,27 @@ impl CraftApp {
         match self.open_run() {
             Some(run) if run.is_running() => {
                 // It joins the feed when the builder reads it; until then it can be taken back.
-                let id = match run.add_note(message, shown, files.clone()) {
-                    Ok(id) => id,
-                    Err(error) => {
-                        self.restore_draft(text, attachments);
-                        return self.toast(error.for_people(), true);
-                    }
-                };
-                self.drafts.insert(id, Draft { root: ws.root.clone(), text, attachments });
+                let result = run.add_note(message, shown, files.clone());
+                self.note_added(ws.root.clone(), text, attachments, result);
             }
             _ => {
                 self.state.feed.push(FeedItem::User(UserItem::new(shown.clone(), files.clone())));
                 self.resume(Some(message), Some(shown), files, Vec::new(), Vec::new());
+            }
+        }
+    }
+
+    fn note_added(&mut self, root: PathBuf, text: String, attachments: Vec<PathBuf>, result: Result<rebuild::AddedNote, ToolError>) {
+        match result {
+            Ok(added) => {
+                self.drafts.insert(added.id, Draft { root, text, attachments });
+                if let Some(warning) = added.persistence_warning {
+                    self.toast(format!("{} {}", tr("Your message was sent, but saving it could not be confirmed."), warning.for_people()), true);
+                }
+            }
+            Err(error) => {
+                self.restore_draft(text, attachments);
+                self.toast(error.for_people(), true);
             }
         }
     }
@@ -2298,6 +2308,30 @@ mod tests {
             assert_eq!(app.state.project_attachments, [new, old]);
             assert!(app.open_run().unwrap().waiting().is_empty());
         }
+    }
+
+    #[test]
+    fn an_accepted_note_with_a_save_warning_does_not_restore_the_draft() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "Notes", "A notes app", TargetRef::None).unwrap();
+        let mut app = crate::demo::app(crate::demo::engine(craft_anything_engine::Mode::Beginner, true));
+        app.open_workspace(ws.clone());
+        let old = d.path().join("accepted.png");
+        let new = d.path().join("new-draft.png");
+        app.state.project_input = "The newer draft".into();
+        app.state.project_attachments = vec![new.clone()];
+        let id = 71;
+        let warning = ToolError::io("notes", std::io::Error::other("the final directory sync failed"));
+        app.note_added(ws.root.clone(), "Already accepted".into(), vec![old.clone()], Ok(rebuild::AddedNote { id, persistence_warning: Some(warning) }));
+
+        assert_eq!(app.state.project_input, "The newer draft", "an accepted request is not offered for accidental resubmission");
+        assert_eq!(app.state.project_attachments, [new]);
+        assert_eq!(app.drafts.len(), 1);
+        let accepted = app.drafts.get(&id).unwrap();
+        assert_eq!(accepted.root, ws.root);
+        assert_eq!(accepted.text, "Already accepted");
+        assert_eq!(accepted.attachments, [old], "the accepted id still retains its take-back draft");
+        assert!(app.state.toasts.iter().any(|(message, error)| *error && message.contains("the final directory sync failed")));
     }
 
     #[test]
