@@ -30,11 +30,14 @@ evidence records) has no version yet; add one the first time its shape changes.
 
 ## Waiting builder notes
 
-A version-1 note is first saved as `<id>.json`. The builder's hook claims it by renaming it to
-`<id>.read.json`; that proves hand-over, while recording request state such as the website language
-can still fail. Only after that recording succeeds does the worker rename the file to
-`<id>.recorded.json`, then remove it. A failed completion rename keeps the claimed note and returns
-an error; a completed record left after a cleanup failure is excluded from replay.
+A version-1 note is first saved as `<id>.json`. The builder's hook claims it with a no-replace
+link to `<id>.read.json`; that proves hand-over, while recording request state such as the website
+language can still fail. A failed claim-directory sync keeps both names. Once request recording
+succeeds, the worker syncs the read link, removes its matching waiting name and syncs that removal
+before renaming the read file to `<id>.recorded.json`. A failure before that rename keeps the claim
+recoverable; completion never leaves a waiting alias beside its marker. The completed marker is
+synced before cleanup, and cleanup errors are reported instead of discarded. A completed record
+left after a cleanup failure is excluded from replay.
 
 Restart validates the full waiting/claimed/completed set before changing any record. Version-1
 waiting and claimed notes with kept original words are recovered in id order. An active and a

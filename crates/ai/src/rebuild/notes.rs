@@ -346,14 +346,22 @@ pub fn was_read(dir: &Path, id: u64) -> bool {
 
 /// The target's request state is saved. Keep that distinction even if removing the completed
 /// note fails; restart must not replay successfully recorded claimed notes. No directory is
-/// created here, and an error leaves the claimed file available for another attempt.
+/// created here, and an error keeps claimed or completed evidence for another attempt.
 pub(super) fn mark_recorded(dir: &Path, id: u64) -> Result<(), ToolError> {
+    mark_recorded_using(dir, id, sync_directory)
+}
+
+fn mark_recorded_using(dir: &Path, id: u64, sync: impl Fn(&Path) -> Result<(), ToolError>) -> Result<(), ToolError> {
     let source = read(dir, id);
     let destination = recorded(dir, id);
+    let waiting = pending(dir, id);
     if !check_record(&source, id)? {
         // A partial batch may already have acknowledged this note. Validate that evidence
         // before allowing forget() to remove it; an unread note has neither entry.
-        check_record(&destination, id)?;
+        if check_record(&destination, id)? {
+            unchanged(&waiting, None)?;
+            sync(dir)?;
+        }
         return Ok(());
     }
     match std::fs::symlink_metadata(&destination) {
@@ -361,7 +369,18 @@ pub(super) fn mark_recorded(dir: &Path, id: u64) -> Result<(), ToolError> {
         Err(error) => return Err(ToolError::io(destination.display(), error)),
         Ok(_) => return Err(ToolError::invalid("The completed note's name is already occupied; both entries were kept for inspection.")),
     }
-    std::fs::rename(&source, &destination).map_err(|error| ToolError::io(source.display(), error))
+    if check_record(&waiting, id)? {
+        let bytes = std::fs::read(&source).map_err(|error| ToolError::io(source.display(), error))?;
+        unchanged(&waiting, Some(&bytes))?;
+    }
+    // A failed claim sync can leave both links. Persist the read name before removing
+    // its waiting alias, and persist that removal before publishing completion. A stop
+    // at either barrier leaves a recoverable claim, never waiting beside recorded.
+    sync(dir)?;
+    remove_if_present(&waiting)?;
+    sync(dir)?;
+    std::fs::rename(&source, &destination).map_err(|error| ToolError::io(source.display(), error))?;
+    sync(dir)
 }
 
 fn check_record(path: &Path, id: u64) -> Result<bool, ToolError> {
@@ -379,11 +398,24 @@ fn check_record(path: &Path, id: u64) -> Result<bool, ToolError> {
     Ok(true)
 }
 
-/// Done with a note: its files go.
-pub fn forget(dir: &Path, id: u64) {
-    let _ = std::fs::remove_file(pending(dir, id));
-    let _ = std::fs::remove_file(read(dir, id));
-    let _ = std::fs::remove_file(recorded(dir, id));
+fn remove_if_present(path: &Path) -> Result<bool, ToolError> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(ToolError::io(path.display(), error)),
+    }
+}
+
+/// Done with a note: its files go. Keep completion evidence if an earlier removal fails.
+pub fn forget(dir: &Path, id: u64) -> Result<(), ToolError> {
+    let mut removed = false;
+    for path in [pending(dir, id), read(dir, id), recorded(dir, id)] {
+        removed |= remove_if_present(&path)?;
+    }
+    if removed {
+        sync_directory(dir)?;
+    }
+    Ok(())
 }
 
 /// Start a run with no notes left over from an earlier one (ids restart with the process).
@@ -394,6 +426,10 @@ pub fn clear(dir: &Path) {
 /// For the agent's hook: claim every waiting note, oldest first, and return their texts. A note
 /// another claimer (or "take back") got first is skipped.
 pub fn claim(dir: &Path) -> Vec<String> {
+    claim_using(dir, sync_directory)
+}
+
+fn claim_using(dir: &Path, sync: impl Fn(&Path) -> Result<(), ToolError>) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
     let mut ids: Vec<u64> =
         entries.flatten().filter_map(|e| e.file_name().to_str().and_then(|n| n.strip_suffix(".json")).and_then(|n| n.parse::<u64>().ok())).collect();
@@ -411,7 +447,7 @@ pub fn claim(dir: &Path) -> Vec<String> {
             std::fs::hard_link(pending(dir, id), read(dir, id)).ok()?;
             // The read link owns delivery. Keep the old durable name if syncing the new
             // link fails; a later hook cannot replace the read link or deliver it again.
-            if sync_directory(dir).is_ok() {
+            if sync(dir).is_ok() {
                 let _ = std::fs::remove_file(pending(dir, id));
             }
             Some(file.text)
@@ -515,7 +551,7 @@ mod tests {
         assert!(was_read(&dir, 2) && was_read(&dir, 10) && !was_read(&dir, 3));
         assert!(!take_back(&dir, 2), "read notes can't be taken back");
         assert!(claim(&dir).is_empty(), "each note is handed over once");
-        forget(&dir, 2);
+        forget(&dir, 2).unwrap();
         assert!(!was_read(&dir, 2));
         clear(&dir);
         assert!(!dir.exists());
@@ -668,6 +704,87 @@ mod tests {
         assert!(was_read(&dir, 7), "an in-memory retry still knows that the builder took it");
         assert!(left_words(&dir).unwrap().is_empty(), "keeping the completed file after cleanup failure cannot replay its request");
         assert!(take_left(&dir).unwrap().is_empty());
+    }
+
+    #[test]
+    fn completion_removes_the_waiting_link_after_a_failed_claim_sync() {
+        let directory = tempfile::tempdir().unwrap();
+        let dir = notes_dir(directory.path());
+        let note = Left { text: "Translate into German".into(), shown: "Translate into German".into(), pictures: Vec::new() };
+        hand_over(&dir, 7, &note.text, Some(&note)).unwrap();
+        assert_eq!(claim_using(&dir, |_| Err(ToolError::internal("injected claim sync failure"))), std::slice::from_ref(&note.text));
+        assert!(pending(&dir, 7).is_file() && read(&dir, 7).is_file());
+        assert!(claim(&dir).is_empty(), "the read link still owns delivery");
+        assert_eq!(left_words(&dir).unwrap(), std::slice::from_ref(&note));
+
+        mark_recorded(&dir, 7).unwrap();
+
+        assert!(!pending(&dir, 7).exists() && !read(&dir, 7).exists());
+        assert!(recorded(&dir, 7).is_file());
+        assert!(take_left(&dir).unwrap().is_empty(), "restart accepts completion even if cleanup never runs");
+        assert!(claim(&dir).is_empty());
+    }
+
+    #[test]
+    fn interrupted_completion_keeps_a_claim_recoverable_until_its_marker_is_published() {
+        for fail_at in 1..=3 {
+            let directory = tempfile::tempdir().unwrap();
+            let dir = notes_dir(directory.path());
+            let note = Left { text: "Translate into German".into(), shown: "Translate into German".into(), pictures: Vec::new() };
+            hand_over(&dir, 7, &note.text, Some(&note)).unwrap();
+            assert_eq!(claim_using(&dir, |_| Err(ToolError::internal("injected claim sync failure"))), std::slice::from_ref(&note.text));
+            let calls = std::cell::Cell::new(0);
+
+            let result = mark_recorded_using(&dir, 7, |path| {
+                calls.set(calls.get() + 1);
+                if calls.get() == fail_at { Err(ToolError::internal("injected completion sync failure")) } else { sync_directory(path) }
+            });
+
+            assert!(result.is_err());
+            assert_eq!(left_words(&dir).unwrap(), if fail_at < 3 { vec![note] } else { Vec::new() });
+            assert!(claim(&dir).is_empty(), "an interrupted completion must not permit a second live delivery");
+            mark_recorded(&dir, 7).unwrap();
+            assert!(take_left(&dir).unwrap().is_empty(), "completion can be retried without leaving colliding states");
+        }
+    }
+
+    #[test]
+    fn completion_preserves_a_replaced_waiting_record() {
+        let directory = tempfile::tempdir().unwrap();
+        let dir = notes_dir(directory.path());
+        hand_over(&dir, 7, "original request", None).unwrap();
+        assert_eq!(claim_using(&dir, |_| Err(ToolError::internal("injected claim sync failure"))), ["original request"]);
+        let original = std::fs::read(read(&dir, 7)).unwrap();
+        std::fs::remove_file(pending(&dir, 7)).unwrap();
+        hand_over(&dir, 7, "changed request", None).unwrap();
+        let changed = std::fs::read(pending(&dir, 7)).unwrap();
+
+        assert!(mark_recorded(&dir, 7).is_err());
+
+        assert_eq!(std::fs::read(read(&dir, 7)).unwrap(), original);
+        assert_eq!(std::fs::read(pending(&dir, 7)).unwrap(), changed);
+        assert!(!recorded(&dir, 7).exists());
+    }
+
+    #[test]
+    fn forgetting_reports_removal_failures_and_keeps_completion_evidence() {
+        let directory = tempfile::tempdir().unwrap();
+        let dir = notes_dir(directory.path());
+        hand_over(&dir, 7, "recorded request", None).unwrap();
+        assert_eq!(claim(&dir), ["recorded request"]);
+        mark_recorded(&dir, 7).unwrap();
+        let completed = std::fs::read(recorded(&dir, 7)).unwrap();
+        std::fs::create_dir(pending(&dir, 7)).unwrap();
+
+        assert!(forget(&dir, 7).is_err());
+
+        assert_eq!(std::fs::read(recorded(&dir, 7)).unwrap(), completed);
+        std::fs::remove_dir(pending(&dir, 7)).unwrap();
+        assert!(take_left(&dir).unwrap().is_empty());
+        forget(&dir, 7).unwrap();
+        assert!(!was_read(&dir, 7));
+        assert!(take_left(&dir).unwrap().is_empty());
+        forget(&dir, 7).unwrap();
     }
 
     #[test]

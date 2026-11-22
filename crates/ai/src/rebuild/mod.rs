@@ -1068,7 +1068,7 @@ impl Worker {
                             notes::mark_recorded(&dir, *id)?;
                         }
                         for id in carried_note_ids.drain(..) {
-                            notes::forget(&dir, id);
+                            notes::forget(&dir, id)?;
                         }
                         reply
                     }
@@ -1532,6 +1532,7 @@ impl Worker {
             *waiting = read;
             return Err(error);
         }
+        let mut cleanup_error = None;
         for n in read {
             // The agent's hook took the note, so the Just-ask answers in its text were told.
             if !n.questions.is_empty()
@@ -1539,10 +1540,12 @@ impl Worker {
             {
                 log::warn!("couldn't record which questions the builder was told: {}", e.message);
             }
-            notes::forget(&dir, n.id);
+            if let Err(error) = notes::forget(&dir, n.id) {
+                cleanup_error.get_or_insert(error);
+            }
             self.emit(RunEvent::Note { shown: n.shown, pictures: n.pictures });
         }
-        Ok(())
+        cleanup_error.map_or(Ok(()), Err)
     }
 
     fn record_request_texts(&self, ws: &mut Workspace, notes: &[Note]) -> Result<(), ToolError> {
