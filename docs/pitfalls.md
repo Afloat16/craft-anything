@@ -1368,3 +1368,8 @@ an after-turn note whose recording failed has not yet been sent and must not cla
 stop the run before its next builder turn. Keep those notes claimed and recoverable until the
 turn succeeds; use a no-replace claim so another hook preserves an occupied read record. A
 completed id must block every active record, not only those with words eligible for recovery.
+
+**A failed handover write still accepted the note.** A memory-only queue entry can be carried
+into a later run without a recoverable file, then disappear when that run fails. Propagate the
+initial handover error before enqueueing, so the caller restores the draft. A successful retry
+keeps the same id in its queue entry and durable record.

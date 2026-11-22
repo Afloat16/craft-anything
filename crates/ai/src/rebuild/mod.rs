@@ -443,13 +443,12 @@ impl RebuildRun {
             };
             (file_text, questions) = note_with_just_asked(file_text, &ws, self.clean_room, &waiting);
         }
-        // Also left for an agent that takes notes at its next step; without it, after the turn.
+        // Save the handover before accepting the note, so a failed save lets the caller restore
+        // the draft instead of carrying a memory-only request into another run.
         // The in-memory note keeps the raw text: if a later run takes it, that run filters the
         // answers by its own mode instead of inheriting this run's.
         let left = notes::Left { text: text.clone(), shown: shown.clone(), pictures: pictures.clone() };
-        if let Err(e) = notes::hand_over(&dir, id, &file_text, Some(&left)) {
-            log::warn!("A note waits for the builder's turn to end: {}", e.message);
-        }
+        notes::hand_over(&dir, id, &file_text, Some(&left))?;
         self.notes.lock().unwrap_or_else(PoisonError::into_inner).push(Note { id, text, shown, pictures, questions });
         Ok(id)
     }

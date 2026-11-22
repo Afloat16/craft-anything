@@ -642,6 +642,50 @@ fn a_note_written_for_the_hook_carries_its_answers() {
     assert_eq!(questions::untold(&ws, false).len(), 1, "the next run decides whether to tell it");
 }
 
+#[cfg(unix)]
+#[test]
+fn a_note_that_cannot_be_saved_is_not_accepted_for_handoff() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = Workspace::create(d.path(), "Site", "Build a website", TargetRef::None).unwrap();
+    let (_tx, rx) = std::sync::mpsc::channel();
+    let feed = Arc::new(Mutex::new(feed::FeedLog::open(&ws)));
+    let activity = feed.lock().unwrap_or_else(PoisonError::into_inner).activity();
+    let run = RebuildRun {
+        rx,
+        stop: CancelToken::default(),
+        inbox: Inbox::new(ws.inbox_dir()),
+        running: Arc::new(AtomicBool::new(true)),
+        preview: Arc::default(),
+        notes: Arc::default(),
+        clean_room: true,
+        feed,
+        root: ws.root.clone(),
+        started: Instant::now(),
+        activity,
+    };
+    let dir = notes::notes_dir(&ws.inbox_dir());
+    std::fs::create_dir_all(ws.inbox_dir()).unwrap();
+    // A dangling directory link looks absent to ID reservation, but hand_over cannot create it.
+    // This exercises the write failure without permissions that a privileged test can bypass.
+    std::os::unix::fs::symlink(d.path().join("unavailable-notes"), &dir).unwrap();
+    let text = "Build the website in French";
+    let pictures = vec![ws.root.join("reference.png")];
+    let error = run.add_note(text.into(), text.into(), pictures.clone()).unwrap_err();
+    assert_eq!(error.code, ErrorCode::FileError);
+    assert!(run.waiting().is_empty(), "a rejected note must not appear as queued");
+    assert!(run.take_notes().is_empty(), "the next run must not receive a memory-only handoff");
+
+    std::fs::remove_file(&dir).unwrap();
+    let id = run.add_note(text.into(), text.into(), pictures.clone()).unwrap();
+    let handed = run.take_notes();
+    let saved = notes::take_left(&dir).unwrap();
+    assert_eq!(handed.len(), 1);
+    assert_eq!(saved.len(), 1);
+    assert_eq!(handed[0].id, id);
+    assert_eq!(saved[0].id, id, "the accepted handoff retains its durable identity");
+    assert_eq!(saved[0].left, notes::Left { text: text.into(), shown: text.into(), pictures });
+}
+
 #[test]
 fn pictures_of_the_original_reach_the_builder() {
     let d = tempfile::tempdir().unwrap();
