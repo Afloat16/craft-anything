@@ -90,3 +90,47 @@ fn invalid_or_unrepresentable_extents_never_become_plausible_sizes() {
     assert_eq!(report.tensors_past_end, 1);
     assert!(report.warnings.iter().any(|w| w.contains("more data")));
 }
+
+#[derive(serde::Deserialize)]
+struct OfficialFixture {
+    tensor_type: String,
+    file_type: String,
+    quantized: bool,
+    shape: Vec<u64>,
+    data_offset: usize,
+    data_bytes: u64,
+    hex: String,
+}
+
+#[derive(serde::Deserialize)]
+struct OfficialCorpus {
+    fixtures: Vec<OfficialFixture>,
+}
+
+// Complete files and measured payload sizes from the pinned official writers;
+// the generator also verifies the files and their truncations with GGUFReader.
+#[test]
+fn official_weight_files_keep_their_identity_and_detect_short_payloads() {
+    let corpus: OfficialCorpus = serde_json::from_str(include_str!("fixtures/gguf_current/fixtures.json")).unwrap();
+    for fixture in corpus.fixtures {
+        let bytes: Vec<u8> =
+            fixture.hex.as_bytes().as_chunks::<2>().0.iter().map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap()).collect();
+        let report = ai_model::parse(&bytes, bytes.len() as u64).unwrap();
+        let tensor = &report.tensors[0];
+        assert_eq!(tensor.dtype, fixture.tensor_type);
+        assert_eq!(tensor.shape, fixture.shape);
+        assert_eq!(tensor.data_bytes, Some(fixture.data_bytes), "{}", fixture.tensor_type);
+        assert_eq!(report.quantization.as_deref(), fixture.quantized.then_some(fixture.tensor_type.as_str()));
+        let file_type = format!("mostly {}", fixture.file_type.strip_prefix("MOSTLY_").unwrap().replace("_MOE", " MoE"));
+        assert_eq!(report.file_type.as_deref(), Some(file_type.as_str()));
+        assert!(report.warnings.is_empty(), "{}: {:?}", fixture.tensor_type, report.warnings);
+
+        // The official writer pads to its alignment. Cut the tensor, not just that padding.
+        let data_end = fixture.data_offset + fixture.data_bytes as usize;
+        let exact = ai_model::parse(&bytes[..data_end], data_end as u64).unwrap();
+        assert_eq!(exact.tensors_past_end, 0);
+        let cut = ai_model::parse(&bytes[..data_end - 1], data_end as u64 - 1).unwrap();
+        assert_eq!(cut.tensors_past_end, 1, "{}", fixture.tensor_type);
+        assert!(cut.warnings.iter().any(|warning| warning.contains("more data")));
+    }
+}
