@@ -47,6 +47,11 @@ the committed fixtures without requiring the generator. Format facts follow the
 [GGUF specification](https://github.com/ggml-org/ggml/blob/d9fe7bff3d2bf4d077e25c654486d02c321734aa/docs/gguf.md#file-structure)
 and the pinned writer's published type and block-size declarations.
 
+The same Rust test file reconstructs big-endian headers from the corpus metadata while
+retaining its byte payloads, and constructs malformed-row, overflow and unknown-type controls
+from the public specification. These inline variants are original work by Afloat16 under the
+same licence; they are not output from the official writer.
+
 ## Icons (`assets/icons/`)
 
 | Files | Set | Copyright | Source | Licence |
