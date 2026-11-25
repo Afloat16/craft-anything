@@ -1504,11 +1504,21 @@ impl CopySource {
 impl Workspace {
     /// Create a new workspace folder under `projects_dir` (a fresh, unique folder).
     pub fn create(projects_dir: &Path, name: &str, request: &str, target: TargetRef) -> Result<Workspace, ToolError> {
+        Self::create_with_publisher(projects_dir, name, request, target, Self::publish_manifest)
+    }
+
+    fn create_with_publisher(
+        projects_dir: &Path,
+        name: &str,
+        request: &str,
+        target: TargetRef,
+        publish: impl FnOnce(&mut Self, &CreationReservation) -> Result<(), ToolError>,
+    ) -> Result<Workspace, ToolError> {
         let manifest = Manifest::new(name, request, target)?;
         let (root, directory) = create_workspace_root(projects_dir, name)?;
         let creation = CreationReservation::claim(&root, directory)?;
         let mut ws = Workspace { root, manifest, creation_warning: None };
-        ws.publish_manifest(&creation)?;
+        ws.publish_with_cleanup(&creation, publish, &CopyDestination::cleanup_directory)?;
         Ok(ws)
     }
 
@@ -1844,24 +1854,7 @@ impl Workspace {
         let directory = FileHandle::from_path(folder).map_err(|error| ToolError::io(folder.display(), error))?;
         let creation = CreationReservation::claim_with_cleanup(folder, directory, allocate)?;
         let mut ws = Workspace { root: folder.to_path_buf(), manifest, creation_warning: None };
-        if let Err(error) = publish(&mut ws, &creation) {
-            return Err(match creation.release_empty_with_cleanup(folder, || {}, allocate) {
-                Ok(()) => error,
-                Err(cleanup) => {
-                    let guidance = format!(
-                        "The creation reservation could not be fully released: {}. Inspect {} and {} together with any retained path reported above before retrying.",
-                        cleanup.for_people(),
-                        ws.root.join(MANIFEST).display(),
-                        ws.inbox_dir().display()
-                    );
-                    let guidance = match &error.remediation {
-                        Some(previous) => format!("{previous} {guidance}"),
-                        None => guidance,
-                    };
-                    error.with_remediation(guidance)
-                }
-            });
-        }
+        ws.publish_with_cleanup(&creation, publish, allocate)?;
         Ok(ws)
     }
 
@@ -1919,6 +1912,30 @@ impl Workspace {
             manifest
         })?;
         Ok(())
+    }
+
+    fn publish_with_cleanup(
+        &mut self,
+        creation: &CreationReservation,
+        publish: impl FnOnce(&mut Self, &CreationReservation) -> Result<(), ToolError>,
+        allocate: &dyn Fn(&Path) -> Result<PathBuf, ToolError>,
+    ) -> Result<(), ToolError> {
+        publish(self, creation).map_err(|error| match creation.release_empty_with_cleanup(&self.root, || {}, allocate) {
+            Ok(()) => error,
+            Err(cleanup) => {
+                let guidance = format!(
+                    "The creation reservation could not be fully released: {}. Inspect {} and {} together with any retained path reported above before retrying.",
+                    cleanup.for_people(),
+                    self.root.join(MANIFEST).display(),
+                    self.inbox_dir().display()
+                );
+                let guidance = match &error.remediation {
+                    Some(previous) => format!("{previous} {guidance}"),
+                    None => guidance,
+                };
+                error.with_remediation(guidance)
+            }
+        })
     }
 
     /// Only the creator holding the folder reservation publishes its initial identity.
@@ -4448,7 +4465,7 @@ mod tests {
 
     #[test]
     fn published_creation_and_copy_return_success_with_a_cleanup_warning() {
-        for duplicate in [false, true] {
+        for place in ["managed", "picked", "copy"] {
             let directory = tempfile::tempdir().unwrap();
             let source = Workspace::create(directory.path(), "Source", "A website", TargetRef::None).unwrap();
             std::fs::create_dir(source.app_dir()).unwrap();
@@ -4474,16 +4491,16 @@ mod tests {
                     },
                 )
             };
-            let result = if duplicate {
-                source.duplicate_with_publisher(
+            let result = match place {
+                "copy" => source.duplicate_with_publisher(
                     "Copy",
                     source.lock_copy_source().unwrap(),
                     |_| {},
                     |_| panic!("a published copy must not enter rollback"),
                     publish,
-                )
-            } else {
-                Workspace::create_at_with_publisher(&selected, "Selected", "A website", TargetRef::None, Some(ExistingFiles::Edit), publish)
+                ),
+                "picked" => Workspace::create_at_with_publisher(&selected, "Selected", "A website", TargetRef::None, Some(ExistingFiles::Edit), publish),
+                _ => Workspace::create_with_publisher(directory.path(), "Managed", "A website", TargetRef::None, publish),
             };
             assert!(result.is_ok(), "a verified published project must remain successful when only empty cleanup fails: {result:?}");
             let ws = result.unwrap();
@@ -4499,7 +4516,7 @@ mod tests {
             drop(crate::feed::lock_project(&ws.root).unwrap());
             assert_eq!(std::fs::read(source.root.join(MANIFEST)).unwrap(), source_manifest);
             assert_eq!(std::fs::read(selected.join("personal.txt")).unwrap(), b"Keep the selected files");
-            if duplicate {
+            if place == "copy" {
                 assert_eq!(std::fs::read(ws.app_dir().join("index.html")).unwrap(), b"Keep the copied app");
             }
         }
@@ -5147,6 +5164,65 @@ mod tests {
                 assert!(displaced.is_dir());
             }
             assert!(error.for_people().contains(&private.display().to_string()));
+        }
+    }
+
+    #[test]
+    fn creation_reservation_is_released_after_definite_managed_publication_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let original = std::cell::RefCell::new(None);
+        let failed = std::cell::RefCell::new(PathBuf::new());
+        let error = Workspace::create_with_publisher(directory.path(), "Managed", "A website", TargetRef::None, |ws, _| {
+            failed.replace(ws.root.clone());
+            assert!(ws.inbox_dir().is_dir());
+            let error = ToolError::io(ws.root.join(MANIFEST).display(), std::io::Error::from(std::io::ErrorKind::StorageFull))
+                .with_remediation("Free storage before retrying.");
+            original.replace(Some(error.clone()));
+            Err(error)
+        })
+        .unwrap_err();
+
+        let original = original.into_inner().unwrap();
+        assert_eq!(error.code, original.code);
+        assert_eq!(error.message, original.message);
+        assert_eq!(error.remediation, original.remediation);
+        let root = failed.into_inner();
+        assert!(std::fs::read_dir(&root).unwrap().next().is_none(), "a failed managed creation must release its unpublished reservation and cleanup slot");
+        let retried = Workspace::create_at(&root, "Retry", "A website", TargetRef::None, None).unwrap();
+        assert_eq!(Workspace::open(&root).unwrap().manifest.generation, retried.manifest.generation);
+    }
+
+    #[test]
+    fn managed_publication_failure_keeps_published_or_occupied_reservations_and_the_original_error() {
+        for published in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let failed = std::cell::RefCell::new(PathBuf::new());
+            let error = Workspace::create_with_publisher(directory.path(), "Managed", "A website", TargetRef::None, |ws, creation| {
+                failed.replace(ws.root.clone());
+                if published {
+                    ws.publish_manifest(creation)?;
+                } else {
+                    std::fs::write(ws.inbox_dir().join("personal.txt"), b"Keep these files after the failed write").unwrap();
+                }
+                Err(ToolError::new(ErrorCode::FileError, "Injected managed publication failure.").with_remediation("Keep the original recovery instruction."))
+            })
+            .unwrap_err();
+
+            let root = failed.into_inner();
+            assert_eq!(error.code, ErrorCode::FileError);
+            assert_eq!(error.message, "Injected managed publication failure.");
+            let remediation = error.remediation.as_deref().unwrap();
+            assert!(remediation.contains("Keep the original recovery instruction."));
+            assert!(remediation.contains(&root.join(MANIFEST).display().to_string()));
+            assert!(remediation.contains(&root.join("inbox").display().to_string()));
+            assert!(root.join("inbox").is_dir());
+            if published {
+                assert_eq!(Workspace::open(&root).unwrap().manifest.name, "Managed");
+                drop(crate::feed::lock_project(&root).unwrap());
+            } else {
+                assert!(!root.join(MANIFEST).exists());
+                assert_eq!(std::fs::read(root.join("inbox/personal.txt")).unwrap(), b"Keep these files after the failed write");
+            }
         }
     }
 

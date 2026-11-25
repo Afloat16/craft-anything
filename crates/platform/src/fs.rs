@@ -49,7 +49,9 @@ pub fn open_child_directory(parent: &std::fs::File, name: &Path) -> std::io::Res
     }
 }
 
-/// Open one regular child for updating, optionally creating it exclusively with private permissions.
+/// Open one regular child for updating, optionally creating it exclusively.
+/// New Unix files request owner read/write permissions (0600). Windows creation does not set an
+/// explicit private security descriptor and uses the default access-control settings.
 /// The parent handle is authoritative even if its former pathname now names another directory.
 /// Existing special files cannot block a Unix open before their type is checked.
 pub fn open_child_file_for_update(parent: &std::fs::File, name: &Path, create_new: bool) -> std::io::Result<std::fs::File> {

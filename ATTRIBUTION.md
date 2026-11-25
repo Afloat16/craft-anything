@@ -5,8 +5,9 @@ crates.io under their own licences (see `Cargo.lock`) and are not listed here.
 
 ## Feed coordination regression inputs
 
-The directory-binding, first-capture, creation-lock and publication-cleanup regressions in
-`crates/engine/src/feed/transaction.rs`, `crates/engine/src/workspace.rs` and
+The directory-binding, first-capture, creation-lock, failed managed-publication and
+publication-cleanup guidance regressions in `crates/engine/src/feed/transaction.rs`,
+`crates/engine/src/workspace.rs`, `crates/ai/src/rebuild/tools.rs` and
 `crates/platform/src/fs.rs` create their inputs from
 literal project metadata, file contents and temporary directories in the committed tests.
 These original regression inputs are contributed by Afloat16 under MIT OR Apache-2.0;
