@@ -993,6 +993,11 @@ version-6 and version-7 builds could publish a generation without reserving an i
 such project breaks ordinary saves and read-only copies. A generation alone is not reservation proof.
 An early project check cannot close the gap before lock creation, and mkdir does not return a handle:
 an old initializer can otherwise capture a new creator's inbox or strand an empty inbox after deletion.
+Capture the inbox relative to the held root. Open and create its coordination file relative to that
+retained inbox handle, including during initial creation: a later public-name replacement must receive
+no stale lock, even before its creator takes the lock. Try an existing-file open on the bound handle
+before create-new; the public path's absence does not establish absence in the original directory.
+Require a literal single child component, reject links and keep Unix opens nonblocking.
 Require initial creators to hold the same raw exclusive coordination inode through publication and
 failed-creation cleanup. That raw handle grants no feed-writing authority without a published project
 identity. An initializer that made an inbox can acquire the same lock, then recheck project

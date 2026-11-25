@@ -71,7 +71,11 @@ Failure to claim reports the public inbox path; no replacement cleanup directory
 Once that public name is released, deletion never cleans it again, so a new project can reserve it
 without losing its inbox to the old deletion. The guard remains held through final cleanup; unexpected
 contents are retained at the reported private path. Later filesystem failures can still interrupt
-that cleanup. Writers check that the project exists before creating coordination
+that cleanup. Writers open the inbox relative to the retained project directory. Both writers and
+initial creators open or create `feed.lock` relative to their captured inbox handle, so reuse of the
+public pathname cannot redirect a late lock creation into another creator's empty reservation.
+Existing-file opens use the same retained directory; Unix opens reject links and cannot block on a
+substituted FIFO. Writers check that the project exists before creating coordination
 entries and recheck the root directory identity, manifest creation time and generation after acquiring
 the lock. New projects and copies receive an operating-system-random 128-bit generation, saved as
 32 hexadecimal characters in `craft.json`. Ordinary manifest updates acquire the project lock,

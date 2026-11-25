@@ -196,7 +196,9 @@ fn lock_for_using_before_open(
     if created_inbox {
         after_mkdir();
     }
-    let inbox = open_directory(&directory)?;
+    let inbox = craft_anything_platform::fs::open_child_directory(project.directory.as_file(), Path::new("inbox"))
+        .and_then(same_file::Handle::from_file)
+        .map_err(|error| ToolError::io(directory.display(), error))?;
     let mut opened = None;
     let mut created_lock = false;
     let mut held_lock = false;
@@ -210,7 +212,7 @@ fn lock_for_using_before_open(
         let path = directory.join(PROJECT_LOCK_FILE);
         let started = Instant::now();
         before_open();
-        let (file, absent) = open_coordination_file(&directory, started, wait)?;
+        let (file, absent) = open_coordination_file(&directory, &inbox, started, wait)?;
         let file = opened.insert(file);
         created_lock = absent;
         check_entry(&path, file)?;
@@ -259,7 +261,7 @@ pub(crate) fn lock_creation(root: &Path, expected_inbox: &same_file::Handle) -> 
     let directory = root.join("inbox");
     check_directory(&directory, expected_inbox)?;
     let started = Instant::now();
-    let (file, _) = open_coordination_file(&directory, started, WAIT)?;
+    let (file, _) = open_coordination_file(&directory, expected_inbox, started, WAIT)?;
     let path = directory.join(PROJECT_LOCK_FILE);
     check_entry(&path, &file)?;
     wait_for_lock(file.as_file(), &path, started, WAIT, false)?;
@@ -268,26 +270,20 @@ pub(crate) fn lock_creation(root: &Path, expected_inbox: &same_file::Handle) -> 
     Ok(file)
 }
 
-fn open_coordination_file(directory: &Path, started: Instant, wait: Duration) -> Result<(same_file::Handle, bool), ToolError> {
+fn open_coordination_file(directory: &Path, inbox: &same_file::Handle, started: Instant, wait: Duration) -> Result<(same_file::Handle, bool), ToolError> {
     let path = directory.join(PROJECT_LOCK_FILE);
     loop {
-        let absent = match std::fs::symlink_metadata(&path) {
-            Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() == 0 => false,
-            Ok(_) => return Err(invalid(&path)),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        // Both opening and creation belong to this retained directory. A different creator
+        // may already own its former pathname, including an empty reservation with no lock.
+        match craft_anything_platform::fs::open_child_file_for_update(inbox.as_file(), Path::new(PROJECT_LOCK_FILE), false) {
+            Ok(file) => return Ok((same_file::Handle::from_file(file).map_err(|error| ToolError::io(path.display(), error))?, false)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(ToolError::io(path.display(), error)),
-        };
-        // Exclusive locks may be emulated as write locks on network filesystems.
-        let mut options = std::fs::OpenOptions::new();
-        options.read(true).write(true).create_new(absent);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt as _;
-            options.mode(0o600);
         }
-        match options.open(&path) {
-            Ok(file) => return Ok((same_file::Handle::from_file(file).map_err(|error| ToolError::io(path.display(), error))?, absent)),
-            Err(error) if absent && error.kind() == std::io::ErrorKind::AlreadyExists && started.elapsed() < wait => {}
+        // Exclusive locks may be emulated as write locks on network filesystems.
+        match craft_anything_platform::fs::open_child_file_for_update(inbox.as_file(), Path::new(PROJECT_LOCK_FILE), true) {
+            Ok(file) => return Ok((same_file::Handle::from_file(file).map_err(|error| ToolError::io(path.display(), error))?, true)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists && started.elapsed() < wait => {}
             Err(error) => return Err(ToolError::io(path.display(), error)),
         }
     }
@@ -701,7 +697,7 @@ mod tests {
             },
         );
 
-        assert_eq!(result.unwrap_err().code, ErrorCode::TimedOut);
+        assert_ne!(result.unwrap_err().code, ErrorCode::TimedOut, "the stale initializer must not wait on the new creator's lock");
         let (directory, inbox, lock) = creation.unwrap();
         assert_eq!(same_file::Handle::from_path(root.join("inbox")).unwrap(), inbox);
         assert_eq!(same_file::Handle::from_path(root.join("inbox").join(PROJECT_LOCK_FILE)).unwrap(), lock);
@@ -714,6 +710,38 @@ mod tests {
         assert_eq!(remaining, [std::ffi::OsString::from("personal.txt")]);
         Workspace::create_at(&root, "Replacement", "Retry", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
         assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep my app");
+    }
+
+    #[test]
+    fn a_deleted_inbox_cannot_redirect_an_initializer_into_a_new_creators_empty_reservation() {
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Project", "Test", TargetRef::None).unwrap();
+        let root = ws.root.clone();
+        std::fs::write(root.join("personal.txt"), b"Keep my app").unwrap();
+        let mut active = None;
+
+        let result = lock_for_using_before_open(
+            &root,
+            Duration::ZERO,
+            || {},
+            || {},
+            || {
+                ws.delete().unwrap();
+                std::fs::create_dir(root.join("inbox")).unwrap();
+                active = Some(same_file::Handle::from_path(root.join("inbox")).unwrap());
+            },
+        );
+
+        assert!(result.is_err());
+        assert_eq!(active.unwrap(), same_file::Handle::from_path(root.join("inbox")).unwrap());
+        assert_eq!(
+            std::fs::read_dir(root.join("inbox")).unwrap().count(),
+            0,
+            "even before its lock is acquired, the replacement creator's reservation must remain empty"
+        );
+        assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep my app");
+        std::fs::remove_dir(root.join("inbox")).unwrap();
+        Workspace::create_at(&root, "Replacement", "Retry", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
     }
 
     #[test]
