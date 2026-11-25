@@ -1008,7 +1008,9 @@ can fail. At final completion, unconfirmed durability still needs an archive wit
 A failed final save cannot leave the only pending conversation in a run that is about to be dropped
 or replaced. Keep an explicit recovery copy on the worker before publishing Finished, and report
 both failures honestly if that copy also cannot be written. Keep the folded feed and source context,
-not raw tool events that may contain input absent from the conversation. Historical recovery notices
+not raw tool events that may contain input absent from the conversation. The in-memory replay
+journal also retains only the tool fields the conversation consumes, including parsed checklist
+steps; a long save outage must not retain every unused tool input and summary. Historical recovery notices
 must not explain a new run's failure or enter writer loads, saves, or later recovery snapshots.
 Cache display notices once when opening a run. Migrate legacy notices only by their complete
 generated Error shape and archive path, preserving ordinary errors and same-text user or agent words.
@@ -1052,9 +1054,11 @@ path replaced by a FIFO must not freeze the display. After a successful retry, r
 canonical detail instead of leaving the previous reply's warning; do not drain queued workflow events.
 If a snapshot is stale while the question remains pending, label its words as an earlier reply:
 another client may have staged a newer one for that same request. After successful delivery, retire
-the retry control even if the refreshed display has no matching answered row. A completion snapshot
-travels with its event; looking up the project's retained run can return an older run when a queued
-follow-up fails before starting. Verify the staging path itself before offering manual cleanup;
+the retry control even if the refreshed display has no matching answered row. A polled batch carries
+one writer display snapshot with its last event, keeping notices out of live text folding while
+preserving every event's workflow effects. Looking up the project's retained run can return an older
+run when a queued follow-up fails before starting. Mark that failure separately: it has no snapshot,
+and an old error or recovery notice cannot explain its new reason. Verify the staging path itself before offering manual cleanup;
 a verified completed archive does not authorize moving a replacement at its former staging path.
 Use the nonblocking regular-file open in the guarded save as well as the display probe; a plain
 read of a substituted FIFO can hold the project guard forever. Sync the inbox directory after
@@ -1093,13 +1097,18 @@ loops as well as between files. Require a retry for newly observed or changed un
 do not silently skip personal replacements or copy a new recovery file through that publication gap.
 A missing or unrecognized receipt cannot reclassify an already known recovery copy as personal
 content during that same copy attempt. Hold the source feed lock across discovery and copying,
-so recovery cannot change ownership during copying. A readable read-only legacy source with no inbox
-can use a read-only copy path only after actual permission denial; keep manifest and ownership checks,
+and check the loaded identity for ordinary app/ sources too: an old handle must not mix a replacement
+project's app with the old project's settings. A readable read-only legacy source with no inbox
+can use a read-only copy path only after actual permission or read-only-filesystem denial; keep manifest and ownership checks,
 and never swallow lock timeouts or unreadable records. Match case variants by the opened file's identity, not by lowercasing
 all names: a case-sensitive filesystem can hold a distinct personal file with that spelling.
-Publish a duplicate's manifest only after the copy succeeds. On failure, remove the newly created
-destination only after claiming it into a fresh private sibling directory and verifying the claimed
-identity. A check followed by recursive removal of the public path still has a replacement window;
+Publish a duplicate's manifest only after the copy succeeds. Before copying, reserve its inbox name
+atomically, and require every initial creator to take that same reservation: a copied app/ is otherwise
+mistaken for personal files another create_at can adopt. Retain the empty inbox until deletion, so
+releasing a creation reservation cannot race a new feed writer. Losing the reservation does not
+authorize cleaning up the winner's folder. On failure, remove the newly created destination only
+after checking the root and inbox identities and manifest absence, claiming it into a fresh private
+sibling directory and verifying the same reservation again. A check followed by recursive removal of the public path still has a replacement window;
 preserve an unexpected claimed entry and report its exact location. Fingerprinting must classify
 backup-shaped entries too, rather than excluding personal files and directories by reserved name.
 Hash each classified personal file through the same opened handle, rewinding after an ownership

@@ -77,20 +77,28 @@ checks that identity before adopting any replacement rows. Deletion also compare
 its loaded workspace with the project under the lock before removing anything. They do not write
 conversation, backup, archive or recorded-answer payloads after deletion. A lock acquisition that starts just before
 deletion can leave an empty coordination directory or file; it still fails the check under the lock.
-In-place duplication holds the same lock from backup discovery through manifest publication, so
-application recovery cannot change ownership during the copy. A readable legacy source with no
-inbox can be copied without creating one when the attempted lock creation is denied; owner write
-bits do not establish the current caller's access. This fallback checks the same directory and project
+Duplication checks the loaded source identity under the same lock in both app layouts and holds
+it through destination manifest publication. In-place backup discovery also stays under that lock,
+so application recovery cannot change ownership during the copy. A readable legacy source with no
+inbox can be copied without creating one when the attempted lock creation is denied, including a
+read-only filesystem; owner write bits do not establish the current caller's access. Other I/O errors
+still fail the copy. This fallback checks the same directory and project
 identity, and an absent inbox, both before copying and before publishing the destination manifest.
 Application publishers retain their inbox, so an inbox appearing during the copy requires a retry
 even after that publisher releases its lock. Manifest and backup classification checks still apply. Each backup-shaped file
 is classified through the opened handle that will be copied. Equivalent case spellings count as
 the reserved slot only when they identify the same file; a distinct personal file is retained.
 A new or changed unverified entry requires a retry. Losing a receipt also cannot turn a previously
-verified recovery copy into personal app content during the same copy. The destination manifest
-is published after copying succeeds. A failed attempt first claims its destination into a fresh private
-`.craft-copy-cleanup-*` folder beside it, then checks the held directory identity before recursive
-removal. An unexpected replacement is preserved at the reported claimed path. This coordination does not make a directory copy an atomic filesystem snapshot
+verified recovery copy into personal app content during the same copy. Every initial creator,
+including creation in a person-selected folder, atomically reserves the existing `inbox/` name before
+publishing a manifest. A selected directory link is resolved before validation; the returned workspace
+and the desktop's remembered project use that real path. The empty directory remains until project deletion; it prevents another creator
+from adopting a copy still in progress without racing later feed writers. A creation that loses the
+reservation leaves the winner's directory alone. The destination manifest is published after copying
+succeeds, while the root and inbox still match their held identities and no manifest has appeared.
+A failed copy checks the same reservation, claims its destination into a fresh private
+`.craft-copy-cleanup-*` folder beside it, then checks that reservation again before recursive removal.
+An unexpected replacement is preserved at the reported claimed path. This coordination does not make a directory copy an atomic filesystem snapshot
 against external programs that do not take the lock. App fingerprinting also uses the same opened
 regular file for ownership classification and content hashing, so recovery cannot substitute a newly
 generated backup between those two reads.
@@ -128,9 +136,12 @@ question remains at its original event boundary during replay, even if loading a
 its pending row or another client answered it. Repeated Ask events do not move the existing row
 or end an active stream when that row exists. If repaired history no longer contains the question,
 replay restores it at the event boundary even if its inbox request has expired; the request is not
-reopened. The desktop uses the final display snapshot to show persistence warnings independently of
-the build outcome, and refreshes only the answered card after a successful retry without consuming
-queued workflow events.
+reopened. The pending journal retains only checklist steps, tool names and result flags from tool
+events, not their unused raw input or summaries. The desktop installs one writer display snapshot
+per polled batch, so live text never folds through recovery or persistence notices. It still handles
+every event's workflow effects. A queued-start failure has no run snapshot and always displays its
+own reason, even after an earlier error or notice. A successful answer retry refreshes only that
+card without consuming queued workflow events.
 
 Answers are saved in the conversation before they are delivered through the inbox. On Unix, the
 feed's containing directory is synced after atomic replacement and before delivery; non-Unix

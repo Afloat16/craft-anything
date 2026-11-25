@@ -2486,6 +2486,91 @@ fn stand_in_app(projects: std::path::PathBuf, runs: &craft_anything_ai::rebuild:
 }
 
 #[test]
+fn a_reopened_live_conversation_keeps_streaming_beside_recovery_notices() {
+    use craft_anything_ai::{
+        AgentEvent,
+        rebuild::{RunEvent, StandIns},
+    };
+    use craft_anything_engine::feed::{RecoverySnapshot, load, write_recovery_snapshot};
+    use craft_anything_engine::workspace::{TargetRef, Workspace};
+    use craft_anything_ui_egui::state::FeedItem;
+
+    let d = tempfile::tempdir().unwrap();
+    let ws = Workspace::create(d.path(), "Live conversation", "Make a clock", TargetRef::None).unwrap();
+    let other = Workspace::create(d.path(), "Other", "Another project", TargetRef::None).unwrap();
+    let archive = write_recovery_snapshot(&ws.root, &RecoverySnapshot::from_loaded(&load(&ws), serde_json::json!({}))).unwrap();
+    let runs = StandIns::new();
+    let (dir, r) = (d.path().to_path_buf(), runs.clone());
+    let mut h = harness(move || stand_in_app(dir, &r));
+    h.state_mut().open_workspace(ws.clone());
+    h.state_mut().continue_build();
+    assert!(runs.send(&ws.root, RunEvent::Agent(AgentEvent::TextDelta { text: "Hello ".into() })));
+    h.state_mut().open_workspace(other);
+    h.state_mut().open_workspace(ws.clone());
+    assert!(matches!(h.state().state.feed.last(), Some(FeedItem::Error { log: Some(path), .. }) if path == &archive));
+
+    assert!(runs.send(&ws.root, RunEvent::Agent(AgentEvent::TextDelta { text: "world".into() })));
+    assert!(runs.send(
+        &ws.root,
+        RunEvent::Agent(AgentEvent::TurnDone {
+            backend: "Claude Code".into(),
+            input_tokens: 7,
+            output_tokens: 3,
+            tokens_unknown: false,
+            cost_usd: Some(0.25),
+            cost_is_estimate: false,
+        })
+    ));
+    h.run_steps(3);
+
+    let messages: Vec<_> = h
+        .state()
+        .state
+        .feed
+        .iter()
+        .filter_map(|item| match item {
+            FeedItem::Agent { text, streaming } => Some((text.as_str(), *streaming)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(messages, [("Hello world", false)]);
+    assert!(h.state().state.feed.iter().any(|item| matches!(item, FeedItem::Error { log: Some(path), .. } if path == &archive)));
+    assert_eq!(h.state().session_usage.input_tokens, 7);
+    assert_eq!(h.state().session_usage.output_tokens, 3);
+    h.get_by_label("Hello world");
+}
+
+#[test]
+fn a_failed_queued_start_is_visible_after_a_recovery_notice() {
+    use craft_anything_ai::rebuild::StandIns;
+    use craft_anything_engine::feed::{RecoverySnapshot, load, write_recovery_snapshot};
+    use craft_anything_engine::workspace::{TargetRef, Workspace};
+    use craft_anything_ui_egui::state::FeedItem;
+
+    let d = tempfile::tempdir().unwrap();
+    let ws = Workspace::create(d.path(), "Unavailable", "Make a clock", TargetRef::None).unwrap();
+    let busy = Workspace::create(d.path(), "Busy", "Keep working", TargetRef::None).unwrap();
+    let archive = write_recovery_snapshot(&ws.root, &RecoverySnapshot::from_loaded(&load(&ws), serde_json::json!({}))).unwrap();
+    let runs = StandIns::new().failing("Unavailable");
+    let (dir, r) = (d.path().to_path_buf(), runs.clone());
+    let mut h = harness(move || stand_in_app(dir, &r));
+    h.state_mut().open_workspace(busy.clone());
+    h.state_mut().continue_build();
+    h.state_mut().open_workspace(ws.clone());
+    h.state_mut().continue_build();
+    assert_eq!(h.state().queue_position(), Some(1));
+    assert!(matches!(h.state().state.feed.last(), Some(FeedItem::Error { log: Some(path), .. }) if path == &archive));
+
+    assert!(runs.finish(&busy.root));
+    h.run_steps(3);
+
+    assert!(h.state().state.feed.iter().any(|item| matches!(item, FeedItem::Error { log: Some(path), .. } if path == &archive)));
+    assert!(matches!(h.state().state.feed.last(), Some(FeedItem::Error { message, log: None, .. }) if message == "No coding agent."));
+    assert!(h.state().runs.get(&ws.root).is_none(), "a failed start has no run or snapshot to reuse");
+    h.get_by_label("No coding agent.");
+}
+
+#[test]
 fn a_failed_queued_follow_up_does_not_restore_the_previous_run_feed() {
     use craft_anything_ai::{
         AgentEvent,

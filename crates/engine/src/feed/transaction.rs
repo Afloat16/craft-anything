@@ -228,7 +228,7 @@ mod tests {
         assert!(!directory.path().join("inbox").exists());
         let ws = Workspace::create(directory.path(), "Project", "Test", TargetRef::None).unwrap();
         let inbox = ws.root.join("inbox");
-        std::fs::create_dir(&inbox).unwrap();
+        assert!(inbox.is_dir(), "initial creation retains its coordination reservation");
         let path = inbox.join("feed.lock");
         std::fs::write(&path, b"Keep these words").unwrap();
         assert!(lock_project(&ws.root).is_err());
@@ -245,7 +245,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let ws = Workspace::create(directory.path(), "Project", "Test", TargetRef::None).unwrap();
         let inbox = ws.root.join("inbox");
-        std::fs::create_dir(&inbox).unwrap();
+        assert!(inbox.is_dir(), "initial creation retains its coordination reservation");
         let path = inbox.join("feed.lock");
         let target = directory.path().join("personal");
         std::fs::write(&target, b"").unwrap();

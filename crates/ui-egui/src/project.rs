@@ -349,19 +349,13 @@ impl CraftApp {
         let open = self.workspace.as_ref().map(|w| w.root.clone());
         let mut finished = Vec::new();
         for update in &mut events {
-            let (root, e) = (&update.root, &update.event);
-            if open.as_ref() == Some(root) {
-                if let Some(feed) = update.completed_feed.take() {
-                    // Finished.message serves text clients. This display keeps the build's
-                    // result and its separate final persistence notice, including recovery.
-                    self.state.feed = feed;
-                } else {
-                    apply(&mut self.state.feed, e);
-                }
-                if matches!(e, RunEvent::Agent(AgentEvent::ToolFinished { .. } | AgentEvent::TurnDone { .. })) {
+            if open.as_ref() == Some(&update.root) {
+                update.update_feed(&mut self.state.feed);
+                if matches!(&update.event, RunEvent::Agent(AgentEvent::ToolFinished { .. } | AgentEvent::TurnDone { .. })) {
                     self.view_dirty = true;
                 }
             }
+            let (root, e) = (&update.root, &update.event);
             // The run saves its usage at each agent turn and when it ends; read it again then.
             if matches!(e, RunEvent::Ask(_)) {
                 self.asking.insert(root.clone());

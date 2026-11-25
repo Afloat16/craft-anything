@@ -14,7 +14,7 @@ pub fn apply(feed: &mut Vec<FeedItem>, e: &RunEvent) {
 
 /// A live run and its replay know which errors they supplied. A saved conversation's tail
 /// alone cannot explain this run's failure, particularly when a duplicate Ask changes nothing.
-fn apply_run_event(feed: &mut Vec<FeedItem>, e: &RunEvent, explained: &mut bool) {
+pub(super) fn apply_run_event(feed: &mut Vec<FeedItem>, e: &RunEvent, explained: &mut bool) {
     let already_explained = *explained && matches!(feed.last(), Some(FeedItem::Error { .. }));
     apply_with_explanation(feed, e, already_explained);
     *explained = matches!(feed.last(), Some(FeedItem::Error { .. }))
@@ -39,37 +39,13 @@ fn apply_with_explanation(feed: &mut Vec<FeedItem>, e: &RunEvent, explained: boo
         // The builder's checklist: one list, updated in place.
         // Claude Code's TodoWrite, or our build_checklist (same shape) for API builders.
         RunEvent::Agent(AgentEvent::ToolStarted { tool, input, .. }) if tool == "TodoWrite" || tool == "build_checklist" => {
-            if let Some(steps) = plan_from(input) {
-                if feed.iter().any(|i| matches!(i, FeedItem::Plan(_))) && craft_anything_engine::feed::visible_plan(feed).is_none() {
-                    // The person folded the last list (#504): a new list is a new card at the end,
-                    // and the folded one goes.
-                    feed.retain(|i| !matches!(i, FeedItem::Plan(_) | FeedItem::PlanDismissed));
-                    feed.push(FeedItem::Plan(steps));
-                } else {
-                    match feed.iter_mut().find_map(|i| if let FeedItem::Plan(p) = i { Some(p) } else { None }) {
-                        Some(p) => *p = steps,
-                        None => feed.push(FeedItem::Plan(steps)),
-                    }
-                }
-            }
+            apply_checklist(feed, plan_from(input).as_deref());
         }
         RunEvent::Agent(AgentEvent::ToolStarted { tool, .. }) => {
             end_stream(feed);
-            match feed.last_mut() {
-                Some(FeedItem::Work { tools, .. }) => tools.push((tool.clone(), None)),
-                _ => feed.push(FeedItem::Work { tools: vec![(tool.clone(), None)], notes: Vec::new() }),
-            }
+            apply_tool_start(feed, tool);
         }
-        RunEvent::Agent(AgentEvent::ToolFinished { tool, ok, .. }) => {
-            for item in feed.iter_mut().rev() {
-                if let FeedItem::Work { tools, .. } = item
-                    && let Some(slot) = tools.iter_mut().rev().find(|(t, done)| t == tool && done.is_none())
-                {
-                    slot.1 = Some(*ok);
-                    break;
-                }
-            }
-        }
+        RunEvent::Agent(AgentEvent::ToolFinished { tool, ok, .. }) => apply_tool_finish(feed, tool, *ok),
         RunEvent::Agent(AgentEvent::Status { text }) => match feed.last_mut() {
             Some(FeedItem::Work { notes, .. }) => notes.push(text.clone()),
             _ => feed.push(FeedItem::Work { tools: Vec::new(), notes: vec![text.clone()] }),
@@ -109,6 +85,39 @@ fn apply_with_explanation(feed: &mut Vec<FeedItem>, e: &RunEvent, explained: boo
             } else if !ok && !explained {
                 feed.push(FeedItem::Error { message: message.clone(), remediation: None, log: None });
             }
+        }
+    }
+}
+
+fn apply_checklist(feed: &mut Vec<FeedItem>, steps: Option<&[PlanStep]>) {
+    let Some(steps) = steps else { return };
+    if feed.iter().any(|i| matches!(i, FeedItem::Plan(_))) && craft_anything_engine::feed::visible_plan(feed).is_none() {
+        // The person folded the last list (#504): a new list is a new card at the end,
+        // and the folded one goes.
+        feed.retain(|i| !matches!(i, FeedItem::Plan(_) | FeedItem::PlanDismissed));
+        feed.push(FeedItem::Plan(steps.to_vec()));
+    } else {
+        match feed.iter_mut().find_map(|i| if let FeedItem::Plan(p) = i { Some(p) } else { None }) {
+            Some(p) => *p = steps.to_vec(),
+            None => feed.push(FeedItem::Plan(steps.to_vec())),
+        }
+    }
+}
+
+fn apply_tool_start(feed: &mut Vec<FeedItem>, tool: &str) {
+    match feed.last_mut() {
+        Some(FeedItem::Work { tools, .. }) => tools.push((tool.into(), None)),
+        _ => feed.push(FeedItem::Work { tools: vec![(tool.into(), None)], notes: Vec::new() }),
+    }
+}
+
+fn apply_tool_finish(feed: &mut [FeedItem], tool: &str, ok: bool) {
+    for item in feed.iter_mut().rev() {
+        if let FeedItem::Work { tools, .. } = item
+            && let Some(slot) = tools.iter_mut().rev().find(|(t, done)| t == tool && done.is_none())
+        {
+            slot.1 = Some(ok);
+            break;
         }
     }
 }
@@ -161,12 +170,30 @@ enum FeedChange {
     Event(RunEvent),
     Item(FeedItem),
     Ask { request: Request, introduced: bool },
+    Checklist(Option<Vec<PlanStep>>),
+    ToolStarted(String),
+    ToolFinished { tool: String, ok: bool },
 }
 
 impl FeedChange {
     fn apply(&self, feed: &mut Vec<FeedItem>, explained: &mut bool) {
         match self {
             Self::Event(event) => apply_run_event(feed, event, explained),
+            Self::Checklist(steps) => {
+                apply_checklist(feed, steps.as_deref());
+                *explained &= matches!(feed.last(), Some(FeedItem::Error { .. }));
+            }
+            Self::ToolStarted(tool) => {
+                if let Some(FeedItem::Agent { streaming, .. }) = feed.last_mut() {
+                    *streaming = false;
+                }
+                apply_tool_start(feed, tool);
+                *explained = false;
+            }
+            Self::ToolFinished { tool, ok } => {
+                apply_tool_finish(feed, tool, *ok);
+                *explained &= matches!(feed.last(), Some(FeedItem::Error { .. }));
+            }
             Self::Item(item) => {
                 feed.push(item.clone());
                 *explained = matches!(item, FeedItem::Error { .. });
@@ -241,13 +268,11 @@ fn retained_stream(feed: &[FeedItem], origin: &[FeedItem]) -> Option<usize> {
 
 fn keeps_stream(change: &FeedChange, feed: &[FeedItem]) -> bool {
     match change {
-        FeedChange::Event(RunEvent::Preview(_) | RunEvent::Agent(AgentEvent::Output { .. } | AgentEvent::ToolFinished { .. })) => true,
+        FeedChange::Event(RunEvent::Preview(_) | RunEvent::Agent(AgentEvent::Output { .. })) | FeedChange::ToolFinished { .. } => true,
         FeedChange::Ask { request, introduced } => {
             !*introduced && feed.iter().any(|item| matches!(item, FeedItem::Ask { request: saved, .. } if saved.id == request.id))
         }
-        FeedChange::Event(RunEvent::Agent(AgentEvent::ToolStarted { tool, input, .. })) if tool == "TodoWrite" || tool == "build_checklist" => {
-            plan_from(input).is_none() || craft_anything_engine::feed::visible_plan(feed).is_some()
-        }
+        FeedChange::Checklist(steps) => steps.is_none() || craft_anything_engine::feed::visible_plan(feed).is_some(),
         _ => false,
     }
 }
@@ -331,6 +356,11 @@ impl FeedLog {
                     request: request.clone(),
                     introduced: !self.feed.iter().any(|item| matches!(item, FeedItem::Ask { request: saved, .. } if saved.id == request.id)),
                 },
+                RunEvent::Agent(AgentEvent::ToolStarted { tool, input, .. }) if tool == "TodoWrite" || tool == "build_checklist" => {
+                    FeedChange::Checklist(plan_from(input))
+                }
+                RunEvent::Agent(AgentEvent::ToolStarted { tool, .. }) => FeedChange::ToolStarted(tool.clone()),
+                RunEvent::Agent(AgentEvent::ToolFinished { tool, ok, .. }) => FeedChange::ToolFinished { tool: tool.clone(), ok: *ok },
                 _ => FeedChange::Event(e.clone()),
             };
             change.apply_with_stream(&mut self.feed, &mut self.failure_explained, &mut self.stream);
@@ -735,6 +765,50 @@ fn merge_saved_answers(root: &Path, feed: &mut LoadedFeed) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pending_tools_keep_only_the_fields_needed_to_replay_the_conversation() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+        let mut log = a_live_feed_with_busy_recovery_names(&ws);
+        let checklist = json!({"todos": [{"content": "Build the clock", "activeForm": "Building the clock", "status": "in_progress"}],
+            "unused": "Discard checklist metadata"});
+        for event in [
+            RunEvent::Agent(AgentEvent::ToolStarted { call_id: "plan".into(), tool: "build_checklist".into(), input: checklist }),
+            RunEvent::Agent(AgentEvent::TextDelta { text: "Working".into() }),
+            RunEvent::Agent(AgentEvent::ToolStarted {
+                call_id: "build".into(),
+                tool: "build_check".into(),
+                input: json!({"private": "Discard raw tool input"}),
+            }),
+            RunEvent::Agent(AgentEvent::ToolFinished {
+                call_id: "build".into(),
+                tool: "build_check".into(),
+                ok: true,
+                summary: "Discard raw tool result".into(),
+                evidence_id: None,
+            }),
+        ] {
+            record_before_next_save(&mut log, event);
+        }
+        let pending = format!("{:?}", log.pending);
+        assert!(!pending.contains("Discard"), "the retry journal must not retain unused payloads: {pending}");
+
+        recover_the_conversation_through_the_cli(&ws);
+        log.record(&RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false });
+        let saved = load(&ws);
+        assert!(log.pending.is_empty());
+        let replayed: Vec<_> =
+            saved.iter().filter(|item| matches!(item, FeedItem::Plan(_) | FeedItem::Agent { .. } | FeedItem::Work { .. })).cloned().collect();
+        assert_eq!(
+            replayed,
+            [
+                FeedItem::Plan(vec![PlanStep { text: "Build the clock".into(), doing: "Building the clock".into(), status: PlanStatus::Stopped }]),
+                FeedItem::Agent { text: "Working".into(), streaming: false },
+                FeedItem::Work { tools: vec![("build_check".into(), Some(true))], notes: Vec::new() },
+            ]
+        );
+    }
 
     fn a_live_feed_with_busy_recovery_names(ws: &Workspace) -> FeedLog {
         std::fs::write(ws.root.join(FEED_FILE), b"damaged conversation").unwrap();
@@ -2490,6 +2564,8 @@ mod lifecycle_tests {
         let d = tempfile::tempdir().unwrap();
         let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
         std::fs::create_dir(ws.root.join(FEED_FILE)).unwrap();
+        // Replace the empty creation reservation with the unrelated entry this case exercises.
+        std::fs::remove_dir(ws.inbox_dir()).unwrap();
         std::fs::write(ws.inbox_dir(), b"An unrelated existing file").unwrap();
         let (mut run, tx) = owned_run(&ws);
         emit(&run, &tx, RunEvent::Finished { ok: true, message: "Ready.".into(), paused: false });

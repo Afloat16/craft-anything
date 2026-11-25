@@ -29,13 +29,28 @@ pub enum Stopped {
     Nothing,
 }
 
-/// An event and, for a completed run, the display that belongs to that same run.
+/// An event and, at the end of its polled batch, the display that belongs to that same run.
 #[derive(Debug)]
 pub struct RunUpdate {
     pub root: PathBuf,
     pub event: RunEvent,
-    /// None for ordinary events and for queued starts that failed before a run existed.
-    pub completed_feed: Option<Vec<feed::FeedItem>>,
+    /// Only the last update in a run's batch carries its display. Failed starts have none.
+    pub display_feed: Option<Vec<feed::FeedItem>>,
+    /// The queued start failed before a run existed, so earlier errors cannot explain it.
+    pub start_failed: bool,
+}
+
+impl RunUpdate {
+    /// Install the writer's display without folding events through its display-only notices.
+    /// Callers still handle every event's workflow effects separately.
+    pub fn update_feed(&mut self, items: &mut Vec<feed::FeedItem>) {
+        if let Some(display) = self.display_feed.take() {
+            *items = display;
+        } else if self.start_failed {
+            let mut explained = false;
+            feed::apply_run_event(items, &self.event, &mut explained);
+        }
+    }
 }
 
 pub struct RunSet {
@@ -99,23 +114,25 @@ impl RunSet {
     /// Every run's new events, by project folder, then start queued runs in the places that came
     /// free. A queued run that can't start gives a `Finished { ok: false }` with the reason.
     pub fn poll(&mut self, hub: &AiHub) -> Vec<(PathBuf, RunEvent)> {
-        self.poll_using(hub, |root, event, _| (root, event))
+        self.poll_using(hub, |root, event, _, _| (root, event))
     }
 
-    /// Attach a completed display before a queued run can replace its owner. A failed start
-    /// has no snapshot, even when the map still retains an older run for the same project.
+    /// Attach one display per polled run before a queued run can replace its owner. A failed
+    /// start has no snapshot, even when the map still retains an older run for the same project.
     pub fn poll_with_snapshots(&mut self, hub: &AiHub) -> Vec<RunUpdate> {
-        self.poll_using(hub, |root, event, run| {
-            let completed_feed = if matches!(&event, RunEvent::Finished { .. }) { run.map(RebuildRun::display_feed) } else { None };
-            RunUpdate { root, event, completed_feed }
+        self.poll_using(hub, |root, event, run, last| {
+            let display_feed = if last { run.map(RebuildRun::display_feed) } else { None };
+            RunUpdate { root, event, display_feed, start_failed: run.is_none() }
         })
     }
 
-    fn poll_using<T>(&mut self, hub: &AiHub, mut collect: impl FnMut(PathBuf, RunEvent, Option<&RebuildRun>) -> T) -> Vec<T> {
+    fn poll_using<T>(&mut self, hub: &AiHub, mut collect: impl FnMut(PathBuf, RunEvent, Option<&RebuildRun>, bool) -> T) -> Vec<T> {
         let mut out = Vec::new();
         for (root, run) in &mut self.runs {
-            for event in run.poll() {
-                out.push(collect(root.clone(), event, Some(run)));
+            let events = run.poll();
+            let last = events.len().saturating_sub(1);
+            for (index, event) in events.into_iter().enumerate() {
+                out.push(collect(root.clone(), event, Some(run), index == last));
             }
         }
         while self.active() < self.limit {
@@ -132,7 +149,7 @@ impl RunSet {
                 Err(e) => {
                     let message = e.for_people();
                     let _ = keep.set_status(Status::NeedsYou, message.clone());
-                    out.push(collect(root, RunEvent::Finished { ok: false, message, paused: false }, None));
+                    out.push(collect(root, RunEvent::Finished { ok: false, message, paused: false }, None, true));
                 }
             }
         }
