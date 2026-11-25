@@ -121,7 +121,8 @@ impl CraftApp {
     }
 
     /// A project from [`Self::start_make`] was made: its build starts.
-    pub(crate) fn created(&mut self, ws: Workspace, request: String, backend: String, pictures: Option<String>, attached: bool) {
+    pub(crate) fn created(&mut self, mut ws: Workspace, request: String, backend: String, pictures: Option<String>, attached: bool) {
+        let creation_warning = ws.creation_warning.take();
         if let Some(e) = pictures {
             self.toast(format!("{} {}", tr("Couldn't add the pictures:"), e), true);
         }
@@ -139,6 +140,7 @@ impl CraftApp {
                 None => feed::for_display(&ws),
             };
             self.start_run(ws, Some(backend), message, None, Vec::new());
+            self.show_creation_warning(creation_warning);
             return;
         }
         // An attached project uses the builder it saved; a new one uses the one Make was started with.
@@ -160,6 +162,13 @@ impl CraftApp {
         // Keep an edited draft; clear it only once this request is running or queued.
         if self.state.make.request.trim() == request && (self.runs.is_running(&root) || self.runs.position(&root).is_some()) {
             self.state.make = MakeDraft::default();
+        }
+        self.show_creation_warning(creation_warning);
+    }
+
+    fn show_creation_warning(&mut self, warning: Option<String>) {
+        if let Some(warning) = warning {
+            self.toast(format!("{} {warning}", tr("The project was created, but cleanup needs attention.")), true);
         }
     }
 
@@ -2615,6 +2624,49 @@ mod tests {
         app.created(ws.clone(), "A notes app".into(), "test-backend".into(), None, false);
         assert!(!app.projects.is_empty(), "project is added to app.projects immediately");
         assert_eq!(app.projects[0].root, ws.root);
+    }
+
+    #[test]
+    fn a_created_project_keeps_running_and_shows_cleanup_guidance() {
+        use egui_kittest::{Harness, kittest::Queryable};
+        for already_running in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut ws = Workspace::create(directory.path(), "Notes", "A notes app", TargetRef::None).unwrap();
+            let root = ws.root.clone();
+            let warning = format!("Inspect {} before retrying cleanup.", root.join("retained-cleanup").display());
+            ws.creation_warning = Some(warning.clone());
+            let stand_ins = rebuild::StandIns::new();
+            let mut app = crate::demo::app(crate::demo::engine(craft_anything_engine::Mode::Beginner, true));
+            app.runs = rebuild::RunSet::new(1).with_starter(stand_ins.starter());
+            if already_running {
+                app.runs.start(&app.hub, ws.clone(), RunOptions::default()).unwrap();
+            }
+
+            app.created(ws, "A notes app".into(), "test-backend".into(), None, false);
+
+            assert_eq!(app.workspace.as_ref().map(|workspace| &workspace.root), Some(&root));
+            assert!(app.projects.iter().any(|workspace| workspace.root == root));
+            assert!(app.runs.is_running(&root));
+            assert_eq!(stand_ins.started().as_slice(), std::slice::from_ref(&root), "the warning neither cancels nor repeats the start");
+            assert!(app.state.toasts.iter().any(|(text, persistent)| *persistent && text.contains(&warning)));
+            let mut harness = Harness::builder().with_size(egui::vec2(1280.0, 820.0)).with_max_steps(32).build_eframe(move |cc| {
+                crate::CraftApp::setup_context(&cc.egui_ctx);
+                app
+            });
+            harness.run_steps(3);
+            let warning_rect = harness.get_by_label_contains(&warning).rect();
+            harness
+                .query_all_by_label("Dismiss")
+                .find(|button| {
+                    let rect = button.rect();
+                    rect.left() >= warning_rect.right() && rect.center().y >= warning_rect.top() && rect.center().y <= warning_rect.bottom()
+                })
+                .expect("the dismiss control beside this cleanup warning")
+                .click();
+            harness.run_steps(2);
+            assert!(harness.state().state.toasts.iter().all(|(text, _)| !text.contains(&warning)));
+            assert!(harness.state().runs.is_running(&root), "dismissing cleanup guidance does not stop the build");
+        }
     }
 
     /// #966: opening a project ensures it is listed in app.projects immediately.

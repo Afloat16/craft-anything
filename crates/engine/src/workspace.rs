@@ -886,6 +886,8 @@ impl ProjectUsage {
 pub struct Workspace {
     pub root: PathBuf,
     pub manifest: Manifest,
+    /// Nonfatal cleanup guidance from this successful creation, never saved in the manifest.
+    pub creation_warning: Option<String>,
 }
 
 /// The absolute form of a project path, for a child that changes into the project folder. An
@@ -1505,7 +1507,7 @@ impl Workspace {
         let manifest = Manifest::new(name, request, target)?;
         let (root, directory) = create_workspace_root(projects_dir, name)?;
         let creation = CreationReservation::claim(&root, directory)?;
-        let ws = Workspace { root, manifest };
+        let mut ws = Workspace { root, manifest, creation_warning: None };
         ws.publish_manifest(&creation)?;
         Ok(ws)
     }
@@ -1554,7 +1556,7 @@ impl Workspace {
         source: CopySource,
         after_discovery: impl FnOnce(&[PathBuf]),
         before_cleanup: impl FnOnce(&Path),
-        publish: impl FnOnce(&Self, &CreationReservation) -> Result<(), ToolError>,
+        publish: impl FnOnce(&mut Self, &CreationReservation) -> Result<(), ToolError>,
     ) -> Result<Workspace, ToolError> {
         let parent = self.root.parent().ok_or_else(|| ToolError::invalid(format!("{} has no parent folder to copy it into.", self.root.display())))?;
         let m = &self.manifest;
@@ -1569,7 +1571,7 @@ impl Workspace {
         after_discovery(generated_backups);
         let manifest = Manifest::new(name, &m.request, m.target.clone())?;
         let destination = CopyDestination::create(parent, name)?;
-        let mut copy = Workspace { root: destination.root.clone(), manifest };
+        let mut copy = Workspace { root: destination.root.clone(), manifest, creation_warning: None };
         let copied = (|| {
             if app.is_dir() {
                 copy_tree(
@@ -1604,7 +1606,7 @@ impl Workspace {
             destination.check_identity()?;
             // The manifest makes the project discoverable, so it is written only after
             // every copied file and all initial settings are complete.
-            publish(&copy, &destination.creation)
+            publish(&mut copy, &destination.creation)
         })();
         if let Err(error) = copied {
             before_cleanup(&destination.root);
@@ -1790,7 +1792,7 @@ impl Workspace {
         request: &str,
         target: TargetRef,
         existing: Option<ExistingFiles>,
-        publish: impl FnOnce(&Self, &CreationReservation) -> Result<(), ToolError>,
+        publish: impl FnOnce(&mut Self, &CreationReservation) -> Result<(), ToolError>,
     ) -> Result<Workspace, ToolError> {
         Self::create_at_with_cleanup(folder, name, request, target, existing, publish, &CopyDestination::cleanup_directory)
     }
@@ -1801,7 +1803,7 @@ impl Workspace {
         request: &str,
         target: TargetRef,
         existing: Option<ExistingFiles>,
-        publish: impl FnOnce(&Self, &CreationReservation) -> Result<(), ToolError>,
+        publish: impl FnOnce(&mut Self, &CreationReservation) -> Result<(), ToolError>,
         allocate: &dyn Fn(&Path) -> Result<PathBuf, ToolError>,
     ) -> Result<Workspace, ToolError> {
         // A person may select a directory link. Resolve that choice before inspecting its
@@ -1841,8 +1843,8 @@ impl Workspace {
         }
         let directory = FileHandle::from_path(folder).map_err(|error| ToolError::io(folder.display(), error))?;
         let creation = CreationReservation::claim_with_cleanup(folder, directory, allocate)?;
-        let ws = Workspace { root: folder.to_path_buf(), manifest };
-        if let Err(error) = publish(&ws, &creation) {
+        let mut ws = Workspace { root: folder.to_path_buf(), manifest, creation_warning: None };
+        if let Err(error) = publish(&mut ws, &creation) {
             return Err(match creation.release_empty_with_cleanup(folder, || {}, allocate) {
                 Ok(()) => error,
                 Err(cleanup) => {
@@ -1868,7 +1870,7 @@ impl Workspace {
         let bytes = std::fs::read(&path).map_err(|e| ToolError::io(path.display(), e))?;
         let manifest = read_manifest(&bytes)
             .map_err(|e| if e.code == ErrorCode::NotSupported { e } else { ToolError::invalid(format!("{} is unreadable: {}", path.display(), e.message)) })?;
-        Ok(Workspace { root: root.to_path_buf(), manifest })
+        Ok(Workspace { root: root.to_path_buf(), manifest, creation_warning: None })
     }
 
     /// Made by a newer Craft Anything: it can be looked at but not changed (saving is refused, so
@@ -1921,14 +1923,15 @@ impl Workspace {
 
     /// Only the creator holding the folder reservation publishes its initial identity.
     /// An ordinary save must never recreate a deleted manifest through this path.
-    fn publish_manifest(&self, creation: &CreationReservation) -> Result<(), ToolError> {
+    fn publish_manifest(&mut self, creation: &CreationReservation) -> Result<(), ToolError> {
+        let root = self.root.clone();
         self.publish_manifest_using(creation, write_atomic, CreationCleanup::remove_empty, |warning| {
-            log::warn!("Project published at {}: {}", self.root.display(), warning.for_people());
+            log::warn!("Project published at {}: {}", root.display(), warning.for_people());
         })
     }
 
     fn publish_manifest_using(
-        &self,
+        &mut self,
         creation: &CreationReservation,
         write: impl FnOnce(&Path, &[u8]) -> Result<(), ToolError>,
         remove: impl FnOnce(&CreationCleanup, &Path) -> Result<(), ToolError>,
@@ -1940,6 +1943,7 @@ impl Workspace {
         write(&self.root.join(MANIFEST), &bytes)?;
         if let Some(warning) = creation.finish_publication(self, remove)? {
             report(&warning);
+            self.creation_warning = Some(warning.for_people());
         }
         Ok(())
     }
@@ -4455,7 +4459,7 @@ mod tests {
             std::fs::write(selected.join("personal.txt"), b"Keep the selected files").unwrap();
             let retained = std::cell::RefCell::new(PathBuf::new());
             let warning = std::cell::RefCell::new(None);
-            let publish = |ws: &Workspace, creation: &CreationReservation| {
+            let publish = |ws: &mut Workspace, creation: &CreationReservation| {
                 ws.publish_manifest_using(
                     creation,
                     write_atomic,
@@ -4933,6 +4937,83 @@ mod tests {
         assert!(refused, "a failed copy must never own a replacement introduced before its reservation");
         assert!(!root.join("inbox").exists(), "the replacement is refused before adding coordination files");
         assert!(displaced.is_dir());
+    }
+
+    #[test]
+    fn published_projects_report_cleanup_failures_without_rejecting_the_project() {
+        for existing in [None, Some(ExistingFiles::Edit), Some(ExistingFiles::StartFrom)] {
+            let directory = tempfile::tempdir().unwrap();
+            let root = directory.path().join("selected");
+            std::fs::create_dir(&root).unwrap();
+            if existing.is_some() {
+                std::fs::write(root.join("personal.txt"), b"Keep my existing files").unwrap();
+            }
+            let mut retained = PathBuf::new();
+            let mut ws = Workspace::create_at_with_publisher(&root, "Selected", "Test", TargetRef::None, existing, |ws, creation| {
+                ws.publish_manifest_using(
+                    creation,
+                    write_atomic,
+                    |cleanup, root| {
+                        retained = root.join(&cleanup.name);
+                        std::fs::write(retained.join("arrived.txt"), b"Keep this late arrival").unwrap();
+                        cleanup.remove_empty(root)
+                    },
+                    |_| {},
+                )
+            })
+            .unwrap();
+
+            let warning = ws.creation_warning.as_deref().unwrap();
+            assert!(warning.contains("manifest was published"));
+            assert!(warning.contains(&retained.display().to_string()));
+            assert_eq!(std::fs::read(retained.join("arrived.txt")).unwrap(), b"Keep this late arrival");
+            assert_eq!(Workspace::open(&root).unwrap().manifest.generation, ws.manifest.generation);
+            drop(crate::feed::lock_project(&root).unwrap());
+            if existing.is_some() {
+                assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep my existing files");
+            }
+            let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(root.join(MANIFEST)).unwrap()).unwrap();
+            assert!(saved.get("creation_warning").is_none(), "cleanup guidance is not a manifest migration");
+            ws.reload().unwrap();
+            assert!(ws.creation_warning.is_none(), "the warning belongs to the successful creation result");
+        }
+    }
+
+    #[test]
+    fn a_published_copy_returns_its_warning_without_entering_failure_cleanup() {
+        let directory = tempfile::tempdir().unwrap();
+        let original = Workspace::create(directory.path(), "Original", "Test", TargetRef::None).unwrap();
+        std::fs::create_dir(original.app_dir()).unwrap();
+        std::fs::write(original.app_dir().join("index.html"), b"Keep this app").unwrap();
+        let mut retained = PathBuf::new();
+        let copy = original
+            .duplicate_with_publisher(
+                "Copy",
+                original.lock_copy_source().unwrap(),
+                |_| {},
+                |_| panic!("a published copy must not enter failure cleanup"),
+                |copy, creation| {
+                    copy.publish_manifest_using(
+                        creation,
+                        write_atomic,
+                        |cleanup, root| {
+                            retained = root.join(&cleanup.name);
+                            std::fs::write(retained.join("arrived.txt"), b"Keep the cleanup arrival").unwrap();
+                            cleanup.remove_empty(root)
+                        },
+                        |_| {},
+                    )
+                },
+            )
+            .unwrap();
+
+        assert!(copy.creation_warning.as_deref().unwrap().contains(&retained.display().to_string()));
+        assert_eq!(Workspace::open(&copy.root).unwrap().manifest.generation, copy.manifest.generation);
+        assert_ne!(copy.manifest.generation, original.manifest.generation);
+        assert_eq!(std::fs::read(copy.app_dir().join("index.html")).unwrap(), b"Keep this app");
+        assert_eq!(std::fs::read(original.app_dir().join("index.html")).unwrap(), b"Keep this app");
+        assert_eq!(std::fs::read(retained.join("arrived.txt")).unwrap(), b"Keep the cleanup arrival");
+        drop(crate::feed::lock_project(&copy.root).unwrap());
     }
 
     #[test]

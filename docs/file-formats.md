@@ -148,8 +148,9 @@ guidance; a missing, changed or occupied cleanup reservation never falls back to
 The selected folder is never removed by that cleanup. Successful manifest publication removes only
 the verified empty cleanup reservation. If that cleanup fails while the root, inbox, coordination
 file and published manifest identity remain unchanged, creation and duplication still return the
-published workspace and log a cleanup warning with the retained path. Identity changes and initial
-write errors remain failures. Preallocation does not guarantee that rename, unlink or directory removal can succeed on
+published workspace with transient cleanup guidance and log the retained path. Creation and copy
+callers also show the guidance through the UI, CLI or tool result; reopening a workspace clears the
+transient warning without changing the manifest. Identity changes and initial write errors remain failures. Preallocation does not guarantee that rename, unlink or directory removal can succeed on
 an exhausted filesystem. Legacy-initializer cleanup and the outer private root claim for failed copies
 can still need allocation. The destination manifest is published after copying
 succeeds, while the root, inbox and coordination file still match their held identities and no manifest

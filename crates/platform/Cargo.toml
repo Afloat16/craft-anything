@@ -42,8 +42,8 @@ nix = { version = "0.31", default-features = false, features = ["signal", "proce
 [target.'cfg(windows)'.dependencies]
 # Resolve a single child against a retained directory handle without reopening its pathname.
 fs_at = "=0.2.1"
-# Only for the creation-flags type process-wrap takes (already in the tree through it).
-windows = { version = "0.62", default-features = false, features = ["Win32_System_Threading"] }
+# Native file-access flags and the creation-flags type process-wrap takes.
+windows = { version = "0.62", default-features = false, features = ["Win32_Storage_FileSystem", "Win32_System_Threading"] }
 
 [dev-dependencies]
 tempfile = "3"

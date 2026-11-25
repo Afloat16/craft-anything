@@ -152,6 +152,7 @@ const ACTIONS: &[Action] = &[
 /// `CraftApp` methods that aren't person-facing actions: callbacks, polling, drawing, helpers.
 #[rustfmt::skip]
 const PLUMBING: &[(&str, &str)] = &[
+    ("show_creation_warning", "shows successful creation cleanup guidance; the CLI and rebuild_start result carry the same warning"),
     ("show_update_outcome_on_start", "native startup queues the previous helper result for the first window frame; no document action"),
     ("load_agent_model_catalog", "worker dispatch shared by the model picker and its reload action"),
     ("check_backend_keys", "a worker that fills the saved-key status rows"),

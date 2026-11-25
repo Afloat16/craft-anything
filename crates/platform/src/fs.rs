@@ -29,7 +29,13 @@ pub fn open_child_directory(parent: &std::fs::File, name: &Path) -> std::io::Res
             std::fs::File::from(openat(parent, name, flags, Mode::empty()).map_err(std::io::Error::from)?)
         };
         #[cfg(windows)]
-        let file = fs_at::OpenOptions::default().read(true).follow(false).open_dir_at(parent, name)?;
+        let file = {
+            use fs_at::os::windows::OpenOptionsExt as _;
+            use windows::Win32::Storage::FileSystem::{FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_TRAVERSE};
+            // Keep the no-follow handle in a File before rejecting links below: fs_at 0.2.1's
+            // own link check can fail before taking ownership. open_path_at needs explicit access.
+            fs_at::OpenOptions::default().desired_access((FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY | FILE_TRAVERSE).0).open_path_at(parent, name)?
+        };
         let metadata = file.metadata()?;
         if !metadata.is_dir() || metadata.file_type().is_symlink() {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "the child is not a directory"));
@@ -61,8 +67,12 @@ pub fn open_child_file_for_update(parent: &std::fs::File, name: &Path, create_ne
             std::fs::File::from(openat(parent, name, flags, Mode::S_IRUSR | Mode::S_IWUSR).map_err(std::io::Error::from)?)
         };
         #[cfg(windows)]
-        let file =
-            fs_at::OpenOptions::default().read(true).write(fs_at::OpenOptionsWriteMode::Write).follow(false).create_new(create_new).open_at(parent, name)?;
+        let file = {
+            use fs_at::os::windows::OpenOptionsExt as _;
+            use windows::Win32::Storage::FileSystem::{FILE_GENERIC_READ, FILE_GENERIC_WRITE};
+            // As above, validate the owned no-follow File and retain read/write and exclusive creation.
+            fs_at::OpenOptions::default().desired_access((FILE_GENERIC_READ | FILE_GENERIC_WRITE).0).create_new(create_new).open_path_at(parent, name)?
+        };
         let metadata = file.metadata()?;
         if !metadata.is_file() || metadata.file_type().is_symlink() {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "the child is not a regular file"));

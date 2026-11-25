@@ -234,7 +234,11 @@ fn project_duplicate(_ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, To
     let ws = open(&p.project)?;
     let name = p.name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| format!("{} copy", ws.manifest.name));
     let copy = ws.duplicate(&name)?;
-    Ok(ToolOutput::Value(json!({"project": copy.root, "name": copy.manifest.name})))
+    let mut result = json!({"project": copy.root, "name": copy.manifest.name});
+    if let Some(warning) = copy.creation_warning {
+        result["creation_warning"] = warning.into();
+    }
+    Ok(ToolOutput::Value(result))
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

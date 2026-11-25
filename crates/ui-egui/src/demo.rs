@@ -220,6 +220,7 @@ fn workspace(slug: &str, name: &str, request: &str, target: TargetRef, status: S
     let at = craft_anything_engine::inbox::now_ms().saturating_sub(age_min * 60_000);
     Workspace {
         root: PathBuf::from(format!("/demo/Craft Anything/{slug}")),
+        creation_warning: None,
         manifest: Manifest {
             version: craft_anything_engine::workspace::MANIFEST_VERSION,
             generation: None,

@@ -429,6 +429,7 @@ fn rebuild_start(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolErr
             .with_remediation("Add to it with rebuild_note, or stop it with rebuild_stop."));
     }
     let root = ws.root.clone();
+    let creation_warning = ws.creation_warning.clone();
     let opts = RunOptions {
         backend: p.backend,
         shown: message.clone(),
@@ -453,6 +454,9 @@ fn rebuild_start(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolErr
     };
     if let Some(notice) = builder_notice {
         out["builder_notice"] = json!(notice);
+    }
+    if let Some(warning) = creation_warning {
+        out["creation_warning"] = json!(warning);
     }
     Ok(ToolOutput::Value(out))
 }
