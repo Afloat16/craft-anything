@@ -91,6 +91,11 @@ names (`git merge-base --is-ancestor <fix> <release tag>`), and check the messag
 where APFS rejects the fixture names before their assertions run. Keep filesystem tests that
 require invalid UTF-8 names off Apple targets, while retaining iterator-only coverage on Unix.
 
+**A zoom-and-resize test kept the old viewport.** Applying egui zoom and a harness resize in
+the same frame let the zoom adjustment replace the supplied screen rectangle. Apply zoom first,
+then resize in logical points, and assert `ctx.content_rect()` matches the requested viewport
+before checking layout. A screenshot of the supposed wide, short window exposed this.
+
 **A TLS fixture closed before the handshake.** Accepted sockets inherited the listener's
 nonblocking mode on Windows, so the fixture read `WouldBlock` and closed a valid connection.
 Set the accepted socket to blocking mode before applying bounded I/O timeouts; consume the
@@ -191,6 +196,11 @@ ours as soon as its listener was dropped. Another fixture could acquire it befor
 Use the unassigned loopback port zero to exercise a real connection refusal without borrowing
 and releasing a shared ephemeral port.
 
+**A click aimed where a control was.** A UI test cleared a message by changing the app's state and
+clicked Test at once; the message's going had moved the form, so the click landed where the button
+had been and nothing ran, which looked like a worker too slow for `wait`. After changing state
+that moves the layout, run a frame or two before clicking.
+
 **Fixtures that leak into each other.** A "nothing here" path sat beside a fake game folder in the
 same temp directory, and game detection walked up and found the game. Give each case its own
 `tempfile::tempdir()`.
@@ -238,6 +248,13 @@ you couldn't.
 off the UI thread; a UI test that added pictures, ran three frames and then looked kept passing on
 fast machines and failed in CI on unrelated PRs. When work moves to a worker, grep the tests that
 call it and make them `wait` for the result, not `run_steps(n)`.
+
+**An interrupted call read as "nothing answered".** A Cutter test failed once on Linux CI with "No
+Cutter session answered … Interrupted system call": a signal reached the thread (likely another
+test's child ending) during a loopback call, and every error that wasn't a timeout meant "no
+session". An interrupted system call is not an answer: decide on the error's typed kind
+(`ErrorKind::Interrupted`), call again within the same time limit when the request is safe to
+repeat (`platform::retry::when_interrupted`), and otherwise say it was interrupted.
 
 **A stand-in server that answers every request in order.** The AI tests' `mock` answered each
 request with the next scripted reply, so when the agent began asking the server for its context
@@ -289,6 +306,10 @@ supervisor thread; the window-capture tool returned and the CLI exited before th
 the program it opened stayed open (and held the shell's pipe, so the command never returned). When
 the caller may exit next, use `kill_and_wait`, and check after a live run that nothing was left
 running.
+
+**Killing the group isn't closing the program.** The pictured program was killed outright, so a
+helper it had launchd start (not in its group) kept running with the program's files open. Ask the
+program to close first and kill only after a short wait (`RunningProcess::close_and_wait`).
 
 **A turn's own process outlived its answer.** `run_cli` only sent `AgentEvent::TurnDone` once the
 whole coding-agent subprocess exited, never once its JSON stream said the turn was done (the
@@ -376,6 +397,12 @@ backend that's started at all: start only the backends the app may use.
 It happened again with Vulkan on Windows (#394): starting Vulkan loaded an Intel Vulkan driver
 (`igvk64.dll`) that crashed with `0xc0000005` on startup. Windows now starts DX12 only by default
 (which includes WARP); `WGPU_BACKEND` still allows choosing other backends.
+
+**A build script that missed a removed file.** `build.rs` joins each catalog folder, and
+`cargo::rerun-if-changed` on the folder saw a new or changed file, but not one taken away: Cargo
+compares the newest time in the folder, which a deletion doesn't change, so the joined catalog
+kept the removed file's lines. Also list every file the script read; Cargo runs it again when a
+listed file is gone. Test a generated file by adding an input and then removing it.
 
 **A shader compiler picked by a default that looks around the computer.** wgpu's DX12 `Auto`
 compiler takes a `dxcompiler.dll` it finds on the PATH; one without `dxil.dll` makes unsigned
@@ -499,6 +526,12 @@ it either. Send its task on stdin, with no task argument. A literal `-` is a std
 Harness versions but is the task itself in older ones; omitting the task makes those older versions
 fail before a model runs. They need an update to a headless profile that supports stdin.
 
+**A stop that only one process heard.** The first Stop button for Ghidra took the project out of
+the app's in-memory list of analyses; the build then decompiled through its tool server (another
+process), which found no saved analysis and started the same hours-long one again, with no Stop
+for it. A decision several processes must honour is kept where they all look (a file in the
+project folder), checked by every path that can start the work, and cleared at one stated point.
+
 **A first analysis that waited for a lock it could never take.** Ghidra's analysis lock is created
 with `create_new` in `ghidra-cache/`, which only existed on machines that had used it before; on a
 fresh store the create failed and the loop read that as "someone else holds it" until the
@@ -585,6 +618,14 @@ anything. A test gated on `unix` must only need what every Unix build has; FreeB
 through pipes, as Windows does.
 
 ## Design
+
+**A bounded modal still grew with its children.** Settings' minimum width and page height ran
+outside a 380×260 logical viewport. Removing those minima alone still let AI fields and nested
+dropdowns widen it; a wrapping row does not always constrain a control that measures a child UI.
+Budget the frame and actual remaining height, scroll navigation independently, and stack control
+groups when narrow. Test the real modal bounds on every tab, then inspect rendered screenshots;
+also check normal desktop proportions. Render the whole app to catch duplicate error overlays;
+a new save-error occurrence must return into view without resetting ordinary scrolling.
 
 **A source inventory limit came after expansion.** Taking five thousand names after collecting
 every source path copied a large `sourceRoot` into every entry first. Count retained entries and
@@ -849,6 +890,14 @@ keystroke, so a dark gradient blinked over the line being typed. Unit tests look
 what's painted over it. When something flickers, render the frames (`Harness::render` at a
 fractional scale) and diff them, then list the shapes painted over the spot.
 
+**A copy kept in sync from one side only.** Each API-key build got an engine of its own that
+copied the app's asset keys before every tool call; a key removed through a build's own engine
+changed only that engine's copy, so the next call copied the app's older keys back and a build
+beside it never heard. And making that engine copied the app's session with a blocking lock, which
+`rebuild_start` already held, so starting a build from the tool deadlocked. State that several
+sessions must agree on lives outside them all, under a lock held for nothing else; anything that
+copies a session it may be called inside tries the lock and has a fallback.
+
 **A tool that locked the session it was called with.** `rebuild_question_ask` read the settings
 with `hub.engine.session()`, but a tool runs while its call holds the session, so the CLI waited
 forever before starting anything (found by the first live run, not by tests, which stopped
@@ -881,6 +930,15 @@ button fill and the track in the field colour; our theme made those the same, an
 preset narrows the bar to 2 px at rest, so the thumb showed only on hover. When a theme sets a
 library's colours, check every widget that borrows them, in both themes, and test contrast with
 numbers (3:1 for parts you interact with), not by eye.
+
+**A scroll area inside another got what was left of the other's first screen.** egui gives a
+scroll area the room left in the one it's in, counted from the top of that one's content; at the
+bottom of a long feed that's nothing, so the build's details box got egui's 64-point floor (about
+three lines) whatever its `max_height`. Give a nested scroll area its own space (`allocate_ui`
+with its height). Fixing it turned up two more: buttons drawn over the box with `scope_builder`
+moved the layout's cursor back up to them, so the rows after the box were drawn over it (draw an
+overlay in `new_child`, which takes no room), and a button over the scroll bar also scrolled the
+lines when pressed. Render the frame and look (`Harness::render`) before trusting rect checks.
 
 **Files read while drawing.** The Project screen parsed `package.json` 2–4 times a frame, listed
 the reference pictures and checked screenshot files on every repaint, and read the side panel's
@@ -1491,3 +1549,8 @@ ordinary saves must keep it. Migrate older manifests without generating a differ
 each read. A denied lock operation, not owner mode bits, establishes a caller's inability to
 coordinate a read-only copy. If that fallback requires no inbox, check the same project and no
 inbox again before publishing the copy, while preserving normal publisher coordination.
+
+**Responsive Settings lost transient state when its parents changed.** Backend drafts, pending
+jobs, focus and cursors need layout-independent identities. Test continued typing without
+refocusing and tab activation across both rail orientations. On resize, egui keeps only the last
+scroll request: combine selection and focus when both fit, otherwise keep focus visible.

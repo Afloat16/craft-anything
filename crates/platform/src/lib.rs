@@ -11,6 +11,7 @@ pub mod capture;
 pub mod display;
 pub mod fs;
 pub mod process;
+pub mod retry;
 pub mod serve;
 pub mod standin_server;
 pub mod sync;

@@ -225,12 +225,16 @@ fn same_copy_entry(current: &std::fs::Metadata, opened: &std::fs::Metadata) -> b
     true
 }
 
+/// Ghidra was stopped for this project's builds (`tools::deep::STOPPED`), and its lock file.
+pub const GHIDRA_STOPPED: &str = "ghidra-stopped";
+pub const GHIDRA_STOP_LOCK: &str = "ghidra-stop.lock";
+
 /// The current `craft.json` format version. Bumping it means appending a step to [`MANIFEST_STEPS`].
-pub const MANIFEST_VERSION: u32 = 6;
+pub const MANIFEST_VERSION: u32 = 7;
 
 /// The steps that bring an older `craft.json` forward; step `i` goes from version `i` to `i + 1`.
 const MANIFEST_STEPS: &[versioned::Step<Value>] =
-    &[manifest_v0_to_v1, manifest_v1_to_v2, manifest_v2_to_v3, manifest_v3_to_v4, manifest_v4_to_v5, manifest_v5_to_v6];
+    &[manifest_v0_to_v1, manifest_v1_to_v2, manifest_v2_to_v3, manifest_v3_to_v4, manifest_v4_to_v5, manifest_v5_to_v6, manifest_v6_to_v7];
 const _: () = assert!(MANIFEST_STEPS.len() == MANIFEST_VERSION as usize, "one step per craft.json version");
 
 /// Version 0 (no `version` field) has the same shape as version 1; only the number is new.
@@ -275,11 +279,18 @@ fn manifest_v4_to_v5(doc: &mut Value) -> Result<(), String> {
     Ok(())
 }
 
-/// Version 6 keeps a random project generation. Older projects keep none: reading a manifest
+/// Version 6 adds the toolchain a move to another language was confirmed with (`toolchain`), none
+/// by default. The number is new so an older build, which would drop it when it saves (and a
+/// Java port's checks could go back to Maven), opens such a project read-only instead.
+fn manifest_v5_to_v6(doc: &mut Value) -> Result<(), String> {
+    if doc.is_object() { Ok(()) } else { Err("the manifest isn't a JSON object".into()) }
+}
+
+/// Version 7 keeps a random project generation. Older projects keep none: reading a manifest
 /// must not create a different identity on each open or require writing a read-only project.
 /// New projects always get a generation, so even a reused folder and timestamp differ. The
 /// version makes older builds read-only instead of silently dropping the identity on save.
-fn manifest_v5_to_v6(doc: &mut Value) -> Result<(), String> {
+fn manifest_v6_to_v7(doc: &mut Value) -> Result<(), String> {
     if doc.is_object() { Ok(()) } else { Err("the manifest isn't a JSON object".into()) }
 }
 
@@ -556,6 +567,10 @@ pub struct Manifest {
     /// The stack chosen for the build ("React + TypeScript (Vite)", "Rust + Bevy"…).
     #[serde(default)]
     pub stack: String,
+    /// The toolchain a move to `stack` was confirmed with ("Gradle", for a Java port that wrote
+    /// build.gradle.kts beside an old pom.xml), when the stack has more than one; none: not recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub toolchain: Option<String>,
     #[serde(default)]
     pub status: Status,
     /// One line on what's happening or what went wrong.
@@ -667,6 +682,7 @@ impl Manifest {
             checks: Vec::new(),
             agent_session: None,
             agent_session_by: None,
+            toolchain: None,
             agent_session_deep: None,
             capture_deep: None,
             allowed_actions: Vec::new(),
@@ -1491,6 +1507,8 @@ pub const AGENT_SESSION_FILE: &str = "agent-session.jsonl";
 pub const OWN_NAMES: &[&str] = &{
     const RECORDS: &[&str] = &[
         MANIFEST,
+        GHIDRA_STOPPED,
+        GHIDRA_STOP_LOCK,
         crate::feed::FEED_FILE,
         crate::questions::QUESTIONS_FILE,
         USAGE_FILE,
@@ -2390,6 +2408,40 @@ mod tests {
         assert!(saved.get("generation").is_none(), "ordinary saves do not invent a new identity for a legacy project");
     }
 
+    #[test]
+    fn version_6_toolchains_and_existing_generations_survive_migration_and_save() {
+        const V6: &str = r#"{
+  "version": 6,
+  "name": "Java port",
+  "request": "Move this app to Java",
+  "target": { "kind": "none" },
+  "stack": "Java",
+  "toolchain": "Gradle",
+  "created_ms": 1700000000000,
+  "updated_ms": 1700000005000
+}"#;
+        for generation in [None, Some("0123456789abcdef0123456789abcdef")] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join(MANIFEST);
+            // Early builds of this change also wrote generation at version 6. Keep it,
+            // while ordinary version-6 projects retain their absent legacy identity.
+            let original = generation.map_or_else(|| V6.to_owned(), |value| V6.replacen('{', &format!(r#"{{ "generation": "{value}","#), 1));
+            std::fs::write(&path, &original).unwrap();
+            let mut opened = Workspace::open(directory.path()).unwrap();
+            assert_eq!(opened.manifest.version, MANIFEST_VERSION);
+            assert_eq!(opened.manifest.toolchain.as_deref(), Some("Gradle"));
+            assert_eq!(opened.manifest.generation.as_deref(), generation);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), original, "opening only migrates in memory");
+            opened.set_status(Status::Building, "Working").unwrap();
+            let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(saved["version"], MANIFEST_VERSION);
+            assert_eq!(saved["stack"], "Java");
+            assert_eq!(saved["toolchain"], "Gradle");
+            assert_eq!(saved.get("generation").and_then(Value::as_str), generation);
+            assert_eq!(Workspace::open(directory.path()).unwrap().manifest, opened.manifest);
+        }
+    }
+
     /// Approval choices survive an old manifest, a stale save and a copy.
     #[test]
     fn approval_choices_survive_an_old_manifest_a_stale_save_and_a_copy() {
@@ -2441,7 +2493,7 @@ mod tests {
         assert_eq!(Workspace::list(dir.path().parent().unwrap()).iter().filter(|w| w.root == dir.path()).count(), 1, "still listed");
 
         // A newer manifest whose shape this build can't read at all is refused, in plain words.
-        std::fs::write(dir.path().join(MANIFEST), r#"{"version": 7, "name": {"parts": []}}"#).unwrap();
+        std::fs::write(dir.path().join(MANIFEST), r#"{"version": 99, "name": {"parts": []}}"#).unwrap();
         let err = Workspace::open(dir.path()).unwrap_err();
         assert_eq!(err.code, ErrorCode::NotSupported);
         assert!(err.message.contains("newer Craft Anything") && err.remediation.is_some());
@@ -2647,6 +2699,52 @@ mod tests {
         let saved: Value = serde_json::from_slice(&std::fs::read(dir.path().join(MANIFEST)).unwrap()).unwrap();
         assert_eq!(saved["version"], MANIFEST_VERSION);
         assert_eq!(saved["agent_session_deep"], want == Some(true));
+    }
+
+    /// Review of #2099: a version-5 build can't save over a recorded toolchain, and a version-5
+    /// manifest opens here unchanged but for its number.
+    #[test]
+    fn a_recorded_toolchain_is_kept_from_older_builds() {
+        let d = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(d.path(), "Game", "a game", TargetRef::None).unwrap();
+        ws.manifest.toolchain = Some("Gradle".into());
+        ws.save().unwrap();
+        let saved: Value = serde_json::from_slice(&std::fs::read(ws.root.join("craft.json")).unwrap()).unwrap();
+        assert_eq!((saved["version"].as_u64(), saved["toolchain"].as_str()), (Some(u64::from(MANIFEST_VERSION)), Some("Gradle")));
+        // A version-5 build reads up to 5, so it opens this one read-only (newer_manifests_open_read_only_and_are_never_overwritten).
+        let mut old = saved.clone();
+        old["version"] = 5.into();
+        old.as_object_mut().unwrap().remove("toolchain");
+        let m = read_manifest(&serde_json::to_vec(&old).unwrap()).unwrap();
+        assert_eq!((m.version, m.toolchain), (MANIFEST_VERSION, None), "brought forward with no toolchain");
+    }
+
+    /// Review of #2099: a build holding a copy read before a newer build brought the file forward
+    /// (both running at once) doesn't save over it, by any of the ways it saves.
+    #[test]
+    fn a_copy_read_before_a_newer_build_saved_doesnt_overwrite_it() {
+        let d = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(d.path(), "Game", "a game", TargetRef::None).unwrap();
+        let original = std::fs::read(ws.root.join(MANIFEST)).unwrap();
+        let mut newer: Value = serde_json::from_slice(&original).unwrap();
+        newer["version"] = (MANIFEST_VERSION + 1).into();
+        newer["a_field_from_the_future"] = "kept".into();
+        let newer = serde_json::to_string_pretty(&newer).unwrap();
+        std::fs::write(ws.root.join(MANIFEST), &newer).unwrap();
+        assert!(!ws.is_read_only(), "this copy was read before");
+        let err = ws.set_status(Status::Building, "x").unwrap_err();
+        assert_eq!(err.code, ErrorCode::NotSupported);
+        assert!(err.message.contains(&format!("version {}", MANIFEST_VERSION + 1)), "{}", err.message);
+        assert_eq!(ws.save().unwrap_err().code, ErrorCode::NotSupported);
+        assert_eq!(ws.set_person(|m| m.note = "x".into()).unwrap_err().code, ErrorCode::NotSupported);
+        assert_eq!(std::fs::read_to_string(ws.root.join(MANIFEST)).unwrap(), newer, "the file is untouched");
+        // An unreadable manifest cannot prove that this is still the loaded project.
+        std::fs::write(ws.root.join(MANIFEST), b"not json").unwrap();
+        assert!(ws.save().is_err());
+        assert_eq!(std::fs::read(ws.root.join(MANIFEST)).unwrap(), b"not json");
+        // Its own readable version on disk still saves.
+        std::fs::write(ws.root.join(MANIFEST), original).unwrap();
+        ws.save().unwrap();
     }
 
     /// #469: a saved session is only for the agent that saved it.

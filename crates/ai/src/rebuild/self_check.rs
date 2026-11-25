@@ -267,6 +267,7 @@ mod tests {
             usage: None,
             self_check: Some((Arc::new(boundary), 90.0)),
             reset_progress_after_notes: false,
+            taken_in_turn: Vec::new(),
         }
     }
 
