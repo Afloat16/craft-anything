@@ -68,4 +68,36 @@ mod tests {
         // 5×5 needs 4 blocks and is cropped.
         assert_eq!(decode(Layout::Dxt1, 5, 5, &[0; 32]).unwrap().len(), 5 * 5 * 4);
     }
+
+    #[test]
+    fn bptc_eac_and_packed_layout_parity() {
+        for layout in [
+            Layout::Dxt3,
+            Layout::Bc6h,
+            Layout::Bc6hSigned,
+            Layout::Bc7,
+            Layout::Etc1,
+            Layout::EacR,
+            Layout::EacRSigned,
+            Layout::EacRg,
+            Layout::EacRgSigned,
+            Layout::Rgb9e5,
+            Layout::Rgba1010102,
+            Layout::Rgb111110Float,
+        ] {
+            let block_bytes = size(layout, 4, 4).unwrap();
+            assert_eq!(Some(block_bytes), craft_dds::pixels::size(layout, 4, 4));
+            let block_input = vec![0u8; block_bytes];
+            assert_eq!(
+                decode(layout, 4, 4, &block_input).unwrap(),
+                craft_dds::pixels::decode_with_limit(layout, 4, 4, &block_input, DEFAULT_MAX_RGBA_BYTES).unwrap()
+            );
+
+            let partial_bytes = size(layout, 5, 3).unwrap();
+            let partial_input = vec![0u8; partial_bytes];
+            assert_eq!(decode(layout, 5, 3, &partial_input).unwrap().len(), 5 * 3 * 4);
+            assert!(matches!(decode(layout, 4, 4, &block_input[..block_bytes - 1]), Err(FormatError::Truncated(_))));
+            assert!(matches!(decode_with_limit(layout, 4, 4, &block_input, 4 * 4 * 4 - 1), Err(FormatError::TooLarge(_))));
+        }
+    }
 }

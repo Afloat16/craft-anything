@@ -168,7 +168,7 @@ fn the_check_retry_uses_generic_guidance_only_when_none_was_supplied() {
     for remediation in [None, Some("Restore the recorded inputs."), Some("")] {
         let (_dir, ws) = workspace();
         let first = ToolError::invalid("The first check failed.").with_remediation("The first attempt's guidance.");
-        let mut second = ToolError::invalid("The second check failed.");
+        let mut second = ToolError::invalid("The second check failed.").with_details(serde_json::json!({"attempt": "second"}));
         second.remediation = remediation.map(str::to_owned);
         let kind = RetryErrors { errors: Arc::new(Mutex::new([first, second].into())) };
 
@@ -177,6 +177,7 @@ fn the_check_retry_uses_generic_guidance_only_when_none_was_supplied() {
         assert_eq!(error.message, "The build is finished, but it couldn't be checked: The second check failed.");
         assert_eq!(error.code, craft_anything_evidence::ErrorCode::BadInput);
         assert_eq!(error.remediation.as_deref(), Some(remediation.unwrap_or("Press Try again to check it again. Nothing needs building again.")));
+        assert_eq!(error.details, Some(serde_json::json!({"attempt": "second"})));
         assert!(kind.errors.lock().unwrap().is_empty(), "exactly two checks must have run");
     }
 }
