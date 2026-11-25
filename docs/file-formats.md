@@ -92,9 +92,14 @@ A new or changed unverified entry requires a retry. Losing a receipt also cannot
 verified recovery copy into personal app content during the same copy. Every initial creator,
 including creation in a person-selected folder, atomically reserves the existing `inbox/` name before
 publishing a manifest. A selected directory link is resolved before validation; the returned workspace
-and the desktop's remembered project use that real path. The empty directory remains until project deletion; it prevents another creator
-from adopting a copy still in progress without racing later feed writers. A creation that loses the
-reservation leaves the winner's directory alone. The destination manifest is published after copying
+and the desktop's remembered project use that real path. The reservation prevents another creator
+from adopting a copy still in progress. After successful publication it remains until project deletion,
+so releasing it cannot race later feed writers. A creation that loses the
+reservation leaves the winner's directory alone. A fresh destination captures its root identity when
+created and checks that same identity before claiming its inbox. A failed initial publication in a
+selected folder removes only this attempt's empty inbox after checking both directory identities and
+manifest absence. A visible manifest, changed identity or occupied inbox is preserved with inspection
+guidance; the selected folder is never removed by that cleanup. The destination manifest is published after copying
 succeeds, while the root and inbox still match their held identities and no manifest has appeared.
 A failed copy checks the same reservation, claims its destination into a fresh private
 `.craft-copy-cleanup-*` folder beside it, then checks that reservation again before recursive removal.

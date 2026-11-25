@@ -923,7 +923,7 @@ pub fn suggest_name(request: &str, target: &TargetRef) -> String {
 }
 
 /// Claim a fresh directory without publishing a project manifest yet.
-fn create_workspace_root(projects_dir: &Path, name: &str) -> Result<PathBuf, ToolError> {
+fn create_workspace_root(projects_dir: &Path, name: &str) -> Result<(PathBuf, FileHandle), ToolError> {
     std::fs::create_dir_all(projects_dir).map_err(|e| ToolError::io(projects_dir.display(), e))?;
     let base = slug(name);
     let mut root = projects_dir.join(&base);
@@ -935,22 +935,23 @@ fn create_workspace_root(projects_dir: &Path, name: &str) -> Result<PathBuf, Too
         root = projects_dir.join(format!("{base}-{n}"));
         n += 1;
     }
-    Ok(root)
+    let directory = FileHandle::from_path(&root).map_err(|error| ToolError::io(root.display(), error))?;
+    CreationReservation::check_directory(&root, &directory)?;
+    Ok((root, directory))
 }
 
 /// Every initial creator claims the existing reserved inbox name before publishing a manifest.
-/// Keep that directory until project deletion: removing it after publication would race a feed
-/// writer creating its persistent lock. An interrupted creation remains visibly reserved.
+/// After publication, keep that directory until project deletion: removing it would race a
+/// feed writer creating its persistent lock. An interrupted creation remains visibly reserved.
 struct CreationReservation {
     directory: FileHandle,
     inbox: FileHandle,
 }
 
 impl CreationReservation {
-    fn claim(root: &Path) -> Result<Self, ToolError> {
-        Self::check_manifest_absent(root)?;
-        let directory = FileHandle::from_path(root).map_err(|error| ToolError::io(root.display(), error))?;
+    fn claim(root: &Path, directory: FileHandle) -> Result<Self, ToolError> {
         Self::check_directory(root, &directory)?;
+        Self::check_manifest_absent(root)?;
         let inbox_path = root.join("inbox");
         #[cfg(unix)]
         let builder = {
@@ -979,6 +980,14 @@ impl CreationReservation {
         Self::check_directory(root, &self.directory)?;
         Self::check_directory(&root.join("inbox"), &self.inbox)?;
         Self::check_manifest_absent(root)
+    }
+
+    /// A failed picked-folder publication may release only this attempt's empty reservation.
+    /// A visible manifest, changed identity or occupied inbox must remain for inspection.
+    fn release_empty(&self, root: &Path) -> Result<(), ToolError> {
+        self.check(root)?;
+        let inbox = root.join("inbox");
+        std::fs::remove_dir(&inbox).map_err(|error| ToolError::io(inbox.display(), error))
     }
 
     fn check_directory(path: &Path, expected: &FileHandle) -> Result<(), ToolError> {
@@ -1013,11 +1022,11 @@ impl CopyDestination {
     }
 
     fn create_after_root(parent: &Path, name: &str, after_root: impl FnOnce(&Path)) -> Result<Self, ToolError> {
-        let root = create_workspace_root(parent, name)?;
+        let (root, directory) = create_workspace_root(parent, name)?;
         after_root(&root);
         // Another creator can win between mkdir(root) and the reservation. On failure,
         // leave that directory alone: its contents may already belong to the winner.
-        let creation = CreationReservation::claim(&root)?;
+        let creation = CreationReservation::claim(&root, directory)?;
         Ok(Self { root, creation })
     }
 
@@ -1125,8 +1134,8 @@ impl Workspace {
     /// Create a new workspace folder under `projects_dir` (a fresh, unique folder).
     pub fn create(projects_dir: &Path, name: &str, request: &str, target: TargetRef) -> Result<Workspace, ToolError> {
         let manifest = Manifest::new(name, request, target)?;
-        let root = create_workspace_root(projects_dir, name)?;
-        let creation = CreationReservation::claim(&root)?;
+        let (root, directory) = create_workspace_root(projects_dir, name)?;
+        let creation = CreationReservation::claim(&root, directory)?;
         let ws = Workspace { root, manifest };
         ws.publish_manifest(&creation)?;
         Ok(ws)
@@ -1308,6 +1317,17 @@ impl Workspace {
     /// Anything keeps there, is refused, so nothing of theirs is ever replaced. A selected
     /// directory link is resolved once; the returned workspace keeps that real directory path.
     pub fn create_at(folder: &Path, name: &str, request: &str, target: TargetRef, existing: Option<ExistingFiles>) -> Result<Workspace, ToolError> {
+        Self::create_at_with_publisher(folder, name, request, target, existing, Self::publish_manifest)
+    }
+
+    fn create_at_with_publisher(
+        folder: &Path,
+        name: &str,
+        request: &str,
+        target: TargetRef,
+        existing: Option<ExistingFiles>,
+        publish: impl FnOnce(&Self, &CreationReservation) -> Result<(), ToolError>,
+    ) -> Result<Workspace, ToolError> {
         // A person may select a directory link. Resolve that choice before inspecting its
         // contents and reserve the real directory; a later link change must not redirect us.
         let selected = match std::fs::symlink_metadata(folder) {
@@ -1343,9 +1363,28 @@ impl Workspace {
                 manifest.start_files = names;
             }
         }
-        let creation = CreationReservation::claim(folder)?;
+        let directory = FileHandle::from_path(folder).map_err(|error| ToolError::io(folder.display(), error))?;
+        let creation = CreationReservation::claim(folder, directory)?;
         let ws = Workspace { root: folder.to_path_buf(), manifest };
-        ws.publish_manifest(&creation)?;
+        if let Err(error) = publish(&ws, &creation) {
+            return Err(match creation.release_empty(folder) {
+                Ok(()) => error,
+                Err(cleanup) => {
+                    let guidance = format!(
+                        "The creation reservation at {} was left in place: {}. Inspect {} and {} before retrying.",
+                        ws.inbox_dir().display(),
+                        cleanup.message,
+                        ws.root.join(MANIFEST).display(),
+                        ws.inbox_dir().display()
+                    );
+                    let guidance = match &error.remediation {
+                        Some(previous) => format!("{previous} {guidance}"),
+                        None => guidance,
+                    };
+                    error.with_remediation(guidance)
+                }
+            });
+        }
         Ok(ws)
     }
 
@@ -3626,6 +3665,133 @@ mod tests {
         assert_eq!(Workspace::open(&root).unwrap().manifest.name, "Winner");
         assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep the winning creator's files");
         assert!(root.join("inbox").is_dir());
+    }
+
+    #[test]
+    fn creation_reservation_refuses_a_replaced_new_root_before_copying() {
+        let directory = tempfile::tempdir().unwrap();
+        let personal = directory.path().join("personal");
+        let displaced = directory.path().join("displaced-copy");
+        std::fs::create_dir(&personal).unwrap();
+        std::fs::write(personal.join("personal.txt"), b"Keep this personal folder").unwrap();
+
+        let result = CopyDestination::create_after_root(directory.path(), "Copy", |root| {
+            std::fs::rename(root, &displaced).unwrap();
+            std::fs::rename(&personal, root).unwrap();
+        });
+
+        let refused = match result {
+            Err(error) => {
+                assert_eq!(error.code, ErrorCode::FileChanged);
+                true
+            }
+            Ok(destination) => {
+                destination.remove().unwrap();
+                false
+            }
+        };
+        let root = directory.path().join("copy");
+        assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep this personal folder");
+        assert!(refused, "a failed copy must never own a replacement introduced before its reservation");
+        assert!(!root.join("inbox").exists(), "the replacement is refused before adding coordination files");
+        assert!(displaced.is_dir());
+    }
+
+    #[test]
+    fn creation_reservation_is_released_after_definite_picked_folder_publication_failure() {
+        for existing in [None, Some(ExistingFiles::Edit), Some(ExistingFiles::StartFrom)] {
+            let directory = tempfile::tempdir().unwrap();
+            let root = directory.path().join("selected");
+            std::fs::create_dir(&root).unwrap();
+            if existing.is_some() {
+                std::fs::write(root.join("personal.txt"), b"Keep this existing file").unwrap();
+            }
+
+            let error = Workspace::create_at_with_publisher(&root, "Selected", "A website", TargetRef::None, existing, |ws, _| {
+                assert!(ws.inbox_dir().is_dir());
+                Err(ToolError::io(ws.root.join(MANIFEST).display(), std::io::Error::from(std::io::ErrorKind::StorageFull)))
+            })
+            .unwrap_err();
+
+            assert_eq!(error.code, ErrorCode::FileError);
+            assert!(root.is_dir(), "failure never removes the person's selected folder");
+            assert!(!root.join(MANIFEST).exists());
+            assert!(!root.join("inbox").exists(), "an unpublished empty reservation must not block a retry");
+            let retried = Workspace::create_at(&root, "Retry", "A website", TargetRef::None, existing).unwrap();
+            assert_eq!(Workspace::open(&root).unwrap().manifest.generation, retried.manifest.generation);
+            assert!(retried.inbox_dir().is_dir(), "a successful creation retains its coordination directory");
+            if existing.is_some() {
+                assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep this existing file");
+            }
+        }
+    }
+
+    #[test]
+    fn creation_reservation_survives_a_picked_folder_error_after_manifest_publication() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("selected");
+        let error = Workspace::create_at_with_publisher(&root, "Selected", "A website", TargetRef::None, None, |ws, creation| {
+            ws.publish_manifest(creation)?;
+            Err(ToolError::new(ErrorCode::FileError, "Injected error after publication."))
+        })
+        .unwrap_err();
+
+        assert_eq!(error.message, "Injected error after publication.");
+        assert_eq!(Workspace::open(&root).unwrap().manifest.name, "Selected");
+        assert!(root.join("inbox").is_dir(), "an error after publication must not release project coordination");
+        let remediation = error.remediation.as_deref().unwrap();
+        assert!(remediation.contains(&root.display().to_string()));
+        assert!(remediation.contains("Inspect"));
+    }
+
+    #[test]
+    fn creation_reservation_preserves_a_nonempty_picked_folder_inbox_on_publication_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("selected");
+        let error = Workspace::create_at_with_publisher(&root, "Selected", "A website", TargetRef::None, None, |ws, _| {
+            std::fs::write(ws.inbox_dir().join("personal.txt"), b"Keep the occupied inbox").unwrap();
+            Err(ToolError::new(ErrorCode::FileError, "Injected publication failure."))
+        })
+        .unwrap_err();
+
+        assert_eq!(error.message, "Injected publication failure.");
+        assert!(!root.join(MANIFEST).exists());
+        assert_eq!(std::fs::read(root.join("inbox/personal.txt")).unwrap(), b"Keep the occupied inbox");
+        assert!(error.remediation.as_deref().unwrap().contains(&root.join("inbox").display().to_string()));
+    }
+
+    #[test]
+    fn creation_reservation_preserves_replaced_picked_folder_entries_on_publication_failure() {
+        for replace_root in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let root = directory.path().join("selected");
+            std::fs::create_dir(&root).unwrap();
+            std::fs::write(root.join("personal.txt"), b"Keep the original file").unwrap();
+            let displaced = directory.path().join("displaced");
+            let error = Workspace::create_at_with_publisher(&root, "Selected", "A website", TargetRef::None, Some(ExistingFiles::Edit), |ws, _| {
+                let entry = if replace_root { ws.root.clone() } else { ws.inbox_dir() };
+                std::fs::rename(&entry, &displaced).unwrap();
+                std::fs::create_dir(&entry).unwrap();
+                if replace_root {
+                    std::fs::create_dir(ws.inbox_dir()).unwrap();
+                    std::fs::write(ws.root.join("personal.txt"), b"Keep the replacement file").unwrap();
+                }
+                Err(ToolError::new(ErrorCode::FileError, "Injected publication failure."))
+            })
+            .unwrap_err();
+
+            assert_eq!(error.message, "Injected publication failure.");
+            assert!(root.join("inbox").is_dir(), "an empty replacement is not this attempt's reservation");
+            assert!(displaced.is_dir(), "the displaced original also remains intact");
+            if replace_root {
+                assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep the replacement file");
+                assert_eq!(std::fs::read(displaced.join("personal.txt")).unwrap(), b"Keep the original file");
+                assert!(displaced.join("inbox").is_dir());
+            } else {
+                assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep the original file");
+            }
+            assert!(error.remediation.as_deref().unwrap().contains(&root.join("inbox").display().to_string()));
+        }
     }
 
     #[test]

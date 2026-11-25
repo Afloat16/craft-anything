@@ -1102,11 +1102,16 @@ project's app with the old project's settings. A readable read-only legacy sourc
 can use a read-only copy path only after actual permission or read-only-filesystem denial; keep manifest and ownership checks,
 and never swallow lock timeouts or unreadable records. Match case variants by the opened file's identity, not by lowercasing
 all names: a case-sensitive filesystem can hold a distinct personal file with that spelling.
-Publish a duplicate's manifest only after the copy succeeds. Before copying, reserve its inbox name
+Publish a duplicate's manifest only after the copy succeeds. Capture the newly created root's identity
+before claiming its inbox; recording whatever is at the path later can adopt a personal replacement.
+Before copying, reserve its inbox name
 atomically, and require every initial creator to take that same reservation: a copied app/ is otherwise
-mistaken for personal files another create_at can adopt. Retain the empty inbox until deletion, so
+mistaken for personal files another create_at can adopt. After publication, retain the empty inbox until deletion, so
 releasing a creation reservation cannot race a new feed writer. Losing the reservation does not
-authorize cleaning up the winner's folder. On failure, remove the newly created destination only
+authorize cleaning up the winner's folder. A picked-folder publication failure may remove only its
+owned empty inbox while the root and inbox identities still match and no manifest is visible. Otherwise,
+preserve it and report what to inspect; a failed creation must not strand a retry behind its own empty
+inbox, or remove a published project's coordination directory. On failure, remove the newly created destination only
 after checking the root and inbox identities and manifest absence, claiming it into a fresh private
 sibling directory and verifying the same reservation again. A check followed by recursive removal of the public path still has a replacement window;
 preserve an unexpected claimed entry and report its exact location. Fingerprinting must classify
