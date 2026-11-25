@@ -80,12 +80,16 @@ fn copy_tree(from: &Path, to: &Path, skip: &dyn Fn(&Path) -> bool, depth: usize)
     Ok(())
 }
 
+/// Ghidra was stopped for this project's builds (`tools::deep::STOPPED`), and its lock file.
+pub const GHIDRA_STOPPED: &str = "ghidra-stopped";
+pub const GHIDRA_STOP_LOCK: &str = "ghidra-stop.lock";
+
 /// The current `craft.json` format version. Bumping it means appending a step to [`MANIFEST_STEPS`].
-pub const MANIFEST_VERSION: u32 = 7;
+pub const MANIFEST_VERSION: u32 = 8;
 
 /// The steps that bring an older `craft.json` forward; step `i` goes from version `i` to `i + 1`.
 const MANIFEST_STEPS: &[versioned::Step<Value>] =
-    &[manifest_v0_to_v1, manifest_v1_to_v2, manifest_v2_to_v3, manifest_v3_to_v4, manifest_v4_to_v5, manifest_v5_to_v6, manifest_v6_to_v7];
+    &[manifest_v0_to_v1, manifest_v1_to_v2, manifest_v2_to_v3, manifest_v3_to_v4, manifest_v4_to_v5, manifest_v5_to_v6, manifest_v6_to_v7, manifest_v7_to_v8];
 const _: () = assert!(MANIFEST_STEPS.len() == MANIFEST_VERSION as usize, "one step per craft.json version");
 
 /// Version 0 (no `version` field) has the same shape as version 1; only the number is new.
@@ -130,16 +134,22 @@ fn manifest_v4_to_v5(doc: &mut Value) -> Result<(), String> {
     Ok(())
 }
 
-/// Version 6 keeps the person's latest website-language request. Older builds opening this
-/// version are read-only, so they cannot drop it and revive the initial request's language.
-/// An older process that already opened version 5 must be closed before this version is saved.
+/// Version 6 adds the toolchain a move to another language was confirmed with (`toolchain`), none
+/// by default. The number is new so an older build, which would drop it when it saves (and a
+/// Java port's checks could go back to Maven), opens such a project read-only instead.
 fn manifest_v5_to_v6(doc: &mut Value) -> Result<(), String> {
     if doc.is_object() { Ok(()) } else { Err("the manifest isn't a JSON object".into()) }
 }
 
-/// Version 7 keeps the request order with the language choice, so an older pending note
-/// cannot replace a newer choice after a restart. Version 6 has no ordering evidence.
+/// Version 7 keeps the person's latest website-language request. Early builds of this change
+/// also wrote it in version 6, so an existing choice is preserved by the migration.
 fn manifest_v6_to_v7(doc: &mut Value) -> Result<(), String> {
+    if doc.is_object() { Ok(()) } else { Err("the manifest isn't a JSON object".into()) }
+}
+
+/// Version 8 keeps request order with the language choice. Existing ids from early version-7
+/// builds are preserved; a choice with no ordering evidence is not assigned an invented id.
+fn manifest_v7_to_v8(doc: &mut Value) -> Result<(), String> {
     if doc.is_object() { Ok(()) } else { Err("the manifest isn't a JSON object".into()) }
 }
 
@@ -432,6 +442,10 @@ pub struct Manifest {
     /// The stack chosen for the build ("React + TypeScript (Vite)", "Rust + Bevy"…).
     #[serde(default)]
     pub stack: String,
+    /// The toolchain a move to `stack` was confirmed with ("Gradle", for a Java port that wrote
+    /// build.gradle.kts beside an old pom.xml), when the stack has more than one; none: not recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub toolchain: Option<String>,
     #[serde(default)]
     pub status: Status,
     /// One line on what's happening or what went wrong.
@@ -535,6 +549,7 @@ impl Manifest {
             checks: Vec::new(),
             agent_session: None,
             agent_session_by: None,
+            toolchain: None,
             agent_session_deep: None,
             capture_deep: None,
             allowed_actions: Vec::new(),
@@ -954,15 +969,27 @@ impl Workspace {
     }
 
     fn write_manifest(&self, m: &Manifest) -> Result<(), ToolError> {
-        if self.is_read_only() {
+        let newer = self.manifest.version.max(self.version_on_disk());
+        if newer > MANIFEST_VERSION {
             return Err(ToolError::unsupported(format!(
-                "{} was made by a newer Craft Anything (craft.json version {}), so this one doesn't change it.",
-                self.manifest.name, self.manifest.version
+                "{} was made by a newer Craft Anything (craft.json version {newer}), so this one doesn't change it.",
+                self.manifest.name
             ))
             .with_remediation("Update Craft Anything to keep working on this project. Nothing was written."));
         }
         let bytes = serde_json::to_vec_pretty(m).map_err(|e| ToolError::internal(e.to_string()))?;
         write_atomic(&self.root.join(MANIFEST), &bytes)
+    }
+
+    /// The version of the `craft.json` on disk now (0 when it can't be read). A newer build running
+    /// at the same time may have brought the file forward since this copy was read, and a save from
+    /// this copy would drop the fields it added (review of #2099).
+    fn version_on_disk(&self) -> u32 {
+        std::fs::read(self.root.join(MANIFEST))
+            .ok()
+            .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+            .and_then(|d| d.get("version")?.as_u64())
+            .map_or(0, |v| u32::try_from(v).unwrap_or(u32::MAX))
     }
 
     /// Set the status and note, and save.
@@ -1107,6 +1134,8 @@ pub const AGENT_SESSION_FILE: &str = "agent-session.jsonl";
 /// mustn't already have any of them.
 pub const OWN_NAMES: &[&str] = &[
     MANIFEST,
+    GHIDRA_STOPPED,
+    GHIDRA_STOP_LOCK,
     crate::feed::FEED_FILE,
     crate::questions::QUESTIONS_FILE,
     USAGE_FILE,
@@ -2040,6 +2069,28 @@ mod tests {
     }
 
     #[test]
+    fn main_toolchains_and_early_language_records_survive_the_appended_migrations() {
+        for version in [6, 7] {
+            for recorded in [false, true] {
+                let mut old: Value = serde_json::from_slice(MANIFEST_V0.as_bytes()).unwrap();
+                old["version"] = version.into();
+                old["toolchain"] = "Gradle".into();
+                if recorded {
+                    old["website_language"] = serde_json::json!({"kind": "requested", "tag": "fr"});
+                    old["website_language_request_id"] = 71.into();
+                }
+
+                let manifest = read_manifest(&serde_json::to_vec(&old).unwrap()).unwrap();
+
+                assert_eq!(manifest.version, MANIFEST_VERSION);
+                assert_eq!(manifest.toolchain.as_deref(), Some("Gradle"));
+                assert_eq!(manifest.website_language, recorded.then(|| WebsiteLanguage::Requested { tag: "fr".into() }));
+                assert_eq!(manifest.website_language_request_id, recorded.then_some(71));
+            }
+        }
+    }
+
+    #[test]
     fn a_version_1_manifest_reads_as_a_usual_project_and_new_fields_are_saved_only_when_set() {
         let v1 = br#"{"version":1,"name":"Old","request":"x","target":{"kind":"none"},"created_ms":1,"updated_ms":1}"#;
         let m = read_manifest(v1).unwrap();
@@ -2114,6 +2165,47 @@ mod tests {
         let saved: Value = serde_json::from_slice(&std::fs::read(dir.path().join(MANIFEST)).unwrap()).unwrap();
         assert_eq!(saved["version"], MANIFEST_VERSION);
         assert_eq!(saved["agent_session_deep"], want == Some(true));
+    }
+
+    /// Review of #2099: a version-5 build can't save over a recorded toolchain, and a version-5
+    /// manifest opens here unchanged but for its number.
+    #[test]
+    fn a_recorded_toolchain_is_kept_from_older_builds() {
+        let d = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(d.path(), "Game", "a game", TargetRef::None).unwrap();
+        ws.manifest.toolchain = Some("Gradle".into());
+        ws.save().unwrap();
+        let saved: Value = serde_json::from_slice(&std::fs::read(ws.root.join("craft.json")).unwrap()).unwrap();
+        assert_eq!((saved["version"].as_u64(), saved["toolchain"].as_str()), (Some(u64::from(MANIFEST_VERSION)), Some("Gradle")));
+        // A version-5 build reads up to 5, so it opens this one read-only (newer_manifests_open_read_only_and_are_never_overwritten).
+        let mut old = saved.clone();
+        old["version"] = 5.into();
+        old.as_object_mut().unwrap().remove("toolchain");
+        let m = read_manifest(&serde_json::to_vec(&old).unwrap()).unwrap();
+        assert_eq!((m.version, m.toolchain), (MANIFEST_VERSION, None), "brought forward with no toolchain");
+    }
+
+    /// Review of #2099: a build holding a copy read before a newer build brought the file forward
+    /// (both running at once) doesn't save over it, by any of the ways it saves.
+    #[test]
+    fn a_copy_read_before_a_newer_build_saved_doesnt_overwrite_it() {
+        let d = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(d.path(), "Game", "a game", TargetRef::None).unwrap();
+        let mut newer: Value = serde_json::from_slice(&std::fs::read(ws.root.join(MANIFEST)).unwrap()).unwrap();
+        newer["version"] = (MANIFEST_VERSION + 1).into();
+        newer["a_field_from_the_future"] = "kept".into();
+        let newer = serde_json::to_string_pretty(&newer).unwrap();
+        std::fs::write(ws.root.join(MANIFEST), &newer).unwrap();
+        assert!(!ws.is_read_only(), "this copy was read before");
+        let err = ws.set_status(Status::Building, "x").unwrap_err();
+        assert_eq!(err.code, ErrorCode::NotSupported);
+        assert!(err.message.contains(&format!("version {}", MANIFEST_VERSION + 1)), "{}", err.message);
+        assert_eq!(ws.save().unwrap_err().code, ErrorCode::NotSupported);
+        assert_eq!(ws.set_person(|m| m.note = "x".into()).unwrap_err().code, ErrorCode::NotSupported);
+        assert_eq!(std::fs::read_to_string(ws.root.join(MANIFEST)).unwrap(), newer, "the file is untouched");
+        // Its own version on disk still saves.
+        std::fs::write(ws.root.join(MANIFEST), b"not json").unwrap();
+        ws.save().unwrap();
     }
 
     /// #469: a saved session is only for the agent that saved it.

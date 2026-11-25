@@ -2,7 +2,7 @@ use super::*;
 use craft_anything_engine::workspace::WebsiteLanguage;
 
 fn note(id: u64, text: &str) -> Note {
-    Note { id, text: text.into(), shown: text.into(), pictures: Vec::new(), questions: Vec::new() }
+    Note { id, text: text.into(), shown: text.into(), pictures: Vec::new(), questions: Vec::new(), added: std::time::SystemTime::now() }
 }
 
 #[test]
@@ -26,7 +26,7 @@ fn website_language_follows_delivered_notes_and_survives_restart() {
     // A following turn consumes these together, in delivery order; the final explicit request wins.
     for (id, text) in [(72, "Translate the site into Italian"), (73, "Restore the original language"), (74, "Make the header blue")] {
         worker.notes.lock().unwrap().push(note(id, text));
-        let left = notes::Left { text: text.into(), shown: text.into(), pictures: Vec::new() };
+        let left = notes::Left { text: text.into(), shown: text.into(), pictures: Vec::new(), added: None };
         notes::hand_over(&inbox, id, text, Some(&left)).unwrap();
     }
     let NotePrompt { prompt, .. } = worker.added(&mut ws, false, true).unwrap().unwrap();
@@ -110,7 +110,7 @@ fn claimed_language_note_recording_mark_failure_keeps_the_batch_retryable() {
     let inbox = notes::notes_dir(&ws.inbox_dir());
     for (id, text) in [(71, "Translate the site into French"), (72, "Translate the site into German")] {
         worker.notes.lock().unwrap().push(note(id, text));
-        let left = notes::Left { text: text.into(), shown: text.into(), pictures: Vec::new() };
+        let left = notes::Left { text: text.into(), shown: text.into(), pictures: Vec::new(), added: None };
         notes::hand_over(&inbox, id, text, Some(&left)).unwrap();
     }
     assert_eq!(notes::claim(&inbox).len(), 2);

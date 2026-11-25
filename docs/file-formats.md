@@ -1,24 +1,24 @@
 # File formats
 
-Every file Craft Anything saves carries a version number. Reading a file runs the same three steps:
-parse it into a raw document (a JSON value or a TOML table), run the migration steps from the file's
-version up to the current one, then turn the document into Rust types. The step runner is
-`crates/engine/src/versioned.rs`.
+The table below lists the files that carry a Craft Anything format version and how older and newer
+versions are handled. When a file has migration steps, Craft Anything parses it into raw JSON or
+TOML, runs the steps up to the current version, then decodes it into Rust types. The step runner
+is `crates/engine/src/versioned.rs`.
 
 | File | Owner | Current version | Older files | Newer files |
 |---|---|---|---|---|
-| `<project>/craft.json` | `engine::workspace` (`Manifest`) | `MANIFEST_VERSION` = 7 (`version`; missing = 0; 3 adds `approvals`, 4 adds the saved builder session's mode `agent_session_deep`, 5 adds the current capture's mode `capture_deep`, 6 adds the person's saved `website_language` choice, 7 saves `website_language_request_id` with that choice; a version-3 session and a version-4 capture migrate as Deep) | brought forward, saved as current | opened read-only: saving is refused; close older processes that already opened the project before upgrading it |
+| `<project>/craft.json` | `engine::workspace` (`Manifest`) | `MANIFEST_VERSION` = 8 (`version`; missing = 0; 3 adds `approvals`, 4 adds the saved builder session's mode `agent_session_deep`, 5 adds the current capture's mode `capture_deep`, 6 adds the toolchain a move to another language was confirmed with, `toolchain`, 7 adds the saved `website_language` choice, 8 records its `website_language_request_id`; language fields already written by early version-6/7 builds are preserved without inventing an absent request id; a version-3 session and a version-4 capture migrate as Deep) | brought forward, saved as current | opened read-only: saving is refused, also by a build that read the file before a newer one brought it forward (builds before version 6 don't check this, so close them before running a newer one on the same project) |
 | `<project>/inbox/build-progress.json` | `engine::workspace::progress` (`BuildProgress`; written only by the rebuild run) | `BUILD_PROGRESS_VERSION` = 2 (`version`; missing = 0; 2 adds `checked`, the round kept while nothing it looked at changes) | brought forward; an absent file starts with no counted turns | the build stops and the record is left unchanged |
-| `<project>/inbox/notes/<id>*.json` | `ai::rebuild::notes` (`NoteFile`, JSON Schema derived with `JsonSchema`) | 1 (`{version, id, text, left}`; `left` is the person's `{text, shown, pictures}`) | unversioned waiting notes keep their original words; legacy `.read.json` files remain excluded from replay | not claimed; restart preserves the notes directory beside the inbox instead of clearing it |
+| `<project>/inbox/notes/<id>*.json` | `ai::rebuild::notes` (`NoteFile`, JSON Schema derived with `JsonSchema`) | 1 (`{version, id, text, left}`; `left` is the person's `{text, shown, pictures}` and optional original `added` time) | unversioned waiting notes keep their original words; legacy `.read.json` files remain excluded from replay | not claimed; restart stops with the notes directory unchanged |
 | `config.toml` (`settings::config_dir()`) | `engine::settings` (`Settings`) | `SETTINGS_VERSION` = 2 (`version`; missing = 0; 2 moved `[engines.ghidra] enabled` to `deep_mode`) | brought forward | loaded, never saved over |
 | `<name>.cany/project.toml` | `engine::project` (`ProjectMeta`) | `FORMAT_VERSION` = 1 (`format_version`, required) | brought forward | refused, with "update Craft Anything" |
-| `<project>/transcript.json` | `ai::context` (the API builder's conversation) | `TRANSCRIPT_VERSION` = 2 (`{version, deep, history}`; a version-1 transcript counts as Deep) | read as before; one without `deep` is resumed only in Deep | not resumed; a fresh build replaces it |
+| `<project>/transcript.json` | `ai::context` (the API builder's conversation) | `TRANSCRIPT_VERSION` = 2 (`{version, deep, history}`; a version-1 transcript counts as Deep) | read as before; one without `deep` is resumed only in Deep | skipped when resuming (see [Newer files](#newer-files)) |
 | `<project>/app/mechanics.json` | `engine::mechanics` (written by the builder, read by `MechanicsCheck`) | `MECHANICS_VERSION` = 1 (`version`; missing = 1) | — | the check fails and says so |
 | `<project>/checks/round-N/self-test.json` | `engine::self_test` (written by the built game's `--self-test`, read by `SelfTestCheck`) | 1 (`version`; missing = 1) | — | the check fails and says so |
 | `<project>/usage.json` | `engine::workspace` (`ProjectUsage`; written by builds and questions) | `USAGE_VERSION` = 1 (`version`; missing = 0) | read as before, saved as current; absent `tokens_incomplete` means no missing token counts were recorded | read as far as its fields are known, never written over |
 | `<project>/questions.json` | `engine::questions` (`AskedQuestion`, written by `rebuild_question_ask`) | `QUESTIONS_VERSION` = 1 (`{version, items}`) | read as before | read as far as its fields are known |
-| `<project>/pinned/<n>/pin.json` | `engine::pins` (`Pin`) | `PIN_VERSION` = 2 (`version`; missing = 1; 2 records the selected program for a copied direct launch) | brought forward | read as far as its fields are known |
-| `<folder>/standin.json` | `engine::tools::standin_tools` (`analysis::standin::StandIn`; written only by `web_standin_build`) | `STANDIN_VERSION` = 1 (`version`, required) | brought forward | refused, with "update Craft Anything", and never written over |
+| `<project>/pinned/<n>/pin.json` | `engine::pins` (`Pin`) | `PIN_VERSION` = 2 (`version`; missing = 1, any other value that is not a whole number is refused; 2 records the selected program for a copied direct launch) | brought forward | read as far as its fields are known, never written over (renaming is refused) |
+| `<folder>/standin.json` | `engine::tools::standin_tools` (`analysis::standin::StandIn`; written only by `web_standin_build`) | `STANDIN_VERSION` = 2 (`version`, required; 2 adds each sample's place in the recording, `order`, and `write` for an answer to a write; a version-1 file has neither: its answers replay in turn, and a write gets each one once) | brought forward | refused, with "update Craft Anything", and never written over |
 | `<project>/feed.json` | `ai::rebuild::feed` (written by the run) | `FEED_VERSION` = 5 (`{version, items}`; a bare list = 0; 4 adds `PlanDismissed`, a folded plan card; 5 marks open steps stopped at a run's end) | read as before, saved as current | never written over; the conversation is rebuilt from the project for display |
 
 A saved `User` message with pictures is `{text, pictures: [paths]}`, where the pictures are the
@@ -51,8 +51,13 @@ merged between those parts in id order, before an unrelated new message. The lan
 and the id of its latest explicit request are saved together in `craft.json`. A delayed older
 note can still reach the builder after a restart, but it cannot replace a newer saved language
 choice. New request ids advance beyond that saved id and all occupied note filenames; exhaustion
-returns an error. Version-6 language choices have no ordering evidence and migrate without an
-invented id; the next explicit request establishes their ordering record.
+returns an error. An older language choice without a recorded request id migrates without
+inventing one; the next explicit request establishes its ordering record.
+
+Known note times survive recovery and joined-message handoff unchanged, so a request from
+before a Ghidra stop cannot clear it just because the app restarted. A genuine new message
+keeps its own request time. Legacy notes with no saved time retain the existing treatment as
+new requests when recovered; recovery does not rewrite that absent time in their raw records.
 
 Recovery remains at-least-once: a builder can receive a previously claimed note again after an
 interrupted recording. Carried initial notes and notes prepared for a follow-up prompt remain
@@ -72,13 +77,16 @@ shape and version are unchanged.
 
 ## Newer files
 
-A file from a newer Craft Anything is never downgraded or overwritten, because the fields we don't
-know would be lost. `craft.json` and `config.toml` are still read as far as their fields are known,
+Craft Anything does not migrate newer files backward when reading them. What happens when saving
+depends on the format. `craft.json` and `config.toml` are still read as far as their fields are known,
 so the person can see their project or keep their settings; every save returns a `ToolError` that
 says to update Craft Anything. A newer `craft.json` whose fields can't be read at all is refused the
 same way, and a newer `config.toml` that can't be read gives defaults without touching the file.
 A newer `.cany` is refused outright: its evidence layout may have changed in ways we can't
 see.
+
+The API builder skips newer transcripts when resuming and leaves the file in place. If a fresh
+build later saves a transcript to the same path, it replaces the existing file.
 
 A file that can't be parsed is not "newer": `config.toml` is set aside as `config.toml.broken` and
 defaults are used; an unreadable `craft.json` gives a plain-English error when opened and is left

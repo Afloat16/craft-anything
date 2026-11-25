@@ -68,6 +68,10 @@ pub struct Left {
     pub shown: String,
     #[serde(default)]
     pub pictures: Vec<PathBuf>,
+    /// When the person added it, so a later run doesn't take it for a request made after a stop
+    /// ([`craft_anything_engine::tools::deep::resume_for`]). An older version's note has none.
+    #[serde(default)]
+    pub added: Option<std::time::SystemTime>,
 }
 
 /// A recoverable record and the exact bytes inspected before taking it over. This is only
@@ -326,7 +330,13 @@ pub(super) fn carry_for_prompt(dir: &Path, id: u64, left: &Left) -> Result<(), T
             take_left(dir)?.into_iter().find(|note| note.id == id).ok_or_else(|| ToolError::invalid("The waiting note changed before delivery."))?
         }
     };
-    if &note.left != left {
+    // Legacy notes have no saved time: recovery still treats them as a new request, but that
+    // in-memory time is not a change to the old record. Known times remain part of its identity.
+    if note.left.text != left.text
+        || note.left.shown != left.shown
+        || note.left.pictures != left.pictures
+        || note.left.added.is_some_and(|added| Some(added) != left.added)
+    {
         return Err(ToolError::invalid("The waiting note changed before delivery; its records were kept."));
     }
     restore(dir, &note, &left.text, true)
@@ -562,7 +572,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let dir = notes_dir(d.path());
         assert!(left_words(&dir).unwrap().is_empty(), "no folder, nothing left");
-        let note = |text: &str| Left { text: text.into(), shown: format!("{text} (shown)"), pictures: vec![PathBuf::from("pictures/a.png")] };
+        let note = |text: &str| Left { text: text.into(), shown: format!("{text} (shown)"), pictures: vec![PathBuf::from("pictures/a.png")], added: None };
         hand_over(&dir, 10, "add a form, with what was asked in Just ask", Some(&note("add a form"))).unwrap();
         hand_over(&dir, 2, "make it blue", Some(&note("make it blue"))).unwrap();
         // A legacy read record has no proof that request-state recording remained pending.
@@ -583,8 +593,11 @@ mod tests {
     fn a_run_inspects_left_notes_without_erasing_their_durable_records() {
         let d = tempfile::tempdir().unwrap();
         let dir = notes_dir(d.path());
-        let note = Left { text: "make it blue".into(), shown: "make it blue".into(), pictures: Vec::new() };
-        assert!(take_left(&dir).unwrap().is_empty());
+        // When it was added goes with it, so a run after a restart doesn't take it for a request
+        // made after a stop of Ghidra (#1903 review).
+        let added = std::time::UNIX_EPOCH + std::time::Duration::from_nanos(1_794_000_000_123_456_789);
+        let note = Left { text: "make it blue".into(), shown: "make it blue".into(), pictures: Vec::new(), added: Some(added) };
+        assert!(take_left(&dir).unwrap().is_empty(), "no folder, nothing left");
         hand_over(&dir, 1, "make it blue", Some(&note)).unwrap();
         let original = std::fs::read(pending(&dir, 1)).unwrap();
         let recovered = take_left(&dir).unwrap();
@@ -603,10 +616,35 @@ mod tests {
     }
 
     #[test]
+    fn prompt_handoff_preserves_known_times_and_accepts_a_legacy_recovery_time() {
+        for known in [false, true] {
+            let d = tempfile::tempdir().unwrap();
+            let dir = notes_dir(d.path());
+            let added = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1);
+            let original = Left { text: "Make it blue".into(), shown: "Make it blue".into(), pictures: Vec::new(), added: known.then_some(added) };
+            hand_over(&dir, 71, &original.text, Some(&original)).unwrap();
+            let bytes = std::fs::read(pending(&dir, 71)).unwrap();
+            let mut recovered = original.clone();
+            recovered.added = Some(added + std::time::Duration::from_secs(1));
+            if known {
+                assert!(carry_for_prompt(&dir, 71, &recovered).is_err(), "a known request time cannot change during delivery");
+                assert_eq!(std::fs::read(pending(&dir, 71)).unwrap(), bytes);
+                recovered.added = original.added;
+            }
+
+            carry_for_prompt(&dir, 71, &recovered).unwrap();
+
+            assert!(!pending(&dir, 71).exists());
+            assert_eq!(std::fs::read(read(&dir, 71)).unwrap(), bytes, "the persistent time stays exact, including a legacy absent time");
+            assert_eq!(take_left(&dir).unwrap()[0].left, original);
+        }
+    }
+
+    #[test]
     fn an_interrupted_takeover_keeps_both_copies_and_restarts_with_the_same_id() {
         let d = tempfile::tempdir().unwrap();
         let dir = notes_dir(d.path());
-        let raw = Left { text: "Keep the title blue".into(), shown: "Keep the title blue".into(), pictures: Vec::new() };
+        let raw = Left { text: "Keep the title blue".into(), shown: "Keep the title blue".into(), pictures: Vec::new(), added: None };
         hand_over(&dir, 71, "Old mode context and the blue title", Some(&raw)).unwrap();
         assert_eq!(claim(&dir), ["Old mode context and the blue title"]);
         let original = std::fs::read(read(&dir, 71)).unwrap();
@@ -632,7 +670,7 @@ mod tests {
         for legacy in [false, true] {
             let d = tempfile::tempdir().unwrap();
             let dir = notes_dir(d.path());
-            let raw = Left { text: "Keep the title blue".into(), shown: "Keep the title blue".into(), pictures: Vec::new() };
+            let raw = Left { text: "Keep the title blue".into(), shown: "Keep the title blue".into(), pictures: Vec::new(), added: None };
             hand_over(&dir, 72, "Old mode context", Some(&raw)).unwrap();
             if legacy {
                 let mut old: Value = serde_json::from_slice(&std::fs::read(pending(&dir, 72)).unwrap()).unwrap();
@@ -656,7 +694,7 @@ mod tests {
     fn takeover_refuses_a_changed_or_newer_record_without_overwriting_it() {
         let d = tempfile::tempdir().unwrap();
         let dir = notes_dir(d.path());
-        let raw = Left { text: "Keep the title blue".into(), shown: "Keep the title blue".into(), pictures: Vec::new() };
+        let raw = Left { text: "Keep the title blue".into(), shown: "Keep the title blue".into(), pictures: Vec::new(), added: None };
         hand_over(&dir, 73, &raw.text, Some(&raw)).unwrap();
         let batch = take_left(&dir).unwrap();
         let future = br#"{"version":99,"id":73,"text":"Newer private record"}"#;
@@ -692,7 +730,7 @@ mod tests {
     fn claimed_notes_wait_for_recording_and_completed_notes_do_not_replay() {
         let directory = tempfile::tempdir().unwrap();
         let dir = notes_dir(directory.path());
-        let note = Left { text: "Translate into German".into(), shown: "Translate into German".into(), pictures: Vec::new() };
+        let note = Left { text: "Translate into German".into(), shown: "Translate into German".into(), pictures: Vec::new(), added: None };
         hand_over(&dir, 7, &note.text, Some(&note)).unwrap();
         assert_eq!(claim(&dir), std::slice::from_ref(&note.text));
         assert_eq!(left_words(&dir).unwrap(), std::slice::from_ref(&note), "handed to the builder is not yet saved request state");
@@ -710,7 +748,7 @@ mod tests {
     fn completion_removes_the_waiting_link_after_a_failed_claim_sync() {
         let directory = tempfile::tempdir().unwrap();
         let dir = notes_dir(directory.path());
-        let note = Left { text: "Translate into German".into(), shown: "Translate into German".into(), pictures: Vec::new() };
+        let note = Left { text: "Translate into German".into(), shown: "Translate into German".into(), pictures: Vec::new(), added: None };
         hand_over(&dir, 7, &note.text, Some(&note)).unwrap();
         assert_eq!(claim_using(&dir, |_| Err(ToolError::internal("injected claim sync failure"))), std::slice::from_ref(&note.text));
         assert!(pending(&dir, 7).is_file() && read(&dir, 7).is_file());
@@ -730,7 +768,7 @@ mod tests {
         for fail_at in 1..=3 {
             let directory = tempfile::tempdir().unwrap();
             let dir = notes_dir(directory.path());
-            let note = Left { text: "Translate into German".into(), shown: "Translate into German".into(), pictures: Vec::new() };
+            let note = Left { text: "Translate into German".into(), shown: "Translate into German".into(), pictures: Vec::new(), added: None };
             hand_over(&dir, 7, &note.text, Some(&note)).unwrap();
             assert_eq!(claim_using(&dir, |_| Err(ToolError::internal("injected claim sync failure"))), std::slice::from_ref(&note.text));
             let calls = std::cell::Cell::new(0);
@@ -791,7 +829,7 @@ mod tests {
     fn failed_recording_cleanup_preserves_all_notes_for_inspection() {
         let directory = tempfile::tempdir().unwrap();
         let dir = notes_dir(directory.path());
-        let note = Left { text: "Translate into German".into(), shown: "Translate into German".into(), pictures: Vec::new() };
+        let note = Left { text: "Translate into German".into(), shown: "Translate into German".into(), pictures: Vec::new(), added: None };
         for id in [1, 2] {
             hand_over(&dir, id, &note.text, Some(&note)).unwrap();
         }
@@ -833,7 +871,7 @@ mod tests {
     fn a_claimed_note_with_changed_identity_is_preserved_on_restart() {
         let directory = tempfile::tempdir().unwrap();
         let dir = notes_dir(directory.path());
-        let note = Left { text: "Translate into German".into(), shown: "Translate into German".into(), pictures: Vec::new() };
+        let note = Left { text: "Translate into German".into(), shown: "Translate into German".into(), pictures: Vec::new(), added: None };
         hand_over(&dir, 71, &note.text, Some(&note)).unwrap();
         assert_eq!(claim(&dir).len(), 1);
         let mut changed: Value = serde_json::from_slice(&std::fs::read(read(&dir, 71)).unwrap()).unwrap();

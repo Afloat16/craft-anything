@@ -428,7 +428,8 @@ impl StructureLikeness {
 /// What the build gets wrong that the original doesn't, from both captures' `health` and `a11y`:
 /// script and console errors, requests that fail (compared by path, since the build is served
 /// from elsewhere), and controls without a name, pictures without alt text or a missing page
-/// language. Problems the original has too aren't the build's to fix.
+/// language. Problems the original has too aren't the build's to fix (the accessibility floor,
+/// [`super::a11y_floor`], is how the person holds the build to more).
 pub fn health_notes(original: &Value, built: &Value) -> Vec<String> {
     health_notes_with_language(original, built, true)
 }
@@ -825,7 +826,8 @@ impl WebVisualCheck {
         mut capture: impl FnMut(&CheckCx, &str, &Path, &[u32]) -> Result<(), ToolError>,
     ) -> Result<CheckResult, ToolError> {
         let (ws, round) = (cx.ws, cx.round);
-        let widths = cx.build_settings().widths();
+        let settings = cx.build_settings();
+        let widths = settings.widths();
         let Some(site) = site_dir(&ws.app_dir()) else {
             return Ok(CheckResult::new(self.id(), round, false, missing_site_note(ws.app_place(), app_is_empty(ws))));
         };
@@ -855,6 +857,10 @@ impl WebVisualCheck {
                 std::fs::create_dir_all(parent).map_err(|e| ToolError::io(parent.display(), e))?;
             }
             capture(cx, url, &built, &widths)?;
+            // The floor judges the build alone, so it holds even where the original can't be compared.
+            let page = if dir.is_empty() { "The start page".to_string() } else { name.clone() };
+            let built_capture = read_json(&built.join("capture.json"));
+            claims.extend(built_capture.as_ref().and_then(|b| super::a11y_floor::floor_claim(&page, b, &settings)));
             let mut per_width = Vec::new();
             for &w in &widths {
                 let (a, b) = (original.join(format!("screenshot-{w}.png")), built.join(format!("screenshot-{w}.png")));
@@ -871,8 +877,7 @@ impl WebVisualCheck {
             }
             // Language is measured by the capture, even when the original has no screenshots
             // at these widths. Every studied route must still satisfy the requested language.
-            let page = if dir.is_empty() { "The start page".to_string() } else { name.clone() };
-            let (o, b) = (read_json(&original.join("capture.json")), read_json(&built.join("capture.json")));
+            let (o, b) = (read_json(&original.join("capture.json")), built_capture);
             let content = super::website_language::content_check(&page, ws.manifest.website_language.as_ref(), o.as_ref(), b.as_ref());
             claims.extend(content.claim);
             unknowns.extend(content.unknown);
@@ -954,6 +959,7 @@ mod tests {
         }
         let png = encode_png(&Image { width: 64, height: 36, rgba: vec![255; 64 * 36 * 4] }).unwrap();
         let worker = crate::rebuild::tests::check_worker(&ws, false);
+        worker.engine.session().settings.build.a11y_floor = true;
         worker.attach(&ws).unwrap();
         let mut cx = CheckCx { worker: &worker, ws: &ws, round: 1, until: None };
         for pictured in [true, false] {
@@ -970,7 +976,12 @@ mod tests {
                     .run_with_capture(&mut cx, |_, url, built, widths| {
                         std::fs::create_dir_all(built).unwrap();
                         let measured = if url.ends_with("/about") { lang } else { Some("fr") };
-                        std::fs::write(built.join("capture.json"), serde_json::to_vec(&json!({"a11y": {"lang": measured}})).unwrap()).unwrap();
+                        let unnamed = u32::from(url.ends_with("/about"));
+                        std::fs::write(
+                            built.join("capture.json"),
+                            serde_json::to_vec(&json!({"a11y": {"lang": measured, "unnamed_controls": unnamed}})).unwrap(),
+                        )
+                        .unwrap();
                         for width in widths {
                             std::fs::write(built.join(format!("screenshot-{width}.png")), &png).unwrap();
                         }
@@ -978,8 +989,15 @@ mod tests {
                     })
                     .unwrap();
                 assert_eq!(check.similarity.is_some(), pictured);
+                assert!(
+                    check.claims.iter().any(|claim| claim.title.contains("/about") && claim.title.contains("accessibility floor") && !claim.passed),
+                    "the accessibility floor still judges a route without reference screenshots: {check:?}"
+                );
                 if lang.is_some() {
-                    assert!(check.claims.iter().any(|claim| claim.title.contains("/about") && !claim.passed), "{check:?}");
+                    assert!(
+                        check.claims.iter().any(|claim| claim.title.contains("/about") && claim.title.contains("requested language") && !claim.passed),
+                        "{check:?}"
+                    );
                 } else {
                     assert!(check.unknowns.iter().any(|unknown| unknown.contains("/about") && unknown.contains("language")), "{check:?}");
                 }
