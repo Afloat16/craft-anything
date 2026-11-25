@@ -976,27 +976,37 @@ also reject stale loaded sources, including a file created after an absent snaps
 an ordinary answer while holding that lock. Keep request-before-feed lock order, bounded waits and
 a persistent coordination file. Another client's intervening answer must yield FileChanged and
 retain the journal for a new load; a second successful decode alone does not make the stale replay current.
-Deletion must hold that same lock, clear fallible inbox payloads while the manifest still permits a
-retry, then remove the manifest and privately claim the still-locked inbox before clearing its
-coordination entries. Never return to the public inbox name after releasing it: a new creator may
+Deletion must hold that same lock, clear fallible inbox payloads and reserve the private cleanup
+directory while the manifest still permits a retry. Allocating the directory only after removing the
+manifest can leave an undiscoverable project with an inbox that still blocks new creation. Keep the
+reservation's identity, release only that verified empty directory if manifest removal fails, and
+reuse it after manifest removal to privately claim the still-locked inbox before clearing its
+coordination entries. A failed claim must report the public inbox path; a preallocated directory does
+not guarantee later rename or removal succeeds. Never return to the public inbox name after releasing it: a new creator may
 already own that name. Preserve the held lock by file identity, including alternate names, and retain
 the guard through cleanup. Check project liveness before creating a lock and again after acquiring it; otherwise an old
 waiter or a late archive writer can recreate records in a deleted in-place project.
 Bind the loaded writer and its recovery snapshot to their original directory identity and manifest
 creation time too: checking only at lock acquisition would accept a new project at the old path.
-Do not turn cleanup of an empty coordination entry into another unsafe public-path unlink. Modern
-generation-bearing projects already reserve an inbox: a writer must refuse its absence, not recreate it.
-A legacy initializer must confirm the original project after its first inbox handle capture before
-granting cleanup authority. If that first confirmation fails, preserve and report the current directory;
-it can already be a new creator's reservation even though this attempt earlier succeeded at mkdir.
-Do not promise automatic retry for that uncertain legacy window. A failed feed initializer can
-privately claim only a confirmed inbox it created itself; recheck held root/inbox identities
-and manifest absence after claiming it. First acquire any existing coordination inode exclusively,
-or retain the entry while its current owner finishes; moving it out from under an active deleter
-would let that deletion remove a new creator's inbox. Remove only its own verified empty create-new lock and empty
-directories. Never claim another creator's existing reservation or unlink another initializer's lock;
-retain uncertain contents with their actual path. This does not synchronize the separate request-posting
-protocol or make arbitrary filesystem changes atomic.
+Do not turn cleanup of an empty coordination entry into another unsafe public-path unlink. Earlier
+version-6 and version-7 builds could publish a generation without reserving an inbox; refusing every
+such project breaks ordinary saves and read-only copies. A generation alone is not reservation proof.
+An early project check cannot close the gap before lock creation, and mkdir does not return a handle:
+an old initializer can otherwise capture a new creator's inbox or strand an empty inbox after deletion.
+Require initial creators to hold the same raw exclusive coordination inode through publication and
+failed-creation cleanup. That raw handle grants no feed-writing authority without a published project
+identity. An initializer that made an inbox can acquire the same lock, then recheck project
+identity and manifest absence before privately claiming only that captured inbox. A non-owner must
+never remove its lock independently: the initializer that made the directory may be waiting for it,
+and may release the same verified empty inode once it holds the lock. A creator holding the inode
+cannot have its reservation released by an old initializer. Recheck held root/inbox identities and
+manifest absence after claiming it; use the already held handle rather than recursively acquiring
+its non-reentrant lock. Never claim another creator's existing reservation or remove an unrecognized
+entry. Retain uncertain contents with their actual path. This does not synchronize the separate
+request-posting protocol or make arbitrary filesystem changes atomic.
+An in-place lock-file mutation control is Unix-specific: Windows exclusive locks reject a write
+through another handle. Keep that Unix control, and exercise changed-file protection on every platform
+by preparing a replacement before locking and renaming it into place without writing the held inode.
 The manifest may already project a pending check, completed reply or failure into that history.
 Save that projection and its damaged source digest with the recovery rather than guessing from a
 manifest that may have advanced. A temporary read failure or a different damaged source does not
@@ -1114,15 +1124,27 @@ content during that same copy attempt. Hold the source feed lock across discover
 and check the loaded identity for ordinary app/ sources too: an old handle must not mix a replacement
 project's app with the old project's settings. Actual write-access denial can use an existing regular
 empty lock through a read-only shared guard that excludes writers; keep that guard distinct from a
-write transaction. A missing or invalid existing lock, contention or unsupported locking must not
+write transaction. Recheck the original inbox directory and held lock identity before publication;
+a matching manifest alone cannot detect an externally replaced coordination namespace. A missing
+or invalid existing lock, contention or unsupported locking must not
 become an unlocked copy. A readable read-only legacy source with no inbox
 can use a read-only copy path only after actual permission or read-only-filesystem denial; keep manifest and ownership checks,
 and never swallow lock timeouts or unreadable records. Match case variants by the opened file's identity, not by lowercasing
 all names: a case-sensitive filesystem can hold a distinct personal file with that spelling.
-Publish a duplicate's manifest only after the copy succeeds. Capture the newly created root's identity
+Publish a duplicate's manifest only after the copy succeeds. Exclusively create every destination
+directory and file: a later root check cannot undo bytes already overwritten through a replaced
+path. Preserve ordinary source permissions using the opened output handle. Capture the newly created root's identity
 before claiming its inbox, and refuse unexpected contents in that fresh root. Directory creation and
 the first handle open remain separate operations; a captured identity alone cannot authorize deleting
 its contents, and files can also appear later.
+Before reserving the inbox, reserve a private cleanup directory and its identity. Allocating that
+directory only after a storage-full publication error can fail for the same reason and strand the
+inbox. Reuse the reserved child name relative to the current root after a failed copy moves that root;
+never fall back to a fresh allocation if the held cleanup directory is missing, replaced or occupied.
+After successful publication, remove only that verified empty directory and report any failure as
+cleanup of an already published project. Preallocation removes one allocation from rollback; it cannot
+guarantee rename or removal under every exhausted-filesystem condition. Test publication failure
+while every later cleanup allocation also fails, plus up-front reservation failure and changed slots.
 Before copying, reserve its inbox name
 atomically, and require every initial creator to take that same reservation: a copied app/ is otherwise
 mistaken for personal files another create_at can adopt. After publication, retain the empty inbox until deletion, so
@@ -1133,8 +1155,10 @@ manifest; removing its public pathname directly still has a replacement window. 
 preserve it and report what to inspect; a failed creation must not strand a retry behind its own empty
 inbox, or remove a published project's coordination directory. For a failed copy, check the root and
 inbox identities and manifest absence, claim the destination into a fresh private sibling directory
-and verify the reservation again. Then remove only its empty reservation and empty root, never its
-contents recursively. Retain partial copied files and unexpected entries and report their exact
+and verify the reservation again. Reuse the held creation lock while removing only its verified
+empty coordination inode and aliases, empty reservation and empty root, never its
+contents recursively. Preserve the original error and its recovery advice alongside the full nested
+cleanup guidance. Retain partial copied files and unexpected entries and report their exact
 claimed location; full automatic cleanup is less important than preserving a person's files. Fingerprinting must classify
 backup-shaped entries too, rather than excluding personal files and directories by reserved name.
 Hash each classified personal file through the same opened handle, rewinding after an ownership

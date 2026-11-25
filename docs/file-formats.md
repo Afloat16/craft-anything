@@ -62,8 +62,12 @@ The empty `inbox/feed.lock` coordination file remains in place after each transa
 are bounded to five seconds; request locks precede this feed lock, never the other way around.
 Deletion holds the same lock and first removes inbox payloads while `craft.json` remains discoverable.
 Every entry identifying the held lock inode is retained, including alternate filesystem spellings.
-A payload-cleanup failure can therefore be retried after access is repaired. Only then is `craft.json`
-removed, and the still-locked inbox is privately claimed before its empty lock entries are removed.
+A payload-cleanup failure can therefore be retried after access is repaired. Deletion also reserves
+its private cleanup directory and retains its identity before removing `craft.json`; a permission or
+space failure at that allocation leaves the manifest and public inbox available for retry. If manifest
+removal fails, only the verified empty cleanup reservation is released. After the manifest is removed,
+the still-locked inbox is claimed into that reserved directory before its empty lock entries are removed.
+Failure to claim reports the public inbox path; no replacement cleanup directory is allocated.
 Once that public name is released, deletion never cleans it again, so a new project can reserve it
 without losing its inbox to the old deletion. The guard remains held through final cleanup; unexpected
 contents are retained at the reported private path. Later filesystem failures can still interrupt
@@ -75,31 +79,32 @@ validate the caller's loaded identity, merge the current person-owned fields and
 without releasing that guard. They cannot adopt another project's generation or recreate a deleted
 manifest. Only initial creation and successful duplication publish a new manifest without an existing
 project guard.
-Version-5 and older manifests keep an absent generation when read or saved; opening one does not
-write it or invent a per-open identity. A later project created in the same directory receives a new
+Older manifests retain a recorded generation, or keep it absent if none was recorded; opening one
+does not write it or invent a per-open identity. A later project created in the same directory receives a new
 generation even if its creation timestamp repeats. Loaded writers retain that identity; replay and separate
 recovery archives reject a different project later created at the same path. Saved-answer merging
 checks that identity before adopting any replacement rows. Deletion also compares
 its loaded workspace with the project under the lock before removing anything. They do not write
-conversation, backup, archive or recorded-answer payloads after deletion. A generation-bearing project
-already reserves its inbox before publication; a writer refuses a missing inbox instead of recreating it.
-Only legacy projects without a generation may initialize a missing inbox. Its first captured identity
-must still belong to the original project before any later failure can authorize cleanup. If that first
-confirmation fails, the current directory is retained with inspection guidance: deletion and a new
-creator may have reused the name before the first open. This legacy case can still require manual
-inspection before retrying. A rejected feed initializer may privately claim only a confirmed inbox
-it created itself, after checking its held root/inbox identities and
-manifest absence again. An existing coordination lock must be held exclusively before that claim;
-a busy deleter keeps the public reservation until it performs its own private claim. Cleanup removes
-only its own verified, still-empty newly created lock and empty
-directories. Existing reservations, a published replacement and changed entries are preserved.
-An unowned lock or other contents remain at the reported private path for inspection; final cleanup
-is not a filesystem-atomic lifecycle protocol. Ordinary inbox request posting uses its separate protocol.
+conversation, backup, archive or recorded-answer payloads after deletion. Earlier builds could publish
+a project with a generation but no inbox, so a generation alone cannot prove a persistent reservation.
+An existing project may initialize a missing inbox through the same guarded protocol. Initial creators hold the
+same exclusive coordination inode from reservation through publication or failed-creation cleanup.
+After capturing a newly made inbox, an initializer acquires that lock before its final project
+check: an active creator cannot have its reservation released by an older initializer. If deletion
+won and no manifest exists, the initializer that made the inbox can privately claim it only after
+checking the held root/inbox identities and exclusively held lock again. A lock created by another
+initializer can be released under this same protocol; an initializer that did not create the inbox
+never removes it. A busy creator or deleter keeps the public reservation until it finishes.
+Cleanup removes only a verified empty coordination entry and empty directories. Existing
+reservations, a published replacement and changed entries are preserved. Unrecognized contents
+remain at the reported private path for inspection; final cleanup is not a filesystem-atomic lifecycle
+protocol. Ordinary inbox request posting uses its separate protocol.
 Duplication checks the loaded source identity under the same lock in both app layouts and holds
 it through destination manifest publication. In-place backup discovery also stays under that lock,
 so application recovery cannot change ownership during the copy. After actual write-access denial,
 an existing regular, empty coordination file can instead be opened read-only and held with a shared
-lock that excludes feed writers. This guard cannot be supplied to a feed-writing API. An existing
+lock that excludes feed writers. It checks both the original inbox directory identity and held lock
+identity again before publication. This guard cannot be supplied to a feed-writing API. An existing
 inbox with no usable lock, a lock timeout or unsupported locking does not fall back to an uncoordinated copy.
 A readable legacy source with no
 inbox can be copied without creating one when the attempted lock creation is denied, including a
@@ -112,23 +117,35 @@ is classified through the opened handle that will be copied. Equivalent case spe
 the reserved slot only when they identify the same file; a distinct personal file is retained.
 A new or changed unverified entry requires a retry. Losing a receipt also cannot turn a previously
 verified recovery copy into personal app content during the same copy. Every initial creator,
-including creation in a person-selected folder, atomically reserves the existing `inbox/` name before
-publishing a manifest. A selected directory link is resolved before validation; the returned workspace
+including creation in a person-selected folder, first reserves a private cleanup directory with a
+held identity, then atomically reserves the existing `inbox/` name before publishing a manifest. If
+that initial cleanup-space allocation fails, no inbox is created. A selected directory link is resolved before validation; the returned workspace
 and the desktop's remembered project use that real path. The reservation prevents another creator
 from adopting a copy still in progress. After successful publication it remains until project deletion,
 so releasing it cannot race later feed writers. A creation that loses the
 reservation leaves the winner's directory alone. A fresh destination captures its root identity immediately
 after creation, refuses a nonempty root and checks that same identity before claiming its inbox.
 Directory creation and the first open are separate operations, so captured identity never authorizes
-deleting directory contents. A failed initial publication in a selected folder privately claims this
-attempt's empty inbox, rechecks both directory identities and manifest absence, and removes only the
-empty claimed entry. A visible manifest, changed identity or occupied inbox is preserved with inspection
-guidance; the selected folder is never removed by that cleanup. The destination manifest is published after copying
-succeeds, while the root and inbox still match their held identities and no manifest has appeared.
+deleting directory contents. A failed initial publication in a selected folder reuses the already
+reserved cleanup directory, without allocating another one after a storage-full error. It privately
+claims this attempt's empty inbox, rechecks both directory identities and manifest absence, and removes only the
+held empty coordination file and any same-file aliases, then the empty claimed directory. A visible
+manifest, changed identity or unrecognized inbox content is preserved with inspection
+guidance; a missing, changed or occupied cleanup reservation never falls back to a new allocation.
+The selected folder is never removed by that cleanup. Successful manifest publication removes only
+the verified empty cleanup reservation; a later cleanup error explicitly reports that the project was
+published. Preallocation does not guarantee that rename, unlink or directory removal can succeed on
+an exhausted filesystem. Legacy-initializer cleanup and the outer private root claim for failed copies
+can still need allocation. The destination manifest is published after copying
+succeeds, while the root, inbox and coordination file still match their held identities and no manifest
+has appeared. Copying exclusively creates each destination directory and file; an existing or
+newly arrived destination entry is refused instead of overwritten. Ordinary files keep their source
+permissions through the opened output handle.
 A failed copy checks the same reservation, claims its destination into a fresh private
 `.craft-copy-cleanup-*` folder beside it, then checks that reservation again. Cleanup removes only an
 empty reservation and empty root; unfinished copied files and unexpected contents are preserved at
-the reported claimed path for inspection. A failed copy is never recursively removed. This coordination does not make a directory copy an atomic filesystem snapshot
+the reported claimed path for inspection. Failure reporting keeps the original recovery advice and
+the complete nested cleanup guidance, including the retained path. A failed copy is never recursively removed. This coordination does not make a directory copy an atomic filesystem snapshot
 against external programs that do not take the lock. App fingerprinting also uses the same opened
 regular file for ownership classification and content hashing, so recovery cannot substitute a newly
 generated backup between those two reads.

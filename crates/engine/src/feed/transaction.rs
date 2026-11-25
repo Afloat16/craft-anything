@@ -36,23 +36,44 @@ impl ProjectFeedGuard {
         if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() != 0 {
             return Ok(false);
         }
-        let (file, _) = craft_anything_platform::fs::open_regular_file(path)?;
-        let file = same_file::Handle::from_file(file).map_err(|error| ToolError::io(path.display(), error))?;
-        Ok(file == self._file)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt as _;
+            // Unlinking a payload does not require permission to read its contents.
+            let held = self._file.as_file().metadata().map_err(|error| ToolError::io(path.display(), error))?;
+            Ok(metadata.dev() == held.dev() && metadata.ino() == held.ino())
+        }
+        #[cfg(not(unix))]
+        {
+            let (file, _) = craft_anything_platform::fs::open_regular_file(path)?;
+            let file = same_file::Handle::from_file(file).map_err(|error| ToolError::io(path.display(), error))?;
+            Ok(file == self._file)
+        }
     }
 
-    pub(crate) fn finish_deletion(&self, inbox: &same_file::Handle, after_claim: impl FnOnce()) -> Result<(), ToolError> {
-        crate::workspace::finish_deleted_inbox(&self.root, &self.project.directory, inbox, &self._file, after_claim)
+    pub(crate) fn finish_deletion(
+        &self,
+        inbox: &same_file::Handle,
+        cleanup: &crate::workspace::CreationCleanup,
+        after_claim: impl FnOnce(),
+    ) -> Result<(), ToolError> {
+        crate::workspace::finish_deleted_inbox(&self.root, &self.project.directory, inbox, &self._file, cleanup, after_claim)
     }
 }
 
 /// A read-only copy holds a shared lock, but cannot supply a writer's transaction guard.
 #[derive(Debug)]
-pub(crate) struct ProjectCopyGuard(ProjectFeedGuard);
+pub(crate) struct ProjectCopyGuard {
+    guard: ProjectFeedGuard,
+    inbox: same_file::Handle,
+}
 
 impl ProjectCopyGuard {
     pub(crate) fn check_workspace(&self, ws: &crate::workspace::Workspace) -> Result<(), ToolError> {
-        self.0.check_workspace(ws)
+        let directory = self.guard.root.join("inbox");
+        check_directory(&directory, &self.inbox)?;
+        check_entry(&directory.join(PROJECT_LOCK_FILE), &self.guard._file)?;
+        self.guard.check_workspace(ws)
     }
 }
 
@@ -112,10 +133,7 @@ pub(crate) fn lock_project_for_copy(root: &Path) -> Result<ProjectCopyGuard, Too
 fn copy_lock_for(root: &Path, wait: Duration) -> Result<ProjectCopyGuard, ToolError> {
     let project = ProjectIdentity::read(root)?;
     let directory = root.join("inbox");
-    let metadata = std::fs::symlink_metadata(&directory).map_err(|error| ToolError::io(directory.display(), error))?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return Err(invalid(&directory));
-    }
+    let inbox = open_directory(&directory)?;
     let path = directory.join(PROJECT_LOCK_FILE);
     let metadata = std::fs::symlink_metadata(&path).map_err(|error| ToolError::io(path.display(), error))?;
     if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() != 0 {
@@ -125,9 +143,9 @@ fn copy_lock_for(root: &Path, wait: Duration) -> Result<ProjectCopyGuard, ToolEr
     let file = same_file::Handle::from_file(file).map_err(|error| ToolError::io(path.display(), error))?;
     check_entry(&path, &file)?;
     wait_for_lock(file.as_file(), &path, Instant::now(), wait, true)?;
-    check_entry(&path, &file)?;
-    project.check(root)?;
-    Ok(ProjectCopyGuard(ProjectFeedGuard { root: root.to_path_buf(), project, _file: file }))
+    let guard = ProjectCopyGuard { guard: ProjectFeedGuard { root: root.to_path_buf(), project, _file: file }, inbox };
+    guard.check_workspace(&crate::workspace::Workspace::open(root)?)?;
+    Ok(guard)
 }
 
 fn lock_for(root: &Path, wait: Duration) -> Result<ProjectFeedGuard, ToolError> {
@@ -139,18 +157,24 @@ fn lock_for_using(root: &Path, wait: Duration, after_identity: impl FnOnce()) ->
 }
 
 fn lock_for_using_after_mkdir(root: &Path, wait: Duration, after_identity: impl FnOnce(), after_mkdir: impl FnOnce()) -> Result<ProjectFeedGuard, ToolError> {
-    // Reject a project already gone before creating coordination entries. If deletion
-    // overlaps initialization, only an inbox created by this attempt can be reclaimed.
+    lock_for_using_before_open(root, wait, after_identity, after_mkdir, || {})
+}
+
+fn lock_for_using_before_open(
+    root: &Path,
+    wait: Duration,
+    after_identity: impl FnOnce(),
+    after_mkdir: impl FnOnce(),
+    before_open: impl FnOnce(),
+) -> Result<ProjectFeedGuard, ToolError> {
+    // Earlier projects can lack an inbox even when they have a generation. Initialization
+    // uses the same exclusive lock as initial creation; only this attempt's newly created
+    // inbox can be reclaimed if deletion overlaps it.
     let project = ProjectIdentity::read(root)?;
     after_identity();
     let directory = root.join("inbox");
     let created_inbox = match std::fs::symlink_metadata(&directory) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            // Generation-bearing projects reserve their inbox before publication. A missing
-            // reservation is never recreated by a possibly stale writer.
-            if project.generation.is_some() {
-                return Err(project_changed());
-            }
             #[cfg(unix)]
             let builder = {
                 use std::os::unix::fs::DirBuilderExt as _;
@@ -169,82 +193,49 @@ fn lock_for_using_after_mkdir(root: &Path, wait: Duration, after_identity: impl 
         Ok(_) => false,
         Err(error) => return Err(ToolError::io(directory.display(), error)),
     };
-    let owned_inbox = if created_inbox {
+    if created_inbox {
         after_mkdir();
-        let inbox = same_file::Handle::from_path(&directory).map_err(|error| ToolError::io(directory.display(), error))?;
-        // mkdir does not return a handle. Deletion and another creator may have replaced
-        // the entry before this first capture; failed identity confirmation grants no cleanup.
-        project.check(root).map_err(|error| {
-            let guidance = format!(
-                "The new coordination directory could not be bound to the original project. Inspect {} before retrying; its current contents were kept.",
-                directory.display()
-            );
-            let guidance = match &error.remediation {
-                Some(previous) => format!("{previous} {guidance}"),
-                None => guidance,
-            };
-            error.with_remediation(guidance)
-        })?;
-        Some(inbox)
-    } else {
-        None
-    };
+    }
+    let inbox = open_directory(&directory)?;
     let mut opened = None;
     let mut created_lock = false;
     let mut held_lock = false;
     let acquired = (|| {
-        let metadata = std::fs::symlink_metadata(&directory).map_err(|error| ToolError::io(directory.display(), error))?;
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
-            return Err(invalid(&directory));
+        if !created_inbox {
+            // Reject a known stale caller without populating an existing reservation.
+            // A newly initialized inbox must reach locked cleanup after deletion.
+            project.check(root)?;
         }
-        // A known stale initializer must not add a lock to another creator's reservation.
-        // This early refusal is not a replacement for the check under the acquired lock.
-        project.check(root)?;
+        check_directory(&directory, &inbox)?;
         let path = directory.join(PROJECT_LOCK_FILE);
         let started = Instant::now();
-        let (file, absent) = loop {
-            let absent = match std::fs::symlink_metadata(&path) {
-                Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() == 0 => false,
-                Ok(_) => return Err(invalid(&path)),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
-                Err(error) => return Err(ToolError::io(path.display(), error)),
-            };
-            // Exclusive locks may be emulated as write locks on network filesystems.
-            let mut options = std::fs::OpenOptions::new();
-            options.read(true).write(true).create_new(absent);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt as _;
-                options.mode(0o600);
-            }
-            match options.open(&path) {
-                Ok(file) => break (file, absent),
-                Err(error) if absent && error.kind() == std::io::ErrorKind::AlreadyExists && started.elapsed() < wait => {}
-                Err(error) => return Err(ToolError::io(path.display(), error)),
-            }
-        };
-        let file = opened.insert(same_file::Handle::from_file(file).map_err(|error| ToolError::io(path.display(), error))?);
+        before_open();
+        let (file, absent) = open_coordination_file(&directory, started, wait)?;
+        let file = opened.insert(file);
         created_lock = absent;
         check_entry(&path, file)?;
         wait_for_lock(file.as_file(), &path, started, wait, false)?;
         held_lock = true;
         check_entry(&path, file)?;
+        check_directory(&directory, &inbox)?;
         project.check(root)
     })();
     if let Err(error) = acquired {
-        return Err(match owned_inbox {
-            Some(inbox) => match crate::workspace::release_created_inbox(
+        return Err(if created_inbox {
+            match crate::workspace::release_created_inbox(
                 root,
                 project.directory,
                 inbox,
-                opened.as_ref().filter(|_| created_lock),
+                // Another initializer can create this inbox's coordination file first.
+                // Once held and verified, it belongs to the same cleanup protocol.
+                opened.as_ref().filter(|_| created_lock || held_lock),
                 opened.as_ref().filter(|_| held_lock),
             ) {
                 Ok(()) => error,
                 Err(cleanup) => {
                     let guidance = format!(
                         "The initializer's coordination entry could not be fully released: {} Inspect {} and any retained path before retrying.",
-                        cleanup.message,
+                        cleanup.for_people(),
                         directory.display()
                     );
                     let guidance = match &error.remediation {
@@ -253,12 +244,72 @@ fn lock_for_using_after_mkdir(root: &Path, wait: Duration, after_identity: impl 
                     };
                     error.with_remediation(guidance)
                 }
-            },
-            None => error,
+            }
+        } else {
+            error
         });
     }
     let file = opened.ok_or_else(|| ToolError::internal("The conversation lock was acquired without retaining its file."))?;
     Ok(ProjectFeedGuard { root: root.to_path_buf(), project, _file: file })
+}
+
+/// Initial creation participates in coordination before copying or publishing a manifest.
+/// The raw handle grants no project identity and cannot authorize feed writes.
+pub(crate) fn lock_creation(root: &Path, expected_inbox: &same_file::Handle) -> Result<same_file::Handle, ToolError> {
+    let directory = root.join("inbox");
+    check_directory(&directory, expected_inbox)?;
+    let started = Instant::now();
+    let (file, _) = open_coordination_file(&directory, started, WAIT)?;
+    let path = directory.join(PROJECT_LOCK_FILE);
+    check_entry(&path, &file)?;
+    wait_for_lock(file.as_file(), &path, started, WAIT, false)?;
+    check_directory(&directory, expected_inbox)?;
+    check_entry(&path, &file)?;
+    Ok(file)
+}
+
+fn open_coordination_file(directory: &Path, started: Instant, wait: Duration) -> Result<(same_file::Handle, bool), ToolError> {
+    let path = directory.join(PROJECT_LOCK_FILE);
+    loop {
+        let absent = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() == 0 => false,
+            Ok(_) => return Err(invalid(&path)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+            Err(error) => return Err(ToolError::io(path.display(), error)),
+        };
+        // Exclusive locks may be emulated as write locks on network filesystems.
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true).create_new(absent);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        match options.open(&path) {
+            Ok(file) => return Ok((same_file::Handle::from_file(file).map_err(|error| ToolError::io(path.display(), error))?, absent)),
+            Err(error) if absent && error.kind() == std::io::ErrorKind::AlreadyExists && started.elapsed() < wait => {}
+            Err(error) => return Err(ToolError::io(path.display(), error)),
+        }
+    }
+}
+
+fn open_directory(path: &Path) -> Result<same_file::Handle, ToolError> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| ToolError::io(path.display(), error))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(invalid(path));
+    }
+    let directory = same_file::Handle::from_path(path).map_err(|error| ToolError::io(path.display(), error))?;
+    check_directory(path, &directory)?;
+    Ok(directory)
+}
+
+fn check_directory(path: &Path, expected: &same_file::Handle) -> Result<(), ToolError> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| ToolError::io(path.display(), error))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(invalid(path));
+    }
+    let current = same_file::Handle::from_path(path).map_err(|error| ToolError::io(path.display(), error))?;
+    if &current == expected { Ok(()) } else { Err(project_changed()) }
 }
 
 fn wait_for_lock(file: &std::fs::File, path: &Path, started: Instant, wait: Duration, shared: bool) -> Result<(), ToolError> {
@@ -368,6 +419,8 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let ws = Workspace::create(directory.path(), "Project", "Test", TargetRef::None).unwrap();
         let path = ws.inbox_dir().join(PROJECT_LOCK_FILE);
+        drop(lock_project(&ws.root).unwrap());
+        std::fs::remove_file(&path).unwrap();
         assert!(copy_lock_for(&ws.root, Duration::ZERO).is_err());
         assert!(!path.exists(), "a read-only lock does not initialize coordination");
         drop(lock_project(&ws.root).unwrap());
@@ -376,7 +429,7 @@ mod tests {
         let first = copy_lock_for(&ws.root, Duration::ZERO).unwrap();
         let second = copy_lock_for(&ws.root, Duration::ZERO).unwrap();
         first.check_workspace(&ws).unwrap();
-        assert!(first.0._file.as_file().write_all(b"not writable").is_err());
+        assert!(first.guard._file.as_file().write_all(b"not writable").is_err());
         craft_anything_platform::Process::new(std::env::current_exe().unwrap())
             .args(["--exact", "feed::transaction::tests::feed_lock_child", "--test-threads=1"])
             .env("CRAFT_TEST_FEED_LOCK_ROOT", &ws.root)
@@ -395,6 +448,40 @@ mod tests {
 
         assert_eq!(identity, same_file::Handle::from_path(&path).unwrap());
         assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn read_only_copy_guards_recheck_the_inbox_and_coordination_inode() {
+        for replace_inbox in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(directory.path(), "Project", "Test", TargetRef::None).unwrap();
+            drop(lock_project(&ws.root).unwrap());
+            let guard = copy_lock_for(&ws.root, Duration::ZERO).unwrap();
+            let manifest = std::fs::read(ws.root.join(crate::workspace::MANIFEST)).unwrap();
+            let inbox = ws.inbox_dir();
+            let lock = inbox.join(PROJECT_LOCK_FILE);
+
+            if replace_inbox {
+                // A hard link retains the locked inode while the directory identity changes.
+                let retained = ws.root.join("retained-inbox");
+                std::fs::rename(&inbox, &retained).unwrap();
+                std::fs::create_dir(&inbox).unwrap();
+                std::fs::hard_link(retained.join(PROJECT_LOCK_FILE), &lock).unwrap();
+                assert_eq!(same_file::Handle::from_path(&lock).unwrap(), guard.guard._file);
+                assert_eq!(lock_for(&ws.root, Duration::ZERO).unwrap_err().code, ErrorCode::TimedOut);
+            } else {
+                // Observable external replacement can give a writer a different lock inode.
+                std::fs::rename(&lock, ws.root.join("retained.lock")).unwrap();
+                std::fs::File::create_new(&lock).unwrap();
+                let writer = lock_for(&ws.root, Duration::ZERO).unwrap();
+                assert!(guard.check_workspace(&ws).is_err());
+                drop(writer);
+            }
+
+            assert!(guard.check_workspace(&ws).is_err());
+            assert_eq!(std::fs::read(ws.root.join(crate::workspace::MANIFEST)).unwrap(), manifest);
+            assert_eq!(std::fs::metadata(&lock).unwrap().len(), 0);
+        }
     }
 
     #[test]
@@ -422,6 +509,33 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn inbox_classification_and_deletion_do_not_require_payload_read_permission() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Project", "Test", TargetRef::None).unwrap();
+        let root = ws.root.clone();
+        std::fs::write(root.join("personal.txt"), b"Keep my app").unwrap();
+        let inbox = ws.inbox_dir();
+        let payload = inbox.join("empty-payload");
+        std::fs::File::create_new(&payload).unwrap();
+        std::fs::set_permissions(&payload, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let alias = inbox.join("coordination-alias");
+        std::fs::hard_link(inbox.join(PROJECT_LOCK_FILE), &alias).unwrap();
+
+        let guard = lock_project(&root).unwrap();
+        assert!(!guard.is_lock_entry(&payload).unwrap());
+        assert!(guard.is_lock_entry(&alias).unwrap(), "an arbitrary same-inode name still belongs to coordination");
+        assert_eq!(std::fs::symlink_metadata(&payload).unwrap().permissions().mode() & 0o777, 0);
+        drop(guard);
+        ws.delete().unwrap();
+
+        assert!(!root.join(crate::workspace::MANIFEST).exists());
+        assert!(!inbox.exists());
+        assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep my app");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn coordination_does_not_follow_existing_links() {
         let directory = tempfile::tempdir().unwrap();
         let ws = Workspace::create(directory.path(), "Project", "Test", TargetRef::None).unwrap();
@@ -430,6 +544,8 @@ mod tests {
         let path = inbox.join("feed.lock");
         let target = directory.path().join("personal");
         std::fs::write(&target, b"").unwrap();
+        drop(lock_project(&ws.root).unwrap());
+        std::fs::remove_file(&path).unwrap();
         std::os::unix::fs::symlink(&target, &path).unwrap();
         assert!(lock_project(&ws.root).is_err());
         assert!(copy_lock_for(&ws.root, Duration::ZERO).is_err());
@@ -459,6 +575,36 @@ mod tests {
     }
 
     #[test]
+    fn earlier_generation_bearing_projects_initialize_coordination_without_changing_the_manifest() {
+        for version in [6u32, 7] {
+            let directory = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(directory.path(), "Earlier project", "Test", TargetRef::None).unwrap();
+            assert!(ws.manifest.generation.is_some());
+            let mut document = serde_json::to_value(&ws.manifest).unwrap();
+            document["version"] = serde_json::Value::from(version);
+            let original = serde_json::to_vec_pretty(&document).unwrap();
+            let manifest = ws.root.join(crate::workspace::MANIFEST);
+            std::fs::write(&manifest, &original).unwrap();
+            drop(lock_project(&ws.root).unwrap());
+            let path = ws.inbox_dir().join(PROJECT_LOCK_FILE);
+            std::fs::remove_file(&path).unwrap();
+            std::fs::remove_dir(ws.inbox_dir()).unwrap();
+
+            let guard = lock_for(&ws.root, Duration::ZERO).unwrap();
+            let opened = Workspace::open(&ws.root).unwrap();
+            guard.check_workspace(&opened).unwrap();
+            assert_eq!(opened.manifest.generation, ws.manifest.generation);
+            assert_eq!(std::fs::read(&manifest).unwrap(), original, "coordination does not rewrite an older manifest");
+            let identity = same_file::Handle::from_path(&path).unwrap();
+            assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
+            drop(guard);
+            drop(lock_for(&ws.root, Duration::ZERO).unwrap());
+            assert_eq!(same_file::Handle::from_path(&path).unwrap(), identity);
+            assert_eq!(std::fs::read(&manifest).unwrap(), original);
+        }
+    }
+
+    #[test]
     fn deletion_during_lock_creation_still_refuses_payload_writes() {
         let directory = tempfile::tempdir().unwrap();
         let ws = Workspace::create(directory.path(), "Project", "Test", TargetRef::None).unwrap();
@@ -470,6 +616,41 @@ mod tests {
         assert!(!root.join("inbox").exists(), "the rejected initializer releases only its newly created empty coordination directory");
         assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep my app");
         Workspace::create_at(&root, "Replacement", "Retry", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+    }
+
+    #[test]
+    fn deleted_legacy_initializers_release_their_empty_coordination_reservation() {
+        for another_initializer_created_lock in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut ws = Workspace::create(directory.path(), "Project", "Test", TargetRef::None).unwrap();
+            let root = ws.root.clone();
+            std::fs::write(root.join("personal.txt"), b"Keep my app").unwrap();
+            drop(lock_project(&root).unwrap());
+            ws.manifest.generation = None;
+            std::fs::write(root.join(crate::workspace::MANIFEST), serde_json::to_vec_pretty(&ws.manifest).unwrap()).unwrap();
+            std::fs::remove_file(ws.inbox_dir().join(PROJECT_LOCK_FILE)).unwrap();
+            std::fs::remove_dir(ws.inbox_dir()).unwrap();
+
+            let result = lock_for_using_after_mkdir(
+                &root,
+                Duration::ZERO,
+                || ws.delete().unwrap(),
+                || {
+                    if another_initializer_created_lock {
+                        std::fs::File::create_new(root.join("inbox").join(PROJECT_LOCK_FILE)).unwrap();
+                    }
+                },
+            );
+
+            assert!(result.is_err());
+            assert!(!root.join(crate::workspace::MANIFEST).exists());
+            assert!(!root.join(super::super::FEED_FILE).exists());
+            assert!(!root.join("inbox").exists());
+            let remaining = std::fs::read_dir(&root).unwrap().map(|entry| entry.unwrap().file_name()).collect::<Vec<_>>();
+            assert_eq!(remaining, [std::ffi::OsString::from("personal.txt")], "no empty coordination entry is stranded at a private cleanup path");
+            assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep my app");
+            Workspace::create_at(&root, "Replacement", "Retry", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+        }
     }
 
     #[test]
@@ -497,22 +678,65 @@ mod tests {
     }
 
     #[test]
+    fn an_initializer_delayed_before_open_cannot_strand_a_new_creators_lock() {
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Project", "Test", TargetRef::None).unwrap();
+        let root = ws.root.clone();
+        std::fs::write(root.join("personal.txt"), b"Keep my app").unwrap();
+        let mut creation = None;
+
+        let result = lock_for_using_before_open(
+            &root,
+            Duration::ZERO,
+            || {},
+            || {},
+            || {
+                // The stale caller has already checked the old project and existing inbox.
+                ws.delete().unwrap();
+                std::fs::create_dir(root.join("inbox")).unwrap();
+                let directory = same_file::Handle::from_path(&root).unwrap();
+                let inbox = same_file::Handle::from_path(root.join("inbox")).unwrap();
+                let lock = lock_creation(&root, &inbox).unwrap();
+                creation = Some((directory, inbox, lock));
+            },
+        );
+
+        assert_eq!(result.unwrap_err().code, ErrorCode::TimedOut);
+        let (directory, inbox, lock) = creation.unwrap();
+        assert_eq!(same_file::Handle::from_path(root.join("inbox")).unwrap(), inbox);
+        assert_eq!(same_file::Handle::from_path(root.join("inbox").join(PROJECT_LOCK_FILE)).unwrap(), lock);
+        assert_eq!(std::fs::metadata(root.join("inbox").join(PROJECT_LOCK_FILE)).unwrap().len(), 0);
+        // A creator that does not publish releases that same held coordination inode.
+        crate::workspace::release_created_inbox(&root, directory, inbox, Some(&lock), Some(&lock)).unwrap();
+        drop(lock);
+        assert!(!root.join("inbox").exists());
+        let remaining = std::fs::read_dir(&root).unwrap().map(|entry| entry.unwrap().file_name()).collect::<Vec<_>>();
+        assert_eq!(remaining, [std::ffi::OsString::from("personal.txt")]);
+        Workspace::create_at(&root, "Replacement", "Retry", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+        assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep my app");
+    }
+
+    #[test]
     fn a_stale_initializer_preserves_a_published_replacement() {
         let directory = tempfile::tempdir().unwrap();
         let ws = Workspace::create(directory.path(), "Project", "Test", TargetRef::None).unwrap();
         let root = ws.root.clone();
         std::fs::write(root.join("personal.txt"), b"Keep my app").unwrap();
         let mut published = Vec::new();
+        let mut published_lock = None;
 
         let result = lock_for_using(&root, WAIT, || {
             ws.delete().unwrap();
             Workspace::create_at(&root, "Replacement", "New request", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
             published = std::fs::read(root.join(crate::workspace::MANIFEST)).unwrap();
+            published_lock = Some(same_file::Handle::from_path(root.join("inbox").join(PROJECT_LOCK_FILE)).unwrap());
         });
 
         assert_eq!(result.unwrap_err().code, ErrorCode::FileChanged);
         assert_eq!(std::fs::read(root.join(crate::workspace::MANIFEST)).unwrap(), published);
-        assert_eq!(std::fs::read_dir(root.join("inbox")).unwrap().count(), 0);
+        assert_eq!(same_file::Handle::from_path(root.join("inbox").join(PROJECT_LOCK_FILE)).unwrap(), published_lock.unwrap());
+        assert_eq!(std::fs::read_dir(root.join("inbox")).unwrap().count(), 1);
+        assert_eq!(std::fs::metadata(root.join("inbox").join(PROJECT_LOCK_FILE)).unwrap().len(), 0);
         assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep my app");
     }
 
@@ -522,27 +746,50 @@ mod tests {
         let mut ws = Workspace::create(directory.path(), "Project", "Test", TargetRef::None).unwrap();
         let root = ws.root.clone();
         std::fs::write(root.join("personal.txt"), b"Keep my app").unwrap();
+        drop(lock_project(&root).unwrap());
         ws.manifest.generation = None;
         std::fs::write(root.join(crate::workspace::MANIFEST), serde_json::to_vec_pretty(&ws.manifest).unwrap()).unwrap();
+        std::fs::remove_file(ws.inbox_dir().join(PROJECT_LOCK_FILE)).unwrap();
         std::fs::remove_dir(ws.inbox_dir()).unwrap();
         let mut active = None;
+        let mut creation_lock = None;
 
         let result = lock_for_using_after_mkdir(
             &root,
-            WAIT,
+            Duration::ZERO,
             || {},
             || {
                 ws.delete().unwrap();
                 std::fs::create_dir(root.join("inbox")).unwrap();
-                active = Some(same_file::Handle::from_path(root.join("inbox")).unwrap());
+                let inbox = same_file::Handle::from_path(root.join("inbox")).unwrap();
+                creation_lock = Some(lock_creation(&root, &inbox).unwrap());
+                active = Some(inbox);
             },
         );
 
         let error = result.unwrap_err();
         assert_eq!(active.unwrap(), same_file::Handle::from_path(root.join("inbox")).unwrap());
-        assert_eq!(std::fs::read_dir(root.join("inbox")).unwrap().count(), 0, "an unconfirmed first capture cannot release another creator's reservation");
+        assert_eq!(std::fs::read_dir(root.join("inbox")).unwrap().count(), 1, "an active creator retains its coordination reservation");
+        assert_eq!(same_file::Handle::from_path(root.join("inbox").join(PROJECT_LOCK_FILE)).unwrap(), creation_lock.unwrap());
         assert!(error.remediation.as_deref().unwrap().contains(&root.join("inbox").display().to_string()));
         assert!(Workspace::create_at(&root, "Other", "Retry", TargetRef::None, Some(ExistingFiles::Edit)).is_err());
         assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep my app");
+    }
+    #[cfg(unix)]
+    #[test]
+    fn creation_lock_rejects_directory_links_before_creating_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("project");
+        let inbox = root.join("inbox");
+        std::fs::create_dir_all(&inbox).unwrap();
+        let held = same_file::Handle::from_path(&inbox).unwrap();
+        let displaced = directory.path().join("displaced-inbox");
+        std::fs::rename(&inbox, &displaced).unwrap();
+        std::os::unix::fs::symlink(&displaced, &inbox).unwrap();
+
+        assert!(lock_creation(&root, &held).is_err());
+
+        assert_eq!(std::fs::read_link(&inbox).unwrap(), displaced);
+        assert!(!displaced.join("feed.lock").exists(), "the refused link target receives no coordination file");
     }
 }

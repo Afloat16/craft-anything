@@ -2565,6 +2565,7 @@ mod lifecycle_tests {
         let ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
         std::fs::create_dir(ws.root.join(FEED_FILE)).unwrap();
         // Replace the empty creation reservation with the unrelated entry this case exercises.
+        std::fs::remove_file(ws.inbox_dir().join("feed.lock")).unwrap();
         std::fs::remove_dir(ws.inbox_dir()).unwrap();
         std::fs::write(ws.inbox_dir(), b"An unrelated existing file").unwrap();
         let (mut run, tx) = owned_run(&ws);

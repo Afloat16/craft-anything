@@ -844,26 +844,40 @@ do not read unrelated receipts, and ownership hashing checks
 cancellation between chunks. Readable legacy sources without an inbox can still be copied when lock creation is denied,
 including a directory whose owner can write but whose current caller cannot. The fallback checks
 the same project and an absent inbox before copying and before destination publication; an observed
-publisher causes the unfinished copy to be removed. Ownership checks remain intact. App fingerprints include personal backup-shaped files
+publisher prevents publication of the unfinished copy; partial files are retained if empty cleanup
+cannot complete safely. A readable existing coordination file supports a shared read-only copy guard
+after write access is denied, excluding writers without creating source entries and rechecking both
+inbox and lock identities before publication. Ownership checks
+remain intact. App fingerprints include personal backup-shaped files
 and directories while excluding verified recovery copies. A failed copy claims its destination into
 a private sibling directory and rechecks its identity before removal; an unexpected replacement is
 kept at the reported path, and no partial project manifest is published. Deletion holds the feed
-lock until cleanup completes, removes the manifest before the coordination directory, and causes
+lock until cleanup completes. It removes inbox payloads while retaining the manifest and lock for a
+normal retry on failure, then removes the manifest and privately claims the inbox before clearing verified coordination
+entries. Once that public name is released, deletion never returns to it; a new creator may use it.
+Late inbox entries are preserved by nonrecursive final cleanup and reported at the retained path. This causes
 waiting or late feed/archive writers to reject the unavailable project. Loading retains the original
 directory identity, manifest creation time and persistent random generation, so an old run also
 refuses to replay or archive into a new project at that path when the directory and timestamp repeat.
 Deletion verifies the workspace the caller loaded against its lock before removing any content.
-`craft.json` version 6 keeps the generation assigned to new projects and copies; legacy projects keep
+`craft.json` version 7 keeps the generation assigned to new projects and copies; legacy projects keep
 none without writes on open. Ordinary manifest updates validate the caller's original identity and
 merge current person-owned fields under the project lock before replacing the file. Person-setting
 updates instead start from the current disk manifest, preserving a newer build's checks, status
 and session while changing a budget or name. New-project choices, including the initial stack,
 are applied together in that disk-based transaction. Neither kind can
 adopt a replacement project's generation or recreate a deleted manifest. Initial publication by a
-new project or duplicate is separate. Fingerprinting hashes a personal backup-shaped file through
+new project or duplicate reserves private cleanup space before creating its inbox and holds a
+separate creation guard for the same coordination file throughout copying and publication. A failed
+picked-folder publication reuses that space even when later directory allocations fail; unexpected
+cleanup contents are retained, and successful publication removes only the verified empty reservation. Fingerprinting hashes a personal backup-shaped file through
 the same handle used to classify it, even if recovery publishes a new file at that path meanwhile.
-An acquisition interleaved with deletion may leave empty coordination
-records, but does not write conversation, backup, archive or recorded-answer payloads.
+Earlier version-6 and version-7 projects can carry a generation without an inbox; initialization
+preserves their manifest bytes. A stale initializer refuses conversation, backup, archive or
+recorded-answer payloads. When it created
+the inbox and the manifest is now absent, it releases the unused reservation under the same lock and
+private-claim checks as failed initial creation. Active creators also hold that lock; unknown contents,
+changed identities and failed cleanup remain for inspection.
 Creation rejects dangling reserved links or propagates metadata errors. Newer read-only manifests are rejected
 before build-finish touches their conversations.
 Regression coverage includes sticky read failures, exact recovery copies and occupied backup names,
