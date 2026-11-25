@@ -924,6 +924,10 @@ pub fn suggest_name(request: &str, target: &TargetRef) -> String {
 
 /// Claim a fresh directory without publishing a project manifest yet.
 fn create_workspace_root(projects_dir: &Path, name: &str) -> Result<(PathBuf, FileHandle), ToolError> {
+    create_workspace_root_after_mkdir(projects_dir, name, |_| {})
+}
+
+fn create_workspace_root_after_mkdir(projects_dir: &Path, name: &str, after_mkdir: impl FnOnce(&Path)) -> Result<(PathBuf, FileHandle), ToolError> {
     std::fs::create_dir_all(projects_dir).map_err(|e| ToolError::io(projects_dir.display(), e))?;
     let base = slug(name);
     let mut root = projects_dir.join(&base);
@@ -935,8 +939,13 @@ fn create_workspace_root(projects_dir: &Path, name: &str) -> Result<(PathBuf, Fi
         root = projects_dir.join(format!("{base}-{n}"));
         n += 1;
     }
+    after_mkdir(&root);
     let directory = FileHandle::from_path(&root).map_err(|error| ToolError::io(root.display(), error))?;
     CreationReservation::check_directory(&root, &directory)?;
+    if let Some(entry) = std::fs::read_dir(&root).map_err(|error| ToolError::io(root.display(), error))?.next() {
+        entry.map_err(|error| ToolError::io(root.display(), error))?;
+        return Err(copy_changed(&root));
+    }
     Ok((root, directory))
 }
 
@@ -982,12 +991,46 @@ impl CreationReservation {
         Self::check_manifest_absent(root)
     }
 
-    /// A failed picked-folder publication may release only this attempt's empty reservation.
-    /// A visible manifest, changed identity or occupied inbox must remain for inspection.
+    /// A failed initial write can release only this attempt's still-empty reservation.
+    /// A visible manifest, unreadable state or changed identity leaves it for inspection.
     fn release_empty(&self, root: &Path) -> Result<(), ToolError> {
+        self.release_empty_after_check(root, || {})
+    }
+
+    fn release_empty_after_check(&self, root: &Path, after_check: impl FnOnce()) -> Result<(), ToolError> {
         self.check(root)?;
         let inbox = root.join("inbox");
-        std::fs::remove_dir(&inbox).map_err(|error| ToolError::io(inbox.display(), error))
+        if let Some(entry) = std::fs::read_dir(&inbox).map_err(|error| ToolError::io(inbox.display(), error))?.next() {
+            entry.map_err(|error| ToolError::io(inbox.display(), error))?;
+            return Err(ToolError::invalid(format!("{} is not empty; its contents were kept.", inbox.display())));
+        }
+        let private = CopyDestination::cleanup_directory(root)?;
+        let claimed = private.join("reservation");
+        let moved = (|| {
+            self.check(root)?;
+            after_check();
+            std::fs::rename(&inbox, &claimed).map_err(|error| ToolError::io(inbox.display(), error))
+        })();
+        if let Err(error) = moved {
+            return match std::fs::remove_dir(&private) {
+                Ok(()) => Err(error),
+                Err(cleanup) => {
+                    Err(ToolError::new(error.code, format!("{} Inspect the cleanup folder at {} before retrying: {cleanup}", error.message, private.display())))
+                }
+            };
+        }
+        let release = (|| {
+            Self::check_directory(root, &self.directory)?;
+            Self::check_directory(&claimed, &self.inbox)?;
+            Self::check_manifest_absent(root)?;
+            // Never recurse: partial writes and unexpected entries must survive cleanup.
+            std::fs::remove_dir(&claimed).map_err(|error| ToolError::io(claimed.display(), error))
+        })();
+        release.map_err(|error| {
+            ToolError::new(error.code, format!("{} The claimed reservation is preserved at {}.", error.message, claimed.display()))
+                .with_remediation("Inspect the preserved entry before retrying. No directory contents were removed.")
+        })?;
+        std::fs::remove_dir(&private).map_err(|error| ToolError::io(private.display(), error))
     }
 
     fn check_directory(path: &Path, expected: &FileHandle) -> Result<(), ToolError> {
@@ -1009,8 +1052,8 @@ impl CreationReservation {
     }
 }
 
-/// An unpublished destination belongs only to this copy attempt. Keep its handle open so
-/// cleanup can distinguish that directory from a replacement at the same pathname.
+/// Keep the first opened destination identity through copying and cleanup. A held identity
+/// detects later replacements but never authorizes recursive deletion of its contents.
 struct CopyDestination {
     root: PathBuf,
     creation: CreationReservation,
@@ -1058,13 +1101,16 @@ impl CopyDestination {
                 ))),
             };
         }
-        // The public pathname can be replaced after the first check. Only recurse after
-        // moving its entry into this attempt's private directory and checking that identity.
+        // The public pathname can be replaced after the first check. Validate again after
+        // moving its entry into this attempt's private directory.
         self.check_identity_at(&claimed).map_err(|error| {
             ToolError::new(error.code, format!("{} The moved entry is preserved at {}.", error.message, claimed.display()))
                 .with_remediation("Inspect the preserved entry and move it to a safe location before retrying. No directory contents were removed.")
         })?;
-        std::fs::remove_dir_all(&claimed).map_err(|error| {
+        self.creation.release_empty(&claimed)?;
+        // mkdir cannot return a directory handle. A replacement before the first open may
+        // have been captured, so that identity never authorizes recursively deleting files.
+        std::fs::remove_dir(&claimed).map_err(|error| {
             ToolError::io(claimed.display(), error)
                 .with_remediation(format!("Cleanup stopped. Inspect the remaining contents at {} before retrying.", claimed.display()))
         })?;
@@ -1231,8 +1277,8 @@ impl Workspace {
             return match destination.remove() {
                 Ok(()) => Err(error),
                 Err(cleanup) => Err(error.with_remediation(format!(
-                    "The copy destination at {} was left alone because it could not be removed safely: {} Inspect that folder before retrying. The original project is unchanged.",
-                    destination.root.display(), cleanup.message
+                    "The unfinished copy could not be removed safely; its files were left alone. {} Inspect the reported path before retrying. The original project is unchanged.",
+                    cleanup.message
                 ))),
             };
         }
@@ -1371,8 +1417,7 @@ impl Workspace {
                 Ok(()) => error,
                 Err(cleanup) => {
                     let guidance = format!(
-                        "The creation reservation at {} was left in place: {}. Inspect {} and {} before retrying.",
-                        ws.inbox_dir().display(),
+                        "The creation reservation could not be fully released: {}. Inspect {} and {} together with any retained path reported above before retrying.",
                         cleanup.message,
                         ws.root.join(MANIFEST).display(),
                         ws.inbox_dir().display()
@@ -3623,7 +3668,22 @@ mod tests {
 
             assert!(result.is_err(), "a not-yet-published copy cannot be adopted as an existing app");
             assert!(!destination.root.join(MANIFEST).exists());
-            destination.remove().unwrap();
+            if with_app {
+                let error = destination.remove().unwrap_err();
+                let kept = std::fs::read_dir(directory.path())
+                    .unwrap()
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.path().join("claimed"))
+                    .find(|path| path.join("app/index.html").is_file())
+                    .expect("unfinished copy files are kept in the reported private folder");
+                assert_eq!(std::fs::read(kept.join("app/index.html")).unwrap(), b"Copy in progress");
+                assert!(error.message.contains(&kept.display().to_string()));
+                let retry = CopyDestination::create(directory.path(), "Copy").unwrap();
+                assert_eq!(retry.root, destination.root);
+                retry.remove().unwrap();
+            } else {
+                destination.remove().unwrap();
+            }
             assert!(!destination.root.exists());
         }
     }
@@ -3792,6 +3852,64 @@ mod tests {
             }
             assert!(error.remediation.as_deref().unwrap().contains(&root.join("inbox").display().to_string()));
         }
+    }
+
+    #[test]
+    fn creation_refuses_personal_contents_introduced_before_the_initial_directory_open() {
+        let directory = tempfile::tempdir().unwrap();
+        let displaced = directory.path().join("displaced-copy");
+        let result = create_workspace_root_after_mkdir(directory.path(), "Copy", |root| {
+            std::fs::rename(root, &displaced).unwrap();
+            std::fs::create_dir(root).unwrap();
+            std::fs::write(root.join("personal.txt"), b"Keep this early replacement").unwrap();
+        });
+
+        assert_eq!(result.unwrap_err().code, ErrorCode::FileChanged);
+        let root = directory.path().join("copy");
+        assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep this early replacement");
+        assert!(!root.join("inbox").exists());
+        assert!(displaced.is_dir());
+    }
+
+    #[test]
+    fn copy_cleanup_preserves_files_added_to_its_unpublished_root() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = CopyDestination::create(directory.path(), "Copy").unwrap();
+        std::fs::write(destination.root.join("personal.txt"), b"Keep this personal file").unwrap();
+
+        let error = destination.remove().unwrap_err();
+
+        let kept = std::fs::read_dir(directory.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path().join("claimed"))
+            .find(|path| path.join("personal.txt").is_file())
+            .expect("holding the root's handle never authorizes deleting personal contents");
+        assert_eq!(std::fs::read(kept.join("personal.txt")).unwrap(), b"Keep this personal file");
+        assert!(error.message.contains(&kept.display().to_string()));
+    }
+
+    #[test]
+    fn reservation_release_preserves_a_replacement_after_its_last_public_path_check() {
+        let directory = tempfile::tempdir().unwrap();
+        let (root, handle) = create_workspace_root(directory.path(), "New").unwrap();
+        let creation = CreationReservation::claim(&root, handle).unwrap();
+        let displaced = directory.path().join("displaced-inbox");
+
+        let result = creation.release_empty_after_check(&root, || {
+            std::fs::rename(root.join("inbox"), &displaced).unwrap();
+            std::fs::create_dir(root.join("inbox")).unwrap();
+        });
+
+        let error = result.unwrap_err();
+        let kept = std::fs::read_dir(&root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path().join("reservation"))
+            .find(|path| path.is_dir())
+            .expect("the replacement inbox remains in the reported private folder");
+        assert!(error.message.contains(&kept.display().to_string()));
+        assert!(displaced.is_dir());
     }
 
     #[test]

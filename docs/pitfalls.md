@@ -1103,18 +1103,22 @@ can use a read-only copy path only after actual permission or read-only-filesyst
 and never swallow lock timeouts or unreadable records. Match case variants by the opened file's identity, not by lowercasing
 all names: a case-sensitive filesystem can hold a distinct personal file with that spelling.
 Publish a duplicate's manifest only after the copy succeeds. Capture the newly created root's identity
-before claiming its inbox; recording whatever is at the path later can adopt a personal replacement.
+before claiming its inbox, and refuse unexpected contents in that fresh root. Directory creation and
+the first handle open remain separate operations; a captured identity alone cannot authorize deleting
+its contents, and files can also appear later.
 Before copying, reserve its inbox name
 atomically, and require every initial creator to take that same reservation: a copied app/ is otherwise
 mistaken for personal files another create_at can adopt. After publication, retain the empty inbox until deletion, so
 releasing a creation reservation cannot race a new feed writer. Losing the reservation does not
 authorize cleaning up the winner's folder. A picked-folder publication failure may remove only its
-owned empty inbox while the root and inbox identities still match and no manifest is visible. Otherwise,
+owned empty inbox after privately claiming it and rechecking the root/inbox identities and absent
+manifest; removing its public pathname directly still has a replacement window. Otherwise,
 preserve it and report what to inspect; a failed creation must not strand a retry behind its own empty
-inbox, or remove a published project's coordination directory. On failure, remove the newly created destination only
-after checking the root and inbox identities and manifest absence, claiming it into a fresh private
-sibling directory and verifying the same reservation again. A check followed by recursive removal of the public path still has a replacement window;
-preserve an unexpected claimed entry and report its exact location. Fingerprinting must classify
+inbox, or remove a published project's coordination directory. For a failed copy, check the root and
+inbox identities and manifest absence, claim the destination into a fresh private sibling directory
+and verify the reservation again. Then remove only its empty reservation and empty root, never its
+contents recursively. Retain partial copied files and unexpected entries and report their exact
+claimed location; full automatic cleanup is less important than preserving a person's files. Fingerprinting must classify
 backup-shaped entries too, rather than excluding personal files and directories by reserved name.
 Hash each classified personal file through the same opened handle, rewinding after an ownership
 read. Reopening its path can hash a generated backup published in that gap as personal app content.

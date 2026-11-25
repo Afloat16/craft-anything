@@ -95,15 +95,18 @@ publishing a manifest. A selected directory link is resolved before validation; 
 and the desktop's remembered project use that real path. The reservation prevents another creator
 from adopting a copy still in progress. After successful publication it remains until project deletion,
 so releasing it cannot race later feed writers. A creation that loses the
-reservation leaves the winner's directory alone. A fresh destination captures its root identity when
-created and checks that same identity before claiming its inbox. A failed initial publication in a
-selected folder removes only this attempt's empty inbox after checking both directory identities and
-manifest absence. A visible manifest, changed identity or occupied inbox is preserved with inspection
+reservation leaves the winner's directory alone. A fresh destination captures its root identity immediately
+after creation, refuses a nonempty root and checks that same identity before claiming its inbox.
+Directory creation and the first open are separate operations, so captured identity never authorizes
+deleting directory contents. A failed initial publication in a selected folder privately claims this
+attempt's empty inbox, rechecks both directory identities and manifest absence, and removes only the
+empty claimed entry. A visible manifest, changed identity or occupied inbox is preserved with inspection
 guidance; the selected folder is never removed by that cleanup. The destination manifest is published after copying
 succeeds, while the root and inbox still match their held identities and no manifest has appeared.
 A failed copy checks the same reservation, claims its destination into a fresh private
-`.craft-copy-cleanup-*` folder beside it, then checks that reservation again before recursive removal.
-An unexpected replacement is preserved at the reported claimed path. This coordination does not make a directory copy an atomic filesystem snapshot
+`.craft-copy-cleanup-*` folder beside it, then checks that reservation again. Cleanup removes only an
+empty reservation and empty root; unfinished copied files and unexpected contents are preserved at
+the reported claimed path for inspection. A failed copy is never recursively removed. This coordination does not make a directory copy an atomic filesystem snapshot
 against external programs that do not take the lock. App fingerprinting also uses the same opened
 regular file for ownership classification and content hashing, so recovery cannot substitute a newly
 generated backup between those two reads.
