@@ -758,6 +758,9 @@ fn godot_installs(p: &Places) -> Vec<Installed> {
                 return None;
             }
             let program = if name.ends_with(".app") { path.join("Contents/MacOS/Godot") } else { path };
+            if !program.is_file() {
+                return None;
+            }
             let version = name.trim_start_matches("Godot_v").split('-').next()?.to_string();
             Some(Installed { builder: Builder::Godot, version, program })
         })
@@ -1130,12 +1133,14 @@ mod tests {
         let store = d.path().join("store");
         touch(&store, "godot/Godot_v4.4.1-stable_win64.exe", b"");
         touch(&store, "godot/Godot_v4.4.1-stable_win64_console.exe", b"");
+        touch(&store, "godot/Godot_v4.5.0.app/Contents/Info.plist", b"");
+        std::fs::create_dir_all(store.join("godot/Godot_v4.6.0-stable_win64.exe")).unwrap();
         let p = Places { program_files: vec![pf.clone()], store, ..Default::default() };
         let inv = inventory(&p);
         assert_eq!(inv.best(Builder::Unity).unwrap().version, "6000.0.23f1", "newest first");
         assert_eq!(inv.engines.iter().filter(|i| i.builder == Builder::Unity).count(), 2);
         assert_eq!(inv.best(Builder::Godot).unwrap().version, "4.4.1");
-        assert_eq!(inv.engines.iter().filter(|i| i.builder == Builder::Godot).count(), 1, "the console helper isn't the editor");
+        assert_eq!(inv.engines.iter().filter(|i| i.builder == Builder::Godot).count(), 1, "only valid editor files count");
         assert_eq!(inv.best(Builder::Unreal).unwrap().version, "5.4");
         assert!(inv.unity_hub.is_some() && inv.epic_launcher.is_none());
         assert!(!inv.ready(Builder::Unreal), "Unreal also needs C++ tools");
