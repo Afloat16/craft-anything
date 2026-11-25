@@ -32,6 +32,35 @@ use std::sync::PoisonError;
 pub mod progress;
 
 pub const MANIFEST: &str = "craft.json";
+/// A stable lock beside the atomically replaced manifest, shared by cooperating writers.
+const MANIFEST_LOCK: &str = "craft-manifest.lock";
+
+struct ManifestLock(std::fs::File);
+
+impl Drop for ManifestLock {
+    fn drop(&mut self) {
+        // Release explicitly even if a child process inherited a copy of the open handle.
+        let _ = self.0.unlock();
+    }
+}
+
+fn lock_manifest(root: &Path, after_attempt: impl FnOnce(bool)) -> Result<ManifestLock, ToolError> {
+    let path = root.join(MANIFEST_LOCK);
+    // Opening this child never creates a missing project directory. Keep the sidecar in place
+    // after unlocking: removing it would let waiting and new writers lock different files.
+    let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&path).map_err(|e| ToolError::io(path.display(), e))?;
+    match file.try_lock() {
+        Ok(()) => after_attempt(true),
+        Err(std::fs::TryLockError::WouldBlock) => {
+            after_attempt(false);
+            file.lock().map_err(|e| ToolError::io(path.display(), e))?;
+        }
+        Err(std::fs::TryLockError::Error(error)) => {
+            return Err(ToolError::io(path.display(), error));
+        }
+    }
+    Ok(ManifestLock(file))
+}
 
 /// Folders a copy of a project leaves out: what a build makes again, which can be gigabytes.
 const REBUILT: &[&str] = &["node_modules", "target", ".godot", "Library", "Temp", ".venv", "__pycache__", ".next", ".turbo"];
@@ -794,6 +823,16 @@ pub fn suggest_name(request: &str, target: &TargetRef) -> String {
 impl Workspace {
     /// Create a new workspace folder under `projects_dir` (a fresh, unique folder).
     pub fn create(projects_dir: &Path, name: &str, request: &str, target: TargetRef) -> Result<Workspace, ToolError> {
+        Self::create_before_publish(projects_dir, name, request, target, |_| {})
+    }
+
+    fn create_before_publish(
+        projects_dir: &Path,
+        name: &str,
+        request: &str,
+        target: TargetRef,
+        before_publish: impl FnOnce(&Self),
+    ) -> Result<Workspace, ToolError> {
         std::fs::create_dir_all(projects_dir).map_err(|e| ToolError::io(projects_dir.display(), e))?;
         let base = slug(name);
         let mut root = projects_dir.join(&base);
@@ -807,7 +846,10 @@ impl Workspace {
             n += 1;
         }
         let ws = Workspace { root, manifest: Manifest::new(name, request, target) };
-        ws.save()?;
+        before_publish(&ws);
+        // This uniquely allocated folder has no published manifest yet. Coordination starts
+        // with later saves; a failed first write must not leave a sidecar that blocks retry.
+        ws.write_manifest(&ws.manifest)?;
         Ok(ws)
     }
 
@@ -895,6 +937,17 @@ impl Workspace {
     /// them. A folder that's already a project, or that has something named like a file Craft
     /// Anything keeps there, is refused, so nothing of theirs is ever replaced.
     pub fn create_at(folder: &Path, name: &str, request: &str, target: TargetRef, existing: Option<ExistingFiles>) -> Result<Workspace, ToolError> {
+        Self::create_at_before_publish(folder, name, request, target, existing, |_| {})
+    }
+
+    fn create_at_before_publish(
+        folder: &Path,
+        name: &str,
+        request: &str,
+        target: TargetRef,
+        existing: Option<ExistingFiles>,
+        before_publish: impl FnOnce(&Self),
+    ) -> Result<Workspace, ToolError> {
         let mut manifest = Manifest::new(name, request, target);
         match folder_state(folder)? {
             FolderState::Empty => std::fs::create_dir_all(folder).map_err(|e| ToolError::io(folder.display(), e))?,
@@ -922,7 +975,10 @@ impl Workspace {
             }
         }
         let ws = Workspace { root: folder.to_path_buf(), manifest };
-        ws.save()?;
+        before_publish(&ws);
+        // folder_state/clashes refused an already published project and owned records above.
+        // As in create, a failed initial publication must not add a persistent lock record.
+        ws.write_manifest(&ws.manifest)?;
         Ok(ws)
     }
 
@@ -950,10 +1006,16 @@ impl Workspace {
     /// they are on disk, so a writer holding an older copy (a run that started before the person
     /// raised the budget) can't undo their change.
     pub fn save(&self) -> Result<(), ToolError> {
+        self.save_after_read(|| {})
+    }
+
+    fn save_after_read(&self, after_read: impl FnOnce()) -> Result<(), ToolError> {
+        let _guard = lock_manifest(&self.root, |_| {})?;
         let mut m = self.manifest.clone();
         if let Ok(disk) = Workspace::open(&self.root) {
             m.take_person_fields(&disk.manifest);
         }
+        after_read();
         self.write_manifest(&m)
     }
 
@@ -961,11 +1023,35 @@ impl Workspace {
     /// actions always allowed): start from what's on disk, apply `f` and save. This is the only
     /// way they change.
     pub fn set_person(&mut self, f: impl FnOnce(&mut Manifest)) -> Result<(), ToolError> {
+        self.update_person(|m| {
+            f(m);
+            Ok(true)
+        })
+    }
+
+    /// Compare and change person-owned fields while holding the manifest's cross-process lock.
+    /// `f` sees the latest saved person fields; return true to write, or false just to refresh this
+    /// handle. A failed callback or write leaves this handle unchanged. The callback must not
+    /// call another manifest writer for this project while it holds the lock.
+    pub fn update_person(&mut self, f: impl FnOnce(&mut Manifest) -> Result<bool, ToolError>) -> Result<(), ToolError> {
+        self.update_person_after_attempt(f, |_| {})
+    }
+
+    fn update_person_after_attempt(
+        &mut self,
+        f: impl FnOnce(&mut Manifest) -> Result<bool, ToolError>,
+        after_attempt: impl FnOnce(bool),
+    ) -> Result<(), ToolError> {
+        let _guard = lock_manifest(&self.root, after_attempt)?;
+        let mut next = self.manifest.clone();
         if let Ok(disk) = Workspace::open(&self.root) {
-            self.manifest.take_person_fields(&disk.manifest);
+            next.take_person_fields(&disk.manifest);
         }
-        f(&mut self.manifest);
-        self.write_manifest(&self.manifest)
+        if f(&mut next)? {
+            self.write_manifest(&next)?;
+        }
+        self.manifest = next;
+        Ok(())
     }
 
     fn write_manifest(&self, m: &Manifest) -> Result<(), ToolError> {
@@ -1134,6 +1220,7 @@ pub const AGENT_SESSION_FILE: &str = "agent-session.jsonl";
 /// mustn't already have any of them.
 pub const OWN_NAMES: &[&str] = &[
     MANIFEST,
+    MANIFEST_LOCK,
     GHIDRA_STOPPED,
     GHIDRA_STOP_LOCK,
     crate::feed::FEED_FILE,
@@ -1749,6 +1836,111 @@ mod tests {
     }
 
     #[test]
+    fn a_person_update_waits_for_a_save_that_already_read_the_manifest() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut run = Workspace::create(dir.path(), "Site", "A website", TargetRef::None).unwrap();
+        run.manifest.status = Status::Building;
+        run.manifest.note = "Building".into();
+        let root = run.root.clone();
+        let mut person = run.clone();
+        let (read_tx, read_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (attempt_tx, attempt_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        // Timeouts only bound cleanup on a broken implementation; ordering comes from channels
+        // and the actual lock attempt, not from a sleep or an elapsed-time expectation.
+        let limit = Duration::from_secs(10);
+        std::thread::scope(|scope| {
+            let saving = scope.spawn(move || {
+                run.save_after_read(|| {
+                    let _ = read_tx.send(());
+                    let _ = release_rx.recv_timeout(limit);
+                })
+            });
+            let reached_read = read_rx.recv_timeout(limit);
+            let changing = scope.spawn(move || {
+                let result = person.update_person_after_attempt(
+                    |m| {
+                        m.name = "My site".into();
+                        m.asset_budget_usd = 20.0;
+                        m.generate_assets = true;
+                        m.website_language = Some(WebsiteLanguage::Requested { tag: "fr".into() });
+                        m.website_language_request_id = Some(73);
+                        Ok(true)
+                    },
+                    |acquired| {
+                        let _ = attempt_tx.send(acquired);
+                    },
+                );
+                let _ = done_tx.send(());
+                result
+            });
+            let attempt = attempt_rx.recv_timeout(limit);
+            // Without the shared lock, let the person's write finish before the paused stale
+            // save resumes. With it, release the save so the waiting edit can read its result.
+            let finished_early = matches!(attempt, Ok(true)).then(|| done_rx.recv_timeout(limit));
+            let _ = release_tx.send(());
+            let saved = saving.join();
+            let changed = changing.join();
+            assert!(reached_read.is_ok(), "the save did not reach its read boundary");
+            assert!(attempt.is_ok(), "the person update did not attempt the manifest lock");
+            assert!(finished_early.is_none_or(|result| result.is_ok()), "the unblocked person update did not finish");
+            saved.unwrap().unwrap();
+            changed.unwrap().unwrap();
+        });
+        let disk = Workspace::open(&root).unwrap().manifest;
+        assert_eq!(disk.name, "My site");
+        assert_eq!((disk.asset_budget_usd, disk.generate_assets), (20.0, true));
+        assert_eq!(disk.website_language, Some(WebsiteLanguage::Requested { tag: "fr".into() }));
+        assert_eq!(disk.website_language_request_id, Some(73));
+        assert_eq!((disk.status, disk.note.as_str()), (Status::Building, "Building"));
+    }
+
+    #[test]
+    fn manifest_writers_do_not_recreate_a_removed_project_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(dir.path(), "Site", "A website", TargetRef::None).unwrap();
+        std::fs::remove_dir_all(&ws.root).unwrap();
+        assert!(ws.save().is_err());
+        assert!(ws.set_person(|m| m.name = "Changed".into()).is_err());
+        assert!(!ws.root.exists());
+    }
+
+    #[test]
+    fn a_failed_initial_manifest_write_leaves_no_lock_that_blocks_retry() {
+        for picked in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path().join("site");
+            if picked {
+                std::fs::create_dir(&root).unwrap();
+                std::fs::write(root.join("index.html"), b"the person's page").unwrap();
+            }
+            let mut reached_publication = false;
+            let fail_write = |ws: &Workspace| {
+                reached_publication = true;
+                // Inject a real atomic-write failure after the constructor's folder checks.
+                std::fs::create_dir(ws.root.join(MANIFEST)).unwrap();
+            };
+            let result = if picked {
+                Workspace::create_at_before_publish(&root, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit), fail_write)
+            } else {
+                Workspace::create_before_publish(dir.path(), "Site", "A website", TargetRef::None, fail_write)
+            };
+            assert!(reached_publication && result.is_err());
+            assert!(!root.join(MANIFEST_LOCK).exists(), "a failed first write leaves no new owned-name clash");
+            std::fs::remove_dir(root.join(MANIFEST)).unwrap();
+            let ws = Workspace::create_at(&root, "Site", "Try the initial write again", TargetRef::None, picked.then_some(ExistingFiles::Edit)).unwrap();
+            assert_eq!(Workspace::open(&root).unwrap().manifest, ws.manifest);
+            if picked {
+                assert_eq!(std::fs::read(root.join("index.html")).unwrap(), b"the person's page");
+            }
+        }
+    }
+
+    #[test]
     fn slugs_and_names() {
         assert_eq!(slug("  My Cool Site!! "), "my-cool-site");
         assert_eq!(slug("***"), "project");
@@ -2289,12 +2481,18 @@ mod tests {
         let ws = Workspace::create_at(&mine, "Site", "x", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
         std::fs::create_dir_all(ws.inbox_dir()).unwrap();
         std::fs::write(ws.agent_session_path(), "{}\n").unwrap();
+        ws.save().unwrap();
+        std::fs::write(mine.join(MANIFEST_LOCK), b"source coordination record").unwrap();
+        assert!(ws.is_own_record(&mine.join(MANIFEST_LOCK)));
         let copy = ws.duplicate("Site copy").unwrap();
         assert!(copy.app_dir().join("index.html").is_file() && !copy.manifest.app_in_root, "the copy's app is in its app/");
         assert!(!copy.app_dir().join(MANIFEST).exists(), "without the original's records");
+        assert!(!copy.app_dir().join(MANIFEST_LOCK).exists(), "the original lock is not app content");
+        assert!(std::fs::read(copy.root.join(MANIFEST_LOCK)).unwrap().is_empty(), "a copy has its own coordination file");
         ws.delete().unwrap();
         assert_eq!(std::fs::read_to_string(mine.join("index.html")).unwrap(), "<p>hi</p>");
         assert!(!mine.join(MANIFEST).exists() && !mine.join("inbox").exists() && !mine.join(AGENT_SESSION_FILE).exists());
+        assert!(!mine.join(MANIFEST_LOCK).exists(), "deletion removes its own coordination file");
     }
 
     #[test]

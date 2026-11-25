@@ -4,6 +4,9 @@ use super::*;
 #[path = "note_progress_tests.rs"]
 mod note_progress;
 
+#[path = "queue_review_tests.rs"]
+mod queue_review;
+
 #[path = "stall_tests.rs"]
 mod stall;
 
@@ -538,7 +541,7 @@ fn notes_added_while_it_works_reach_the_agent_at_its_next_step() {
     let mut ws = Workspace::create(d.path(), "x", "Copy this game", TargetRef::None).unwrap();
     let (tx, rx) = std::sync::mpsc::channel();
     let notes: Arc<Mutex<Vec<Note>>> = Arc::default();
-    let w = Worker {
+    let mut w = Worker {
         wake: Default::default(),
         engine: Arc::new(Engine::new(craft_anything_engine::testing::session())),
         tx,
@@ -556,6 +559,7 @@ fn notes_added_while_it_works_reach_the_agent_at_its_next_step() {
         self_check: None,
         reset_progress_after_notes: false,
         taken_in_turn: Vec::new(),
+        prepared_note_ids: HashSet::new(),
     };
     assert!(w.added(&mut ws, true, true).unwrap().is_none(), "nothing added, nothing to say");
     use craft_anything_engine::questions::{self, AskedQuestion};
@@ -705,6 +709,7 @@ fn notes_worker(ws: &Workspace, run: &RebuildRun) -> Worker {
         self_check: None,
         reset_progress_after_notes: false,
         taken_in_turn: Vec::new(),
+        prepared_note_ids: HashSet::new(),
     }
 }
 
@@ -1805,6 +1810,7 @@ fn an_api_backend_builds_with_the_build_tools() {
         self_check: None,
         reset_progress_after_notes: false,
         taken_in_turn: Vec::new(),
+        prepared_note_ids: HashSet::new(),
     };
     w.attach(&ws).unwrap();
     // The model writes a file with the Build tools, then answers.
@@ -2015,6 +2021,7 @@ fn the_mechanics_sheet_is_required_without_claiming_effective_behavior() {
         self_check: None,
         reset_progress_after_notes: false,
         taken_in_turn: Vec::new(),
+        prepared_note_ids: HashSet::new(),
     };
     let check = |round| w.run_checks(&ws, &SheetKind, round).unwrap().remove(0);
 
@@ -3805,6 +3812,7 @@ pub(crate) fn check_worker(ws: &Workspace, deep: bool) -> Worker {
         self_check: None,
         reset_progress_after_notes: false,
         taken_in_turn: Vec::new(),
+        prepared_note_ids: HashSet::new(),
         keys: crate::KeyStore::file_only(ws.root.join("keys.toml")),
         kept_checks: Mutex::default(),
     }
@@ -4408,6 +4416,7 @@ fn preparing_the_builders_agent_does_not_lock_up() {
         self_check: None,
         reset_progress_after_notes: false,
         taken_in_turn: Vec::new(),
+        prepared_note_ids: HashSet::new(),
     };
     let entry = crate::BackendEntry {
         config: crate::BackendConfig {
@@ -4452,6 +4461,7 @@ fn the_run_answers_the_builders_own_check_during_its_turn() {
         self_check: Some((Arc::new(SheetKind), 90.0)),
         reset_progress_after_notes: false,
         taken_in_turn: Vec::new(),
+        prepared_note_ids: HashSet::new(),
     };
     let mut builder = ChecksItsWork { root: ws.root.clone(), asked: None, reply: None };
     let reply = w.turn(&mut ws, &mut builder, "Build it.", true, None).unwrap();
@@ -4492,6 +4502,7 @@ fn a_stopped_build_answers_the_check_it_took() {
         self_check: Some((Arc::new(SheetKind), 90.0)),
         reset_progress_after_notes: false,
         taken_in_turn: Vec::new(),
+        prepared_note_ids: HashSet::new(),
     };
     let asks = Inbox::new(self_check::asks_dir(&ws.root));
     let id = asks.post(craft_anything_engine::inbox::RequestKind::Question, "Check the build", "", Vec::new(), false, None).unwrap();
@@ -4652,6 +4663,7 @@ fn decompiling_once_is_remembered_by_the_project() {
         self_check: None,
         reset_progress_after_notes: false,
         taken_in_turn: Vec::new(),
+        prepared_note_ids: HashSet::new(),
     };
     let mut builder = Decompiles { events: Vec::new() };
     w.turn(&mut ws, &mut builder, "Build it.", true, None).unwrap();
@@ -4718,6 +4730,7 @@ fn a_build_says_why_it_refused_a_tool_that_needs_consent() {
         self_check: None,
         reset_progress_after_notes: false,
         taken_in_turn: Vec::new(),
+        prepared_note_ids: HashSet::new(),
     };
     let mut builder = AsksConsent::default();
     w.turn(&mut ws, &mut builder, "Build it.", true, None).unwrap();
@@ -4968,6 +4981,7 @@ fn a_note_the_builder_took_at_a_step_joins_the_feed_and_isnt_sent_again() {
         self_check: None,
         reset_progress_after_notes: false,
         taken_in_turn: Vec::new(),
+        prepared_note_ids: HashSet::new(),
     };
     let dir = notes::notes_dir(&ws.inbox_dir());
     for (id, text) in [(1, "make the header blue"), (2, "add a footer")] {
@@ -5421,6 +5435,7 @@ fn a_session_left_on_another_computer_starts_a_new_one_from_the_project() {
         self_check: None,
         reset_progress_after_notes: false,
         taken_in_turn: Vec::new(),
+        prepared_note_ids: HashSet::new(),
     };
     let first = resumed_elsewhere("THE BRIEF", &ws.manifest.last_reply, None);
     let reply = w.turn(&mut ws, &mut agent, "The person asks: make it blue", true, Some(first)).unwrap();
@@ -5478,6 +5493,7 @@ fn a_missing_session_with_nothing_to_start_from_is_said_plainly() {
         self_check: None,
         reset_progress_after_notes: false,
         taken_in_turn: Vec::new(),
+        prepared_note_ids: HashSet::new(),
     };
     let e = w
         .turn_with_wait(&mut ws, &mut agent, "Carry on.", true, None, |_, _| panic!("a missing session without a fresh start must not be retried"))
@@ -5546,6 +5562,7 @@ fn the_builders_conversation_travels_with_the_project() {
         self_check: None,
         reset_progress_after_notes: false,
         taken_in_turn: Vec::new(),
+        prepared_note_ids: HashSet::new(),
     };
     let adapter = KeepsSessions(store.path().to_path_buf());
     // No session yet, or one this computer doesn't have: nothing to keep, nothing said.
@@ -5625,6 +5642,7 @@ fn waiting_for_another_analysis(d: &Path, limit_secs: u64) -> (Worker, std::sync
         self_check: None,
         reset_progress_after_notes: false,
         taken_in_turn: Vec::new(),
+        prepared_note_ids: HashSet::new(),
     };
 
     // Another process is already analysing this program: a fresh lock beside its project.
@@ -5720,6 +5738,7 @@ fn a_later_run_opens_the_projects_program_again_for_the_builder() {
             self_check: None,
             reset_progress_after_notes: false,
             taken_in_turn: Vec::new(),
+            prepared_note_ids: HashSet::new(),
         };
         w.reopen_target(&mut ws, app.as_ref(), true, deep).unwrap();
         assert!(w.engine.session().shared_targets().is_empty(), "a builder over SSH isn't handed this computer's targets");

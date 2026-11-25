@@ -28,11 +28,37 @@ versions wrote.
 Other JSON in a project (`assets.json`, `inbox/` except `inbox/build-progress.json` and `inbox/notes/`, `checks/`,
 evidence records) has no version yet; add one the first time its shape changes.
 
+## Manifest updates
+
+Writers of an existing project's `craft.json` share the operating-system lock in
+`craft-manifest.lock`. Ordinary saves read and preserve the latest person-owned fields while
+holding it. Person edits and website-language recording hold the same lock through their
+comparison and atomic manifest replacement, so a delayed decision is checked against the
+current language choice and request id before it is accepted. Automatic request ids are also
+recomputed when that saved state changed. A rejected person-field proposal leaves the saved
+manifest and the caller's handle unchanged.
+
+The first manifest in a newly allocated or accepted folder is published before this
+coordination file is needed. If that initial write fails, it does not leave a lock-file clash
+that prevents creating the project in the folder again.
+
+The sidecar remains in the project after unlocking; a new writer and one already waiting must
+lock the same file. Opening it does not create a missing project directory. It is a Craft-owned
+record, excluded from an app-in-place copy and removed when the project is deleted. This
+coordinates manifest writers using this API; it does not make older builds or external editors
+participate, or protect against concurrent project deletion or replacement of the directory or
+lock file. A successful save keeps the existing manifest format and version.
+
 ## Waiting builder notes
 
-A version-1 note is first saved as `<id>.json`. The builder's hook claims it with a no-replace
-link to `<id>.read.json`; that proves hand-over, while recording request state such as the website
-language can still fail. A failed claim-directory sync keeps both names. Once request recording
+A version-1 note is first saved as `<id>.json`. The builder's hook claims it with no-replace
+publication to `<id>.read.json`; that proves hand-over, while recording request state such as
+the website language can still fail. A hard link is preferred; when unavailable, the pinned
+`tempfile` implementation attempts a no-clobber rename (native exclusive rename on supported
+Windows, Linux and Apple filesystems). This moves the source, so a completed withdrawal cannot
+be copied back into a new claim. An existing claim is never overwritten, and a failed publication
+retains the waiting record. A failed claim-directory sync keeps both names after a hard link,
+or the recoverable read name after an exclusive rename. Once request recording
 succeeds, the worker syncs the read link, removes its matching waiting name and syncs that removal
 before renaming the read file to `<id>.recorded.json`. A failure before that rename keeps the claim
 recoverable; completion never leaves a waiting alias beside its marker. The completed marker is
@@ -62,9 +88,19 @@ new requests when recovered; recovery does not rewrite that absent time in their
 Recovery remains at-least-once: a builder can receive a previously claimed note again after an
 interrupted recording. Carried initial notes and notes prepared for a follow-up prompt remain
 claimed until their builder turn succeeds; a failed intervening progress save leaves them
-recoverable. Claiming uses a no-replace link so an existing read record is preserved for inspection.
-In a live run, only a continuous read prefix of the id-ordered queue is recorded, so a claim
-arriving during a scan cannot apply a newer language before an earlier request.
+recoverable. Claiming uses no-replace publication so an existing read record is preserved for
+inspection. During a builder turn, only a continuous read prefix of the id-ordered queue is
+recorded, so a claim arriving during a scan cannot apply a newer language before an earlier
+request. Before the following prompt is sent, notes already claimed by the hook are confirmed
+without including their text again. The worker remembers claims it reserved for an unsent
+prompt separately: a partial preparation failure cannot mistake those claims for hook delivery.
+This ownership is local to the worker; restart continues to use the saved records above.
+
+A batch completion failure keeps only its unfinished notes in the next handoff. A completion
+marker this writer published or fully validated is excluded from that handoff even if its final
+directory sync fails; the persistence error is still reported. Successful builder turns save
+their reply and check-only state before note cleanup, so a final cleanup sync failure cannot
+make a message-free retry repeat a completed builder turn.
 
 ## Stand-in cached responses
 

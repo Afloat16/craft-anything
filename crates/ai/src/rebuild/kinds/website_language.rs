@@ -4,7 +4,7 @@
 //! <https://www.rfc-editor.org/rfc/rfc4647#section-3.3.1>. Tests use original synthetic captures.
 
 use super::*;
-use craft_anything_engine::workspace::{Claim, WebsiteLanguage};
+use craft_anything_engine::workspace::{Claim, Manifest, WebsiteLanguage};
 use icu_locale_core::Locale;
 use regex::Regex;
 use std::sync::LazyLock;
@@ -137,46 +137,68 @@ fn requested(text: &str) -> Option<WebsiteLanguage> {
 }
 
 pub(super) fn record(ws: &mut Workspace, requests: &[&str]) -> Result<(), ToolError> {
-    let saved = Workspace::open(&ws.root)?.manifest.website_language_request_id.unwrap_or(0);
-    let requests = requests
-        .iter()
-        .enumerate()
-        .map(|(offset, text)| {
-            let id = saved
-                .checked_add(offset as u64)
-                .and_then(|id| id.checked_add(1))
-                .ok_or_else(|| ToolError::invalid("The website-language request ids have no space for a later request."))?;
-            Ok((id, *text))
-        })
-        .collect::<Result<Vec<_>, ToolError>>()?;
-    record_ordered(ws, &requests)
+    record_after_snapshot(ws, requests, || {})
+}
+
+fn record_after_snapshot(ws: &mut Workspace, requests: &[&str], after_snapshot: impl FnOnce()) -> Result<(), ToolError> {
+    let original_request = ws.manifest.request.clone();
+    record_choice(
+        ws,
+        |current| {
+            let saved = current.website_language_request_id.unwrap_or(0);
+            let requests = requests
+                .iter()
+                .enumerate()
+                .map(|(offset, text)| {
+                    let id = saved
+                        .checked_add(offset as u64)
+                        .and_then(|id| id.checked_add(1))
+                        .ok_or_else(|| ToolError::invalid("The website-language request ids have no space for a later request."))?;
+                    Ok((id, *text))
+                })
+                .collect::<Result<Vec<_>, ToolError>>()?;
+            Ok(select(&original_request, current, &requests))
+        },
+        after_snapshot,
+    )
 }
 
 pub(super) fn record_ordered(ws: &mut Workspace, requests: &[(u64, &str)]) -> Result<(), ToolError> {
-    let current = Workspace::open(&ws.root)?.manifest;
-    let saved = current.website_language;
+    record_ordered_after_snapshot(ws, requests, || {})
+}
+
+fn record_ordered_after_snapshot(ws: &mut Workspace, requests: &[(u64, &str)], after_snapshot: impl FnOnce()) -> Result<(), ToolError> {
+    let original_request = ws.manifest.request.clone();
+    record_choice(ws, |current| Ok(select(&original_request, current, requests)), after_snapshot)
+}
+
+type Choice = (Option<WebsiteLanguage>, Option<u64>);
+
+fn select(original_request: &str, current: &Manifest, requests: &[(u64, &str)]) -> Choice {
     let order = current.website_language_request_id;
-    let initial = saved.clone().or_else(|| requested(&ws.manifest.request));
+    let initial = current.website_language.clone().or_else(|| requested(original_request));
     let latest = requests
         .iter()
         .filter(|(id, _)| order.is_none_or(|saved| *id > saved))
         .filter_map(|(id, text)| requested(text).map(|choice| (*id, choice)))
         .max_by_key(|(id, _)| *id);
-    let (next, next_order) = latest.map_or((initial, order), |(id, choice)| (Some(choice), Some(id)));
-    if next != saved || next_order != order {
-        if let Err(error) = ws.set_person(|m| {
-            m.website_language = next;
-            m.website_language_request_id = next_order;
-        }) {
-            ws.manifest.website_language = saved;
-            ws.manifest.website_language_request_id = order;
-            return Err(error);
+    latest.map_or((initial, order), |(id, choice)| (Some(choice), Some(id)))
+}
+
+fn record_choice(ws: &mut Workspace, select: impl Fn(&Manifest) -> Result<Choice, ToolError>, after_snapshot: impl FnOnce()) -> Result<(), ToolError> {
+    let current = Workspace::open(&ws.root)?.manifest;
+    let mut next = select(&current)?;
+    after_snapshot();
+    ws.update_person(|m| {
+        // Parsing can happen outside the lock, but accepting an ordering decision cannot. A
+        // different handle may have recorded a later request since the snapshot was read.
+        if m.website_language != current.website_language || m.website_language_request_id != current.website_language_request_id {
+            next = select(m)?;
         }
-    } else {
-        ws.manifest.website_language = next;
-        ws.manifest.website_language_request_id = next_order;
-    }
-    Ok(())
+        let changed = m.website_language != next.0 || m.website_language_request_id != next.1;
+        (m.website_language, m.website_language_request_id) = next;
+        Ok(changed)
+    })
 }
 
 pub(super) fn brief(ws: &Workspace) -> Vec<String> {
@@ -341,6 +363,59 @@ mod tests {
         record_ordered(&mut restarted, &[(73, "Build the website in French")]).unwrap();
         assert_eq!(Workspace::open(&ws.root).unwrap().manifest.website_language, Some(WebsiteLanguage::Original));
         assert_eq!(Workspace::open(&ws.root).unwrap().manifest.website_language_request_id, Some(74));
+    }
+
+    #[test]
+    fn an_older_language_request_rechecks_a_concurrent_equal_choice() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(dir.path(), "site", "Rebuild this website in English", TargetRef::None).unwrap();
+        record_ordered(&mut ws, &[(71, "Build the website in French")]).unwrap();
+        let mut newer = Workspace::open(&ws.root).unwrap();
+        record_ordered_after_snapshot(&mut ws, &[(72, "Build the website in German")], || {
+            record_ordered(&mut newer, &[(73, "Build the website in French")]).unwrap();
+            newer.set_person(|m| m.name = "The person's name".into()).unwrap();
+        })
+        .unwrap();
+        let disk = Workspace::open(&ws.root).unwrap().manifest;
+        assert_eq!(disk.website_language, Some(french()));
+        assert_eq!(disk.website_language_request_id, newer.manifest.website_language_request_id);
+        assert_eq!(ws.manifest.website_language, disk.website_language);
+        assert_eq!(ws.manifest.website_language_request_id, disk.website_language_request_id);
+        assert_eq!(disk.name, newer.manifest.name, "recording also keeps unrelated person edits");
+    }
+
+    #[test]
+    fn an_unordered_language_request_advances_past_a_concurrent_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(dir.path(), "site", "Rebuild this website in English", TargetRef::None).unwrap();
+        record_ordered(&mut ws, &[(71, "Build the website in French")]).unwrap();
+        let mut newer = Workspace::open(&ws.root).unwrap();
+        record_after_snapshot(&mut ws, &["Build the website in German"], || {
+            record_ordered(&mut newer, &[(80, "Restore the original language")]).unwrap();
+        })
+        .unwrap();
+        let disk = Workspace::open(&ws.root).unwrap().manifest;
+        assert_eq!(disk.website_language, Some(WebsiteLanguage::Requested { tag: "de".into() }));
+        assert!(disk.website_language_request_id > newer.manifest.website_language_request_id, "new automatic ids advance from the guarded state");
+        assert_eq!(ws.manifest.website_language_request_id, disk.website_language_request_id);
+    }
+
+    #[test]
+    fn a_failed_guarded_language_selection_keeps_the_saved_choice_and_handle() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(dir.path(), "site", "Rebuild this website in English", TargetRef::None).unwrap();
+        record_ordered(&mut ws, &[(u64::MAX - 1, "Build the website in French")]).unwrap();
+        let original = ws.manifest.clone();
+        let mut newer = Workspace::open(&ws.root).unwrap();
+        let mut saved = Vec::new();
+        let error = record_after_snapshot(&mut ws, &["Build the website in German"], || {
+            record_ordered(&mut newer, &[(u64::MAX, "Restore the original language")]).unwrap();
+            saved = std::fs::read(newer.root.join(craft_anything_engine::workspace::MANIFEST)).unwrap();
+        })
+        .unwrap_err();
+        assert!(error.message.contains("no space for a later request"));
+        assert_eq!(std::fs::read(ws.root.join(craft_anything_engine::workspace::MANIFEST)).unwrap(), saved);
+        assert_eq!(ws.manifest, original, "a rejected proposal does not become this handle's state");
     }
 
     #[test]

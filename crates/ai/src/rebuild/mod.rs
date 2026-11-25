@@ -406,6 +406,7 @@ impl RebuildRun {
             self_check: None,
             reset_progress_after_notes: false,
             taken_in_turn: Vec::new(),
+            prepared_note_ids: HashSet::new(),
             keys: hub.keys.clone(),
             kept_checks: Mutex::default(),
         };
@@ -492,16 +493,17 @@ impl RebuildRun {
         self.notes.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
-    /// Take back a note the agent hasn't read yet; `None` once it has.
-    pub fn unsend(&self, id: u64) -> Option<Note> {
+    /// Take back a note the agent hasn't read yet; `None` once it has. A failed removal
+    /// leaves the queue intact: the durable note may still reach the builder.
+    pub fn unsend(&self, id: u64) -> Result<Option<Note>, ToolError> {
         let mut notes = self.notes.lock().unwrap_or_else(PoisonError::into_inner);
-        let i = notes.iter().position(|n| n.id == id)?;
+        let Some(i) = notes.iter().position(|n| n.id == id) else { return Ok(None) };
         let dir = notes::notes_dir(self.inbox.dir());
         // Taking its file back first means the agent can't claim it after this.
-        if !notes::take_back(&dir, id) && notes::was_read(&dir, id) {
-            return None;
+        if !notes::take_back(&dir, id)? {
+            return Ok(None);
         }
-        Some(notes.remove(i))
+        Ok(Some(notes.remove(i)))
     }
 
     /// How many notes are still waiting for the agent.
@@ -628,6 +630,9 @@ struct Worker {
     /// Notes the builder's hook took during the turn under way. If that turn ends with its
     /// conversation lost or too long, they go to the new one (review of #2043).
     taken_in_turn: Vec<Note>,
+    /// Claims this worker reserved for a prompt that has not succeeded yet. They are not
+    /// hook delivery, even when preparing a later note or syncing the first claim fails.
+    prepared_note_ids: HashSet<u64>,
     /// The backends' stored keys, for an agent CLI that asks the host to authenticate (Devin).
     keys: crate::keys::KeyStore,
     /// The last check round in which everything worked, kept while nothing it looks at changes.
@@ -794,18 +799,25 @@ impl Worker {
 
     /// The prompt for notes the person added while the agent worked, if there are any, and the
     /// Just-ask answers it carries so they're marked told once the turn finishes.
-    fn added(&self, ws: &mut Workspace, deep: bool, sees_pictures: bool) -> Result<Option<NotePrompt>, ToolError> {
+    fn added(&mut self, ws: &mut Workspace, deep: bool, sees_pictures: bool) -> Result<Option<NotePrompt>, ToolError> {
         let mut notes = std::mem::take(&mut *self.notes.lock().unwrap_or_else(PoisonError::into_inner));
         if notes.is_empty() {
             return Ok(None);
         }
         notes.sort_by_key(|note| note.id);
         let dir = notes::notes_dir(&ws.inbox_dir());
+        let mut already_read = HashSet::new();
         let mut prepare = || {
             self.record_request_texts(ws, &notes)?;
             for note in notes.iter().filter(|note| !note.text.trim().is_empty()) {
                 let left = notes::Left { text: note.text.clone(), shown: note.shown.clone(), pictures: note.pictures.clone(), added: Some(note.added) };
-                notes::carry_for_prompt(&dir, note.id, &left)?;
+                let prepared = notes::carry_for_prompt(&dir, note.id, &left, || {
+                    self.prepared_note_ids.insert(note.id);
+                    Ok(())
+                })?;
+                if !prepared && !self.prepared_note_ids.contains(&note.id) {
+                    already_read.insert(note.id);
+                }
             }
             Ok(())
         };
@@ -814,6 +826,19 @@ impl Worker {
             notes.append(&mut *waiting);
             *waiting = notes;
             return Err(error);
+        }
+        let (read, mut notes): (Vec<_>, Vec<_>) = notes.into_iter().partition(|note| already_read.contains(&note.id));
+        // A hook can claim a later note while an earlier file is temporarily unreadable.
+        // The turn's prefix relay leaves it here; it was already delivered, so only the
+        // remaining waiting notes belong in this next prompt.
+        if !read.is_empty() {
+            let completion = self.complete_read_notes(ws, read).and_then(|()| self.progress_after_notes(ws).map(|_| ()));
+            if let Err(error) = completion {
+                let mut waiting = self.notes.lock().unwrap_or_else(PoisonError::into_inner);
+                notes.append(&mut *waiting);
+                *waiting = notes;
+                return Err(error);
+            }
         }
         notes.retain(|n| !n.text.trim().is_empty());
         if notes.is_empty() {
@@ -1107,19 +1132,7 @@ impl Worker {
                     self.keep_session(ws, a.as_ref());
                 }
                 let reply = match reply {
-                    Ok(reply) => {
-                        // These notes were explicitly carried in this prompt. Keep their read
-                        // records through startup and failed turns; only a successful delivery
-                        // and the request-state save above allow completion acknowledgement.
-                        let dir = notes::notes_dir(&ws.inbox_dir());
-                        for id in &carried_note_ids {
-                            notes::mark_recorded(&dir, *id)?;
-                        }
-                        for id in carried_note_ids.drain(..) {
-                            notes::forget(&dir, id)?;
-                        }
-                        reply
-                    }
+                    Ok(reply) => reply,
                     Err(error) => {
                         // Consumed instructions start a fresh attempt even if this turn fails
                         // or is cancelled. The provider retry loop has ended; stop any remaining
@@ -1144,9 +1157,6 @@ impl Worker {
                 {
                     log::warn!("couldn't record which questions the builder was told: {}", e.message);
                 }
-                if !reply.trim().is_empty() {
-                    ws.manifest.last_reply = reply.trim().to_string();
-                }
                 // The stack is recorded as the one the build uses, once it shows: left to the builder,
                 // or another than the default because the request asked for it. A game engine stays
                 // (it says the project is a game, and its editor is found for it), unless a follow-up
@@ -1162,8 +1172,8 @@ impl Worker {
                     ws.manifest.stack = s.name.clone();
                     ws.manifest.toolchain = None;
                 }
-                ws.manifest.awaiting_check = true;
-                ws.save()?;
+                self.prepared_note_ids.retain(|id| !carried_note_ids.contains(id));
+                save_completed_turn(ws, &reply, &mut carried_note_ids, notes::forget)?;
                 // Keep the finished turn before scanning: a cancellation during the scan
                 // must not make Try again repeat work that only needs its checks.
                 // A consumed note starts another attempt, but its record I/O must not
@@ -1646,20 +1656,44 @@ impl Worker {
             notes.sort_by_key(|note| note.id);
             // Claims happen in another process, outside this mutex. Stop at the first
             // unread note so a later claim cannot leapfrog its earlier request state.
-            let count = notes.iter().take_while(|note| was_read(&dir, note.id)).count();
+            let count = notes.iter().take_while(|note| !self.prepared_note_ids.contains(&note.id) && was_read(&dir, note.id)).count();
             notes.drain(..count).collect()
         };
         if read.is_empty() {
             return Ok(());
         }
-        // The hook has already delivered these instructions. Even a request-state or
-        // completion-mark failure must leave the next attempt a fresh progress allowance.
+        // The hook has already delivered these instructions. Even a request-state failure
+        // must leave the next attempt a fresh progress allowance.
         self.reset_progress_after_notes |= read.iter().any(|n| !n.text.trim().is_empty());
-        if let Err(error) = self.record_note_requests(ws, &read) {
+        if let Err(error) = self.record_request_texts(ws, &read) {
             let mut waiting = self.notes.lock().unwrap_or_else(PoisonError::into_inner);
             read.append(&mut *waiting);
             *waiting = read;
             return Err(error);
+        }
+        self.complete_read_notes(ws, read)
+    }
+
+    /// Acknowledge each delivered note independently. A later failure must not put an
+    /// earlier completed request back in the UI's handoff for the next run.
+    fn complete_read_notes(&mut self, ws: &Workspace, read: Vec<Note>) -> Result<(), ToolError> {
+        self.complete_read_notes_with_sync(ws, read, notes::sync_directory)
+    }
+
+    fn complete_read_notes_with_sync(&mut self, ws: &Workspace, mut read: Vec<Note>, sync: impl Fn(&Path) -> Result<(), ToolError>) -> Result<(), ToolError> {
+        let dir = notes::notes_dir(&ws.inbox_dir());
+        self.reset_progress_after_notes |= read.iter().any(|n| !n.text.trim().is_empty());
+        let mut completion_error = None;
+        for index in 0..read.len() {
+            let mut published = false;
+            if let Err(error) = notes::mark_recorded_using(&dir, read[index].id, &sync, || published = true) {
+                let mut unfinished = read.split_off(index + usize::from(published));
+                let mut waiting = self.notes.lock().unwrap_or_else(PoisonError::into_inner);
+                unfinished.append(&mut *waiting);
+                *waiting = unfinished;
+                completion_error = Some(error);
+                break;
+            }
         }
         resume_ghidra(ws, &read);
         self.taken_in_turn.extend(read.iter().cloned());
@@ -1676,22 +1710,13 @@ impl Worker {
             }
             self.emit(RunEvent::Note { shown: n.shown, pictures: n.pictures });
         }
-        cleanup_error.map_or(Ok(()), Err)
+        completion_error.or(cleanup_error).map_or(Ok(()), Err)
     }
 
     fn record_request_texts(&self, ws: &mut Workspace, notes: &[Note]) -> Result<(), ToolError> {
         if let Some((kind, _)) = &self.self_check {
             let requests: Vec<_> = notes.iter().filter(|note| !note.text.trim().is_empty()).map(|note| (note.id, note.shown.as_str())).collect();
             kind.record_ordered_requests(ws, &requests)?;
-        }
-        Ok(())
-    }
-
-    fn record_note_requests(&self, ws: &mut Workspace, notes: &[Note]) -> Result<(), ToolError> {
-        self.record_request_texts(ws, notes)?;
-        let dir = notes::notes_dir(&ws.inbox_dir());
-        for note in notes {
-            notes::mark_recorded(&dir, note.id)?;
         }
         Ok(())
     }
@@ -1703,6 +1728,29 @@ impl Worker {
             }
         }
     }
+}
+
+/// Save the successful turn before acknowledging or removing its carried notes. A cleanup
+/// failure after their removal must leave a check-only retry. Failed turns never reach here.
+fn save_completed_turn(
+    ws: &mut Workspace,
+    reply: &str,
+    note_ids: &mut Vec<u64>,
+    forget: impl Fn(&Path, u64) -> Result<(), ToolError>,
+) -> Result<(), ToolError> {
+    if !reply.trim().is_empty() {
+        ws.manifest.last_reply = reply.trim().to_string();
+    }
+    ws.manifest.awaiting_check = true;
+    ws.save()?;
+    let dir = notes::notes_dir(&ws.inbox_dir());
+    for id in note_ids.iter() {
+        notes::mark_recorded(&dir, *id)?;
+    }
+    for id in note_ids.drain(..) {
+        forget(&dir, id)?;
+    }
+    Ok(())
 }
 
 /// Restore durable notes and their queue before a worker can observe them. Known request times

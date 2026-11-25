@@ -1,7 +1,7 @@
 //! Notes the person adds while the builder works, handed over at the builder's next step instead
 //! of after its whole turn. The run writes each one to `inbox/notes/<id>.json`; a coding agent
 //! that runs a command after every tool call (Claude Code's PostToolUse hook, running
-//! `craft-anything-cli builder-notes <dir>`) claims what's there with a no-replace link to
+//! `craft-anything-cli builder-notes <dir>`) claims what's there with no-replace publication to
 //! `<id>.read.json`, removes the waiting name and gives the text to the model. That is the one moment a note changes hands,
 //! so "take back" works until then. The run records the request's state before renaming that file
 //! to `<id>.recorded.json` and forgetting it; a claimed version-1 note is still recoverable until
@@ -280,6 +280,23 @@ fn unchanged(path: &Path, expected: Option<&[u8]>) -> Result<(), ToolError> {
     if matches { Ok(()) } else { Err(ToolError::invalid("A waiting note changed during recovery; its records were kept.")) }
 }
 
+/// Prefer a link so a failed directory sync can retain both names. A drive without hard links
+/// can use the pinned library's no-clobber rename instead. Neither operation replaces an existing
+/// claim, and moving the source also keeps withdrawal and delivery mutually exclusive.
+fn publish_claim(source: &Path, destination: &Path, link: impl FnOnce(&Path, &Path) -> std::io::Result<()>) -> std::io::Result<()> {
+    match link(source, destination) {
+        Ok(()) => Ok(()),
+        Err(error) if matches!(error.kind(), std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::NotFound) => Err(error),
+        Err(_) => {
+            let mut source = tempfile::TempPath::try_from_path(source)?;
+            // This is the person's durable waiting record, not a disposable temporary file.
+            // In particular, a refused destination must never remove the original on drop.
+            source.disable_cleanup(true);
+            source.persist_noclobber(destination).map_err(|error| error.error)
+        }
+    }
+}
+
 /// Reuse the persistent id. A claimed note becomes waiting only after its new current-mode
 /// copy is synced. Explicitly carried notes stay claimed until their initial turn succeeds.
 pub(super) fn restore(dir: &Path, note: &LeftNote, text: &str, carried: bool) -> Result<(), ToolError> {
@@ -287,6 +304,17 @@ pub(super) fn restore(dir: &Path, note: &LeftNote, text: &str, carried: bool) ->
 }
 
 fn restore_using(dir: &Path, note: &LeftNote, text: &str, carried: bool, after_publish: impl FnOnce() -> Result<(), ToolError>) -> Result<(), ToolError> {
+    restore_with_link(dir, note, text, carried, after_publish, |source, destination| std::fs::hard_link(source, destination))
+}
+
+fn restore_with_link(
+    dir: &Path,
+    note: &LeftNote,
+    text: &str,
+    carried: bool,
+    after_publish: impl FnOnce() -> Result<(), ToolError>,
+    link: impl Fn(&Path, &Path) -> std::io::Result<()>,
+) -> Result<(), ToolError> {
     let waiting = pending(dir, note.id);
     let claimed = read(dir, note.id);
     unchanged(&waiting, note.waiting.as_deref())?;
@@ -296,9 +324,10 @@ fn restore_using(dir: &Path, note: &LeftNote, text: &str, carried: bool, after_p
             // A legacy waiting note can be recovered, but a legacy read note cannot. Write
             // the current version durably before publishing its claimed successor.
             hand_over(dir, note.id, text, Some(&note.left))?;
-            std::fs::hard_link(&waiting, &claimed).map_err(|error| ToolError::io(claimed.display(), error))?;
+            publish_claim(&waiting, &claimed, link).map_err(|error| ToolError::io(claimed.display(), error))?;
+            after_publish()?;
             sync_directory(dir)?;
-            std::fs::remove_file(&waiting).map_err(|error| ToolError::io(waiting.display(), error))?;
+            remove_if_present(&waiting)?;
             sync_directory(dir)?;
         } else if note.waiting.is_some() {
             sync_directory(dir)?;
@@ -318,7 +347,9 @@ fn restore_using(dir: &Path, note: &LeftNote, text: &str, carried: bool, after_p
 }
 
 /// Keep a note out of the hook while a follow-up prompt waits for its builder turn.
-pub(super) fn carry_for_prompt(dir: &Path, id: u64, left: &Left) -> Result<(), ToolError> {
+/// False means a read claim already exists; the caller remembers its own prepared claims
+/// to distinguish them from hook delivery. Startup recovery uses restore() separately.
+pub(super) fn carry_for_prompt(dir: &Path, id: u64, left: &Left, claimed: impl FnOnce() -> Result<(), ToolError>) -> Result<bool, ToolError> {
     let mut batch = take_left(dir)?;
     let note = match batch.iter().position(|note| note.id == id) {
         Some(index) => batch.swap_remove(index),
@@ -339,14 +370,18 @@ pub(super) fn carry_for_prompt(dir: &Path, id: u64, left: &Left) -> Result<(), T
     {
         return Err(ToolError::invalid("The waiting note changed before delivery; its records were kept."));
     }
-    restore(dir, &note, &left.text, true)
+    if note.read.is_some() {
+        return Ok(false);
+    }
+    restore_using(dir, &note, &left.text, true, claimed)?;
+    Ok(true)
 }
 
 /// Take a note back before the builder read it: true when it was still waiting.
-pub fn take_back(dir: &Path, id: u64) -> bool {
+pub fn take_back(dir: &Path, id: u64) -> Result<bool, ToolError> {
     // A claimer can have published its read link just before the waiting name is removed.
     // The caller holds the queue lock, so completion cannot erase that evidence meanwhile.
-    std::fs::remove_file(pending(dir, id)).is_ok() && !was_read(dir, id)
+    Ok(remove_if_present(&pending(dir, id))? && !was_read(dir, id))
 }
 
 /// The builder has read the note (it was claimed).
@@ -358,10 +393,12 @@ pub fn was_read(dir: &Path, id: u64) -> bool {
 /// note fails; restart must not replay successfully recorded claimed notes. No directory is
 /// created here, and an error keeps claimed or completed evidence for another attempt.
 pub(super) fn mark_recorded(dir: &Path, id: u64) -> Result<(), ToolError> {
-    mark_recorded_using(dir, id, sync_directory)
+    mark_recorded_using(dir, id, sync_directory, || {})
 }
 
-fn mark_recorded_using(dir: &Path, id: u64, sync: impl Fn(&Path) -> Result<(), ToolError>) -> Result<(), ToolError> {
+/// Notify only after this call has published or fully validated completion. A subsequent
+/// directory-sync error still propagates, but the live handoff must not replay that request.
+pub(super) fn mark_recorded_using(dir: &Path, id: u64, sync: impl Fn(&Path) -> Result<(), ToolError>, published: impl FnOnce()) -> Result<(), ToolError> {
     let source = read(dir, id);
     let destination = recorded(dir, id);
     let waiting = pending(dir, id);
@@ -370,6 +407,7 @@ fn mark_recorded_using(dir: &Path, id: u64, sync: impl Fn(&Path) -> Result<(), T
         // before allowing forget() to remove it; an unread note has neither entry.
         if check_record(&destination, id)? {
             unchanged(&waiting, None)?;
+            published();
             sync(dir)?;
         }
         return Ok(());
@@ -390,6 +428,7 @@ fn mark_recorded_using(dir: &Path, id: u64, sync: impl Fn(&Path) -> Result<(), T
     remove_if_present(&waiting)?;
     sync(dir)?;
     std::fs::rename(&source, &destination).map_err(|error| ToolError::io(source.display(), error))?;
+    published();
     sync(dir)
 }
 
@@ -418,12 +457,16 @@ fn remove_if_present(path: &Path) -> Result<bool, ToolError> {
 
 /// Done with a note: its files go. Keep completion evidence if an earlier removal fails.
 pub fn forget(dir: &Path, id: u64) -> Result<(), ToolError> {
+    forget_using(dir, id, sync_directory)
+}
+
+pub(super) fn forget_using(dir: &Path, id: u64, sync: impl Fn(&Path) -> Result<(), ToolError>) -> Result<(), ToolError> {
     let mut removed = false;
     for path in [pending(dir, id), read(dir, id), recorded(dir, id)] {
         removed |= remove_if_present(&path)?;
     }
     if removed {
-        sync_directory(dir)?;
+        sync(dir)?;
     }
     Ok(())
 }
@@ -440,6 +483,10 @@ pub fn claim(dir: &Path) -> Vec<String> {
 }
 
 fn claim_using(dir: &Path, sync: impl Fn(&Path) -> Result<(), ToolError>) -> Vec<String> {
+    claim_with_link(dir, sync, |source, destination| std::fs::hard_link(source, destination))
+}
+
+fn claim_with_link(dir: &Path, sync: impl Fn(&Path) -> Result<(), ToolError>, link: impl Fn(&Path, &Path) -> std::io::Result<()>) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
     let mut ids: Vec<u64> =
         entries.flatten().filter_map(|e| e.file_name().to_str().and_then(|n| n.strip_suffix(".json")).and_then(|n| n.parse::<u64>().ok())).collect();
@@ -454,9 +501,9 @@ fn claim_using(dir: &Path, sync: impl Fn(&Path) -> Result<(), ToolError>) -> Vec
             if file.id != id {
                 return None;
             }
-            std::fs::hard_link(pending(dir, id), read(dir, id)).ok()?;
-            // The read link owns delivery. Keep the old durable name if syncing the new
-            // link fails; a later hook cannot replace the read link or deliver it again.
+            publish_claim(&pending(dir, id), &read(dir, id), &link).ok()?;
+            // The read name owns delivery. Keep the waiting alias when available if syncing
+            // the claim fails; a later hook cannot replace the claim or deliver it again.
             if sync(dir).is_ok() {
                 let _ = std::fs::remove_file(pending(dir, id));
             }
@@ -490,6 +537,102 @@ mod tests {
 
     fn left_words(dir: &Path) -> std::io::Result<Vec<Left>> {
         left(dir).map(|notes| notes.into_iter().map(|note| note.left).collect())
+    }
+
+    fn no_hard_links(_: &Path, _: &Path) -> std::io::Result<()> {
+        Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "this drive does not support hard links"))
+    }
+
+    #[test]
+    fn a_hook_claim_can_deliver_without_hard_links() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = notes_dir(d.path());
+        let original = Left { text: "Use Spanish".into(), shown: "Use Spanish".into(), ..Default::default() };
+        hand_over(&dir, 71, "Use Spanish", Some(&original)).unwrap();
+        let bytes = std::fs::read(pending(&dir, 71)).unwrap();
+
+        assert_eq!(claim_with_link(&dir, sync_directory, no_hard_links), ["Use Spanish"]);
+        assert!(was_read(&dir, 71));
+        assert!(!pending(&dir, 71).exists());
+        assert_eq!(std::fs::read(read(&dir, 71)).unwrap(), bytes);
+        assert!(claim_with_link(&dir, sync_directory, no_hard_links).is_empty(), "a second hook cannot claim the note again");
+        assert_eq!(left_words(&dir).unwrap(), [original], "the claimed note remains recoverable until recording succeeds");
+        mark_recorded(&dir, 71).unwrap();
+        assert!(take_left(&dir).unwrap().is_empty());
+        forget(&dir, 71).unwrap();
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_carried_legacy_note_can_start_without_hard_links() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = notes_dir(d.path());
+        std::fs::create_dir_all(&dir).unwrap();
+        let original = Left { text: "Use Spanish".into(), shown: "Use Spanish".into(), ..Default::default() };
+        let bytes = serde_json::to_vec(&serde_json::json!({"id":71,"text":"Earlier mode context","left":original})).unwrap();
+        std::fs::write(pending(&dir, 71), bytes).unwrap();
+        let batch = take_left(&dir).unwrap();
+
+        restore_with_link(&dir, &batch[0], "Current mode context", true, || Ok(()), no_hard_links).unwrap();
+
+        assert!(!pending(&dir, 71).exists());
+        let (_, claimed) = decode(&std::fs::read(read(&dir, 71)).unwrap()).unwrap().unwrap();
+        assert_eq!(claimed.version, VERSION);
+        assert_eq!(claimed.text, "Current mode context");
+        assert_eq!(claimed.left, Some(original.clone()));
+        assert_eq!(left_words(&dir).unwrap(), [original]);
+        assert!(claim_with_link(&dir, sync_directory, no_hard_links).is_empty(), "the initial prompt owns the carried note");
+        mark_recorded(&dir, 71).unwrap();
+        forget(&dir, 71).unwrap();
+        assert!(take_left(&dir).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_no_link_claim_preserves_a_competing_claim_or_withdrawal() {
+        for change in ["file", "directory", "withdrawn"] {
+            let d = tempfile::tempdir().unwrap();
+            let dir = notes_dir(d.path());
+            hand_over(&dir, 71, "Waiting change", None).unwrap();
+            let before = std::fs::read(pending(&dir, 71)).unwrap();
+            let got = claim_with_link(&dir, sync_directory, |source, destination| {
+                // These changes happen after the hook has read the waiting record.
+                match change {
+                    "file" => std::fs::write(destination, b"Keep this earlier claim").unwrap(),
+                    "directory" => {
+                        std::fs::create_dir(destination).unwrap();
+                        std::fs::write(destination.join("personal.txt"), b"Keep this unexpected entry").unwrap();
+                    }
+                    _ => std::fs::remove_file(source).unwrap(),
+                }
+                no_hard_links(source, destination)
+            });
+            assert!(got.is_empty(), "a competing claim or completed withdrawal owns delivery");
+            if change == "withdrawn" {
+                assert!(!pending(&dir, 71).exists());
+                assert!(!read(&dir, 71).exists());
+            } else {
+                assert_eq!(std::fs::read(pending(&dir, 71)).unwrap(), before, "failed publication must not drop the durable source");
+                let retained = if change == "file" { read(&dir, 71) } else { read(&dir, 71).join("personal.txt") };
+                assert_eq!(
+                    std::fs::read(retained).unwrap(),
+                    if change == "file" { b"Keep this earlier claim".as_slice() } else { b"Keep this unexpected entry".as_slice() }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_no_link_claim_keeps_recovery_evidence_after_failed_directory_sync() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = notes_dir(d.path());
+        let original = Left { text: "Keep my change".into(), shown: "Keep my change".into(), ..Default::default() };
+        hand_over(&dir, 71, "Keep my change", Some(&original)).unwrap();
+        let delivered = claim_with_link(&dir, |_| Err(ToolError::invalid("Injected claim directory sync failure.")), no_hard_links);
+        assert_eq!(delivered, ["Keep my change"]);
+        assert!(claim_with_link(&dir, sync_directory, no_hard_links).is_empty());
+        assert_eq!(left_words(&dir).unwrap(), [original], "the claimed record survives until the request is saved");
+        mark_recorded(&dir, 71).unwrap();
+        assert!(take_left(&dir).unwrap().is_empty());
     }
 
     #[test]
@@ -542,7 +685,7 @@ mod tests {
         let dir = notes_dir(d.path());
         hand_over(&dir, 71, "already claimed", None).unwrap();
         std::fs::hard_link(pending(&dir, 71), read(&dir, 71)).unwrap();
-        assert!(!take_back(&dir, 71), "removing the waiting name cannot retract the published claim");
+        assert!(!take_back(&dir, 71).unwrap(), "removing the waiting name cannot retract the published claim");
         assert!(was_read(&dir, 71));
         assert!(claim(&dir).is_empty());
         assert!(std::fs::read_to_string(read(&dir, 71)).unwrap().contains("already claimed"));
@@ -556,10 +699,10 @@ mod tests {
         hand_over(&dir, 2, "make the header blue", None).unwrap();
         hand_over(&dir, 10, "add a contact form", None).unwrap();
         hand_over(&dir, 3, "never mind the footer", None).unwrap();
-        assert!(take_back(&dir, 3), "still waiting: it can be taken back");
+        assert!(take_back(&dir, 3).unwrap(), "still waiting: it can be taken back");
         assert_eq!(claim(&dir), ["make the header blue", "add a contact form"], "oldest first, by number");
         assert!(was_read(&dir, 2) && was_read(&dir, 10) && !was_read(&dir, 3));
-        assert!(!take_back(&dir, 2), "read notes can't be taken back");
+        assert!(!take_back(&dir, 2).unwrap(), "read notes can't be taken back");
         assert!(claim(&dir).is_empty(), "each note is handed over once");
         forget(&dir, 2).unwrap();
         assert!(!was_read(&dir, 2));
@@ -616,6 +759,28 @@ mod tests {
     }
 
     #[test]
+    fn a_prompt_claim_reports_ownership_before_later_persistence_can_fail() {
+        let directory = tempfile::tempdir().unwrap();
+        let dir = notes_dir(directory.path());
+        let left = Left { text: "Keep this prepared request".into(), shown: "Keep this prepared request".into(), pictures: Vec::new(), added: None };
+        hand_over(&dir, 71, &left.text, Some(&left)).unwrap();
+        let owned = std::cell::Cell::new(false);
+
+        let error = carry_for_prompt(&dir, 71, &left, || {
+            owned.set(true);
+            assert!(read(&dir, 71).is_file(), "the callback observes an actually published claim");
+            Err(ToolError::internal("interrupted after claim publication, before its sync"))
+        })
+        .unwrap_err();
+
+        assert!(error.message.contains("interrupted after claim publication"));
+        assert!(owned.get(), "the prompt's ownership must survive a later persistence failure");
+        assert!(claim(&dir).is_empty(), "the hook cannot also deliver the prepared request");
+        assert_eq!(take_left(&dir).unwrap()[0].left, left, "the undelivered claim stays recoverable");
+        assert!(!carry_for_prompt(&dir, 71, &left, || panic!("an existing claim cannot be acquired again")).unwrap());
+    }
+
+    #[test]
     fn prompt_handoff_preserves_known_times_and_accepts_a_legacy_recovery_time() {
         for known in [false, true] {
             let d = tempfile::tempdir().unwrap();
@@ -627,12 +792,12 @@ mod tests {
             let mut recovered = original.clone();
             recovered.added = Some(added + std::time::Duration::from_secs(1));
             if known {
-                assert!(carry_for_prompt(&dir, 71, &recovered).is_err(), "a known request time cannot change during delivery");
+                assert!(carry_for_prompt(&dir, 71, &recovered, || Ok(())).is_err(), "a known request time cannot change during delivery");
                 assert_eq!(std::fs::read(pending(&dir, 71)).unwrap(), bytes);
                 recovered.added = original.added;
             }
 
-            carry_for_prompt(&dir, 71, &recovered).unwrap();
+            assert!(carry_for_prompt(&dir, 71, &recovered, || Ok(())).unwrap());
 
             assert!(!pending(&dir, 71).exists());
             assert_eq!(std::fs::read(read(&dir, 71)).unwrap(), bytes, "the persistent time stays exact, including a legacy absent time");
@@ -773,10 +938,15 @@ mod tests {
             assert_eq!(claim_using(&dir, |_| Err(ToolError::internal("injected claim sync failure"))), std::slice::from_ref(&note.text));
             let calls = std::cell::Cell::new(0);
 
-            let result = mark_recorded_using(&dir, 7, |path| {
-                calls.set(calls.get() + 1);
-                if calls.get() == fail_at { Err(ToolError::internal("injected completion sync failure")) } else { sync_directory(path) }
-            });
+            let result = mark_recorded_using(
+                &dir,
+                7,
+                |path| {
+                    calls.set(calls.get() + 1);
+                    if calls.get() == fail_at { Err(ToolError::internal("injected completion sync failure")) } else { sync_directory(path) }
+                },
+                || {},
+            );
 
             assert!(result.is_err());
             assert_eq!(left_words(&dir).unwrap(), if fail_at < 3 { vec![note] } else { Vec::new() });

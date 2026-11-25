@@ -519,7 +519,7 @@ fn rebuild_note_withdraw(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput,
     let runs = runs(ctx);
     let mut set = runs.0.lock().unwrap_or_else(PoisonError::into_inner);
     refresh(ctx, &mut set);
-    match set.get(&ws.root).and_then(|r| r.unsend(p.id)) {
+    match set.get(&ws.root).map(|r| r.unsend(p.id)).transpose()?.flatten() {
         Some(note) => Ok(ToolOutput::Value(json!({"withdrawn": note.text}))),
         None => Err(ToolError::new(ErrorCode::BadInput, format!("Note {} isn't waiting: the agent has read it, or it isn't from this session.", p.id))),
     }

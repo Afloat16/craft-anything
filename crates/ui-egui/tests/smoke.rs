@@ -505,6 +505,7 @@ fn the_sidebar_lists_projects_and_moves_between_them() {
 
 #[test]
 fn the_prompt_box_sends_on_enter_with_its_pictures() {
+    use craft_anything_ai::rebuild::StandIns;
     use craft_anything_engine::workspace::{TargetRef, Workspace};
     use craft_anything_ui_egui::state::FeedItem;
     let d = tempfile::tempdir().unwrap();
@@ -512,10 +513,12 @@ fn the_prompt_box_sends_on_enter_with_its_pictures() {
     std::fs::write(&pic, "x").unwrap();
     let ws = Workspace::create(&d.path().join("projects"), "Game", "Recreate this game", TargetRef::None).unwrap();
     let root = ws.root.clone();
+    let projects = d.path().join("projects");
+    let runs = StandIns::new();
+    let starting = runs.clone();
     let mut h = harness(move || {
-        let mut a = demo::app(demo::engine(Mode::Beginner, true));
-        a.workspace = Some(ws);
-        a.state.screen = Screen::Project;
+        let mut a = stand_in_app(projects, &starting);
+        a.open_workspace(ws);
         a
     });
     h.run_steps(3);
@@ -547,6 +550,8 @@ fn the_prompt_box_sends_on_enter_with_its_pictures() {
         "{:?}",
         h.state().state.feed
     );
+    assert_eq!(runs.started(), [root]);
+    h.state_mut().runs.stop_all();
 }
 
 #[test]

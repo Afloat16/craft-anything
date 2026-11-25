@@ -100,7 +100,7 @@ fn claimed_language_notes_cannot_overtake_an_earlier_unread_observation() {
 }
 
 #[test]
-fn claimed_language_note_recording_mark_failure_keeps_the_batch_retryable() {
+fn claimed_language_note_recording_mark_failure_keeps_unfinished_notes_retryable() {
     let directory = tempfile::tempdir().unwrap();
     let mut ws = Workspace::create(directory.path(), "Site", "Rebuild this website in English", TargetRef::None).unwrap();
     let website = kind("website");
@@ -118,20 +118,20 @@ fn claimed_language_note_recording_mark_failure_keeps_the_batch_retryable() {
 
     assert!(worker.relay_read_notes(&mut ws).is_err());
 
-    assert_eq!(worker.notes.lock().unwrap().len(), 2);
-    assert!(inbox.join("71.recorded.json").is_file());
+    assert_eq!(worker.notes.lock().unwrap().iter().map(|note| note.id).collect::<Vec<_>>(), [72]);
+    assert!(!notes::was_read(&inbox, 71), "the completed prefix is acknowledged and cannot enter the next handoff");
     assert!(inbox.join("72.read.json").is_file(), "a failed completion mark cannot forget the pending note");
     std::fs::remove_dir(inbox.join("72.recorded.json")).unwrap();
-    let completed = inbox.join("71.recorded.json");
-    let original = std::fs::read(&completed).unwrap();
+    let unfinished = inbox.join("72.read.json");
+    let original = std::fs::read(&unfinished).unwrap();
     let mut future: Value = serde_json::from_slice(&original).unwrap();
     future["version"] = Value::from(99);
     let future = serde_json::to_vec(&future).unwrap();
-    std::fs::write(&completed, &future).unwrap();
-    assert!(worker.relay_read_notes(&mut ws).is_err(), "a live retry must validate an earlier completion record before cleanup");
-    assert_eq!(std::fs::read(&completed).unwrap(), future);
+    std::fs::write(&unfinished, &future).unwrap();
+    assert!(worker.relay_read_notes(&mut ws).is_err(), "a live retry must still validate the unfinished record before cleanup");
+    assert_eq!(std::fs::read(&unfinished).unwrap(), future);
     assert!(inbox.join("72.read.json").is_file());
-    std::fs::write(&completed, original).unwrap();
+    std::fs::write(&unfinished, original).unwrap();
     worker.relay_read_notes(&mut ws).unwrap();
     assert!(worker.notes.lock().unwrap().is_empty());
     assert_eq!(Workspace::open(&ws.root).unwrap().manifest.website_language, Some(WebsiteLanguage::Requested { tag: "de".into() }));
