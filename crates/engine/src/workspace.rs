@@ -1027,6 +1027,15 @@ impl CreationReservation {
     }
 
     fn claim_with_cleanup(root: &Path, directory: FileHandle, allocate: &dyn Fn(&Path) -> Result<PathBuf, ToolError>) -> Result<Self, ToolError> {
+        Self::claim_with_creation_lock(root, directory, allocate, crate::feed::lock_creation)
+    }
+
+    fn claim_with_creation_lock(
+        root: &Path,
+        directory: FileHandle,
+        allocate: &dyn Fn(&Path) -> Result<PathBuf, ToolError>,
+        acquire: impl FnOnce(&Path, &FileHandle) -> Result<FileHandle, Box<crate::feed::CreationLockFailure>>,
+    ) -> Result<Self, ToolError> {
         Self::check_directory(root, &directory)?;
         Self::check_manifest_absent(root)?;
         // Reserve before mkdir(inbox): a failed allocation must not strand a new reservation.
@@ -1059,7 +1068,32 @@ impl CreationReservation {
             let inbox = captured_inbox.insert(FileHandle::from_path(&inbox_path).map_err(|error| ToolError::io(inbox_path.display(), error))?);
             Self::check_directory(root, &directory)?;
             Self::check_manifest_absent(root)?;
-            coordination = Some(crate::feed::lock_creation(root, inbox)?);
+            coordination = Some(match acquire(root, inbox) {
+                Ok(file) => file,
+                Err(failure) => {
+                    let error = failure.error.clone();
+                    let recovered: Result<_, ToolError> = (|| {
+                        Self::check_directory(root, &directory)?;
+                        Self::check_manifest_absent(root)?;
+                        let file = failure.recover(root, inbox)?;
+                        Self::check_directory(root, &directory)?;
+                        Self::check_manifest_absent(root)?;
+                        Ok(file)
+                    })();
+                    match recovered {
+                        Ok(file) => coordination = file,
+                        Err(recovery) => {
+                            let guidance = format!("The initial coordination lock could not be recovered safely: {}", recovery.for_people());
+                            let guidance = match &error.remediation {
+                                Some(previous) => format!("{previous} {guidance}"),
+                                None => guidance,
+                            };
+                            return Err(error.with_remediation(guidance));
+                        }
+                    }
+                    return Err(error);
+                }
+            });
             Self::check_directory(root, &directory)?;
             Self::check_directory(&inbox_path, inbox)?;
             Self::check_manifest_absent(root)
@@ -1085,15 +1119,40 @@ impl CreationReservation {
         Ok(Self { directory, inbox, coordination, cleanup: Some(cleanup) })
     }
 
-    fn finish_publication(&self, root: &Path) -> Result<(), ToolError> {
-        let Some(cleanup) = &self.cleanup else { return Ok(()) };
-        let removed = Self::check_directory(root, &self.directory).and_then(|()| cleanup.remove_empty(root));
-        removed.map_err(|error| {
-            error.with_remediation(format!(
-                "The project manifest was published. Keep the project and inspect the reserved cleanup directory at {} before retrying cleanup.",
-                root.join(&cleanup.name).display()
-            ))
-        })
+    fn finish_publication(
+        &self,
+        ws: &Workspace,
+        remove: impl FnOnce(&CreationCleanup, &Path) -> Result<(), ToolError>,
+    ) -> Result<Option<ToolError>, ToolError> {
+        let check = || {
+            Self::check_directory(&ws.root, &self.directory)?;
+            Self::check_directory(&ws.inbox_dir(), &self.inbox)?;
+            if let Some(lock) = &self.coordination {
+                crate::feed::check_coordination_entry(&ws.inbox_dir().join(crate::feed::PROJECT_LOCK_FILE), lock)?;
+            }
+            let published = Workspace::open(&ws.root)?.manifest;
+            if published.generation != ws.manifest.generation || published.created_ms != ws.manifest.created_ms {
+                return Err(copy_changed(&ws.root.join(MANIFEST)));
+            }
+            Ok(())
+        };
+        check()?;
+        let warning = self.cleanup.as_ref().and_then(|cleanup| {
+            remove(cleanup, &ws.root).err().map(|error| {
+                let guidance = format!(
+                    "The project manifest was published. Keep the project and inspect the reserved cleanup directory at {} before retrying cleanup.",
+                    ws.root.join(&cleanup.name).display()
+                );
+                let guidance = match &error.remediation {
+                    Some(previous) => format!("{previous} {guidance}"),
+                    None => guidance,
+                };
+                error.with_remediation(guidance)
+            })
+        });
+        // Only private-directory cleanup is nonfatal. A changed published project still fails.
+        check()?;
+        Ok(warning)
     }
 
     fn check(&self, root: &Path) -> Result<(), ToolError> {
@@ -1486,6 +1545,17 @@ impl Workspace {
         after_discovery: impl FnOnce(&[PathBuf]),
         before_cleanup: impl FnOnce(&Path),
     ) -> Result<Workspace, ToolError> {
+        self.duplicate_with_publisher(name, source, after_discovery, before_cleanup, Self::publish_manifest)
+    }
+
+    fn duplicate_with_publisher(
+        &self,
+        name: &str,
+        source: CopySource,
+        after_discovery: impl FnOnce(&[PathBuf]),
+        before_cleanup: impl FnOnce(&Path),
+        publish: impl FnOnce(&Self, &CreationReservation) -> Result<(), ToolError>,
+    ) -> Result<Workspace, ToolError> {
         let parent = self.root.parent().ok_or_else(|| ToolError::invalid(format!("{} has no parent folder to copy it into.", self.root.display())))?;
         let m = &self.manifest;
         let in_place = m.app_in_root;
@@ -1534,7 +1604,7 @@ impl Workspace {
             destination.check_identity()?;
             // The manifest makes the project discoverable, so it is written only after
             // every copied file and all initial settings are complete.
-            copy.publish_manifest(&destination.creation)
+            publish(&copy, &destination.creation)
         })();
         if let Err(error) = copied {
             before_cleanup(&destination.root);
@@ -1852,11 +1922,26 @@ impl Workspace {
     /// Only the creator holding the folder reservation publishes its initial identity.
     /// An ordinary save must never recreate a deleted manifest through this path.
     fn publish_manifest(&self, creation: &CreationReservation) -> Result<(), ToolError> {
+        self.publish_manifest_using(creation, write_atomic, CreationCleanup::remove_empty, |warning| {
+            log::warn!("Project published at {}: {}", self.root.display(), warning.for_people());
+        })
+    }
+
+    fn publish_manifest_using(
+        &self,
+        creation: &CreationReservation,
+        write: impl FnOnce(&Path, &[u8]) -> Result<(), ToolError>,
+        remove: impl FnOnce(&CreationCleanup, &Path) -> Result<(), ToolError>,
+        report: impl FnOnce(&ToolError),
+    ) -> Result<(), ToolError> {
         self.ensure_writable()?;
         creation.check(&self.root)?;
         let bytes = serde_json::to_vec_pretty(&self.manifest).map_err(|e| ToolError::internal(e.to_string()))?;
-        write_atomic(&self.root.join(MANIFEST), &bytes)?;
-        creation.finish_publication(&self.root)
+        write(&self.root.join(MANIFEST), &bytes)?;
+        if let Some(warning) = creation.finish_publication(self, remove)? {
+            report(&warning);
+        }
+        Ok(())
     }
 
     fn write_manifest(&self, change: impl FnOnce(&Manifest) -> Manifest) -> Result<Manifest, ToolError> {
@@ -4294,6 +4379,181 @@ mod tests {
                 assert!(!root.join(MANIFEST).exists());
                 assert!(!root.join("inbox").exists());
                 Workspace::create_at(&root, "Retry", "Test", TargetRef::None, None).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn failed_creation_lock_acquisition_recovers_only_its_verified_exclusive_inode() {
+        for case in ["transient", "busy", "replaced", "foreign"] {
+            let directory = tempfile::tempdir().unwrap();
+            let root = directory.path().join("selected");
+            std::fs::create_dir(&root).unwrap();
+            std::fs::write(root.join("personal.txt"), b"Keep the selected folder").unwrap();
+            let busy = std::cell::RefCell::new(None);
+            let original = std::cell::RefCell::new(None);
+            let error = CreationReservation::claim_with_creation_lock(
+                &root,
+                FileHandle::from_path(&root).unwrap(),
+                &CopyDestination::cleanup_directory,
+                |root, inbox| {
+                    if case == "foreign" {
+                        std::fs::File::create_new(root.join("inbox/feed.lock")).unwrap();
+                    }
+                    crate::feed::lock_creation_using(root, inbox, |_, path, _| {
+                        original.replace(Some(FileHandle::from_path(path).unwrap()));
+                        if case == "busy" {
+                            let other = std::fs::File::options().read(true).write(true).open(path).unwrap();
+                            other.try_lock().unwrap();
+                            busy.replace(Some(other));
+                        } else if case == "replaced" {
+                            std::fs::rename(path, root.join("retained.lock")).unwrap();
+                            std::fs::write(path, b"Keep the replacement lock").unwrap();
+                        }
+                        Err(ToolError::io(path.display(), std::io::Error::other("Injected initial lock failure"))
+                            .with_remediation("Keep the initial error guidance."))
+                    })
+                },
+            )
+            .err()
+            .expect("the initial acquisition reports its original failure");
+
+            assert_eq!(error.code, ErrorCode::FileError);
+            assert!(error.message.contains("Injected initial lock failure"));
+            assert!(error.for_people().contains("Keep the initial error guidance."));
+            assert!(!root.join(MANIFEST).exists());
+            assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep the selected folder");
+            if case == "transient" {
+                assert!(!root.join("inbox").exists(), "a recovered original inode releases its failed creation reservation");
+                assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+                Workspace::create_at(&root, "Retry", "Test", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+            } else {
+                assert!(root.join("inbox").is_dir(), "busy or unconfirmed coordination is preserved at its public path");
+                assert!(error.for_people().contains(&root.join("inbox").display().to_string()));
+                if case == "replaced" {
+                    assert_eq!(std::fs::read(root.join("inbox/feed.lock")).unwrap(), b"Keep the replacement lock");
+                    assert_eq!(FileHandle::from_path(root.join("retained.lock")).unwrap(), *original.borrow().as_ref().unwrap());
+                } else {
+                    assert_eq!(FileHandle::from_path(root.join("inbox/feed.lock")).unwrap(), *original.borrow().as_ref().unwrap());
+                    assert_eq!(std::fs::metadata(root.join("inbox/feed.lock")).unwrap().len(), 0);
+                }
+                assert!(Workspace::create_at(&root, "Other", "Test", TargetRef::None, Some(ExistingFiles::Edit)).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn published_creation_and_copy_return_success_with_a_cleanup_warning() {
+        for duplicate in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let source = Workspace::create(directory.path(), "Source", "A website", TargetRef::None).unwrap();
+            std::fs::create_dir(source.app_dir()).unwrap();
+            std::fs::write(source.app_dir().join("index.html"), b"Keep the copied app").unwrap();
+            let source_manifest = std::fs::read(source.root.join(MANIFEST)).unwrap();
+            let selected = directory.path().join("selected");
+            std::fs::create_dir(&selected).unwrap();
+            std::fs::write(selected.join("personal.txt"), b"Keep the selected files").unwrap();
+            let retained = std::cell::RefCell::new(PathBuf::new());
+            let warning = std::cell::RefCell::new(None);
+            let publish = |ws: &Workspace, creation: &CreationReservation| {
+                ws.publish_manifest_using(
+                    creation,
+                    write_atomic,
+                    |cleanup, root| {
+                        let path = cleanup.empty_path(root)?;
+                        retained.replace(path.clone());
+                        Err(ToolError::io(path.display(), std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+                            .with_remediation("Inspect the cleanup access settings."))
+                    },
+                    |error| {
+                        warning.replace(Some(error.clone()));
+                    },
+                )
+            };
+            let result = if duplicate {
+                source.duplicate_with_publisher(
+                    "Copy",
+                    source.lock_copy_source().unwrap(),
+                    |_| {},
+                    |_| panic!("a published copy must not enter rollback"),
+                    publish,
+                )
+            } else {
+                Workspace::create_at_with_publisher(&selected, "Selected", "A website", TargetRef::None, Some(ExistingFiles::Edit), publish)
+            };
+            assert!(result.is_ok(), "a verified published project must remain successful when only empty cleanup fails: {result:?}");
+            let ws = result.unwrap();
+
+            let retained = retained.into_inner();
+            let warning = warning.into_inner().expect("cleanup failure is separately reported");
+            assert!(retained.is_dir());
+            assert_eq!(std::fs::read_dir(&retained).unwrap().count(), 0);
+            assert!(warning.for_people().contains(&retained.display().to_string()));
+            assert!(warning.for_people().contains("Inspect the cleanup access settings."));
+            assert!(warning.for_people().contains("manifest was published"));
+            assert_eq!(Workspace::open(&ws.root).unwrap().manifest.generation, ws.manifest.generation);
+            drop(crate::feed::lock_project(&ws.root).unwrap());
+            assert_eq!(std::fs::read(source.root.join(MANIFEST)).unwrap(), source_manifest);
+            assert_eq!(std::fs::read(selected.join("personal.txt")).unwrap(), b"Keep the selected files");
+            if duplicate {
+                assert_eq!(std::fs::read(ws.app_dir().join("index.html")).unwrap(), b"Keep the copied app");
+            }
+        }
+    }
+
+    #[test]
+    fn publication_identity_changes_and_write_failures_are_not_cleanup_warnings() {
+        for case in ["write", "root", "manifest"] {
+            let directory = tempfile::tempdir().unwrap();
+            let root = directory.path().join("selected");
+            std::fs::create_dir(&root).unwrap();
+            std::fs::write(root.join("personal.txt"), b"Keep the original files").unwrap();
+            let displaced = directory.path().join("displaced");
+            let reported = std::cell::Cell::new(false);
+            let result = Workspace::create_at_with_publisher(&root, "Selected", "A website", TargetRef::None, Some(ExistingFiles::Edit), |ws, creation| {
+                ws.publish_manifest_using(
+                    creation,
+                    |path, bytes| {
+                        if case == "write" {
+                            return Err(ToolError::io(path.display(), std::io::Error::from(std::io::ErrorKind::StorageFull)));
+                        }
+                        write_atomic(path, bytes)
+                    },
+                    |_, root| {
+                        assert_ne!(case, "write", "failed manifest writes cannot reach cleanup or warning reporting");
+                        if case == "root" {
+                            std::fs::rename(root, &displaced).unwrap();
+                            std::fs::create_dir(root).unwrap();
+                            std::fs::write(root.join("personal.txt"), b"Keep the replacement files").unwrap();
+                        } else {
+                            let replacement = Manifest::new("Replacement", "Another project", TargetRef::None).unwrap();
+                            write_atomic(&root.join(MANIFEST), &serde_json::to_vec_pretty(&replacement).unwrap()).unwrap();
+                        }
+                        Err(ToolError::io(root.display(), std::io::Error::from(std::io::ErrorKind::PermissionDenied)))
+                    },
+                    |_| reported.set(true),
+                )
+            });
+
+            assert!(result.is_err(), "an identity or initial write error is not downgraded to a cleanup warning");
+            let error = result.unwrap_err();
+
+            assert!(!reported.get(), "an identity or initial write error is not downgraded to a cleanup warning");
+            if case == "write" {
+                assert_eq!(error.code, ErrorCode::FileError);
+                assert!(!root.join(MANIFEST).exists());
+                assert!(!root.join("inbox").exists());
+                Workspace::create_at(&root, "Retry", "Test", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+            } else {
+                assert_eq!(error.code, ErrorCode::FileChanged);
+                if case == "root" {
+                    assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep the replacement files");
+                    assert_eq!(std::fs::read(displaced.join("personal.txt")).unwrap(), b"Keep the original files");
+                    assert_eq!(Workspace::open(&displaced).unwrap().manifest.name, "Selected");
+                } else {
+                    assert_eq!(Workspace::open(&root).unwrap().manifest.name, "Replacement");
+                    assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep the original files");
+                }
             }
         }
     }

@@ -272,17 +272,59 @@ fn lock_for_using_before_open(
 
 /// Initial creation participates in coordination before copying or publishing a manifest.
 /// The raw handle grants no project identity and cannot authorize feed writes.
-pub(crate) fn lock_creation(root: &Path, expected_inbox: &same_file::Handle) -> Result<same_file::Handle, ToolError> {
+pub(crate) fn lock_creation(root: &Path, expected_inbox: &same_file::Handle) -> Result<same_file::Handle, Box<CreationLockFailure>> {
+    lock_creation_using(root, expected_inbox, |file, path, started| wait_for_lock(file, path, started, WAIT, false))
+}
+
+/// A failed acquisition retains only a newly created or already exclusively held inode.
+/// An opened but unlocked pre-existing file does not authorize creation rollback.
+#[derive(Debug)]
+pub(crate) struct CreationLockFailure {
+    pub(crate) error: ToolError,
+    file: Option<same_file::Handle>,
+    held: bool,
+}
+
+impl CreationLockFailure {
+    /// The caller checks the original root and absent manifest before and after recovery.
+    /// An unheld handle must acquire its own exclusive lock before becoming coordination.
+    pub(crate) fn recover(self, root: &Path, expected_inbox: &same_file::Handle) -> Result<Option<same_file::Handle>, ToolError> {
+        let Some(file) = self.file else { return Ok(None) };
+        let directory = root.join("inbox");
+        let path = directory.join(PROJECT_LOCK_FILE);
+        check_directory(&directory, expected_inbox)?;
+        check_entry(&path, &file)?;
+        if !self.held {
+            wait_for_lock(file.as_file(), &path, Instant::now(), Duration::ZERO, false)?;
+        }
+        check_directory(&directory, expected_inbox)?;
+        check_entry(&path, &file)?;
+        Ok(Some(file))
+    }
+}
+
+pub(crate) fn lock_creation_using(
+    root: &Path,
+    expected_inbox: &same_file::Handle,
+    acquire: impl FnOnce(&std::fs::File, &Path, Instant) -> Result<(), ToolError>,
+) -> Result<same_file::Handle, Box<CreationLockFailure>> {
     let directory = root.join("inbox");
-    check_directory(&directory, expected_inbox)?;
     let started = Instant::now();
-    let (file, _) = open_coordination_file(&directory, expected_inbox, started, WAIT)?;
+    let opened = check_directory(&directory, expected_inbox).and_then(|()| open_coordination_file(&directory, expected_inbox, started, WAIT));
+    let (file, created) = opened.map_err(|error| Box::new(CreationLockFailure { error, file: None, held: false }))?;
     let path = directory.join(PROJECT_LOCK_FILE);
-    check_entry(&path, &file)?;
-    wait_for_lock(file.as_file(), &path, started, WAIT, false)?;
-    check_directory(&directory, expected_inbox)?;
-    check_entry(&path, &file)?;
-    Ok(file)
+    let mut held = false;
+    let acquired = (|| {
+        check_entry(&path, &file)?;
+        acquire(file.as_file(), &path, started)?;
+        held = true;
+        check_directory(&directory, expected_inbox)?;
+        check_entry(&path, &file)
+    })();
+    match acquired {
+        Ok(()) => Ok(file),
+        Err(error) => Err(Box::new(CreationLockFailure { error, file: (created || held).then_some(file), held })),
+    }
 }
 
 fn open_coordination_file(directory: &Path, inbox: &same_file::Handle, started: Instant, wait: Duration) -> Result<(same_file::Handle, bool), ToolError> {

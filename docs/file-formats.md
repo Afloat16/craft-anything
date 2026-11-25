@@ -93,6 +93,11 @@ conversation, backup, archive or recorded-answer payloads after deletion. Earlie
 a project with a generation but no inbox, so a generation alone cannot prove a persistent reservation.
 An existing project may initialize a missing inbox through the same guarded protocol. Initial creators hold the
 same exclusive coordination inode from reservation through publication or failed-creation cleanup.
+A failed acquisition retains the original newly created lock handle. Rollback can use it only after
+confirming the original root/inbox, an absent manifest and exclusive ownership of that same empty
+inode; an already held lock is not acquired again. Contention, continued I/O errors or changed
+identity preserve the reservation and its inspection guidance. Opening an existing unlocked file
+does not grant cleanup ownership.
 After its first capture of a newly made inbox, an initializer must confirm the original project before
 opening a coordination file or gaining cleanup authority. If that confirmation fails, it retains the
 current inbox and reports its inspection path without creating or acquiring a lock: deletion and a new
@@ -141,8 +146,10 @@ held empty coordination file and any same-file aliases, then the empty claimed d
 manifest, changed identity or unrecognized inbox content is preserved with inspection
 guidance; a missing, changed or occupied cleanup reservation never falls back to a new allocation.
 The selected folder is never removed by that cleanup. Successful manifest publication removes only
-the verified empty cleanup reservation; a later cleanup error explicitly reports that the project was
-published. Preallocation does not guarantee that rename, unlink or directory removal can succeed on
+the verified empty cleanup reservation. If that cleanup fails while the root, inbox, coordination
+file and published manifest identity remain unchanged, creation and duplication still return the
+published workspace and log a cleanup warning with the retained path. Identity changes and initial
+write errors remain failures. Preallocation does not guarantee that rename, unlink or directory removal can succeed on
 an exhausted filesystem. Legacy-initializer cleanup and the outer private root claim for failed copies
 can still need allocation. The destination manifest is published after copying
 succeeds, while the root, inbox and coordination file still match their held identities and no manifest

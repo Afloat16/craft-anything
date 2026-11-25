@@ -1006,7 +1006,12 @@ empty reservation and no lock. This uncertain first-capture case can require man
 retry; neither an empty directory nor a missing manifest grants permission to remove it.
 Require initial creators to hold the same raw exclusive coordination inode through publication and
 failed-creation cleanup. That raw handle grants no feed-writing authority without a published project
-identity. An initializer whose newly made inbox passed that first confirmation can acquire the same lock, then recheck project
+identity. Keep a failed acquisition's newly created file handle and whether it already holds the lock:
+a transient lock error must not discard the identity needed for rollback. Before promoting an unheld
+handle to cleanup coordination, recheck the original root/inbox and absent manifest, exclusively lock
+that same inode without waiting, then recheck. Busy, changed or unreadable state stays preserved;
+never treat a merely opened pre-existing file as owned, or acquire an already held lock again.
+An initializer whose newly made inbox passed that first confirmation can acquire the same lock, then recheck project
 identity and manifest absence before privately claiming only that captured inbox. A non-owner must
 never remove its lock independently: the initializer that made the directory may be waiting for it,
 and may release the same verified empty inode once it holds the lock. A creator holding the inode
@@ -1152,8 +1157,10 @@ Before reserving the inbox, reserve a private cleanup directory and its identity
 directory only after a storage-full publication error can fail for the same reason and strand the
 inbox. Reuse the reserved child name relative to the current root after a failed copy moves that root;
 never fall back to a fresh allocation if the held cleanup directory is missing, replaced or occupied.
-After successful publication, remove only that verified empty directory and report any failure as
-cleanup of an already published project. Preallocation removes one allocation from rollback; it cannot
+After successful publication, remove only that verified empty directory. Check the published root,
+inbox, held lock and manifest identity before and after cleanup; only cleanup failure becomes a logged
+warning with its retained path while returning the successful workspace. A root or manifest change
+must remain an error, and a failed manifest write must never reach this warning path. Preallocation removes one allocation from rollback; it cannot
 guarantee rename or removal under every exhausted-filesystem condition. Test publication failure
 while every later cleanup allocation also fails, plus up-front reservation failure and changed slots.
 Before copying, reserve its inbox name
