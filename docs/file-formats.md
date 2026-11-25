@@ -93,10 +93,14 @@ conversation, backup, archive or recorded-answer payloads after deletion. Earlie
 a project with a generation but no inbox, so a generation alone cannot prove a persistent reservation.
 An existing project may initialize a missing inbox through the same guarded protocol. Initial creators hold the
 same exclusive coordination inode from reservation through publication or failed-creation cleanup.
-After capturing a newly made inbox, an initializer acquires that lock before its final project
-check: an active creator cannot have its reservation released by an older initializer. If deletion
-won and no manifest exists, the initializer that made the inbox can privately claim it only after
-checking the held root/inbox identities and exclusively held lock again. A lock created by another
+After its first capture of a newly made inbox, an initializer must confirm the original project before
+opening a coordination file or gaining cleanup authority. If that confirmation fails, it retains the
+current inbox and reports its inspection path without creating or acquiring a lock: deletion and a new
+creator may have reused the name between mkdir and capture. Even an empty retained inbox can belong
+to that creator. This uncertain case can require manual inspection before retry; automatic cleanup is
+not promised. After a successful first confirmation, the initializer still rechecks the project under
+the exclusive lock. If deletion then wins and no manifest exists, it can privately claim its confirmed
+inbox only after checking the held root/inbox identities and exclusively held lock again. A lock created by another
 initializer can be released under this same protocol; an initializer that did not create the inbox
 never removes it. A busy creator or deleter keeps the public reservation until it finishes.
 Cleanup removes only a verified empty coordination entry and empty directories. Existing

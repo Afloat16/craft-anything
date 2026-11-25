@@ -168,8 +168,8 @@ fn lock_for_using_before_open(
     before_open: impl FnOnce(),
 ) -> Result<ProjectFeedGuard, ToolError> {
     // Earlier projects can lack an inbox even when they have a generation. Initialization
-    // uses the same exclusive lock as initial creation; only this attempt's newly created
-    // inbox can be reclaimed if deletion overlaps it.
+    // uses the same exclusive lock as initial creation. A newly created inbox must first
+    // be confirmed against the original project before later failure can authorize cleanup.
     let project = ProjectIdentity::read(root)?;
     after_identity();
     let directory = root.join("inbox");
@@ -199,13 +199,28 @@ fn lock_for_using_before_open(
     let inbox = craft_anything_platform::fs::open_child_directory(project.directory.as_file(), Path::new("inbox"))
         .and_then(same_file::Handle::from_file)
         .map_err(|error| ToolError::io(directory.display(), error))?;
+    if created_inbox {
+        // mkdir does not return a handle: deletion and another creator can reuse the name
+        // before this first capture. An unconfirmed capture grants neither opening nor cleanup.
+        project.check(root).map_err(|error| {
+            let guidance = format!(
+                "The coordination directory could not be confirmed against the original project. Inspect {} before retrying; its current contents were kept and this attempt did not create or acquire its lock.",
+                directory.display()
+            );
+            let guidance = match &error.remediation {
+                Some(previous) => format!("{previous} {guidance}"),
+                None => guidance,
+            };
+            error.with_remediation(guidance)
+        })?;
+    }
     let mut opened = None;
     let mut created_lock = false;
     let mut held_lock = false;
     let acquired = (|| {
         if !created_inbox {
             // Reject a known stale caller without populating an existing reservation.
-            // A newly initialized inbox must reach locked cleanup after deletion.
+            // A newly created inbox already passed the first-capture confirmation above.
             project.check(root)?;
         }
         check_directory(&directory, &inbox)?;
@@ -606,16 +621,21 @@ mod tests {
         let ws = Workspace::create(directory.path(), "Project", "Test", TargetRef::None).unwrap();
         let root = ws.root.clone();
         std::fs::write(root.join("personal.txt"), b"Keep my app").unwrap();
-        assert!(lock_for_using(&root, WAIT, || ws.delete().unwrap()).is_err());
+        let error = lock_for_using(&root, WAIT, || ws.delete().unwrap()).unwrap_err();
         assert!(!root.join(crate::workspace::MANIFEST).exists());
         assert!(!root.join(super::super::FEED_FILE).exists());
-        assert!(!root.join("inbox").exists(), "the rejected initializer releases only its newly created empty coordination directory");
+        assert!(root.join("inbox").is_dir(), "a failed first-capture confirmation cannot authorize directory cleanup");
+        assert_eq!(std::fs::read_dir(root.join("inbox")).unwrap().count(), 0);
+        assert!(error.remediation.as_deref().unwrap().contains(&root.join("inbox").display().to_string()));
         assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep my app");
+        assert!(Workspace::create_at(&root, "Replacement", "Retry", TargetRef::None, Some(ExistingFiles::Edit)).is_err());
+        // The fixture can inspect and release its known empty orphan; the initializer cannot.
+        std::fs::remove_dir(root.join("inbox")).unwrap();
         Workspace::create_at(&root, "Replacement", "Retry", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
     }
 
     #[test]
-    fn deleted_legacy_initializers_release_their_empty_coordination_reservation() {
+    fn deleted_legacy_initializers_preserve_unconfirmed_coordination_entries() {
         for another_initializer_created_lock in [false, true] {
             let directory = tempfile::tempdir().unwrap();
             let mut ws = Workspace::create(directory.path(), "Project", "Test", TargetRef::None).unwrap();
@@ -626,6 +646,7 @@ mod tests {
             std::fs::write(root.join(crate::workspace::MANIFEST), serde_json::to_vec_pretty(&ws.manifest).unwrap()).unwrap();
             std::fs::remove_file(ws.inbox_dir().join(PROJECT_LOCK_FILE)).unwrap();
             std::fs::remove_dir(ws.inbox_dir()).unwrap();
+            let mut retained = None;
 
             let result = lock_for_using_after_mkdir(
                 &root,
@@ -635,16 +656,33 @@ mod tests {
                     if another_initializer_created_lock {
                         std::fs::File::create_new(root.join("inbox").join(PROJECT_LOCK_FILE)).unwrap();
                     }
+                    retained = Some(same_file::Handle::from_path(root.join("inbox")).unwrap());
                 },
             );
 
-            assert!(result.is_err());
+            let error = result.unwrap_err();
             assert!(!root.join(crate::workspace::MANIFEST).exists());
             assert!(!root.join(super::super::FEED_FILE).exists());
-            assert!(!root.join("inbox").exists());
-            let remaining = std::fs::read_dir(&root).unwrap().map(|entry| entry.unwrap().file_name()).collect::<Vec<_>>();
-            assert_eq!(remaining, [std::ffi::OsString::from("personal.txt")], "no empty coordination entry is stranded at a private cleanup path");
+            assert_eq!(retained.unwrap(), same_file::Handle::from_path(root.join("inbox")).unwrap());
+            assert_eq!(std::fs::read_dir(root.join("inbox")).unwrap().count(), usize::from(another_initializer_created_lock));
+            if another_initializer_created_lock {
+                assert_eq!(std::fs::metadata(root.join("inbox").join(PROJECT_LOCK_FILE)).unwrap().len(), 0);
+            }
+            let mut remaining = std::fs::read_dir(&root).unwrap().map(|entry| entry.unwrap().file_name()).collect::<Vec<_>>();
+            remaining.sort();
+            assert_eq!(
+                remaining,
+                [std::ffi::OsString::from("inbox"), std::ffi::OsString::from("personal.txt")],
+                "uncertain contents stay at the public inspection path"
+            );
+            assert!(error.remediation.as_deref().unwrap().contains(&root.join("inbox").display().to_string()));
             assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep my app");
+            assert!(Workspace::create_at(&root, "Replacement", "Retry", TargetRef::None, Some(ExistingFiles::Edit)).is_err());
+            // Only the fixture knows these retained entries are orphaned; inspection precedes retry.
+            if another_initializer_created_lock {
+                std::fs::remove_file(root.join("inbox").join(PROJECT_LOCK_FILE)).unwrap();
+            }
+            std::fs::remove_dir(root.join("inbox")).unwrap();
             Workspace::create_at(&root, "Replacement", "Retry", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
         }
     }
@@ -770,38 +808,63 @@ mod tests {
 
     #[test]
     fn a_legacy_initializers_late_first_capture_preserves_a_new_creators_reservation() {
-        let directory = tempfile::tempdir().unwrap();
-        let mut ws = Workspace::create(directory.path(), "Project", "Test", TargetRef::None).unwrap();
-        let root = ws.root.clone();
-        std::fs::write(root.join("personal.txt"), b"Keep my app").unwrap();
-        drop(lock_project(&root).unwrap());
-        ws.manifest.generation = None;
-        std::fs::write(root.join(crate::workspace::MANIFEST), serde_json::to_vec_pretty(&ws.manifest).unwrap()).unwrap();
-        std::fs::remove_file(ws.inbox_dir().join(PROJECT_LOCK_FILE)).unwrap();
-        std::fs::remove_dir(ws.inbox_dir()).unwrap();
-        let mut active = None;
-        let mut creation_lock = None;
+        for creator_holds_lock in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut ws = Workspace::create(directory.path(), "Project", "Test", TargetRef::None).unwrap();
+            let root = ws.root.clone();
+            std::fs::write(root.join("personal.txt"), b"Keep my app").unwrap();
+            drop(lock_project(&root).unwrap());
+            ws.manifest.generation = None;
+            std::fs::write(root.join(crate::workspace::MANIFEST), serde_json::to_vec_pretty(&ws.manifest).unwrap()).unwrap();
+            std::fs::remove_file(ws.inbox_dir().join(PROJECT_LOCK_FILE)).unwrap();
+            std::fs::remove_dir(ws.inbox_dir()).unwrap();
+            let mut active = None;
+            let mut creation_lock = None;
 
-        let result = lock_for_using_after_mkdir(
-            &root,
-            Duration::ZERO,
-            || {},
-            || {
-                ws.delete().unwrap();
-                std::fs::create_dir(root.join("inbox")).unwrap();
-                let inbox = same_file::Handle::from_path(root.join("inbox")).unwrap();
+            let result = lock_for_using_after_mkdir(
+                &root,
+                Duration::ZERO,
+                || {},
+                || {
+                    ws.delete().unwrap();
+                    std::fs::create_dir(root.join("inbox")).unwrap();
+                    let inbox = same_file::Handle::from_path(root.join("inbox")).unwrap();
+                    if creator_holds_lock {
+                        creation_lock = Some(lock_creation(&root, &inbox).unwrap());
+                    }
+                    active = Some(inbox);
+                },
+            );
+
+            let error = result.unwrap_err();
+            assert!(root.join("inbox").is_dir(), "an unconfirmed first capture must preserve the replacement reservation");
+            let inbox = active.unwrap();
+            assert_eq!(inbox, same_file::Handle::from_path(root.join("inbox")).unwrap());
+            assert_eq!(
+                std::fs::read_dir(root.join("inbox")).unwrap().count(),
+                usize::from(creator_holds_lock),
+                "the stale initializer neither adds nor removes coordination entries"
+            );
+            if let Some(lock) = &creation_lock {
+                assert_eq!(&same_file::Handle::from_path(root.join("inbox").join(PROJECT_LOCK_FILE)).unwrap(), lock);
+            } else {
+                assert!(!root.join("inbox").join(PROJECT_LOCK_FILE).exists());
+            }
+            assert!(error.remediation.as_deref().unwrap().contains(&root.join("inbox").display().to_string()));
+            assert!(Workspace::create_at(&root, "Other", "Retry", TargetRef::None, Some(ExistingFiles::Edit)).is_err());
+            assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep my app");
+            if creation_lock.is_none() {
                 creation_lock = Some(lock_creation(&root, &inbox).unwrap());
-                active = Some(inbox);
-            },
-        );
-
-        let error = result.unwrap_err();
-        assert_eq!(active.unwrap(), same_file::Handle::from_path(root.join("inbox")).unwrap());
-        assert_eq!(std::fs::read_dir(root.join("inbox")).unwrap().count(), 1, "an active creator retains its coordination reservation");
-        assert_eq!(same_file::Handle::from_path(root.join("inbox").join(PROJECT_LOCK_FILE)).unwrap(), creation_lock.unwrap());
-        assert!(error.remediation.as_deref().unwrap().contains(&root.join("inbox").display().to_string()));
-        assert!(Workspace::create_at(&root, "Other", "Retry", TargetRef::None, Some(ExistingFiles::Edit)).is_err());
-        assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep my app");
+            }
+            assert_eq!(std::fs::metadata(root.join("inbox").join(PROJECT_LOCK_FILE)).unwrap().len(), 0);
+            drop(creation_lock);
+            drop(inbox);
+            // The fixture owns this creator's unchanged reservation and explicitly releases it.
+            std::fs::remove_file(root.join("inbox").join(PROJECT_LOCK_FILE)).unwrap();
+            std::fs::remove_dir(root.join("inbox")).unwrap();
+            Workspace::create_at(&root, "Replacement", "Retry", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+            assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep my app");
+        }
     }
     #[cfg(unix)]
     #[test]

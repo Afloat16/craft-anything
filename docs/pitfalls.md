@@ -998,9 +998,15 @@ retained inbox handle, including during initial creation: a later public-name re
 no stale lock, even before its creator takes the lock. Try an existing-file open on the bound handle
 before create-new; the public path's absence does not establish absence in the original directory.
 Require a literal single child component, reject links and keep Unix opens nonblocking.
+Before opening a coordination file for an inbox this attempt just made, confirm the original project
+after that inbox's first capture. A successful mkdir does not prove that the captured directory is still
+that entry. If confirmation fails, return before entering the cleanup scope: keep the directory and its
+contents, create or acquire no lock, and report the inspection path. A new creator may still have an
+empty reservation and no lock. This uncertain first-capture case can require manual inspection before
+retry; neither an empty directory nor a missing manifest grants permission to remove it.
 Require initial creators to hold the same raw exclusive coordination inode through publication and
 failed-creation cleanup. That raw handle grants no feed-writing authority without a published project
-identity. An initializer that made an inbox can acquire the same lock, then recheck project
+identity. An initializer whose newly made inbox passed that first confirmation can acquire the same lock, then recheck project
 identity and manifest absence before privately claiming only that captured inbox. A non-owner must
 never remove its lock independently: the initializer that made the directory may be waiting for it,
 and may release the same verified empty inode once it holds the lock. A creator holding the inode
