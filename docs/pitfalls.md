@@ -976,13 +976,27 @@ also reject stale loaded sources, including a file created after an absent snaps
 an ordinary answer while holding that lock. Keep request-before-feed lock order, bounded waits and
 a persistent coordination file. Another client's intervening answer must yield FileChanged and
 retain the journal for a new load; a second successful decode alone does not make the stale replay current.
-Deletion must hold that same lock, remove the manifest before the inbox and retain the guard through
-cleanup. Check project liveness before creating a lock and again after acquiring it; otherwise an old
+Deletion must hold that same lock, clear fallible inbox payloads while the manifest still permits a
+retry, then remove the manifest and privately claim the still-locked inbox before clearing its
+coordination entries. Never return to the public inbox name after releasing it: a new creator may
+already own that name. Preserve the held lock by file identity, including alternate names, and retain
+the guard through cleanup. Check project liveness before creating a lock and again after acquiring it; otherwise an old
 waiter or a late archive writer can recreate records in a deleted in-place project.
 Bind the loaded writer and its recovery snapshot to their original directory identity and manifest
 creation time too: checking only at lock acquisition would accept a new project at the old path.
-Do not turn cleanup of an empty coordination entry into another unsafe public-path unlink; a
-creation interleaved with deletion may leave empty coordination records while refusing all payloads.
+Do not turn cleanup of an empty coordination entry into another unsafe public-path unlink. Modern
+generation-bearing projects already reserve an inbox: a writer must refuse its absence, not recreate it.
+A legacy initializer must confirm the original project after its first inbox handle capture before
+granting cleanup authority. If that first confirmation fails, preserve and report the current directory;
+it can already be a new creator's reservation even though this attempt earlier succeeded at mkdir.
+Do not promise automatic retry for that uncertain legacy window. A failed feed initializer can
+privately claim only a confirmed inbox it created itself; recheck held root/inbox identities
+and manifest absence after claiming it. First acquire any existing coordination inode exclusively,
+or retain the entry while its current owner finishes; moving it out from under an active deleter
+would let that deletion remove a new creator's inbox. Remove only its own verified empty create-new lock and empty
+directories. Never claim another creator's existing reservation or unlink another initializer's lock;
+retain uncertain contents with their actual path. This does not synchronize the separate request-posting
+protocol or make arbitrary filesystem changes atomic.
 The manifest may already project a pending check, completed reply or failure into that history.
 Save that projection and its damaged source digest with the recovery rather than guessing from a
 manifest that may have advanced. A temporary read failure or a different damaged source does not
@@ -1098,7 +1112,10 @@ do not silently skip personal replacements or copy a new recovery file through t
 A missing or unrecognized receipt cannot reclassify an already known recovery copy as personal
 content during that same copy attempt. Hold the source feed lock across discovery and copying,
 and check the loaded identity for ordinary app/ sources too: an old handle must not mix a replacement
-project's app with the old project's settings. A readable read-only legacy source with no inbox
+project's app with the old project's settings. Actual write-access denial can use an existing regular
+empty lock through a read-only shared guard that excludes writers; keep that guard distinct from a
+write transaction. A missing or invalid existing lock, contention or unsupported locking must not
+become an unlocked copy. A readable read-only legacy source with no inbox
 can use a read-only copy path only after actual permission or read-only-filesystem denial; keep manifest and ownership checks,
 and never swallow lock timeouts or unreadable records. Match case variants by the opened file's identity, not by lowercasing
 all names: a case-sensitive filesystem can hold a distinct personal file with that spelling.

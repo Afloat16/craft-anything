@@ -1004,6 +1004,18 @@ impl CreationReservation {
             entry.map_err(|error| ToolError::io(inbox.display(), error))?;
             return Err(ToolError::invalid(format!("{} is not empty; its contents were kept.", inbox.display())));
         }
+        self.release_claimed(root, after_check, None, |_| Ok(()))
+    }
+
+    fn release_claimed(
+        &self,
+        root: &Path,
+        after_check: impl FnOnce(),
+        held_lock: Option<&FileHandle>,
+        remove_owned: impl FnOnce(&Path) -> Result<(), ToolError>,
+    ) -> Result<(), ToolError> {
+        let _coordination = crate::feed::lock_inbox_for_cleanup(root, held_lock)?;
+        let inbox = root.join("inbox");
         let private = CopyDestination::cleanup_directory(root)?;
         let claimed = private.join("reservation");
         let moved = (|| {
@@ -1023,12 +1035,13 @@ impl CreationReservation {
             Self::check_directory(root, &self.directory)?;
             Self::check_directory(&claimed, &self.inbox)?;
             Self::check_manifest_absent(root)?;
+            remove_owned(&claimed)?;
             // Never recurse: partial writes and unexpected entries must survive cleanup.
             std::fs::remove_dir(&claimed).map_err(|error| ToolError::io(claimed.display(), error))
         })();
         release.map_err(|error| {
             ToolError::new(error.code, format!("{} The claimed reservation is preserved at {}.", error.message, claimed.display()))
-                .with_remediation("Inspect the preserved entry before retrying. No directory contents were removed.")
+                .with_remediation("Inspect the preserved entry before retrying. No directory contents were removed recursively.")
         })?;
         std::fs::remove_dir(&private).map_err(|error| ToolError::io(private.display(), error))
     }
@@ -1050,6 +1063,85 @@ impl CreationReservation {
             Err(error) => Err(ToolError::io(path.display(), error)),
         }
     }
+}
+
+/// A failed feed initializer may release only an inbox it created, never an existing reservation.
+pub(crate) fn release_created_inbox(
+    root: &Path,
+    directory: FileHandle,
+    inbox: FileHandle,
+    created_lock: Option<&FileHandle>,
+    held_lock: Option<&FileHandle>,
+) -> Result<(), ToolError> {
+    let creation = CreationReservation { directory, inbox };
+    creation.check(root)?;
+    creation.release_claimed(
+        root,
+        || {},
+        held_lock,
+        |claimed| {
+            if let Some(expected) = created_lock {
+                let path = claimed.join(crate::feed::PROJECT_LOCK_FILE);
+                let metadata = std::fs::symlink_metadata(&path).map_err(|error| ToolError::io(path.display(), error))?;
+                let opened = expected.as_file().metadata().map_err(|error| ToolError::io(path.display(), error))?;
+                if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() != 0 || !opened.is_file() || opened.len() != 0 {
+                    return Err(copy_changed(&path));
+                }
+                let current = FileHandle::from_path(&path).map_err(|error| ToolError::io(path.display(), error))?;
+                if &current != expected {
+                    return Err(copy_changed(&path));
+                }
+                std::fs::remove_file(&path).map_err(|error| ToolError::io(path.display(), error))?;
+            }
+            Ok(())
+        },
+    )
+}
+
+/// Once a deleter releases the public inbox name, it cleans only its privately claimed entry.
+pub(crate) fn finish_deleted_inbox(
+    root: &Path,
+    directory: &FileHandle,
+    inbox: &FileHandle,
+    lock: &FileHandle,
+    after_claim: impl FnOnce(),
+) -> Result<(), ToolError> {
+    let public = root.join("inbox");
+    CreationReservation::check_directory(root, directory)?;
+    CreationReservation::check_directory(&public, inbox)?;
+    CreationReservation::check_manifest_absent(root)?;
+    crate::feed::check_coordination_entry(&public.join(crate::feed::PROJECT_LOCK_FILE), lock)?;
+    let private = CopyDestination::cleanup_directory(root)?;
+    let claimed = private.join("reservation");
+    let moved = (|| {
+        CreationReservation::check_directory(root, directory)?;
+        CreationReservation::check_directory(&public, inbox)?;
+        CreationReservation::check_manifest_absent(root)?;
+        crate::feed::check_coordination_entry(&public.join(crate::feed::PROJECT_LOCK_FILE), lock)?;
+        std::fs::rename(&public, &claimed).map_err(|error| ToolError::io(public.display(), error))
+    })();
+    if let Err(error) = moved {
+        return match std::fs::remove_dir(&private) {
+            Ok(()) => Err(error),
+            Err(cleanup) => Err(error.with_remediation(format!("Inspect the cleanup folder at {} before retrying: {cleanup}", private.display()))),
+        };
+    }
+    after_claim();
+    let removed = (|| {
+        CreationReservation::check_directory(root, directory)?;
+        CreationReservation::check_directory(&claimed, inbox)?;
+        // A new creator may now publish at the public name. Do not inspect or remove its inbox.
+        for entry in std::fs::read_dir(&claimed).map_err(|error| ToolError::io(claimed.display(), error))? {
+            let entry = entry.map_err(|error| ToolError::io(claimed.display(), error))?;
+            crate::feed::check_coordination_entry(&entry.path(), lock)?;
+            std::fs::remove_file(entry.path()).map_err(|error| ToolError::io(entry.path().display(), error))?;
+        }
+        std::fs::remove_dir(&claimed).map_err(|error| ToolError::io(claimed.display(), error))
+    })();
+    removed.map_err(|error| {
+        error.with_remediation(format!("Inspect the retained coordination entry at {}. Its contents were not removed recursively.", claimed.display()))
+    })?;
+    std::fs::remove_dir(&private).map_err(|error| ToolError::io(private.display(), error))
 }
 
 /// Keep the first opened destination identity through copying and cleanup. A held identity
@@ -1142,12 +1234,12 @@ impl CopyDestination {
     }
 }
 
-/// Every copy normally holds the publisher lock. A caller denied permission to create
-/// an inbox may instead read a legacy source with no inbox, then recheck before publishing its
-/// copy. Application publishers retain that directory until project deletion, so its appearance
-/// makes the unlocked copy uncertain even if its lock has already been released.
+/// Every copy normally holds the publisher lock. A caller denied write access can hold an
+/// existing lock shared through a read-only handle. A legacy source with no inbox can instead
+/// be read and rechecked before publication. A new inbox makes that unlocked copy uncertain.
 enum CopySource {
     Locked(crate::feed::ProjectFeedGuard),
+    ReadOnly(crate::feed::ProjectCopyGuard),
     WithoutInbox(FileHandle),
 }
 
@@ -1155,6 +1247,7 @@ impl CopySource {
     fn check(&self, ws: &Workspace) -> Result<(), ToolError> {
         match self {
             Self::Locked(guard) => guard.check_workspace(ws),
+            Self::ReadOnly(guard) => guard.check_workspace(ws),
             Self::WithoutInbox(directory) => {
                 let metadata = std::fs::symlink_metadata(&ws.root).map_err(|error| ToolError::io(ws.root.display(), error))?;
                 if !metadata.is_dir() || metadata.file_type().is_symlink() {
@@ -1296,7 +1389,14 @@ impl Workspace {
                 let inbox = self.inbox_dir();
                 match std::fs::symlink_metadata(&inbox) {
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Ok(_) => return Err(error),
+                    Ok(_) => {
+                        let path = inbox.join(crate::feed::PROJECT_LOCK_FILE);
+                        match std::fs::symlink_metadata(&path) {
+                            Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => return Err(error),
+                            Err(error) => return Err(ToolError::io(path.display(), error)),
+                            Ok(_) => return crate::feed::lock_project_for_copy(&self.root).map(CopySource::ReadOnly),
+                        }
+                    }
                     Err(error) => return Err(ToolError::io(inbox.display(), error)),
                 }
                 // Mode bits cannot determine this caller's access (for example, another
@@ -1318,6 +1418,25 @@ impl Workspace {
     }
 
     fn delete_after_discovery(self, after_discovery: impl FnOnce(&[PathBuf])) -> Result<(), ToolError> {
+        self.delete_with_remover(after_discovery, |p| {
+            let r = if p.is_dir() { std::fs::remove_dir_all(p) } else { std::fs::remove_file(p) };
+            match r {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(ToolError::io(p.display(), e)),
+                _ => Ok(()),
+            }
+        })
+    }
+
+    fn delete_with_remover(self, after_discovery: impl FnOnce(&[PathBuf]), mut gone: impl FnMut(&Path) -> Result<(), ToolError>) -> Result<(), ToolError> {
+        self.delete_with_hooks(after_discovery, &mut gone, || {})
+    }
+
+    fn delete_with_hooks(
+        self,
+        after_discovery: impl FnOnce(&[PathBuf]),
+        mut gone: impl FnMut(&Path) -> Result<(), ToolError>,
+        after_claim: impl FnOnce(),
+    ) -> Result<(), ToolError> {
         if !self.root.join(MANIFEST).is_file() {
             return Err(ToolError::invalid(format!("{} isn't a project folder.", self.root.display())));
         }
@@ -1325,13 +1444,6 @@ impl Workspace {
         // The caller may still hold a workspace loaded before this folder was reused.
         // Acquiring the replacement project's lock must not authorize deleting its data.
         feed.check_workspace(&self)?;
-        let gone = |p: &Path| -> Result<(), ToolError> {
-            let r = if p.is_dir() { std::fs::remove_dir_all(p) } else { std::fs::remove_file(p) };
-            match r {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(ToolError::io(p.display(), e)),
-                _ => Ok(()),
-            }
-        };
         // A legacy project can have personal files at a name reserved by a later version.
         // Read the receipts before removing the inbox, and never recursively remove backups.
         let backups = crate::feed::owned_backups(&self.root)?;
@@ -1348,8 +1460,18 @@ impl Workspace {
             }
             gone(&self.root.join(name))?;
         }
+        // Fallible payload cleanup keeps the project discoverable and its lock inode intact,
+        // so a person can repair access and retry. Only coordination cleanup follows deletion.
+        let inbox = self.inbox_dir();
+        let inbox_identity = FileHandle::from_path(&inbox).map_err(|error| ToolError::io(inbox.display(), error))?;
+        for entry in std::fs::read_dir(&inbox).map_err(|error| ToolError::io(inbox.display(), error))? {
+            let entry = entry.map_err(|error| ToolError::io(inbox.display(), error))?;
+            if !feed.is_lock_entry(&entry.path())? {
+                gone(&entry.path())?;
+            }
+        }
         gone(&self.root.join(MANIFEST))?;
-        gone(&self.inbox_dir())?;
+        feed.finish_deletion(&inbox_identity, after_claim)?;
         if std::fs::read_dir(&self.root).is_ok_and(|mut d| d.next().is_none()) {
             let _ = std::fs::remove_dir(&self.root);
         }
@@ -3247,8 +3369,10 @@ mod tests {
         let original = directory.path().join("original");
         std::fs::create_dir(&original).unwrap();
         std::fs::write(original.join("index.html"), b"Keep my app").unwrap();
-        let ws = Workspace::create_at(&original, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+        let mut ws = Workspace::create_at(&original, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
         // Model a legacy project created before initial inbox reservations.
+        ws.manifest.generation = None;
+        std::fs::write(original.join(MANIFEST), serde_json::to_vec_pretty(&ws.manifest).unwrap()).unwrap();
         std::fs::remove_dir(ws.inbox_dir()).unwrap();
         assert!(!ws.inbox_dir().exists());
         std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o555)).unwrap();
@@ -3278,8 +3402,10 @@ mod tests {
         let original = directory.path().join("original");
         std::fs::create_dir(&original).unwrap();
         std::fs::write(original.join("index.html"), b"Keep my app").unwrap();
-        let ws = Workspace::create_at(&original, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+        let mut ws = Workspace::create_at(&original, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
         // Model a legacy project created before initial inbox reservations.
+        ws.manifest.generation = None;
+        std::fs::write(original.join(MANIFEST), serde_json::to_vec_pretty(&ws.manifest).unwrap()).unwrap();
         std::fs::remove_dir(ws.inbox_dir()).unwrap();
         std::fs::write(original.join("feed.json.broken"), b"A personal file with a reserved name").unwrap();
         std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -3301,7 +3427,7 @@ mod tests {
         for in_place in [false, true] {
             let directory = tempfile::tempdir().unwrap();
             let original = directory.path().join("original");
-            let ws = if in_place {
+            let mut ws = if in_place {
                 std::fs::create_dir(&original).unwrap();
                 std::fs::write(original.join("index.html"), b"Keep my app").unwrap();
                 Workspace::create_at(&original, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap()
@@ -3312,6 +3438,8 @@ mod tests {
                 ws
             };
             // A legacy project has no coordination directory before its first feed write.
+            ws.manifest.generation = None;
+            std::fs::write(ws.root.join(MANIFEST), serde_json::to_vec_pretty(&ws.manifest).unwrap()).unwrap();
             std::fs::remove_dir(ws.inbox_dir()).unwrap();
             let denied = || ToolError::io(ws.inbox_dir().display(), std::io::Error::from(std::io::ErrorKind::ReadOnlyFilesystem));
             let source = ws.copy_source_after_lock(Err(denied())).unwrap();
@@ -3328,13 +3456,48 @@ mod tests {
     }
 
     #[test]
+    fn duplication_reads_an_existing_coordination_file_without_write_access() {
+        for in_place in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let original = directory.path().join("original");
+            let ws = if in_place {
+                std::fs::create_dir(&original).unwrap();
+                std::fs::write(original.join("index.html"), b"Keep my app").unwrap();
+                Workspace::create_at(&original, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap()
+            } else {
+                let ws = Workspace::create(directory.path(), "Original", "A website", TargetRef::None).unwrap();
+                std::fs::create_dir(ws.app_dir()).unwrap();
+                std::fs::write(ws.app_dir().join("index.html"), b"Keep my app").unwrap();
+                ws
+            };
+            drop(crate::feed::lock_project(&ws.root).unwrap());
+            let path = ws.inbox_dir().join(crate::feed::PROJECT_LOCK_FILE);
+            let identity = FileHandle::from_path(&path).unwrap();
+            let manifest = std::fs::read(ws.root.join(MANIFEST)).unwrap();
+            for denial in [std::io::ErrorKind::PermissionDenied, std::io::ErrorKind::ReadOnlyFilesystem] {
+                // Exercise the actual denied-write fallback even for privileged test runners.
+                let denied = ToolError::io(path.display(), std::io::Error::from(denial));
+                let source = ws.copy_source_after_lock(Err(denied)).unwrap();
+                let copy = ws.duplicate_from_source("Copy", source, |_| {}, |_| {}).unwrap();
+
+                assert_eq!(std::fs::read(copy.app_dir().join("index.html")).unwrap(), b"Keep my app");
+                assert_eq!(std::fs::read(ws.root.join(MANIFEST)).unwrap(), manifest);
+                assert_eq!(identity, FileHandle::from_path(&path).unwrap());
+                assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
+            }
+        }
+    }
+
+    #[test]
     fn an_unlocked_copy_rejects_a_publisher_that_starts_after_discovery() {
         let directory = tempfile::tempdir().unwrap();
         let original = directory.path().join("original");
         std::fs::create_dir(&original).unwrap();
         std::fs::write(original.join("index.html"), b"Keep my app").unwrap();
-        let ws = Workspace::create_at(&original, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+        let mut ws = Workspace::create_at(&original, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
         // Model a legacy project created before initial inbox reservations.
+        ws.manifest.generation = None;
+        std::fs::write(original.join(MANIFEST), serde_json::to_vec_pretty(&ws.manifest).unwrap()).unwrap();
         std::fs::remove_dir(ws.inbox_dir()).unwrap();
         let denied = ToolError::io(ws.inbox_dir().display(), std::io::Error::from(std::io::ErrorKind::PermissionDenied));
         let source = ws.copy_source_after_lock(Err(denied)).unwrap();
@@ -3355,7 +3518,7 @@ mod tests {
         assert!(ws.inbox_dir().is_dir());
         assert_eq!(std::fs::read(original.join("index.html")).unwrap(), b"Keep my app");
         let denied = ToolError::io(ws.inbox_dir().display(), std::io::Error::from(std::io::ErrorKind::PermissionDenied));
-        assert!(matches!(ws.copy_source_after_lock(Err(denied)), Err(error) if error.code == ErrorCode::NoPermission));
+        assert!(matches!(ws.copy_source_after_lock(Err(denied)), Err(error) if error.code == ErrorCode::TimedOut));
     }
 
     #[test]
@@ -3464,6 +3627,158 @@ mod tests {
         assert!(!original.join(crate::feed::FEED_FILE).exists());
         assert!(!original.join("inbox").exists());
         assert_eq!(std::fs::read(original.join("index.html")).unwrap(), b"Keep my app");
+    }
+
+    #[test]
+    fn inbox_payload_cleanup_failure_keeps_project_deletion_retryable() {
+        let directory = tempfile::tempdir().unwrap();
+        let original = directory.path().join("original");
+        std::fs::create_dir(&original).unwrap();
+        std::fs::write(original.join("index.html"), b"Keep my app").unwrap();
+        let ws = Workspace::create_at(&original, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+        let payload = ws.inbox_dir().join("unavailable-payload");
+        std::fs::create_dir(&payload).unwrap();
+        std::fs::write(payload.join("partial"), b"The unfinished inbox write").unwrap();
+        drop(crate::feed::lock_project(&original).unwrap());
+        let lock = ws.inbox_dir().join(crate::feed::PROJECT_LOCK_FILE);
+        let identity = FileHandle::from_path(&lock).unwrap();
+        let manifest = std::fs::read(original.join(MANIFEST)).unwrap();
+
+        let result = ws.delete_with_remover(
+            |_| {},
+            |path| {
+                if payload.starts_with(path) {
+                    return Err(ToolError::io(path.display(), std::io::Error::from(std::io::ErrorKind::PermissionDenied)));
+                }
+                let removed = if path.is_dir() { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) };
+                match removed {
+                    Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(ToolError::io(path.display(), error)),
+                    _ => Ok(()),
+                }
+            },
+        );
+
+        assert_eq!(result.unwrap_err().code, ErrorCode::NoPermission);
+        assert_eq!(std::fs::read(original.join(MANIFEST)).unwrap(), manifest);
+        assert_eq!(identity, FileHandle::from_path(&lock).unwrap());
+        assert_eq!(std::fs::read(payload.join("partial")).unwrap(), b"The unfinished inbox write");
+        Workspace::open(&original).unwrap().delete().unwrap();
+        assert!(!original.join(MANIFEST).exists());
+        assert!(!original.join("inbox").exists());
+        assert_eq!(std::fs::read(original.join("index.html")).unwrap(), b"Keep my app");
+    }
+
+    #[test]
+    fn deletion_keeps_lock_file_aliases_until_the_manifest_is_removed() {
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Original", "A website", TargetRef::None).unwrap();
+        drop(crate::feed::lock_project(&ws.root).unwrap());
+        let manifest = ws.root.join(MANIFEST);
+        let inbox = ws.inbox_dir();
+        let alias = inbox.join("another-lock-name");
+        std::fs::hard_link(inbox.join(crate::feed::PROJECT_LOCK_FILE), &alias).unwrap();
+
+        ws.delete_with_remover(
+            |_| {},
+            |path| {
+                if path == alias || path == inbox {
+                    assert!(!manifest.exists(), "another spelling of the held inode is not an ordinary payload");
+                }
+                let removed = if path.is_dir() { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) };
+                match removed {
+                    Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(ToolError::io(path.display(), error)),
+                    _ => Ok(()),
+                }
+            },
+        )
+        .unwrap();
+
+        assert!(!manifest.exists());
+        assert!(!inbox.exists());
+    }
+
+    #[test]
+    fn deletion_preserves_a_coordination_file_changed_after_locking() {
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Original", "A website", TargetRef::None).unwrap();
+        let root = ws.root.clone();
+        let lock = ws.inbox_dir().join(crate::feed::PROJECT_LOCK_FILE);
+        let manifest = std::fs::read(root.join(MANIFEST)).unwrap();
+
+        let result = ws.delete_after_discovery(|_| std::fs::write(&lock, b"Keep these unexpected bytes").unwrap());
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(root.join(MANIFEST)).unwrap(), manifest);
+        assert_eq!(std::fs::read(&lock).unwrap(), b"Keep these unexpected bytes");
+    }
+
+    #[test]
+    fn a_failed_initializer_cannot_release_a_deleters_active_inbox() {
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Original", "A website", TargetRef::None).unwrap();
+        let root = ws.root.clone();
+        std::fs::write(root.join("personal.txt"), b"Keep this folder").unwrap();
+        // A legacy initializer creates the inbox, then deletion gets its coordination lock.
+        std::fs::remove_dir(ws.inbox_dir()).unwrap();
+        std::fs::create_dir(ws.inbox_dir()).unwrap();
+        let mut initializer = Some((FileHandle::from_path(&root).unwrap(), FileHandle::from_path(ws.inbox_dir()).unwrap()));
+
+        ws.delete_with_remover(
+            |_| {},
+            |path| {
+                let removed = if path.is_dir() { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) };
+                if let Err(error) = removed {
+                    if error.kind() != std::io::ErrorKind::NotFound {
+                        return Err(ToolError::io(path.display(), error));
+                    }
+                }
+                if path == root.join(MANIFEST) {
+                    let expected = FileHandle::from_path(root.join("inbox")).unwrap();
+                    let (directory, inbox) = initializer.take().unwrap();
+                    let error = release_created_inbox(&root, directory, inbox, None, None).unwrap_err();
+                    assert_eq!(expected, FileHandle::from_path(root.join("inbox")).unwrap(), "a busy deleter keeps the public reservation");
+                    assert_eq!(error.code, ErrorCode::TimedOut);
+                    assert!(Workspace::create_at(&root, "Too soon", "New request", TargetRef::None, Some(ExistingFiles::Edit)).is_err());
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        Workspace::create_at(&root, "Replacement", "New request", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+        assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep this folder");
+    }
+
+    #[test]
+    fn deletion_never_returns_to_the_public_inbox_after_claiming_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Original", "A website", TargetRef::None).unwrap();
+        let root = ws.root.clone();
+        std::fs::write(root.join("personal.txt"), b"Keep this folder").unwrap();
+        let mut replacement = None;
+
+        ws.delete_with_hooks(
+            |_| {},
+            |path| {
+                let removed = if path.is_dir() { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) };
+                match removed {
+                    Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(ToolError::io(path.display(), error)),
+                    _ => Ok(()),
+                }
+            },
+            || {
+                Workspace::create_at(&root, "Replacement", "New request", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+                std::fs::write(root.join("inbox/new-request"), b"Keep the new request").unwrap();
+                replacement = Some((std::fs::read(root.join(MANIFEST)).unwrap(), FileHandle::from_path(root.join("inbox")).unwrap()));
+            },
+        )
+        .unwrap();
+
+        let (manifest, inbox) = replacement.unwrap();
+        assert_eq!(std::fs::read(root.join(MANIFEST)).unwrap(), manifest);
+        assert_eq!(FileHandle::from_path(root.join("inbox")).unwrap(), inbox);
+        assert_eq!(std::fs::read(root.join("inbox/new-request")).unwrap(), b"Keep the new request");
+        assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep this folder");
     }
 
     #[test]
@@ -3909,6 +4224,76 @@ mod tests {
             .find(|path| path.is_dir())
             .expect("the replacement inbox remains in the reported private folder");
         assert!(error.message.contains(&kept.display().to_string()));
+        assert!(displaced.is_dir());
+    }
+
+    #[test]
+    fn failed_initialization_releases_only_its_own_empty_coordination_entries() {
+        let directory = tempfile::tempdir().unwrap();
+        let (root, handle) = create_workspace_root(directory.path(), "New").unwrap();
+        std::fs::create_dir(root.join("inbox")).unwrap();
+        let inbox = FileHandle::from_path(root.join("inbox")).unwrap();
+        let lock = FileHandle::from_file(std::fs::File::create_new(root.join("inbox").join(crate::feed::PROJECT_LOCK_FILE)).unwrap()).unwrap();
+        lock.as_file().try_lock().unwrap();
+
+        release_created_inbox(&root, handle, inbox, Some(&lock), Some(&lock)).unwrap();
+
+        assert!(!root.join("inbox").exists());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+        Workspace::create_at(&root, "Retry", "New request", TargetRef::None, None).unwrap();
+    }
+
+    #[test]
+    fn failed_initialization_preserves_foreign_or_changed_lock_files() {
+        for owned in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let (root, handle) = create_workspace_root(directory.path(), "New").unwrap();
+            std::fs::create_dir(root.join("inbox")).unwrap();
+            let inbox = FileHandle::from_path(root.join("inbox")).unwrap();
+            // Another stale initializer can win create_new after this attempt's mkdir.
+            let path = root.join("inbox").join(crate::feed::PROJECT_LOCK_FILE);
+            let lock = FileHandle::from_file(std::fs::File::create_new(&path).unwrap()).unwrap();
+            let bytes = if owned { b"Keep these unexpected bytes".as_slice() } else { b"".as_slice() };
+            std::fs::write(&path, bytes).unwrap();
+
+            let error = release_created_inbox(&root, handle, inbox, owned.then_some(&lock), None).unwrap_err();
+
+            if owned {
+                assert!(error.message.contains(&path.display().to_string()));
+                assert_eq!(lock, FileHandle::from_path(&path).unwrap());
+                assert_eq!(std::fs::read(&path).unwrap(), bytes);
+                assert!(Workspace::create_at(&root, "Retry", "New request", TargetRef::None, Some(ExistingFiles::Edit)).is_err());
+                continue;
+            }
+
+            let kept = std::fs::read_dir(&root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .map(|entry| entry.path().join("reservation"))
+                .find(|path| path.join(crate::feed::PROJECT_LOCK_FILE).is_file())
+                .expect("an unowned or changed lock is retained in the reported private folder");
+            assert!(error.message.contains(&kept.display().to_string()));
+            assert_eq!(lock, FileHandle::from_path(kept.join(crate::feed::PROJECT_LOCK_FILE)).unwrap());
+            assert_eq!(std::fs::read(kept.join(crate::feed::PROJECT_LOCK_FILE)).unwrap(), bytes);
+            assert!(!root.join("inbox").exists());
+            Workspace::create_at(&root, "Retry", "New request", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+        }
+    }
+
+    #[test]
+    fn failed_initialization_does_not_claim_a_replacement_inbox() {
+        let directory = tempfile::tempdir().unwrap();
+        let (root, handle) = create_workspace_root(directory.path(), "New").unwrap();
+        std::fs::create_dir(root.join("inbox")).unwrap();
+        let inbox = FileHandle::from_path(root.join("inbox")).unwrap();
+        let displaced = directory.path().join("displaced-inbox");
+        std::fs::rename(root.join("inbox"), &displaced).unwrap();
+        std::fs::create_dir(root.join("inbox")).unwrap();
+        std::fs::write(root.join("inbox/personal.txt"), b"Keep the replacement").unwrap();
+
+        assert_eq!(release_created_inbox(&root, handle, inbox, None, None).unwrap_err().code, ErrorCode::FileChanged);
+
+        assert_eq!(std::fs::read(root.join("inbox/personal.txt")).unwrap(), b"Keep the replacement");
         assert!(displaced.is_dir());
     }
 

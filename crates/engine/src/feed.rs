@@ -18,6 +18,7 @@ mod transaction;
 pub(crate) use backups::{owned_backups, owned_backups_with_cancel, owns_open_backup_with_cancel, remove_owned_backups};
 pub(crate) use recovery::sync_directory;
 pub use recovery::{RECOVERY_ARCHIVE_DIR, RecoverySnapshot, RecoveryWrite, recovery_notices, write_recovery_snapshot, write_recovery_snapshot_report};
+pub(crate) use transaction::{PROJECT_LOCK_FILE, ProjectCopyGuard, check_entry as check_coordination_entry, lock_inbox_for_cleanup, lock_project_for_copy};
 pub use transaction::{ProjectFeedGuard, lock_project};
 
 /// Where the conversation is kept in the project folder.

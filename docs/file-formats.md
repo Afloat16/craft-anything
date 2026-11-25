@@ -60,8 +60,14 @@ the recovered conversation names the backup. A newer format is left in place wit
 
 The empty `inbox/feed.lock` coordination file remains in place after each transaction. Lock waits
 are bounded to five seconds; request locks precede this feed lock, never the other way around.
-Deletion holds the same lock, removes `craft.json` before removing `inbox/`, and retains its guard
-through final directory cleanup. Writers check that the project exists before creating coordination
+Deletion holds the same lock and first removes inbox payloads while `craft.json` remains discoverable.
+Every entry identifying the held lock inode is retained, including alternate filesystem spellings.
+A payload-cleanup failure can therefore be retried after access is repaired. Only then is `craft.json`
+removed, and the still-locked inbox is privately claimed before its empty lock entries are removed.
+Once that public name is released, deletion never cleans it again, so a new project can reserve it
+without losing its inbox to the old deletion. The guard remains held through final cleanup; unexpected
+contents are retained at the reported private path. Later filesystem failures can still interrupt
+that cleanup. Writers check that the project exists before creating coordination
 entries and recheck the root directory identity, manifest creation time and generation after acquiring
 the lock. New projects and copies receive an operating-system-random 128-bit generation, saved as
 32 hexadecimal characters in `craft.json`. Ordinary manifest updates acquire the project lock,
@@ -75,11 +81,27 @@ generation even if its creation timestamp repeats. Loaded writers retain that id
 recovery archives reject a different project later created at the same path. Saved-answer merging
 checks that identity before adopting any replacement rows. Deletion also compares
 its loaded workspace with the project under the lock before removing anything. They do not write
-conversation, backup, archive or recorded-answer payloads after deletion. A lock acquisition that starts just before
-deletion can leave an empty coordination directory or file; it still fails the check under the lock.
+conversation, backup, archive or recorded-answer payloads after deletion. A generation-bearing project
+already reserves its inbox before publication; a writer refuses a missing inbox instead of recreating it.
+Only legacy projects without a generation may initialize a missing inbox. Its first captured identity
+must still belong to the original project before any later failure can authorize cleanup. If that first
+confirmation fails, the current directory is retained with inspection guidance: deletion and a new
+creator may have reused the name before the first open. This legacy case can still require manual
+inspection before retrying. A rejected feed initializer may privately claim only a confirmed inbox
+it created itself, after checking its held root/inbox identities and
+manifest absence again. An existing coordination lock must be held exclusively before that claim;
+a busy deleter keeps the public reservation until it performs its own private claim. Cleanup removes
+only its own verified, still-empty newly created lock and empty
+directories. Existing reservations, a published replacement and changed entries are preserved.
+An unowned lock or other contents remain at the reported private path for inspection; final cleanup
+is not a filesystem-atomic lifecycle protocol. Ordinary inbox request posting uses its separate protocol.
 Duplication checks the loaded source identity under the same lock in both app layouts and holds
 it through destination manifest publication. In-place backup discovery also stays under that lock,
-so application recovery cannot change ownership during the copy. A readable legacy source with no
+so application recovery cannot change ownership during the copy. After actual write-access denial,
+an existing regular, empty coordination file can instead be opened read-only and held with a shared
+lock that excludes feed writers. This guard cannot be supplied to a feed-writing API. An existing
+inbox with no usable lock, a lock timeout or unsupported locking does not fall back to an uncoordinated copy.
+A readable legacy source with no
 inbox can be copied without creating one when the attempted lock creation is denied, including a
 read-only filesystem; owner write bits do not establish the current caller's access. Other I/O errors
 still fail the copy. This fallback checks the same directory and project
