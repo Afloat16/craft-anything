@@ -1,0 +1,118 @@
+name: Craft 2224 merge and review validation
+on:
+  push:
+    branches: [validation/20261126-craft2224-candidate]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+      CARGO_NET_RETRY: '10'
+      RUST_BACKTRACE: '1'
+      CANDIDATE_SHA: '7a37f86c6fcb8a3f935414c92d52f2df429aa0f5'
+    steps:
+      - name: Check out the immutable source candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: '7a37f86c6fcb8a3f935414c92d52f2df429aa0f5'
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Verify source identity
+        run: test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+      - name: Repository CI build environment
+        uses: storytold/craft-common-actions/actions/gate-setup@315eb1972c857c839c3abb3d9288bfd40d21b7da
+        with:
+          craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+          require-craft-fonts: 'true'
+          packages: >-
+            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev
+          toolchain: stable
+          cache-save: 'false'
+          writes: 'false'
+      - name: Format the changed source roots
+        run: |
+          rustfmt --edition 2024 crates/ai/src/rebuild/mod.rs crates/engine/src/workspace.rs crates/ui-egui/src/project.rs
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          allowed = set(["ATTRIBUTION.md","crates/ai/src/rebuild/mod.rs","crates/ai/src/rebuild/notes.rs","crates/ai/src/rebuild/queued_request.rs","crates/ai/src/rebuild/runs.rs","crates/ai/src/rebuild/tests.rs","crates/engine/src/workspace.rs","crates/ui-egui/src/project.rs","crates/ui-egui/tests/headless_parity.rs","docs/ROADMAP.md","docs/STATUS.md","docs/file-formats.md","docs/pitfalls.md","Cargo.lock","NOTICE","crates/ai/Cargo.toml","crates/ai/src/rebuild/kept_check.rs","crates/ai/src/rebuild/kinds/mod.rs","crates/ai/src/rebuild/kinds/website.rs","crates/ai/src/rebuild/kinds/website_language.rs","crates/ai/src/rebuild/note_progress_tests.rs","crates/ai/src/rebuild/queue_review_tests.rs","crates/ai/src/rebuild/self_check.rs","crates/ai/src/rebuild/tools.rs","crates/ai/src/rebuild/website_language_tests.rs","crates/ui-egui/examples/snapshot.rs","crates/ui-egui/src/demo.rs","crates/ui-egui/tests/smoke.rs","docs/schemas/craft.schema.json"])
+          changed = subprocess.check_output(['git', 'diff', '--name-only'], text=True).splitlines()
+          assert set(changed) <= allowed, f'unrelated formatter changes: {set(changed) - allowed}'
+          out = pathlib.Path(os.environ['RUNNER_TEMP']) / 'craft2224-review'
+          out.mkdir(exist_ok=True)
+          patch = subprocess.check_output(['git', 'diff', '--binary'], text=True)
+          (out / 'format.patch').write_text(patch)
+          print('FORMAT_PATCH_BEGIN\n' + patch + 'FORMAT_PATCH_END')
+          subprocess.run(['git', 'add', '--update'], check=True)
+          tree = subprocess.check_output(['git', 'write-tree'], text=True).strip()
+          (out / 'tested-tree.txt').write_text(tree + '\n')
+          print('FORMATTED_CANDIDATE_TREE=' + tree)
+          PY
+      - name: Required source policy and formatting gates
+        run: |
+          set -euo pipefail
+          cargo xtask fmt --check
+          cargo xtask layers
+          cargo xtask locks
+          cargo xtask secrets
+          cargo xtask status
+          cargo xtask i18n-coverage
+          cargo xtask schemas --check
+      - name: All workspace targets pass clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Engine AI and UI behavior tests
+        run: cargo test --locked -p craft-anything-engine -p craft-anything-ai -p craft-anything-ui-egui
+      - name: Regression tests reject the original defects
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          
+          def rejects(path, change, test, expected):
+              source = Path(path)
+              original = source.read_text()
+              mutated = change(original)
+              assert mutated != original, "negative control did not change production code"
+              try:
+                  source.write_text(mutated)
+                  result = subprocess.run(["cargo", "test", "--locked", "-p", "craft-anything-engine" if "/engine/" in path else "craft-anything-ai", "--lib", test, "--", "--nocapture"], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                  print(result.stdout[-12000:])
+                  assert result.returncode != 0, f"{test} did not reject the production mutation"
+                  assert "FAILED" in result.stdout and expected in result.stdout, f"{test} failed for an unrelated reason"
+                  print(f"NEGATIVE_CONTROL_PASS {test}")
+              finally:
+                  source.write_text(original)
+          
+          rejects(
+              "crates/engine/src/workspace.rs",
+              lambda source: source.replace("self.saved_person_fields()?", "Workspace::open(&self.root).ok().map(|disk| disk.manifest)"),
+              "unreadable_saved_person_fields_stop_both_manifest_writers",
+              "an unreadable manifest must stop the writer",
+          )
+          rejects(
+              "crates/ai/src/rebuild/queued_request.rs",
+              lambda source: source.replace(
+                  "!opts.request_parts.is_empty() && opts.carried_note_ids.iter().all(|id| opts.request_parts.iter().any(|part| part.id == *id))",
+                  "!opts.request_parts.is_empty()",
+              ),
+              "repeated_recovery_keeps_partial_carried_identities_and_separate_notes",
+              "repeated_recovery_keeps_partial_carried_identities_and_separate_notes",
+          )
+          PY
+      - name: Confirm the exact validated tree
+        run: |
+          git diff --exit-code
+          test "$(git write-tree)" = "$(cat "$RUNNER_TEMP/craft2224-review/tested-tree.txt")"
+          printf '%s\n' "$CANDIDATE_SHA" > "$RUNNER_TEMP/craft2224-review/source-commit.txt"
+          printf '%s\n' 'Source policy, format, clippy, affected crate tests, and regression negative controls passed.' > "$RUNNER_TEMP/craft2224-review/result.txt"
+      - name: Preserve formatting patch and validation identity
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: craft2224-reviewed-merge
+          path: '${{ runner.temp }}/craft2224-review'
+          if-no-files-found: error
+          retention-days: 7
