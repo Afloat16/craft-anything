@@ -1,0 +1,48 @@
+name: Windows candidate cleanup validation
+
+on: create
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validation-2183-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: "never"
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  CARGO_BUILD_JOBS: "2"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  focused-engine-tests:
+    if: github.event.ref_type == 'branch' && github.repository == 'Afloat16/craft-anything' && github.ref == 'refs/heads/test/r2.9-windows-cleanup-canonical-20261126'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Configure job-local validation paths
+        shell: pwsh
+        run: |
+          "CRAFT_VALIDATION_OUTPUT=$env:RUNNER_TEMP/craft-2183-candidate-results" >> $env:GITHUB_ENV
+          "CARGO_TARGET_DIR=$env:RUNNER_TEMP/craft-2183-candidate-target" >> $env:GITHUB_ENV
+      - name: Verify NTFS and record exact source
+        shell: pwsh
+        run: ./validation/windows-lock-rename/prepare.ps1
+      - name: Run production cleanup regressions and late-initializer controls
+        shell: pwsh
+        run: ./validation/windows-lock-rename/run.ps1 -Mode Engine
+      - name: Preserve regression, Clippy and source logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-2183-engine-tests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.CRAFT_VALIDATION_OUTPUT }}
+          if-no-files-found: warn
+          retention-days: 7
