@@ -294,8 +294,15 @@ only when it's green and a maintainer has fully reviewed it, code as well as wor
       action declares `node24`; the other reached actions are shell composites. This records
       that `@main` snapshot; recheck after shared workflow or action-pin changes.
       — claimed: Afloat16, branch docs/r5.2-release-actions-runtime-audit
-- [ ] Check the action runtime declarations reachable from `ci.yml`, `freebsd.yml` and
+- [x] Check the action runtime declarations reachable from `ci.yml`, `freebsd.yml` and
       `windows-arm64.yml`; these workflow entry points were outside the `release.yml` audit.
+      Audited on 2026-11-26 at
+      [craft-common-actions 4ec2a14](https://github.com/storytold/craft-common-actions/tree/4ec2a14646b538253fd5ebe109bf463a3d31b061/.github/workflows):
+      followed all three reusable workflows, 16 shared action manifests at their resolved refs,
+      and 12 distinct external action manifests at their exact pins. Ten external manifests
+      declare `node24`; the other two and all shared actions are composites. No older Node
+      runtime declaration was found. This is a static audit, not a runner test; recheck when
+      the shared workflow or action pins change.
 - [x] Correct STATUS.md's obsolete GUI-only limit: document the shared project feed, engine
       setup, launch and preview tools, with their consent and lifetime limits — PR #1014
       — claimed: Codex, branch docs/r5.2-headless-status
