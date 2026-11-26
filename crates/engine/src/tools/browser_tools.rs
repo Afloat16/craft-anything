@@ -2616,4 +2616,4 @@ pub(crate) fn click_at(client: &mut CdpClient, x: f64, y: f64, dl: &Deadline) ->
 mod script_check;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

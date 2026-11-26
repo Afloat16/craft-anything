@@ -1396,6 +1396,53 @@ fn run_details(app: &mut CraftApp, ui: &mut Ui, status_row: bool) {
     }
 }
 
+/// How tall each item of a conversation was last drawn, while what decides that (the project, the
+/// column's width, the scale, the font, the mode and the language) stays the same.
+#[derive(Default)]
+pub(crate) struct FeedHeights {
+    key: Option<(PathBuf, [u32; 3], bool, String)>,
+    /// With the item's [`size_mark`] then: entries move when a folded checklist is replaced.
+    heights: Vec<Option<(SizeMark, f32)>>,
+}
+
+type SizeMark = (std::mem::Discriminant<FeedItem>, usize, usize);
+
+/// What tells an item from another that may take its place or a later state of itself, for the
+/// kinds that can be skipped out of view. The rarer kinds ask or load something.
+// shortcut: lengths, not the words; another item of the same kind and length keeps the old height until it's in view.
+fn size_mark(item: &FeedItem) -> Option<SizeMark> {
+    let (a, b) = match item {
+        FeedItem::User(u) => (u.text().len(), 0),
+        FeedItem::Step { text, .. } | FeedItem::Agent { text, streaming: false } => (text.len(), 0),
+        FeedItem::Work { tools, notes } => (tools.len() + notes.len(), tools.iter().filter(|(_, d)| *d == Some(false)).count()),
+        FeedItem::Paused => (0, 0),
+        _ => return None,
+    };
+    Some((std::mem::discriminant(item), a, b))
+}
+
+/// Whether items out of view are needed this frame: a screen reader reads them, the keyboard may
+/// move into them or be in them, and a selection that loses an end is dropped.
+fn needs_whole_feed(ui: &Ui) -> bool {
+    let ctx = ui.ctx();
+    let moves = ui.input(|i| {
+        i.events.iter().any(|e| {
+            matches!(
+                e,
+                egui::Event::Key {
+                    key: egui::Key::Tab | egui::Key::ArrowUp | egui::Key::ArrowDown | egui::Key::ArrowLeft | egui::Key::ArrowRight,
+                    pressed: true,
+                    ..
+                }
+            )
+        })
+    });
+    moves
+        || (ctx.memory(|m| m.focused().is_some()) && !ctx.text_edit_focused())
+        || ctx.plugin_opt::<egui::text_selection::LabelSelectionState>().is_some_and(|p| p.lock().has_selection())
+        || ctx.accesskit_node_builder(ui.unique_id(), |_| ()).is_some()
+}
+
 /// Each item of the feed, in order. Answers and "Try again" are collected, to act on afterwards.
 fn draw_items(
     app: &mut CraftApp,
@@ -1416,9 +1463,29 @@ fn draw_items(
             next_asked += 1;
         }
     };
+    let width = ui.available_width();
+    let sizes = [width, ui.ctx().pixels_per_point(), ui.text_style_height(&egui::TextStyle::Body)].map(f32::to_bits);
+    let key = (ws.root.clone(), sizes, advanced, crate::i18n::language());
+    let mut heights = std::mem::take(&mut app.feed_heights);
+    if heights.key.as_ref() != Some(&key) {
+        heights = FeedHeights { key: Some(key), heights: Vec::new() };
+    }
+    heights.heights.resize(items.len(), None);
+    let whole = needs_whole_feed(ui);
     for (i, item) in items.iter().enumerate() {
         questions_up_to(app, ui, i);
-        ui.push_id(i, |ui| match item {
+        // The last item may still be growing.
+        let mark = size_mark(item).filter(|_| i + 1 < items.len());
+        if let Some((_, h)) = heights.heights[i].filter(|(m, _)| !whole && mark == Some(*m)) {
+            let size = Vec2::new(width, h);
+            if !ui.is_rect_visible(egui::Rect::from_min_size(ui.cursor().min, size)) {
+                // One id, as drawing it takes, so the items after it keep theirs.
+                ui.allocate_space(size);
+                ui.add_space(chat::MESSAGE_GAP);
+                continue;
+            }
+        }
+        let drawn = ui.push_id(i, |ui| match item {
             FeedItem::User(text) => chat::user_bubble(ui, text.text(), false),
             FeedItem::Step { text, .. } => chat::activity_row(ui, RichText::new(text).color(t.text_dim).size(theme::SMALL)),
             FeedItem::Paused => chat::activity_row(ui, RichText::new(tr("Paused.")).color(t.text_dim).size(theme::SMALL)),
@@ -1484,8 +1551,10 @@ fn draw_items(
                     });
             }
         });
+        heights.heights[i] = size_mark(item).map(|m| (m, drawn.response.rect.height()));
         ui.add_space(chat::MESSAGE_GAP);
     }
+    app.feed_heights = heights;
     questions_up_to(app, ui, usize::MAX);
 }
 
@@ -2524,6 +2593,108 @@ mod tests {
         assert_eq!(accepted.text, "Already accepted");
         assert_eq!(accepted.attachments, [old], "the accepted id still retains its take-back draft");
         assert!(app.state.toasts.iter().any(|(message, error)| *error && message.contains("the final directory sync failed")));
+    }
+
+    /// Every item used to be drawn on every frame, so a long conversation made each frame slow
+    /// (#2448). What needs the items out of view still gets them, and nothing moves.
+    #[test]
+    fn a_long_conversation_draws_what_is_in_view() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "Game", "Make a game", TargetRef::None).unwrap();
+        let mut app = crate::demo::app(crate::demo::engine(craft_anything_engine::Mode::Experienced, true));
+        app.workspace = Some(ws);
+        app.state.screen = Screen::Project;
+        app.state.feed.push(FeedItem::Plan(Vec::new()));
+        for i in 0..200 {
+            app.state.feed.push(FeedItem::Agent { text: format!("Answer {i} with some `code` in it."), streaming: false });
+            app.state.feed.push(FeedItem::Work { tools: vec![(format!("tool_{i}"), Some(true)); 3], notes: Vec::new() });
+        }
+        let ctx = egui::Context::default();
+        CraftApp::setup_context(&ctx);
+        // How many widgets the frame made, and the text it showed with where each piece is.
+        let mut frame = |events: Vec<egui::Event>, remove_first: bool| {
+            if remove_first {
+                app.state.feed.remove(0);
+            }
+            let screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 820.0)));
+            let mut out = ctx.run_ui(egui::RawInput { screen_rect, events, ..Default::default() }, |ui| app.show(ui));
+            out.textures_delta.clear();
+            let shown: Vec<_> = out
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::Shape::Text(t) => Some((t.galley.text().to_string(), t.pos.x.round(), t.pos.y.round())),
+                    _ => None,
+                })
+                .filter(|(text, ..)| text.contains("tool ") || text.starts_with("Answer"))
+                .collect();
+            (ctx.viewport(|v| v.prev_pass.widgets.layers().map(|(_, w)| w.len()).sum::<usize>()), shown)
+        };
+        for _ in 0..8 {
+            frame(Vec::new(), false);
+        }
+        let (in_view, shown) = frame(Vec::new(), false);
+        assert!(!shown.is_empty());
+        let key = |key| egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        // Keyboard navigation can go to any item.
+        let (all, shown_whole) = frame(vec![key(egui::Key::Tab)], false);
+        assert!(in_view * 5 < all, "{in_view} of {all} widgets");
+        assert_eq!(shown, shown_whole, "what's in view stays where it is");
+        ctx.memory_mut(|m| m.stop_text_input());
+        assert!(frame(Vec::new(), false).0 * 5 < all);
+        // A folded checklist is replaced: what follows it moves up, and keeps its own heights.
+        frame(Vec::new(), true);
+        frame(Vec::new(), false);
+        let (_, shown) = frame(Vec::new(), false);
+        assert_eq!(shown, frame(vec![key(egui::Key::Tab)], false).1);
+        // A screen reader reads all of it.
+        ctx.enable_accesskit();
+        assert!(frame(Vec::new(), false).0 * 2 > all);
+    }
+
+    #[test]
+    fn automatically_forwarded_notes_keep_their_saved_identities() {
+        use craft_anything_ai::{AiConfig, BackendConfig, BackendEntry, BackendKind};
+        use craft_anything_platform::sync::Mutex;
+        use std::sync::Arc;
+        for opened in [true, false] {
+            let d = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(d.path(), "Notes", "A notes app", TargetRef::None).unwrap();
+            let engine = Arc::new(craft_anything_engine::Engine::new(craft_anything_engine::testing::session()));
+            let mut app = crate::demo::app(engine);
+            let backend =
+                BackendConfig { name: "Agent".into(), kind: BackendKind::AgentCli, model: "claude-code".into(), base_url: None, ssh_host: None, enabled: true };
+            app.backends = vec![backend.clone()];
+            let mut cfg = AiConfig::default();
+            cfg.upsert(BackendEntry { config: backend, options: Default::default() });
+            app.hub.save_config(&cfg).unwrap();
+            let fake = rebuild::StandIns::new();
+            let mut start = fake.starter();
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let requests = seen.clone();
+            app.runs = rebuild::RunSet::new(1).with_starter(Box::new(move |hub, ws, opts| {
+                requests.lock().unwrap().push((opts.message.clone(), opts.request_parts.iter().map(rebuild::notes::Carried::from).collect::<Vec<_>>()));
+                start(hub, ws, opts)
+            }));
+            if opened {
+                app.open_workspace(ws.clone());
+            }
+            app.runs.start(&app.hub, ws.clone(), RunOptions::default()).unwrap();
+            let mut left = rebuild::notes::Left {
+                text: "Make the header blue".into(),
+                shown: "Use this blue".into(),
+                pictures: vec![ws.root.join("blue.png")],
+                added: None,
+            };
+            let id = app.runs.get(&ws.root).unwrap().add_note(left.text.clone(), left.shown.clone(), left.pictures.clone()).unwrap().id;
+            left.added = Some(app.runs.get(&ws.root).unwrap().waiting().into_iter().find(|note| note.id == id).unwrap().added);
+            fake.finish(&ws.root);
+            app.poll_run();
+            let seen = seen.lock().unwrap();
+            assert_eq!(seen.len(), 2, "the waiting note starts a follow-up");
+            assert_eq!(seen[1].0.as_deref(), Some(left.text.as_str()));
+            assert_eq!(seen[1].1, [rebuild::notes::Carried { id, note: left }]);
+        }
     }
 
     #[test]

@@ -233,7 +233,10 @@ impl OpenAi {
     pub fn loaded_models(&self, timeout: std::time::Duration) -> Vec<String> {
         let Some(root) = self.base_url.strip_suffix("/v1") else { return Vec::new() };
         let agent = http::quick_agent(timeout);
-        let get = |path: &str| http::get_json(&agent, &self.label, &format!("{root}{path}"), &self.headers()).ok();
+        let get = |path: &str| {
+            let deadline = std::time::Instant::now() + timeout;
+            http::get_json(&agent, &self.label, &format!("{root}{path}"), &self.headers(), deadline).ok()
+        };
         let ids = |entries: Vec<&Value>, keys: &[&str]| {
             let mut out: Vec<String> = Vec::new();
             for m in entries {
@@ -279,7 +282,8 @@ impl OpenAi {
 
     pub(crate) fn model_catalog(&self, connect: std::time::Duration, wait: std::time::Duration) -> Result<ModelCatalog, ToolError> {
         let agent = http::agent(connect, wait, wait);
-        let v = http::get_json(&agent, &self.label, &self.url("models"), &self.headers()).map_err(|e| self.explain_key(e))?;
+        let deadline = std::time::Instant::now() + wait;
+        let v = http::get_json(&agent, &self.label, &self.url("models"), &self.headers(), deadline).map_err(|e| self.explain_key(e))?;
         let arr = v.get("data").or_else(|| v.get("models")).and_then(Value::as_array).cloned().unwrap_or_default();
         // A catalogue may list a model only for another API (Responses, Messages): such an entry
         // would fail on a chat-completions client, so skip it when the entry says which APIs it

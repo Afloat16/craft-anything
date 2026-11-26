@@ -49,14 +49,7 @@ fn serve(mut stream: TcpStream, port: u16, seen: &Mutex<Seen>) {
         }
         _ => {
             let Some(key) = key else { return };
-            let accept = {
-                use base64::Engine as _;
-                use sha1::{Digest, Sha1};
-                let mut h = Sha1::new();
-                h.update(key.as_bytes());
-                h.update(b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
-                base64::engine::general_purpose::STANDARD.encode(h.finalize())
-            };
+            let accept = crate::tools::browser_tools::tests::ws_accept(&key);
             let _ = write!(stream, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n");
             if let Some(tab) = path.strip_prefix("/devtools/page/") {
                 seen.lock().unwrap().tabs_connected.push(tab.to_string());

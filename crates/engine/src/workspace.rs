@@ -1012,8 +1012,8 @@ impl Workspace {
     fn save_after_read(&self, after_read: impl FnOnce()) -> Result<(), ToolError> {
         let _guard = lock_manifest(&self.root, |_| {})?;
         let mut m = self.manifest.clone();
-        if let Ok(disk) = Workspace::open(&self.root) {
-            m.take_person_fields(&disk.manifest);
+        if let Some(disk) = self.saved_person_fields()? {
+            m.take_person_fields(&disk);
         }
         after_read();
         self.write_manifest(&m)
@@ -1044,14 +1044,24 @@ impl Workspace {
     ) -> Result<(), ToolError> {
         let _guard = lock_manifest(&self.root, after_attempt)?;
         let mut next = self.manifest.clone();
-        if let Ok(disk) = Workspace::open(&self.root) {
-            next.take_person_fields(&disk.manifest);
+        if let Some(disk) = self.saved_person_fields()? {
+            next.take_person_fields(&disk);
         }
         if f(&mut next)? {
             self.write_manifest(&next)?;
         }
         self.manifest = next;
         Ok(())
+    }
+
+    /// A missing or malformed manifest keeps the existing repair path. An I/O failure does not
+    /// establish that the saved person fields are absent, so neither writer may replace them.
+    fn saved_person_fields(&self) -> Result<Option<Manifest>, ToolError> {
+        match Workspace::open(&self.root) {
+            Ok(disk) => Ok(Some(disk.manifest)),
+            Err(e) if matches!(e.code, ErrorCode::NotFound | ErrorCode::BadInput) => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 
     fn write_manifest(&self, m: &Manifest) -> Result<(), ToolError> {
@@ -1900,6 +1910,81 @@ mod tests {
     }
 
     #[test]
+    fn unreadable_saved_person_fields_stop_both_manifest_writers() {
+        for person_update in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut stale = Workspace::create(dir.path(), "Site", "A website", TargetRef::None).unwrap();
+            stale.set_person(|m| {
+                m.website_language = Some(WebsiteLanguage::Requested { tag: "fr".into() });
+                m.website_language_request_id = Some(71);
+            }).unwrap();
+            let before = serde_json::to_value(&stale.manifest).unwrap();
+            let mut newer = Workspace::open(&stale.root).unwrap();
+            newer.set_person(|m| {
+                m.website_language = Some(WebsiteLanguage::Requested { tag: "de".into() });
+                m.website_language_request_id = Some(80);
+                m.asset_budget_usd = 20.0;
+            }).unwrap();
+            let path = stale.root.join(MANIFEST);
+            let saved = stale.root.join("saved-manifest.json");
+            let saved_bytes = std::fs::read(&path).unwrap();
+            std::fs::rename(&path, &saved).unwrap();
+            // A directory fails a real file read even when the test runs as root. Restore the
+            // newer file only if the writer incorrectly continues beyond that failed read.
+            std::fs::create_dir(&path).unwrap();
+            let continued = std::cell::Cell::new(false);
+            let restore = || {
+                continued.set(true);
+                std::fs::remove_dir(&path).unwrap();
+                std::fs::rename(&saved, &path).unwrap();
+            };
+            let result = if person_update {
+                stale.update_person(|m| {
+                    restore();
+                    m.asset_budget_usd = 25.0;
+                    Ok(true)
+                })
+            } else {
+                stale.save_after_read(restore)
+            };
+            if path.is_dir() {
+                std::fs::remove_dir(&path).unwrap();
+                std::fs::rename(&saved, &path).unwrap();
+            }
+            assert!(result.is_err(), "an unreadable manifest must stop the writer");
+            assert!(!continued.get(), "neither the update callback nor publication may follow a failed read");
+            assert_eq!(std::fs::read(&path).unwrap(), saved_bytes, "the newer saved person fields are unchanged");
+            assert_eq!(serde_json::to_value(&stale.manifest).unwrap(), before, "a failed update keeps its handle unchanged");
+        }
+    }
+
+    #[test]
+    fn missing_and_malformed_manifests_keep_the_existing_repair_path() {
+        for person_update in [false, true] {
+            for malformed in [false, true] {
+                let dir = tempfile::tempdir().unwrap();
+                let mut ws = Workspace::create(dir.path(), "Site", "A website", TargetRef::None).unwrap();
+                let path = ws.root.join(MANIFEST);
+                if malformed {
+                    std::fs::write(&path, b"{broken json").unwrap();
+                } else {
+                    std::fs::remove_file(&path).unwrap();
+                }
+                if person_update {
+                    ws.set_person(|m| m.asset_budget_usd = 25.0).unwrap();
+                } else {
+                    ws.manifest.note = "Saved progress".into();
+                    ws.save().unwrap();
+                }
+                let disk = Workspace::open(&ws.root).unwrap().manifest;
+                assert_eq!(disk.name, ws.manifest.name);
+                assert_eq!(disk.asset_budget_usd, ws.manifest.asset_budget_usd);
+                assert_eq!(disk.note, ws.manifest.note);
+            }
+        }
+    }
+
+    #[test]
     fn manifest_writers_do_not_recreate_a_removed_project_directory() {
         let dir = tempfile::tempdir().unwrap();
         let mut ws = Workspace::create(dir.path(), "Site", "A website", TargetRef::None).unwrap();
@@ -2517,3 +2602,4 @@ mod tests {
         assert_eq!(normalized(&root.join("a/../b/./c")), root.join("b/c"));
     }
 }
+

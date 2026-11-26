@@ -268,7 +268,7 @@ fn write_standin_tool(dir: &Path, stem: &str, line: &str, code: i32) -> PathBuf 
         let path = dir.join(stem);
         let body = if line.is_empty() { format!("#!/bin/sh\nexit {code}\n") } else { format!("#!/bin/sh\nprintf '%s\\n' '{line}'\nexit {code}\n") };
         std::fs::write(&path, body).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
         path
     }
 }

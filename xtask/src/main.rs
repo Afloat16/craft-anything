@@ -339,6 +339,7 @@ fn schemas(root: &Path, check: bool) -> bool {
         ("mechanics.schema.json", craft_anything_engine::mechanics::mechanics_schema()),
         ("self-test.schema.json", craft_anything_engine::self_test::self_test_schema()),
         ("ghidra-stopped.schema.json", craft_anything_engine::tools::deep::stop_schema()),
+        ("pseudocode-export.schema.json", craft_anything_engine::tools::program_facts_tools::source_export_schema()),
     ];
     let mut ok = true;
     for (name, schema) in files {

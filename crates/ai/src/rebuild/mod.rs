@@ -49,6 +49,7 @@ pub mod notes;
 mod output;
 pub mod project;
 pub mod question;
+mod queued_request;
 pub mod runs;
 pub mod self_check;
 pub mod stacks;
@@ -146,6 +147,9 @@ pub struct RunOptions {
     /// Original requests, including their ids and words, when a caller joins several notes.
     /// Empty keeps the ordinary single `shown`/`message` request.
     pub request_parts: Vec<Note>,
+    /// Waiting notes already included in `message`, with their saved identities. Other waiting
+    /// notes must still be delivered, including after a queued request is restored.
+    pub carried_notes: Vec<notes::Carried>,
     /// Pick up a build whose last run stopped part-way (paused, the app closed, the computer
     /// stopped): Study isn't repeated when it was done, and an agent with a saved session is
     /// told to carry on rather than given the brief again. A run with no message on a project
@@ -180,6 +184,7 @@ impl Default for RunOptions {
             shown_pictures: Vec::new(),
             carried_note_ids: Vec::new(),
             request_parts: Vec::new(),
+            carried_notes: Vec::new(),
             continuing: false,
             max_rounds: 6,
             good_enough: 90.0,
@@ -318,7 +323,16 @@ impl RebuildRun {
         // The project as it is now. A run that waited in the queue, or one started as the project's
         // last run was ending, holds a copy from before that run's last saves (its session), and
         // everything below, the worker's saves included, works from this copy.
-        let mut ws = Workspace::open(&ws.root).unwrap_or(ws);
+        let ws = Workspace::open(&ws.root).unwrap_or(ws);
+        let queued = queued_request::restore(&ws, &mut opts)?;
+        let run = Self::start_prepared(hub, ws.clone(), opts)?;
+        queued_request::finished(&ws, queued.as_ref());
+        Ok(run)
+    }
+
+    /// Start the snapshot already prepared by `RunSet`, which owns its queued-request cleanup.
+    /// Reading the saved request again here could retire a newer request than the one starting.
+    fn start_prepared(hub: &AiHub, mut ws: Workspace, mut opts: RunOptions) -> Result<RebuildRun, ToolError> {
         let cfg = hub.config();
         let entry = builder_backend(&cfg, opts.backend.as_deref().or_else(|| project_builder(&cfg, &ws)))?;
         // The person's choice of mode is a session setting. A run that waited its turn uses the mode
@@ -1786,6 +1800,31 @@ fn restore_left_notes(ws: &Workspace, clean_room: bool, opts: &mut RunOptions, l
 /// Keep each original request's position when recovered notes join a carried initial message.
 fn prepend_older_notes(opts: &mut RunOptions, left: &[notes::LeftNote]) -> Result<(), ToolError> {
     let Some(message) = opts.message.as_deref().filter(|message| !message.trim().is_empty()) else { return Ok(()) };
+    // Version-3 queued requests kept exact carried-note identities, but they can describe only
+    // part of a larger message. Restore request boundaries only when they account for all of it.
+    if opts.request_parts.is_empty() && opts.carried_note_ids.is_empty() && !opts.carried_notes.is_empty() {
+        let joined = opts.carried_notes.iter().map(|carried| carried.note.text.as_str()).collect::<Vec<_>>().join("\n\n");
+        let shown = opts.carried_notes.iter().map(|carried| carried.note.shown.as_str()).collect::<Vec<_>>().join("\n\n");
+        let pictures: Vec<_> = opts.carried_notes.iter().flat_map(|carried| carried.note.pictures.iter().cloned()).collect();
+        if message == joined && opts.shown.as_deref() == Some(shown.as_str()) && opts.shown_pictures == pictures {
+            opts.carried_note_ids = opts.carried_notes.iter().map(|carried| carried.id).collect();
+            opts.request_parts = opts.carried_notes.iter().map(|carried| Note {
+                id: carried.id,
+                text: carried.note.text.clone(),
+                shown: carried.note.shown.clone(),
+                pictures: carried.note.pictures.clone(),
+                questions: Vec::new(),
+                added: carried.note.added.unwrap_or(opts.asked),
+            }).collect();
+        }
+    }
+    // A legacy message can include extra instructions beyond its carried notes. Keep that
+    // complete message, and omit only notes with the same saved id and original contents.
+    let legacy_carried: HashSet<_> = if opts.request_parts.is_empty() && opts.carried_note_ids.is_empty() {
+        left.iter().filter(|note| opts.carried_notes.iter().any(|carried| carried.id == note.id && carried.note == note.left)).map(|note| note.id).collect()
+    } else {
+        HashSet::new()
+    };
     let show = opts.shown.is_some() || !left.is_empty() || !opts.request_parts.is_empty();
     let last_carried = opts.carried_note_ids.iter().copied().max();
     if let Some(id) = last_carried {
@@ -1797,7 +1836,7 @@ fn prepend_older_notes(opts: &mut RunOptions, left: &[notes::LeftNote]) -> Resul
             return Err(ToolError::invalid("The carried requests have inconsistent note identities; their records were kept."));
         }
     }
-    for note in left.iter().filter(|note| last_carried.is_none_or(|last| note.id <= last)) {
+    for note in left.iter().filter(|note| !legacy_carried.contains(&note.id) && last_carried.is_none_or(|last| note.id <= last)) {
         if let Some(part) = parts.get(&note.id) {
             if part.text != note.left.text
                 || part.shown != note.left.shown
@@ -1824,6 +1863,14 @@ fn prepend_older_notes(opts: &mut RunOptions, left: &[notes::LeftNote]) -> Resul
         return Err(ToolError::invalid("A carried request's original words are missing; its records were kept."));
     }
     opts.carried_note_ids = parts.keys().copied().collect();
+    opts.carried_note_ids.extend(legacy_carried.iter().copied());
+    if !legacy_carried.is_empty() {
+        // A retry may queue these prepared options again. Keep the exact on-disk identities,
+        // including an unknown original time, for every note now inside the complete message.
+        opts.carried_notes = left.iter().filter(|note| opts.carried_note_ids.contains(&note.id)).map(|note| notes::Carried {
+            id: note.id, note: note.left.clone(),
+        }).collect();
+    }
     if last_carried.is_none() {
         let id = notes::new_id()?;
         parts.insert(

@@ -742,6 +742,13 @@ Owner: open · Status: todo
 - [x] Bound accumulated data across all lines of one server-sent event, so short lines cannot
       grow a streamed API response without limit
       — claimed: Afloat16, branch bugfix/r5.5-bounded-sse-events-20261103
+- [x] An API POST interrupted by a signal (EINTR) was reported as "Couldn't reach {AI}"
+      (`EngineMissing`), blaming the server or connection; it now says the call was interrupted and
+      is not retried, since a sent request may already be billed. A GET cut short the same way is
+      simply asked again, since repeating it is safe
+      — claimed: AlexJoaquimPereira, branch bugfix/r5.5-interrupted-ai-call
+- [ ] The same interrupted-call reading remains in `install.rs`'s download: say interrupted there
+      too (the MCP client is covered by #2354 and #2206; fal's paid POST and download by #2426)
 - [x] Show the provider's own reason: #369 bought $10 of credit and got only "OpenRouter answered
       400: Provider returned error". Find the reason in the response body and show it — PR #542
 - [x] A Claude build failed with 400 "Invalid `signature` in `thinking` block" once the conversation
@@ -764,6 +771,19 @@ Owner: open · Status: todo
 - [x] A saved fal.ai key reaches an API-key build's asset tools; every call said "No fal.ai key"
       (#923). Outside a project the tools now say that instead. Not checked with a real fal.ai key
       or API build
+- [x] fal.ai's paid generation POST reported a timeout, an interrupted call, a connection reset or
+      TLS failure, a disconnect before the answer or an unreadable answer as unreachable or garbled
+      and invited a retry, although the generation may already be running and billed. Only a
+      failure before anything was sent (refused or failed connection, host not found, connect or
+      resolve timeout) still says "Couldn't reach"; every later failure says it may be billed,
+      points at the dashboard, and isn't retried. A generated file that can't be downloaded after
+      that also says it was paid for, gives its address, and isn't retried. A 3D model rate-limited
+      after its picture was made says the picture is saved and paid for, and gives its `app/` path
+      as `image` so a retry doesn't pay for another picture
+      — claimed: AlexJoaquimPereira, branch bugfix/r5.5-fal-generation-timeout
+- [ ] A paid generation that may have been billed isn't counted against the project's asset budget,
+      because cost is recorded only when the file is saved: charge the estimate when the POST may
+      have been billed, so the budget matches what fal charged
 - [x] Each build has an engine of its own: sharing the app's session, whose `attach` points
       at whichever project started last, sent a build's files and asset spending to the wrong project
       (`build.parallel` is 2 by default). It takes on settings and project permissions from the
@@ -2248,8 +2268,11 @@ Gaps found while using the app for real projects.
       keeps its live feed when it is already building, and keeps a queued request with its options;
       a start that fails keeps the Make draft
       — claimed: AlexJoaquimPereira, branch bugfix/r2.9-attached-builder-feed
-- [ ] A queued run's request lives in its `RunOptions` and the in-memory queue; an app exit before
-      it starts loses it. Let the run side keep it (a queue record or a left note) across a restart
+- [x] A queued run's request is kept in `inbox/queued-request.json` before the queue accepts it.
+      Its words, shown message and picture paths survive a pause, app exit or failed start; the
+      next manual Continue or Try again restores them with the current builder and mode. The
+      waiting project offers Continue after reopening; unreadable or newer records stay unchanged
+      — claimed: Afloat16, branch bugfix/r2.9-persist-queued-request
 - [x] A config.toml that is there but can't be read (another program holds it, no permission, not
       UTF-8) loaded as defaults like a missing one, and the next save replaced it; one that couldn't
       be parsed was renamed aside with the rename's result ignored. Only "not found" is plain
@@ -2634,8 +2657,9 @@ Owner: open · Status: in progress
       — claimed: Plastic-time, branch bugfix/r3.11-pseudo-memory-write-overlap
 - [x] Preserve argument loads across implicit and multi-register writes, and limit fixed-width Win64 slot invalidation to overlapping offsets (#2124 follow-up).
       — claimed: Plastic-time, branch bugfix/r3.11-pseudo-write-footprints
-- [ ] `native_source_folder_write` uses the built-in decompiler only: use Ghidra in Deep mode when
+- [x] `native_source_folder_write` uses the built-in decompiler only: use Ghidra in Deep mode when
       it's there
+      — claimed: Afloat16, branch feature/r3.11-deep-source-folder
 - [x] Keep source registers alive when an AArch64 arithmetic result is discarded into the zero register.
       — claimed: Afloat16, branch bugfix/r3.11-a64-discarded-results-20261111
 - [x] Lift AArch64 `cmn` (`adds xzr/wzr, …`) branch conditions as `(a + b) <op> 0` and omit

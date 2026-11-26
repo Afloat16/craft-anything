@@ -74,6 +74,21 @@ pub struct Left {
     pub added: Option<std::time::SystemTime>,
 }
 
+/// A saved waiting note already included in a following request. Both its id and its original
+/// contents must match: a later note reusing an old id still belongs to the next run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Carried {
+    pub id: u64,
+    pub note: Left,
+}
+
+impl From<&super::Note> for Carried {
+    fn from(note: &super::Note) -> Self {
+        Self { id: note.id, note: Left { text: note.text.clone(), shown: note.shown.clone(), pictures: note.pictures.clone(), added: Some(note.added) } }
+    }
+}
+
 /// A recoverable record and the exact bytes inspected before taking it over. This is only
 /// an in-memory handoff; the files remain version 1 and keep their original note id.
 #[derive(Debug)]
@@ -173,7 +188,29 @@ pub(super) struct Published {
 /// returns. Report that sync separately: a new sender cannot safely retry an already visible id.
 /// Recovery callers keep using hand_over(), which requires every persistence step to succeed.
 pub(super) fn publish(dir: &Path, id: u64, text: &str, left: Option<&Left>, sync: impl Fn(&Path) -> Result<(), ToolError>) -> Result<Published, ToolError> {
+    publish_checking_claim(dir, id, text, left, sync, |source, destination| publish_claim(source, destination, |from, to| std::fs::hard_link(from, to)))
+}
+
+fn publish_checking_claim(
+    dir: &Path,
+    id: u64,
+    text: &str,
+    left: Option<&Left>,
+    sync: impl Fn(&Path) -> Result<(), ToolError>,
+    claim: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
+) -> Result<Published, ToolError> {
     std::fs::create_dir_all(dir).map_err(|e| craft_anything_evidence::ToolError::io(dir.display(), e))?;
+    // The no-clobber rename can itself fall back to a hard link on some systems. Exercise the
+    // actual publication path on this drive before accepting any of the person's words.
+    let probe = tempfile::Builder::new().prefix("claim-probe-").tempdir_in(dir).map_err(|e| ToolError::io(dir.display(), e))?;
+    let source = probe.path().join("waiting");
+    std::fs::write(&source, b"").map_err(|e| ToolError::io(source.display(), e))?;
+    claim(&source, &probe.path().join("claimed")).map_err(|e| {
+        ToolError::io(dir.display(), e).with_remediation(
+            "The note was not accepted. Restore access or move the project to a drive that supports atomic note delivery, then try again.",
+        )
+    })?;
+    probe.close().map_err(|e| ToolError::io(dir.display(), e))?;
     if let Some(parent) = dir.parent() {
         sync(parent)?;
     }
@@ -534,6 +571,49 @@ pub fn hook_output(texts: &[String]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_drive_without_safe_claim_publication_refuses_a_new_note_before_accepting_it() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = notes_dir(d.path());
+        let original = Left { text: "Keep the older request".into(), ..Default::default() };
+        hand_over(&dir, 7, &original.text, Some(&original)).unwrap();
+        let before = std::fs::read(pending(&dir, 7)).unwrap();
+        let error = publish_checking_claim(&dir, 8, "New request", None, sync_directory, |source, destination| {
+            assert!(source.is_file(), "the capability check uses a real disposable file on the project drive");
+            assert!(!destination.exists());
+            Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "neither hard links nor exclusive rename are available"))
+        }).err().unwrap();
+
+        assert!(error.message.contains("neither hard links nor exclusive rename"));
+        assert!(error.remediation.unwrap().contains("not accepted"));
+        assert!(!pending(&dir, 8).exists(), "a rejected note cannot be observed by the builder's hook");
+        assert_eq!(std::fs::read(pending(&dir, 7)).unwrap(), before);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "the disposable probe is cleaned after failure");
+    }
+
+    #[test]
+    fn only_the_exact_waiting_note_carried_by_a_request_is_omitted() {
+        for (id, picture, copies) in [(7, "blue.png", 1), (8, "blue.png", 2), (7, "another-blue.png", 2)] {
+            let d = tempfile::tempdir().unwrap();
+            let dir = notes_dir(d.path());
+            let original = Left { text: "make it blue".into(), shown: "Blue".into(), pictures: vec![PathBuf::from("blue.png")], added: None };
+            let waiting = Left { pictures: vec![PathBuf::from(picture)], ..original.clone() };
+            hand_over(&dir, id, &waiting.text, Some(&waiting)).unwrap();
+            let mut opts = super::super::RunOptions {
+                message: Some("make it blue and keep the current layout".into()),
+                carried_notes: vec![Carried { id: 7, note: original }],
+                ..Default::default()
+            };
+
+            super::super::prepend_older_notes(&mut opts, &take_left(&dir).unwrap()).unwrap();
+
+            let message = opts.message.unwrap();
+            assert_eq!(message.matches("make it blue").count(), copies, "a different id or saved content remains a separate request");
+            assert!(message.contains("and keep the current layout"), "the carried identity does not replace the whole message");
+            assert!(pending(&dir, id).is_file(), "preparing the request leaves its durable note recoverable");
+        }
+    }
 
     fn left_words(dir: &Path) -> std::io::Result<Vec<Left>> {
         left(dir).map(|notes| notes.into_iter().map(|note| note.left).collect())
