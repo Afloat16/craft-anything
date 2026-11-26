@@ -63,8 +63,12 @@ jobs:
           cargo xtask schemas --check
       - name: All workspace targets pass clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Build the real CLI helper used by builder tests
+        run: |
+          cargo build --locked -p craft-anything-cli
+          target/debug/craft-anything-cli --version
       - name: Engine AI and UI behavior tests
-        run: cargo test --locked -p craft-anything-engine -p craft-anything-ai -p craft-anything-ui-egui
+        run: cargo test --no-fail-fast --locked -p craft-anything-engine -p craft-anything-ai -p craft-anything-ui-egui
       - name: Regression tests reject the original defects
         run: |
           python3 - <<'PY'
