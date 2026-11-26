@@ -84,7 +84,9 @@ fn directory_using(root: &Path, create: bool, mut sync: impl FnMut(&Path) -> Res
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound && !create => return Ok(None),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let mut builder = std::fs::DirBuilder::new();
+                let builder = std::fs::DirBuilder::new();
+                #[cfg(unix)]
+                let mut builder = builder;
                 #[cfg(unix)]
                 std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
                 match builder.create(&path) {
@@ -165,7 +167,7 @@ fn archive_path(report: RecoveryWrite) -> PathBuf {
     report.path
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn write_recovery_snapshot_using(root: &Path, snapshot: &RecoverySnapshot, sync: impl FnMut(&Path) -> Result<(), ToolError>) -> Result<PathBuf, ToolError> {
     write_recovery_snapshot_with_limit(root, snapshot, sync, MAX_BYTES)
 }
@@ -302,7 +304,9 @@ fn retained_write_error(error: ToolError, pending: &Path, published: Option<&Pat
 
 fn staging_directory(directory: &Path, sync: &mut impl FnMut(&Path) -> Result<(), ToolError>) -> Result<PathBuf, ToolError> {
     let staging = directory.join(STAGING_DIR);
-    let mut builder = std::fs::DirBuilder::new();
+    let builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    let mut builder = builder;
     #[cfg(unix)]
     std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
     match builder.create(&staging) {

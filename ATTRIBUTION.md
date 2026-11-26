@@ -3,10 +3,16 @@
 Third-party material bundled with Craft Anything, file by file. Rust crates are pulled from
 crates.io under their own licences (see `Cargo.lock`) and are not listed here.
 
+## Windows coordination cleanup dependency
+
+| Dependency | Source / copyright | Licence | Use |
+|---|---|---|---|
+| `atomicwrites` 0.4.4, unmodified | [rust-atomicwrites](https://github.com/untitaker/rust-atomicwrites), Copyright (c) 2015 Markus Unterwaditzer | MIT | Its safe `move_atomic` API performs Windows no-replace moves; no implementation is copied into this repository. |
+
 ## Feed coordination regression inputs
 
-The directory-binding, first-capture, creation-lock, failed managed-publication and
-publication-cleanup guidance regressions in `crates/engine/src/feed/transaction.rs`,
+The directory-binding, first-capture, creation-lock, failed managed-publication, Windows
+retirement races and publication-cleanup guidance regressions in `crates/engine/src/feed/transaction.rs`,
 `crates/engine/src/workspace.rs`, `crates/ai/src/rebuild/tools.rs` and
 `crates/platform/src/fs.rs` create their inputs from
 literal project metadata, file contents and temporary directories in the committed tests.
