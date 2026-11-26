@@ -42,7 +42,9 @@ fn directory_for(root: &Path, create: bool, pending: bool) -> Result<Option<Path
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound && !create => return Ok(None),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let mut builder = std::fs::DirBuilder::new();
+                let builder = std::fs::DirBuilder::new();
+                #[cfg(unix)]
+                let mut builder = builder;
                 #[cfg(unix)]
                 std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
                 match builder.create(&path) {

@@ -39,6 +39,10 @@ png = "0.17"
 # The person's reference pictures may be JPEG, WebP or GIF (decoders only; pure Rust, MIT/Apache).
 image = { version = "0.25", default-features = false, features = ["jpeg", "webp", "gif"] }
 
+[target.'cfg(windows)'.dependencies]
+# Safe no-replace file moves retain late source replacements during inbox cleanup.
+atomicwrites = "=0.4.4"
+
 [features]
 # WASM component plugins (R1.8): compiles wasmtime, so off by default.
 wasm-plugins = ["craft-anything-engines/wasm-plugins"]
