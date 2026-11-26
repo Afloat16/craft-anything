@@ -619,6 +619,11 @@ through pipes, as Windows does.
 
 ## Design
 
+**A readiness flag outlived the provider it described.** A Deep export cached success after a
+bridge failure removed its provider. The next function restarted the bridge after the startup
+budget check and decompiled past the deadline. Cache unavailable results for the call, but
+reconfirm successful readiness through the provider slot before checking the remaining budget.
+
 **A bounded modal still grew with its children.** Settings' minimum width and page height ran
 outside a 380×260 logical viewport. Removing those minima alone still let AI fields and nested
 dropdowns widen it; a wrapping row does not always constrain a control that measures a child UI.

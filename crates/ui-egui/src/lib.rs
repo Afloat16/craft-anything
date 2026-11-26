@@ -560,6 +560,8 @@ pub struct CraftApp {
     open_url: Option<String>,
     /// The open project's screenshot thumbnails (dropped when another project opens).
     pub thumbs: std::collections::HashMap<PathBuf, project::Thumb>,
+    /// How tall each item of the open conversation was last drawn.
+    feed_heights: project::FeedHeights,
     /// Pictures of the attachments in the prompt boxes (`CraftApp::previews`).
     pub previews: std::collections::HashMap<PathBuf, project::Thumb>,
     /// The kinds of thing this app can make; a fork registers its own here.
@@ -706,6 +708,7 @@ impl CraftApp {
             pins_read_at: None,
             open_url: None,
             thumbs: Default::default(),
+            feed_heights: Default::default(),
             previews: Default::default(),
             kinds: craft_anything_ai::rebuild::KindRegistry::built_in(),
             game_engines: None,

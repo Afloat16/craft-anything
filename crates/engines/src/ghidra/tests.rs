@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 enum Mode {
     /// Answer requests normally (token must equal `expected`).
     Serve,
+    /// Hold the first decompile reply until the test releases it.
+    PauseDecompile,
     /// Accept the connection and then stay silent forever.
     Silent,
     /// Answer the first request with a reply line far longer than a test client accepts.
@@ -26,6 +28,13 @@ struct Fake {
     addr: SocketAddr,
     saw_eof: Arc<AtomicBool>,
     handle: Option<std::thread::JoinHandle<()>>,
+    request_started: std::sync::mpsc::Receiver<()>,
+    release_reply: std::sync::mpsc::Sender<()>,
+}
+
+struct RequestPause {
+    started: std::sync::mpsc::Sender<()>,
+    release: std::sync::mpsc::Receiver<()>,
 }
 
 impl Fake {
@@ -34,6 +43,8 @@ impl Fake {
         let addr = listener.local_addr().expect("addr");
         let saw_eof = Arc::new(AtomicBool::new(false));
         let eof2 = saw_eof.clone();
+        let (started, request_started) = std::sync::mpsc::channel();
+        let (release_reply, release) = std::sync::mpsc::channel();
         let handle = std::thread::spawn(move || {
             if let Ok((stream, _)) = listener.accept() {
                 match mode {
@@ -53,7 +64,8 @@ impl Fake {
                             }
                         }
                     }
-                    Mode::Serve => serve(stream, expected_token, &eof2),
+                    Mode::Serve => serve(stream, expected_token, &eof2, None),
+                    Mode::PauseDecompile => serve(stream, expected_token, &eof2, Some(RequestPause { started, release })),
                     Mode::Huge | Mode::Split => {
                         let mut writer = stream.try_clone().expect("clone");
                         let mut reader = BufReader::new(stream);
@@ -84,7 +96,7 @@ impl Fake {
                 }
             }
         });
-        Fake { addr, saw_eof, handle: Some(handle) }
+        Fake { addr, saw_eof, handle: Some(handle), request_started, release_reply }
     }
 
     fn join(mut self) {
@@ -94,7 +106,7 @@ impl Fake {
     }
 }
 
-fn serve(stream: TcpStream, expected: &str, saw_eof: &Arc<AtomicBool>) {
+fn serve(stream: TcpStream, expected: &str, saw_eof: &Arc<AtomicBool>, mut pause: Option<RequestPause>) {
     let mut writer = stream.try_clone().expect("clone");
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
@@ -124,6 +136,14 @@ fn serve(stream: TcpStream, expected: &str, saw_eof: &Arc<AtomicBool>) {
             let resp = format!("{{\"id\":{},\"ok\":false,\"error\":{{\"code\":\"bad_input\",\"message\":\"bad token\"}}}}\n", req.id);
             let _ = writer.write_all(resp.as_bytes());
             break; // close on a bad token
+        }
+        if req.method == "native_function_pseudocode"
+            && let Some(pause) = pause.take()
+        {
+            let _ = pause.started.send(());
+            // A failed assertion must not strand the fake bridge or wait for the real
+            // fifteen-minute request deadline. The test normally releases this first.
+            let _ = pause.release.recv_timeout(Duration::from_secs(10));
         }
         let result = match req.method.as_str() {
             "ping" => "{\"name\":\"fake\",\"provider\":{\"id\":\"ghidra\",\"version\":\"12.1.4\"},\"analysed\":true,\"analysis_cut_short\":false,\"target\":{\"name\":\"t\",\"image_base\":\"0x100000\"}}"
@@ -156,6 +176,22 @@ fn serve(stream: TcpStream, expected: &str, saw_eof: &Arc<AtomicBool>) {
 
 fn no_cancel() -> impl Fn() -> bool {
     || false
+}
+
+fn fake_session(fake: &Fake, runtime_root: &std::path::Path) -> Session {
+    std::fs::create_dir(runtime_root).unwrap();
+    // Keep Session's real ownership/drop path without installing or launching Ghidra.
+    // Listing this test binary's tests creates an owned process that has already exited.
+    let mut process = Process::new(std::env::current_exe().unwrap()).arg("--list").timeout(Duration::from_secs(5)).spawn().unwrap();
+    assert!(process.wait_timeout(Duration::from_secs(5)).expect("test process exits").is_ok());
+    Session {
+        client: Mutex::new(Client::connect(fake.addr, "tok", Instant::now() + Duration::from_secs(5)).unwrap()),
+        _process: Mutex::new(process),
+        runtime_root: runtime_root.to_path_buf(),
+        version: None,
+        language_id: None,
+        image_base: None,
+    }
 }
 
 #[test]
@@ -243,6 +279,81 @@ fn cancel_stops_a_request_quickly() {
     assert!(t.elapsed() < Duration::from_secs(3));
     drop(client);
     fake.join();
+}
+
+#[test]
+fn session_cancellation_interrupts_a_pending_decompile() {
+    let fake = Fake::start(Mode::PauseDecompile, "tok");
+    let tmp = tempfile::tempdir().unwrap();
+    let session = fake_session(&fake, &tmp.path().join("runtime"));
+    let cancel = AtomicBool::new(false);
+    let (finished, done) = std::sync::mpsc::channel();
+    let (entered, cancelled_before_reply, result) = std::thread::scope(|scope| {
+        let worker = scope.spawn(|| {
+            let result = session.decompile(0x401000, &|| cancel.load(Ordering::SeqCst), &|_| {});
+            let _ = finished.send(());
+            result
+        });
+        let entered = fake.request_started.recv_timeout(Duration::from_secs(5));
+        cancel.store(true, Ordering::SeqCst);
+        let cancelled_before_reply = done.recv_timeout(Duration::from_secs(5));
+        // Both the fixed and negative variants must release the fake server and join the
+        // caller before making assertions. No failed control waits for REQUEST_TIME.
+        let _ = fake.release_reply.send(());
+        let result = worker.join().expect("decompile worker");
+        (entered, cancelled_before_reply, result)
+    });
+    // A late response to the cancelled request must not become the next request's result.
+    let next = session.decompile(0x401200, &no_cancel(), &|_| {});
+    drop(session);
+    fake.join();
+
+    assert!(entered.is_ok(), "the bridge did not receive the decompile");
+    assert!(cancelled_before_reply.is_ok(), "cancellation waited for the bridge's reply");
+    assert!(matches!(result, Err(GhidraError::Cancelled)), "{result:?}");
+    let next = next.unwrap().unwrap();
+    assert_eq!(next.entry, 0x401200);
+    assert!(next.created && next.pseudocode.as_deref().unwrap_or_default().contains("FUN_00401200"), "{next:?}");
+}
+
+#[test]
+fn session_cancellation_interrupts_waiting_for_the_client() {
+    let fake = Fake::start(Mode::Serve, "tok");
+    let tmp = tempfile::tempdir().unwrap();
+    let session = fake_session(&fake, &tmp.path().join("runtime"));
+    let cancel = AtomicBool::new(false);
+    let first_check = AtomicBool::new(true);
+    let (started, checking) = std::sync::mpsc::channel();
+    let (finished, done) = std::sync::mpsc::channel();
+    let held = session.lock();
+    let (entered, cancelled_before_unlock, result) = std::thread::scope(|scope| {
+        let worker = scope.spawn(|| {
+            let check = || {
+                if first_check.swap(false, Ordering::SeqCst) {
+                    let _ = started.send(());
+                    return false;
+                }
+                cancel.load(Ordering::SeqCst)
+            };
+            let result = session.decompile(0x401000, &check, &|_| {});
+            let _ = finished.send(());
+            result
+        });
+        let entered = checking.recv_timeout(Duration::from_secs(5));
+        cancel.store(true, Ordering::SeqCst);
+        let cancelled_before_unlock = done.recv_timeout(Duration::from_secs(5));
+        drop(held);
+        let result = worker.join().expect("decompile worker");
+        (entered, cancelled_before_unlock, result)
+    });
+    let next = session.decompile(0x401000, &no_cancel(), &|_| {});
+    drop(session);
+    fake.join();
+
+    assert!(entered.is_ok(), "the queued decompile did not check cancellation");
+    assert!(cancelled_before_unlock.is_ok(), "cancellation waited for the client lock");
+    assert!(matches!(result, Err(GhidraError::Cancelled)), "{result:?}");
+    assert!(next.unwrap().is_some(), "the other caller's client is still usable");
 }
 
 #[test]
@@ -686,16 +797,16 @@ fn live_ghidra_makes_and_decompiles_code_reached_only_through_a_pointer_table() 
 
     let known: Vec<u64> = session.list_functions().unwrap().iter().map(|f| f.entry).collect();
     assert!(!known.contains(&triple) && !known.contains(&negate), "the analysis already made these, so this tests nothing: {known:x?}");
-    let made = session.decompile(triple, &|_| {}).unwrap().expect("an answer");
+    let made = session.decompile(triple, &no_cancel(), &|_| {}).unwrap().expect("an answer");
     assert!(made.created && made.pseudocode.as_deref().unwrap_or_default().contains("* 3"), "{made:?}");
-    let again = session.decompile(negate, &|_| {}).unwrap().expect("an answer");
+    let again = session.decompile(negate, &no_cancel(), &|_| {}).unwrap().expect("an answer");
     assert!(again.created && again.pseudocode.as_deref().unwrap_or_default().contains("-param_1"), "{again:?}");
-    match session.decompile(table, &|_| {}).unwrap_err() {
+    match session.decompile(table, &no_cancel(), &|_| {}).unwrap_err() {
         GhidraError::Bridge { code, message } => assert!(code == "not_found" && message.contains("executable memory"), "{code}: {message}"),
         other => panic!("expected not_found, got {other:?}"),
     }
     // Made once, then found again, still marked as made on demand.
-    assert!(session.decompile(triple, &|_| {}).unwrap().expect("an answer").created);
+    assert!(session.decompile(triple, &no_cancel(), &|_| {}).unwrap().expect("an answer").created);
 }
 
 #[test]
@@ -735,7 +846,7 @@ fn live_ghidra_reports_where_it_loaded_a_position_independent_elf() {
     let base = session.image_base().expect("the handshake says where the program is");
     assert_ne!(base, 0, "Ghidra moves a program whose lowest segment is at 0");
     let rebase = Rebase::new(0, Some(base));
-    let made = session.decompile(rebase.to_engine(triple), &|_| {}).unwrap().expect("an answer");
+    let made = session.decompile(rebase.to_engine(triple), &no_cancel(), &|_| {}).unwrap().expect("an answer");
     assert_eq!(rebase.from_engine(made.entry), triple);
     assert!(made.pseudocode.as_deref().unwrap_or_default().contains("* 3"), "{made:?}");
 }
@@ -757,9 +868,9 @@ fn live_ghidra_bounds_a_jump_table_with_no_bounds_check() {
     };
     let (elf, first, third) = unguarded_jump_tables_elf();
     let session = Session::start(&cfg, &elf, &craft_anything_evidence::sha256_hex(&elf), &"ab".repeat(32), &|| false, &|_, _| {}).expect("Ghidra starts");
-    let c = session.decompile(first, &|_| {}).unwrap().expect("an answer").pseudocode.unwrap_or_default();
+    let c = session.decompile(first, &no_cancel(), &|_| {}).unwrap().expect("an answer").pseudocode.unwrap_or_default();
     assert!(c.contains("manually overridden") && c.contains("0x21") && !c.contains("0x2c") && !c.contains("case 3"), "{c}");
-    let guarded = session.decompile(third, &|_| {}).unwrap().expect("an answer").pseudocode.unwrap_or_default();
+    let guarded = session.decompile(third, &no_cancel(), &|_| {}).unwrap().expect("an answer").pseudocode.unwrap_or_default();
     assert!(!guarded.contains("manually overridden") && guarded.contains("0x4d"), "a guarded table is Ghidra's own: {guarded}");
 }
 

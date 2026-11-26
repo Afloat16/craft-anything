@@ -74,8 +74,9 @@ pub trait DeepDecompiler: Send + Sync {
         None
     }
     /// Decompile the function at `entry` (an address in the engine's own space). `Ok(None)` means
-    /// the engine has no better answer. `waiting` gets a line now and then while it waits (#1714).
-    fn decompile(&self, entry: u64, waiting: &dyn Fn(&str)) -> Result<Option<DeepFunction>, GhidraError>;
+    /// the engine has no better answer. `cancel` is checked while waiting for the engine or its
+    /// reply. `waiting` gets a line now and then while it waits (#1714).
+    fn decompile(&self, entry: u64, cancel: &dyn Fn() -> bool, waiting: &dyn Fn(&str)) -> Result<Option<DeepFunction>, GhidraError>;
     /// List the functions the engine found.
     fn list_functions(&self) -> Result<Vec<DeepFunction>, GhidraError>;
 }
@@ -869,7 +870,7 @@ impl DeepDecompiler for Session {
         self.image_base
     }
 
-    fn decompile(&self, entry: u64, waiting: &dyn Fn(&str)) -> Result<Option<DeepFunction>, GhidraError> {
+    fn decompile(&self, entry: u64, cancel: &dyn Fn() -> bool, waiting: &dyn Fn(&str)) -> Result<Option<DeepFunction>, GhidraError> {
         let said = std::cell::RefCell::new(String::new());
         // Once a minute, from the first: most decompiles take seconds and say nothing.
         let say = |since: Instant, what: &dyn Fn(u64) -> String| {
@@ -883,6 +884,9 @@ impl DeepDecompiler for Session {
         // A decompile ahead of this one holds the bridge, for up to its own request time (#1711).
         let queued = Instant::now();
         let mut client = loop {
+            if cancel() {
+                return Err(GhidraError::Cancelled);
+            }
             match self.client.try_lock() {
                 Ok(g) => break g,
                 Err(std::sync::TryLockError::Poisoned(p)) => break p.into_inner(),
@@ -895,6 +899,9 @@ impl DeepDecompiler for Session {
         let asked = Instant::now();
         let limit = REQUEST_TIME.as_secs() / 60;
         let still = || {
+            if cancel() {
+                return true;
+            }
             say(asked, &|m| format!("Ghidra is decompiling this function ({m} min so far; it gives up at {limit} min)"));
             false
         };

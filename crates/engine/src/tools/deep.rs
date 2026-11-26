@@ -116,6 +116,13 @@ impl NotUsed {
     }
 }
 
+#[cfg(test)]
+struct TestProviderStart {
+    result: Result<Arc<dyn DeepDecompiler>, Option<NotUsed>>,
+    delay: Duration,
+    calls: AtomicUsize,
+}
+
 /// How long Ghidra's one-time analysis of a target may take by default: a big game can take hours,
 /// and it's saved, so later sessions open it in moments.
 const ANALYSIS_LIMIT_SECS: u64 = 8 * 3600;
@@ -130,7 +137,7 @@ pub const STOPPED_NOTE: &str = "The person stopped Ghidra's analysis for this pr
 /// Get (or lazily create) the deep provider for the active target. `Err(Some(why))`: Deep mode is
 /// on but Ghidra can't be used; `Err(None)`: Clean room (never launches). Either way the caller
 /// uses the built-in engine.
-fn provider_for_active(ctx: &mut Ctx<'_>) -> Result<Arc<dyn DeepDecompiler>, Option<NotUsed>> {
+pub(super) fn provider_for_active(ctx: &mut Ctx<'_>) -> Result<Arc<dyn DeepDecompiler>, Option<NotUsed>> {
     if ctx.session.clean_room() {
         return Err(None);
     }
@@ -151,6 +158,16 @@ fn provider_for_active(ctx: &mut Ctx<'_>) -> Result<Arc<dyn DeepDecompiler>, Opt
         && let Some(slot) = t.ext.get::<DeepSlot>()
     {
         return slot.provider.clone().map_err(Some);
+    }
+
+    // A target-local startup fixture leaves the real slot reuse and bridge invalidation in
+    // place. An unavailable installation is not remembered here, matching config's fallback.
+    #[cfg(test)]
+    if let Some(start) = ctx.session.active().ok().and_then(|t| t.ext.get::<TestProviderStart>()) {
+        start.calls.fetch_add(1, Ordering::SeqCst);
+        std::thread::sleep(start.delay);
+        let provider = start.result.clone()?;
+        return remember(ctx, Ok(provider));
     }
 
     // The target's bytes and identity.
@@ -442,7 +459,8 @@ pub fn pseudo_code(ctx: &mut Ctx<'_>, at: At, our_base: u64, params: serde_json:
             a.say(line);
         }
     };
-    match provider.decompile(entry, &waiting) {
+    let cancel = ctx.cancel.clone();
+    match provider.decompile(entry, &|| cancel.is_cancelled(), &waiting) {
         Ok(Some(df)) => {
             let renames = user_renames(ctx, rebase);
             Ok(build_evidence(ctx, provider.as_ref(), df, rebase, &renames, params))
@@ -731,7 +749,7 @@ mod tests {
         fn image_base(&self) -> Option<u64> {
             Some(self.base)
         }
-        fn decompile(&self, entry: u64, _: &dyn Fn(&str)) -> Result<Option<DeepFunction>, ghidra::GhidraError> {
+        fn decompile(&self, entry: u64, _: &dyn Fn() -> bool, _: &dyn Fn(&str)) -> Result<Option<DeepFunction>, ghidra::GhidraError> {
             self.asked.store(entry, Ordering::SeqCst);
             if entry < self.base {
                 return Err(ghidra::GhidraError::Bridge { code: "not_found".into(), message: "the address is not in executable memory".into() });
@@ -788,7 +806,7 @@ mod tests {
         fn image_base(&self) -> Option<u64> {
             Some(tk::ELF_BASE)
         }
-        fn decompile(&self, entry: u64, waiting: &dyn Fn(&str)) -> Result<Option<DeepFunction>, ghidra::GhidraError> {
+        fn decompile(&self, entry: u64, _: &dyn Fn() -> bool, waiting: &dyn Fn(&str)) -> Result<Option<DeepFunction>, ghidra::GhidraError> {
             waiting("Ghidra is decompiling this function (1 min so far; it gives up at 15 min)");
             *self.seen.lock().unwrap() = crate::inbox::activity(&self.inbox);
             Ok(Some(DeepFunction { entry, name: "main".into(), signature: None, pseudocode: Some("int main(void) { return 0; }".into()), created: false }))
@@ -835,7 +853,7 @@ mod tests {
         fn image_base(&self) -> Option<u64> {
             Some(tk::ELF_BASE)
         }
-        fn decompile(&self, entry: u64, _: &dyn Fn(&str)) -> Result<Option<DeepFunction>, ghidra::GhidraError> {
+        fn decompile(&self, entry: u64, _: &dyn Fn() -> bool, _: &dyn Fn(&str)) -> Result<Option<DeepFunction>, ghidra::GhidraError> {
             let pseudocode = Some(
                 "int main(void) {
   return helper(5) + helper_count + my_helper();
@@ -855,6 +873,369 @@ mod tests {
         s.active_mut().unwrap().ext.insert(Arc::new(DeepSlot { provider: Ok(provider) }));
     }
 
+    enum ExportReply {
+        Code,
+        NoFunction,
+        NoText,
+        BlankText,
+        FailFirst,
+        Disconnected,
+        InvalidProtocol,
+        CancelSecond,
+        StopSecond(crate::tool::CancelToken),
+        WaitSecond { started: std::sync::mpsc::Sender<()>, release: Arc<AtomicBool> },
+    }
+
+    struct ExportProvider {
+        calls: AtomicUsize,
+        reply: ExportReply,
+    }
+
+    const EXPORT_SHIFT: u64 = 0x10_0000;
+
+    impl ExportProvider {
+        fn new(reply: ExportReply) -> Arc<Self> {
+            Arc::new(Self { calls: AtomicUsize::new(0), reply })
+        }
+    }
+
+    impl DeepDecompiler for ExportProvider {
+        fn engine(&self) -> &'static str {
+            "ghidra"
+        }
+        fn engine_version(&self) -> Option<String> {
+            Some("test-export".into())
+        }
+        fn image_base(&self) -> Option<u64> {
+            Some(tk::ELF_BASE + EXPORT_SHIFT)
+        }
+        fn decompile(&self, entry: u64, cancel: &dyn Fn() -> bool, _: &dyn Fn(&str)) -> Result<Option<DeepFunction>, ghidra::GhidraError> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            match &self.reply {
+                ExportReply::NoFunction => return Ok(None),
+                ExportReply::FailFirst if call == 1 => {
+                    return Err(ghidra::GhidraError::Bridge { code: "not_found".into(), message: "fixture has no answer here".into() });
+                }
+                ExportReply::Disconnected => return Err(ghidra::GhidraError::Connection("fixture bridge closed".into())),
+                ExportReply::InvalidProtocol => return Err(ghidra::GhidraError::Protocol("fixture bridge sent invalid data".into())),
+                ExportReply::CancelSecond if call == 2 => return Err(ghidra::GhidraError::Cancelled),
+                ExportReply::StopSecond(token) if call == 2 => token.cancel(),
+                ExportReply::WaitSecond { started, release } if call == 2 => {
+                    let _ = started.send(());
+                    while !release.load(Ordering::SeqCst) {
+                        if cancel() {
+                            return Err(ghidra::GhidraError::Cancelled);
+                        }
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                }
+                _ => {}
+            }
+            let name = format!("FUN_{entry:08x}");
+            let pseudocode = match &self.reply {
+                ExportReply::NoText => None,
+                ExportReply::BlankText => Some(" \n\t".into()),
+                _ => Some(format!("int {name}(void) {{ return 73; }}")),
+            };
+            Ok(Some(DeepFunction { entry, name, signature: None, pseudocode, created: false }))
+        }
+        fn list_functions(&self) -> Result<Vec<DeepFunction>, ghidra::GhidraError> {
+            panic!("folder export uses the built-in function inventory")
+        }
+    }
+
+    fn export_state(folder: &std::path::Path) -> serde_json::Value {
+        let path = folder.join(super::super::program_facts_tools::EXPORT_STATE_FILE);
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn source_folder_uses_deep_code_with_rebased_addresses_and_user_names() {
+        let (elf, layout) = tk::elf64(tk::ElfArch::X86_64, true);
+        let e = engine_with("prog", &elf);
+        let provider = ExportProvider::new(ExportReply::Code);
+        with_deep(&e, provider.clone());
+        call(&e, "native_name_set", json!({"address": format!("{:#x}", layout.code_va), "name": "start_here"}));
+        let tmp = tempfile::tempdir().unwrap();
+        let folder = tmp.path().join("out");
+
+        let v = call(&e, "native_source_folder_write", json!({"folder": folder}));
+        let total = v["result"]["functions_total"].as_u64().unwrap();
+        assert_eq!(v["result"]["functions_by_engine"]["ghidra"], total);
+        assert_eq!(v["result"]["deep_fallbacks"], 0);
+        assert_eq!(v["environment"]["engine"], "ghidra");
+        assert_eq!(v["confidence"], "derived");
+        assert_eq!(provider.calls.load(Ordering::SeqCst) as u64, total);
+        let state = export_state(&folder);
+        assert_eq!(state["version"], 2);
+        let key = format!("{:#x}", layout.code_va);
+        let main = &state["functions"][&key];
+        assert_eq!(main["name"], "start_here");
+        assert_eq!(main["source"]["entry"], key);
+        assert_eq!(main["source"]["engine_entry"], format!("{:#x}", layout.code_va + EXPORT_SHIFT));
+        assert_eq!(main["source"]["engine_version"], "test-export");
+        assert!(main["structured"].is_null());
+        let text = std::fs::read_to_string(folder.join(main["file"].as_str().unwrap())).unwrap();
+        assert!(text.contains("int start_here(void) { return 73; }"), "{text}");
+        assert!(text.contains("engine_rebased"), "{text}");
+        assert!(text.contains("user_names_applied"), "{text}");
+
+        let resumed = call(&e, "native_source_folder_write", json!({"folder": folder}));
+        assert_eq!(resumed["result"]["written_now"], 0);
+        assert_eq!(resumed["result"]["already_done"], total);
+        assert_eq!(provider.calls.load(Ordering::SeqCst) as u64, total, "completed files are not decompiled again");
+    }
+
+    #[test]
+    fn source_folder_keeps_v1_files_when_a_deep_run_finishes_the_folder() {
+        let (elf, layout) = tk::elf64(tk::ElfArch::X86_64, true);
+        let e = engine_with("prog", &elf);
+        let sha = e.session().active().unwrap().target.sha256.clone();
+        let tmp = tempfile::tempdir().unwrap();
+        let folder = tmp.path().join("out");
+        std::fs::create_dir(&folder).unwrap();
+        let legacy = folder.join("legacy-main.c");
+        std::fs::write(&legacy, b"// keep this completed version-1 file\nint main(void) { return 5; }\n").unwrap();
+        let before = std::fs::read(&legacy).unwrap();
+        let modified = std::fs::metadata(&legacy).unwrap().modified().unwrap();
+        let key = format!("{:#x}", layout.code_va);
+        let v1 = json!({
+            "version": 1, "target_sha256": sha, "target_name": "prog", "engine": "clean-room lifter",
+            "functions": {(key.clone()): {"file": "legacy-main.c", "name": "main", "lines": 1, "structured": true}}
+        });
+        std::fs::write(folder.join(super::super::program_facts_tools::EXPORT_STATE_FILE), serde_json::to_vec(&v1).unwrap()).unwrap();
+        let provider = ExportProvider::new(ExportReply::Code);
+        with_deep(&e, provider.clone());
+
+        let first = call(&e, "native_source_folder_write", json!({"folder": folder, "max_functions": 1}));
+        assert_eq!(first["result"]["functions_by_engine"]["builtin"], 1);
+        assert_eq!(first["result"]["functions_by_engine"]["ghidra"], 1);
+        assert_eq!(first["environment"]["engine"], "mixed");
+        let first_file = folder.join(first["result"]["written_files"][0].as_str().unwrap());
+        let first_bytes = std::fs::read(&first_file).unwrap();
+        let first_modified = std::fs::metadata(&first_file).unwrap().modified().unwrap();
+        let v = call(&e, "native_source_folder_write", json!({"folder": folder}));
+        let total = v["result"]["functions_total"].as_u64().unwrap();
+        assert_eq!(v["result"]["finished"], true);
+        assert_eq!(v["result"]["functions_by_engine"]["builtin"], 1);
+        assert_eq!(v["result"]["functions_by_engine"]["ghidra"], total - 1);
+        assert_eq!(v["environment"]["engine"], "mixed");
+        assert_eq!(v["confidence"], "inferred");
+        assert_eq!(provider.calls.load(Ordering::SeqCst) as u64, total - 1);
+        let state = export_state(&folder);
+        assert_eq!(state["functions"][&key]["source"]["engine"], "builtin");
+        assert_eq!(state["functions"][&key]["source"]["entry"], key);
+        assert_eq!(state["functions"][&key]["structured"], true);
+        assert_eq!(std::fs::read(&legacy).unwrap(), before);
+        assert_eq!(std::fs::metadata(&legacy).unwrap().modified().unwrap(), modified);
+        assert_eq!(std::fs::read(&first_file).unwrap(), first_bytes);
+        assert_eq!(std::fs::metadata(&first_file).unwrap().modified().unwrap(), first_modified);
+    }
+
+    #[test]
+    fn source_folder_falls_back_for_absent_or_empty_deep_code() {
+        let (elf, _) = tk::elf64(tk::ElfArch::X86_64, true);
+        for reply in [ExportReply::NoFunction, ExportReply::NoText, ExportReply::BlankText] {
+            let e = engine_with("prog", &elf);
+            with_deep(&e, ExportProvider::new(reply));
+            let tmp = tempfile::tempdir().unwrap();
+            let folder = tmp.path().join("out");
+            let v = call(&e, "native_source_folder_write", json!({"folder": folder}));
+            let total = v["result"]["functions_total"].as_u64().unwrap();
+            assert_eq!(v["result"]["functions_by_engine"]["builtin"], total);
+            assert_eq!(v["result"]["deep_fallbacks"], total);
+            assert_eq!(v["result"]["fallback_examples"].as_array().unwrap().len() as u64, total.min(5));
+            assert_eq!(v["environment"]["engine"], "builtin");
+            for function in export_state(&folder)["functions"].as_object().unwrap().values() {
+                assert_eq!(function["source"]["engine"], "builtin");
+                assert!(function["lines"].as_u64().unwrap() > 0);
+                let text = std::fs::read_to_string(folder.join(function["file"].as_str().unwrap())).unwrap();
+                assert!(text.contains("deep_engine_unavailable"), "{text}");
+            }
+        }
+    }
+
+    #[test]
+    fn source_folder_can_fall_back_for_one_function_and_use_deep_for_the_rest() {
+        let (elf, _) = tk::elf64(tk::ElfArch::X86_64, true);
+        let e = engine_with("prog", &elf);
+        with_deep(&e, ExportProvider::new(ExportReply::FailFirst));
+        let tmp = tempfile::tempdir().unwrap();
+        let v = call(&e, "native_source_folder_write", json!({"folder": tmp.path().join("out")}));
+        let total = v["result"]["functions_total"].as_u64().unwrap();
+        assert_eq!(v["result"]["functions_by_engine"]["builtin"], 1);
+        assert_eq!(v["result"]["functions_by_engine"]["ghidra"], total - 1);
+        assert_eq!(v["result"]["deep_fallbacks"], 1);
+        assert_eq!(v["environment"]["engine"], "mixed");
+    }
+
+    #[test]
+    fn source_folder_rechecks_the_deadline_after_a_failed_bridge_restarts() {
+        let (elf, _) = tk::elf64(tk::ElfArch::X86_64, true);
+        for failure in [ExportReply::Disconnected, ExportReply::InvalidProtocol] {
+            let e = engine_with("prog", &elf);
+            let failed = ExportProvider::new(failure);
+            with_deep(&e, failed.clone());
+            let replacement = ExportProvider::new(ExportReply::Code);
+            let start = Arc::new(TestProviderStart { result: Ok(replacement.clone()), delay: Duration::from_millis(1100), calls: AtomicUsize::new(0) });
+            e.session().active_mut().unwrap().ext.insert(start.clone());
+            let tmp = tempfile::tempdir().unwrap();
+            let folder = tmp.path().join("out");
+
+            let v = call(&e, "native_source_folder_write", json!({"folder": folder, "max_seconds": 1}));
+
+            assert_eq!(failed.calls.load(Ordering::SeqCst), 1, "a real bridge error invalidates the first provider");
+            assert_eq!(start.calls.load(Ordering::SeqCst), 1, "the next function starts its replacement");
+            assert_eq!(replacement.calls.load(Ordering::SeqCst), 0, "startup spent the budget, so no replacement decompile may start");
+            assert_eq!(v["result"]["written_now"], 1);
+            assert_eq!(v["result"]["functions_done"], 1);
+            assert_eq!(v["result"]["deep_fallbacks"], 1);
+            assert_eq!(v["result"]["stopped_because"], "time_limit");
+            assert_eq!(v["result"]["finished"], false);
+            assert!(v["result"]["next_function"].is_string());
+            let state = export_state(&folder);
+            let functions = state["functions"].as_object().unwrap();
+            assert_eq!(functions.len(), 1, "the unstarted function gets no file or completed record");
+            let first = folder.join(functions.values().next().unwrap()["file"].as_str().unwrap());
+            let before = std::fs::read(&first).unwrap();
+            let modified = std::fs::metadata(&first).unwrap().modified().unwrap();
+
+            let resumed = call(&e, "native_source_folder_write", json!({"folder": folder}));
+
+            assert_eq!(resumed["result"]["finished"], true);
+            assert_eq!(resumed["result"]["already_done"], 1);
+            assert_eq!(start.calls.load(Ordering::SeqCst), 1, "the ready replacement is reused");
+            assert_eq!(replacement.calls.load(Ordering::SeqCst) as u64, resumed["result"]["functions_total"].as_u64().unwrap() - 1);
+            assert_eq!(std::fs::read(&first).unwrap(), before);
+            assert_eq!(std::fs::metadata(&first).unwrap().modified().unwrap(), modified);
+        }
+    }
+
+    #[test]
+    fn source_folder_checks_an_unavailable_installation_once_per_call() {
+        let (elf, _) = tk::elf64(tk::ElfArch::X86_64, true);
+        let e = engine_with("prog", &elf);
+        let start = Arc::new(TestProviderStart {
+            result: Err(Some(NotUsed::new(Unavailable::NotInstalled, NOT_INSTALLED))),
+            delay: Duration::ZERO,
+            calls: AtomicUsize::new(0),
+        });
+        {
+            let mut session = e.session();
+            session.settings.deep_mode = true;
+            session.active_mut().unwrap().ext.insert(start.clone());
+        }
+        let tmp = tempfile::tempdir().unwrap();
+
+        let v = call(&e, "native_source_folder_write", json!({"folder": tmp.path().join("out")}));
+
+        let total = v["result"]["functions_total"].as_u64().unwrap();
+        assert!(total > 1, "the cache must cover more than one function");
+        assert_eq!(start.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(v["result"]["functions_by_engine"]["builtin"], total);
+        assert_eq!(v["result"]["deep_fallbacks"], total);
+        assert_eq!(v["result"]["finished"], true);
+        let next = call(&e, "native_source_folder_write", json!({"folder": tmp.path().join("another-export")}));
+        assert_eq!(next["result"]["finished"], true);
+        assert_eq!(start.calls.load(Ordering::SeqCst), 2, "another export gets its own availability check");
+    }
+
+    #[test]
+    fn source_folder_cancellation_saves_finished_functions_without_writing_the_cancelled_one() {
+        let (elf, _) = tk::elf64(tk::ElfArch::X86_64, true);
+        for stop_token in [false, true] {
+            let e = engine_with("prog", &elf);
+            let token = crate::tool::CancelToken::default();
+            let reply = if stop_token { ExportReply::StopSecond(token.clone()) } else { ExportReply::CancelSecond };
+            with_deep(&e, ExportProvider::new(reply));
+            let tmp = tempfile::tempdir().unwrap();
+            let folder = tmp.path().join("out");
+            let out = e.call("native_source_folder_write", json!({"folder": folder}), crate::CallOptions::new(crate::Caller::Mcp).with_cancel(token));
+            assert_eq!(out.unwrap_err().code, craft_anything_evidence::ErrorCode::Cancelled);
+            let state = export_state(&folder);
+            let functions = state["functions"].as_object().unwrap();
+            assert_eq!(functions.len(), 1, "the first function is saved before cancellation: {state}");
+            assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 2, "only one code file and the state");
+            let first = folder.join(functions.values().next().unwrap()["file"].as_str().unwrap());
+            let before = std::fs::read(&first).unwrap();
+            let modified = std::fs::metadata(&first).unwrap().modified().unwrap();
+            let provider = ExportProvider::new(ExportReply::Code);
+            with_deep(&e, provider.clone());
+            let v = call(&e, "native_source_folder_write", json!({"folder": folder}));
+            assert_eq!(v["result"]["finished"], true);
+            assert_eq!(v["result"]["already_done"], 1);
+            assert_eq!(provider.calls.load(Ordering::SeqCst) as u64, v["result"]["functions_total"].as_u64().unwrap() - 1);
+            assert_eq!(std::fs::read(&first).unwrap(), before);
+            assert_eq!(std::fs::metadata(&first).unwrap().modified().unwrap(), modified);
+        }
+    }
+
+    #[test]
+    fn source_folder_cancels_an_in_flight_decompile_and_can_resume() {
+        let (elf, _) = tk::elf64(tk::ElfArch::X86_64, true);
+        for cached in [false, true] {
+            let e = engine_with("prog", &elf);
+            let token = crate::tool::CancelToken::default();
+            let (started, waiting) = std::sync::mpsc::channel();
+            let (finished, done) = std::sync::mpsc::channel();
+            let release = Arc::new(AtomicBool::new(false));
+            let provider = ExportProvider::new(ExportReply::WaitSecond { started, release: release.clone() });
+            if cached {
+                with_deep(&e, provider);
+            } else {
+                let start = Arc::new(TestProviderStart { result: Ok(provider), delay: Duration::ZERO, calls: AtomicUsize::new(0) });
+                let mut session = e.session();
+                session.settings.deep_mode = true;
+                session.active_mut().unwrap().ext.insert(start);
+            }
+            let tmp = tempfile::tempdir().unwrap();
+            let folder = tmp.path().join("out");
+            std::thread::scope(|scope| {
+                let worker = scope.spawn(|| {
+                    let result =
+                        e.call("native_source_folder_write", json!({"folder": folder}), crate::CallOptions::new(crate::Caller::Mcp).with_cancel(token.clone()));
+                    let _ = finished.send(());
+                    result
+                });
+                let entered = waiting.recv_timeout(Duration::from_secs(5));
+                token.cancel();
+                let cancelled_while_waiting = done.recv_timeout(Duration::from_secs(5));
+                // Release and join even when cancellation was not forwarded. The negative
+                // control must finish before asserting, rather than leave a blocked provider.
+                release.store(true, Ordering::SeqCst);
+                let result = worker.join().expect("export worker");
+                assert!(entered.is_ok(), "the second decompile did not start (cached={cached})");
+                assert!(cancelled_while_waiting.is_ok(), "the export waited for the decompile to return (cached={cached})");
+                assert_eq!(result.unwrap_err().code, craft_anything_evidence::ErrorCode::Cancelled);
+            });
+
+            let state = export_state(&folder);
+            let functions = state["functions"].as_object().unwrap();
+            assert_eq!(functions.len(), 1, "save the first function but not the in-flight one");
+            assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 2, "one code file and its resumable state");
+            let first = folder.join(functions.values().next().unwrap()["file"].as_str().unwrap());
+            let before = std::fs::read(&first).unwrap();
+            with_deep(&e, ExportProvider::new(ExportReply::Code));
+            let resumed = call(&e, "native_source_folder_write", json!({"folder": folder}));
+            assert_eq!(resumed["result"]["already_done"], 1);
+            assert_eq!(resumed["result"]["finished"], true);
+            assert_eq!(std::fs::read(first).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn source_folder_does_not_decompile_when_no_function_can_start() {
+        let (elf, _) = tk::elf64(tk::ElfArch::X86_64, true);
+        let e = engine_with("prog", &elf);
+        let provider = ExportProvider::new(ExportReply::Code);
+        with_deep(&e, provider.clone());
+        let tmp = tempfile::tempdir().unwrap();
+        let v = call(&e, "native_source_folder_write", json!({"folder": tmp.path().join("out"), "max_seconds": 0}));
+        assert_eq!(v["result"]["written_now"], 0);
+        assert_eq!(v["result"]["functions_done"], 0);
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+    }
+
     /// #1903 review: once Ghidra is stopped for the project, a Ghidra already open for its target
     /// is let go, so its process ends, and the decompile uses the built-in engine.
     #[test]
@@ -872,7 +1253,7 @@ mod tests {
             fn engine_version(&self) -> Option<String> {
                 None
             }
-            fn decompile(&self, _: u64, _: &dyn Fn(&str)) -> Result<Option<DeepFunction>, ghidra::GhidraError> {
+            fn decompile(&self, _: u64, _: &dyn Fn() -> bool, _: &dyn Fn(&str)) -> Result<Option<DeepFunction>, ghidra::GhidraError> {
                 Ok(None)
             }
             fn list_functions(&self) -> Result<Vec<DeepFunction>, ghidra::GhidraError> {
@@ -1005,7 +1386,7 @@ mod tests {
         fn image_base(&self) -> Option<u64> {
             Some(tk::ELF_BASE)
         }
-        fn decompile(&self, entry: u64, _: &dyn Fn(&str)) -> Result<Option<DeepFunction>, ghidra::GhidraError> {
+        fn decompile(&self, entry: u64, _: &dyn Fn() -> bool, _: &dyn Fn(&str)) -> Result<Option<DeepFunction>, ghidra::GhidraError> {
             let pseudocode = Some("int sub_parse(void) { return 0; }".into());
             Ok(Some(DeepFunction { entry, name: "sub_parse".into(), signature: None, pseudocode, created: false }))
         }
@@ -1082,7 +1463,7 @@ mod tests {
         fn image_base(&self) -> Option<u64> {
             Some(tk::ELF_BASE)
         }
-        fn decompile(&self, _: u64, _: &dyn Fn(&str)) -> Result<Option<DeepFunction>, ghidra::GhidraError> {
+        fn decompile(&self, _: u64, _: &dyn Fn() -> bool, _: &dyn Fn(&str)) -> Result<Option<DeepFunction>, ghidra::GhidraError> {
             Err((self.0)())
         }
         fn list_functions(&self) -> Result<Vec<DeepFunction>, ghidra::GhidraError> {
