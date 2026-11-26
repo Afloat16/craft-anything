@@ -1,0 +1,42 @@
+name: Windows occupied target probe
+
+on: create
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: "never"
+  CARGO_INCREMENTAL: "0"
+  CARGO_BUILD_JOBS: "2"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  occupied-target-probe:
+    if: github.event.ref_type == 'branch' && github.repository == 'Afloat16/craft-anything' && github.ref == 'refs/heads/test/r2.9-windows-target-overwrite-probe-20261126'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Configure isolated probe paths
+        shell: pwsh
+        run: |
+          "CRAFT_VALIDATION_OUTPUT=$env:RUNNER_TEMP/craft-2183-target-probe-results" >> $env:GITHUB_ENV
+          "CARGO_TARGET_DIR=$env:RUNNER_TEMP/craft-2183-target-probe-build" >> $env:GITHUB_ENV
+      - name: Verify NTFS and record unchanged production source
+        shell: pwsh
+        run: ./validation/windows-lock-rename/prepare.ps1
+      - name: Observe occupied target moves with and without a target handle
+        shell: pwsh
+        run: ./validation/windows-lock-rename/run.ps1
+      - name: Retain probe evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-2183-target-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.CRAFT_VALIDATION_OUTPUT }}
+          if-no-files-found: warn
+          retention-days: 7
