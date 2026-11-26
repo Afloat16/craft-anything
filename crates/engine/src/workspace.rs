@@ -1023,6 +1023,139 @@ impl CreationCleanup {
     }
 }
 
+/// The public name is released only after its old coordination entries have been retained.
+/// On Windows an open descendant prevents the directory move, even with delete sharing.
+struct ClaimedInbox {
+    path: PathBuf,
+    detached: Vec<(std::ffi::OsString, PathBuf)>,
+}
+
+impl ClaimedInbox {
+    fn coordination_path(&self, name: &std::ffi::OsStr) -> PathBuf {
+        self.detached
+            .iter()
+            .find(|(original, _)| original == name || cfg!(windows) && original.to_string_lossy().eq_ignore_ascii_case(&name.to_string_lossy()))
+            .map_or_else(|| self.path.join(name), |(_, path)| path.clone())
+    }
+
+    fn check_after_detach(&self) -> Result<(), ToolError> {
+        if !self.detached.is_empty()
+            && let Some(entry) = std::fs::read_dir(&self.path).map_err(|error| ToolError::io(self.path.display(), error))?.next()
+        {
+            let entry = entry.map_err(|error| ToolError::io(self.path.display(), error))?;
+            return Err(copy_changed(&entry.path()));
+        }
+        Ok(())
+    }
+
+    fn release(&self, before_remove: impl FnOnce(), remove_owned: impl FnOnce() -> Result<(), ToolError>) -> Result<(), ToolError> {
+        self.check_after_detach()?;
+        before_remove();
+        // Removing the empty directory closes a late initializer's directory-relative
+        // create window. On failure every detached lock link must remain inspectable.
+        #[cfg(windows)]
+        std::fs::remove_dir(&self.path).map_err(|error| ToolError::io(self.path.display(), error))?;
+        remove_owned()?;
+        #[cfg(not(windows))]
+        std::fs::remove_dir(&self.path).map_err(|error| ToolError::io(self.path.display(), error))?;
+        Ok(())
+    }
+
+    fn claim(
+        root: &Path,
+        directory: &FileHandle,
+        inbox: &FileHandle,
+        cleanup: &CreationCleanup,
+        held: Option<&FileHandle>,
+        after_detach: impl FnOnce(),
+    ) -> Result<Self, ToolError> {
+        let public = root.join("inbox");
+        let private = cleanup.empty_path(root)?;
+        let check = || -> Result<(), ToolError> {
+            CreationReservation::check_directory(root, directory)?;
+            CreationReservation::check_directory(&public, inbox)?;
+            CreationReservation::check_manifest_absent(root)?;
+            cleanup.checked_path(root)?;
+            Ok(())
+        };
+        check()?;
+        #[cfg(windows)]
+        let detached = Self::detach_coordination(&public, &private, held, &check)?;
+        #[cfg(not(windows))]
+        let detached = {
+            let _ = held;
+            Vec::new()
+        };
+        after_detach();
+        // A delayed initializer may have populated the public directory, or a new manifest
+        // may have appeared. Never restore the old lock over a new entry in either case.
+        #[cfg(windows)]
+        check()?;
+        #[cfg(not(windows))]
+        cleanup.empty_path(root)?;
+        let path = private.join("reservation");
+        std::fs::rename(&public, &path).map_err(|error| ToolError::io(public.display(), error))?;
+        CreationReservation::check_directory(root, directory)?;
+        cleanup.checked_path(root)?;
+        CreationReservation::check_directory(&path, inbox)?;
+        Ok(Self { path, detached })
+    }
+
+    #[cfg(windows)]
+    fn detach_coordination(
+        public: &Path,
+        private: &Path,
+        held: Option<&FileHandle>,
+        check: &impl Fn() -> Result<(), ToolError>,
+    ) -> Result<Vec<(std::ffi::OsString, PathBuf)>, ToolError> {
+        let Some(held) = held else { return Ok(Vec::new()) };
+        crate::feed::check_coordination_entry(&public.join(crate::feed::PROJECT_LOCK_FILE), held)?;
+        let mut names = Vec::new();
+        for entry in std::fs::read_dir(public).map_err(|error| ToolError::io(public.display(), error))? {
+            let entry = entry.map_err(|error| ToolError::io(public.display(), error))?;
+            let metadata = std::fs::symlink_metadata(entry.path()).map_err(|error| ToolError::io(entry.path().display(), error))?;
+            if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() != 0 {
+                continue;
+            }
+            let current = FileHandle::from_path(entry.path()).map_err(|error| ToolError::io(entry.path().display(), error))?;
+            if &current == held {
+                crate::feed::check_coordination_entry(&entry.path(), held)?;
+                names.push(entry.file_name());
+            }
+        }
+        let mut detached = Vec::new();
+        for (index, name) in names.into_iter().enumerate() {
+            check()?;
+            let public_entry = public.join(&name);
+            let retained = private.join(format!("coordination-{index}"));
+            Self::detach_entry(&public_entry, &retained, held, || {})?;
+            check()?;
+            detached.push((name, retained));
+        }
+        Ok(detached)
+    }
+
+    #[cfg(windows)]
+    fn detach_entry(public: &Path, retained: &Path, held: &FileHandle, before_move: impl FnOnce()) -> Result<(), ToolError> {
+        // Canonicalize only the existing parent: Windows returns its extended-length form,
+        // while the final entry remains unresolved so a late replacement link is moved as-is.
+        let native_path = |path: &Path| -> Result<PathBuf, ToolError> {
+            let parent = path.parent().ok_or_else(|| copy_changed(path))?;
+            let name = path.file_name().ok_or_else(|| copy_changed(path))?;
+            std::fs::canonicalize(parent).map(|parent| parent.join(name)).map_err(|error| ToolError::io(parent.display(), error))
+        };
+        let public = native_path(public)?;
+        let retained = native_path(retained)?;
+        crate::feed::check_coordination_entry(&public, held)?;
+        before_move();
+        // This is one Windows move without replacement, not link followed by public unlink.
+        // A source changed after the check is moved but preserved; an occupied target is
+        // never overwritten. The original OS lock remains held through either result.
+        atomicwrites::move_atomic(&public, &retained).map_err(|error| ToolError::io(retained.display(), error))?;
+        crate::feed::check_coordination_entry(&retained, held)
+    }
+}
+
 impl CreationReservation {
     fn claim(root: &Path, directory: FileHandle) -> Result<Self, ToolError> {
         Self::claim_with_cleanup(root, directory, &CopyDestination::cleanup_directory)
@@ -1200,7 +1333,7 @@ impl CreationReservation {
         self.release_claimed_with_cleanup(root, after_check, self.coordination.as_ref(), allocate, |claimed| {
             if let Some(lock) = &self.coordination {
                 for name in entries {
-                    let path = claimed.join(name);
+                    let path = claimed.coordination_path(&name);
                     crate::feed::check_coordination_entry(&path, lock)?;
                     std::fs::remove_file(&path).map_err(|error| ToolError::io(path.display(), error))?;
                 }
@@ -1214,7 +1347,7 @@ impl CreationReservation {
         root: &Path,
         after_check: impl FnOnce(),
         held_lock: Option<&FileHandle>,
-        remove_owned: impl FnOnce(&Path) -> Result<(), ToolError>,
+        remove_owned: impl FnOnce(&ClaimedInbox) -> Result<(), ToolError>,
     ) -> Result<(), ToolError> {
         self.release_claimed_with_cleanup(root, after_check, held_lock, &CopyDestination::cleanup_directory, remove_owned)
     }
@@ -1225,7 +1358,7 @@ impl CreationReservation {
         after_check: impl FnOnce(),
         held_lock: Option<&FileHandle>,
         allocate: &dyn Fn(&Path) -> Result<PathBuf, ToolError>,
-        remove_owned: impl FnOnce(&Path) -> Result<(), ToolError>,
+        remove_owned: impl FnOnce(&ClaimedInbox) -> Result<(), ToolError>,
     ) -> Result<(), ToolError> {
         let _coordination = crate::feed::lock_inbox_for_cleanup(root, held_lock)?;
         let inbox = root.join("inbox");
@@ -1238,33 +1371,36 @@ impl CreationReservation {
             }
         };
         let private = cleanup.empty_path(root)?;
-        let claimed = private.join("reservation");
         let moved = (|| {
             self.check(root)?;
-            after_check();
-            cleanup.empty_path(root)?;
-            std::fs::rename(&inbox, &claimed).map_err(|error| ToolError::io(inbox.display(), error))
+            ClaimedInbox::claim(root, &self.directory, &self.inbox, cleanup, held_lock.or(_coordination.as_ref()), after_check)
         })();
-        if let Err(error) = moved {
-            return match cleanup.remove_empty(root) {
-                Ok(()) => Err(error),
-                Err(cleanup) => {
-                    Err(ToolError::new(error.code, format!("{} Inspect the cleanup folder at {} before retrying: {cleanup}", error.message, private.display())))
-                }
-            };
-        }
+        let claimed = moved.map_err(|error| match cleanup.remove_empty(root) {
+            Ok(()) => error,
+            Err(cleanup) => error.with_remediation(format!(
+                "Inspect the inbox at {} and all retained entries in {} before retrying: {}. Nothing was restored over a new entry.",
+                inbox.display(),
+                private.display(),
+                cleanup.for_people()
+            )),
+        })?;
         let release = (|| {
             Self::check_directory(root, &self.directory)?;
             cleanup.checked_path(root)?;
-            Self::check_directory(&claimed, &self.inbox)?;
+            Self::check_directory(&claimed.path, &self.inbox)?;
             Self::check_manifest_absent(root)?;
-            remove_owned(&claimed)?;
             // Never recurse: partial writes and unexpected entries must survive cleanup.
-            std::fs::remove_dir(&claimed).map_err(|error| ToolError::io(claimed.display(), error))
+            claimed.release(|| {}, || remove_owned(&claimed))
         })();
         release.map_err(|error| {
-            ToolError::new(error.code, format!("{} The claimed reservation is preserved at {}.", error.message, claimed.display()))
-                .with_remediation("Inspect the preserved entry before retrying. No directory contents were removed recursively.")
+            ToolError::new(
+                error.code,
+                format!("{} Cleanup stopped in {}. Inspect any remaining reservation at {}.", error.message, private.display(), claimed.path.display()),
+            )
+            .with_remediation(format!(
+                "Inspect {} and its retained coordination entries before retrying. No directory contents were removed recursively.",
+                private.display()
+            ))
         })?;
         cleanup.remove_empty(root)
     }
@@ -1304,7 +1440,7 @@ pub(crate) fn release_created_inbox(
         held_lock,
         |claimed| {
             if let Some(expected) = created_lock {
-                let path = claimed.join(crate::feed::PROJECT_LOCK_FILE);
+                let path = claimed.coordination_path(std::ffi::OsStr::new(crate::feed::PROJECT_LOCK_FILE));
                 let metadata = std::fs::symlink_metadata(&path).map_err(|error| ToolError::io(path.display(), error))?;
                 let opened = expected.as_file().metadata().map_err(|error| ToolError::io(path.display(), error))?;
                 if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() != 0 || !opened.is_file() || opened.len() != 0 {
@@ -1332,20 +1468,18 @@ pub(crate) fn finish_deleted_inbox(
 ) -> Result<(), ToolError> {
     let public = root.join("inbox");
     let private = root.join(&cleanup.name);
-    let claimed = private.join("reservation");
     let moved = (|| {
         CreationReservation::check_directory(root, directory)?;
         CreationReservation::check_directory(&public, inbox)?;
         CreationReservation::check_manifest_absent(root)?;
         crate::feed::check_coordination_entry(&public.join(crate::feed::PROJECT_LOCK_FILE), lock)?;
-        cleanup.empty_path(root)?;
-        std::fs::rename(&public, &claimed).map_err(|error| ToolError::io(public.display(), error))
+        ClaimedInbox::claim(root, directory, inbox, cleanup, Some(lock), || {})
     })();
-    if let Err(error) = moved {
+    let claimed = moved.map_err(|error| {
         let guidance = match cleanup.remove_empty(root) {
             Ok(()) => format!("The inbox was not privately claimed. Inspect {} before retrying cleanup.", public.display()),
             Err(cleanup) => format!(
-                "The inbox was not privately claimed. Inspect {} and the reserved cleanup folder at {} before retrying: {}",
+                "Inspect {} and all retained entries in {} before retrying cleanup: {}. Nothing was restored over a new entry.",
                 public.display(),
                 private.display(),
                 cleanup.for_people()
@@ -1355,23 +1489,38 @@ pub(crate) fn finish_deleted_inbox(
             Some(previous) => format!("{previous} {guidance}"),
             None => guidance,
         };
-        return Err(error.with_remediation(guidance));
-    }
+        error.with_remediation(guidance)
+    })?;
     after_claim();
     let removed = (|| {
         CreationReservation::check_directory(root, directory)?;
         cleanup.checked_path(root)?;
-        CreationReservation::check_directory(&claimed, inbox)?;
+        CreationReservation::check_directory(&claimed.path, inbox)?;
         // A new creator may now publish at the public name. Do not inspect or remove its inbox.
-        for entry in std::fs::read_dir(&claimed).map_err(|error| ToolError::io(claimed.display(), error))? {
-            let entry = entry.map_err(|error| ToolError::io(claimed.display(), error))?;
-            crate::feed::check_coordination_entry(&entry.path(), lock)?;
-            std::fs::remove_file(entry.path()).map_err(|error| ToolError::io(entry.path().display(), error))?;
+        let mut entries = claimed.detached.iter().map(|(_, path)| path.clone()).collect::<Vec<_>>();
+        for entry in std::fs::read_dir(&claimed.path).map_err(|error| ToolError::io(claimed.path.display(), error))? {
+            entries.push(entry.map_err(|error| ToolError::io(claimed.path.display(), error))?.path());
         }
-        std::fs::remove_dir(&claimed).map_err(|error| ToolError::io(claimed.display(), error))
+        for path in &entries {
+            crate::feed::check_coordination_entry(path, lock)?;
+        }
+        claimed.release(
+            || {},
+            || {
+                for path in entries {
+                    crate::feed::check_coordination_entry(&path, lock)?;
+                    std::fs::remove_file(&path).map_err(|error| ToolError::io(path.display(), error))?;
+                }
+                Ok(())
+            },
+        )
     })();
     removed.map_err(|error| {
-        error.with_remediation(format!("Inspect the retained coordination entry at {}. Its contents were not removed recursively.", claimed.display()))
+        error.with_remediation(format!(
+            "Inspect retained entries in {}, including any remaining reservation at {}. No directory contents were removed recursively.",
+            private.display(),
+            claimed.path.display()
+        ))
     })?;
     cleanup.remove_empty(root)
 }
@@ -1405,13 +1554,27 @@ impl CopyDestination {
         self.creation.check(path)
     }
 
-    fn remove(&self) -> Result<(), ToolError> {
+    fn remove(self) -> Result<(), ToolError> {
         self.remove_after_check(|| {})
     }
 
-    fn remove_after_check(&self, after_check: impl FnOnce()) -> Result<(), ToolError> {
+    fn remove_after_check(self, after_check: impl FnOnce()) -> Result<(), ToolError> {
         self.check_identity()?;
+        #[cfg(windows)]
+        let directory = {
+            // Windows cannot move the root with any child directory handle open. Release
+            // only this reservation first; retain the root identity through its later claim.
+            self.creation.release_empty(&self.root)?;
+            let CreationReservation { directory, inbox, coordination, cleanup } = self.creation;
+            drop((inbox, coordination, cleanup));
+            directory
+        };
         after_check();
+        #[cfg(windows)]
+        {
+            CreationReservation::check_directory(&self.root, &directory)?;
+            CreationReservation::check_manifest_absent(&self.root)?;
+        }
         let parent = self.root.parent().ok_or_else(|| ToolError::invalid("The copy destination has no parent folder."))?;
         let private = Self::cleanup_directory(parent)?;
         let claimed = private.join("claimed");
@@ -1427,10 +1590,15 @@ impl CopyDestination {
         }
         // The public pathname can be replaced after the first check. Validate again after
         // moving its entry into this attempt's private directory.
-        self.check_identity_at(&claimed).map_err(|error| {
+        #[cfg(not(windows))]
+        let checked = self.check_identity_at(&claimed);
+        #[cfg(windows)]
+        let checked = CreationReservation::check_directory(&claimed, &directory).and_then(|()| CreationReservation::check_manifest_absent(&claimed));
+        checked.map_err(|error| {
             ToolError::new(error.code, format!("{} The moved entry is preserved at {}.", error.message, claimed.display()))
                 .with_remediation("Inspect the preserved entry and move it to a safe location before retrying. No directory contents were removed.")
         })?;
+        #[cfg(not(windows))]
         self.creation.release_empty(&claimed)?;
         // mkdir cannot return a directory handle. A replacement before the first open may
         // have been captured, so that identity never authorizes recursively deleting files.
@@ -1620,13 +1788,14 @@ impl Workspace {
         })();
         if let Err(error) = copied {
             before_cleanup(&destination.root);
+            let destination_root = destination.root.clone();
             return match destination.remove() {
                 Ok(()) => Err(error),
                 Err(cleanup) => {
                     let guidance = format!(
                         "The unfinished copy could not be removed safely; its files were left alone. {} Inspect the reported retained path, or {} if no retained path is reported, before retrying. The original project is unchanged.",
                         cleanup.for_people(),
-                        destination.root.display()
+                        destination_root.display()
                     );
                     let guidance = match &error.remediation {
                         Some(previous) => format!("{previous} {guidance}"),
@@ -3454,6 +3623,7 @@ mod tests {
         std::fs::write(from.join("shared.txt"), b"Source bytes").unwrap();
         let destination = CopyDestination::create(directory.path(), "Copy").unwrap();
         let displaced = directory.path().join("displaced-copy");
+        let root = destination.root.clone();
         let to = destination.root.join("app");
 
         let copied = copy_tree(
@@ -3475,7 +3645,7 @@ mod tests {
         assert!(destination.remove().is_err(), "failed cleanup must leave the replacement root intact");
         assert_eq!(std::fs::read(to.join("shared.txt")).unwrap(), b"Keep the replacement's personal bytes");
         assert_eq!(std::fs::read(from.join("shared.txt")).unwrap(), b"Source bytes");
-        assert!(!destination.root.join(MANIFEST).exists());
+        assert!(!root.join(MANIFEST).exists());
         assert!(displaced.join("inbox").is_dir());
         assert!(displaced.join("app").is_dir());
     }
@@ -4857,6 +5027,7 @@ mod tests {
         for with_app in [false, true] {
             let directory = tempfile::tempdir().unwrap();
             let destination = CopyDestination::create(directory.path(), "Copy").unwrap();
+            let root = destination.root.clone();
             if with_app {
                 std::fs::create_dir(destination.root.join("app")).unwrap();
                 std::fs::write(destination.root.join("app/index.html"), b"Copy in progress").unwrap();
@@ -4878,12 +5049,12 @@ mod tests {
                 assert_eq!(std::fs::read(kept.join("app/index.html")).unwrap(), b"Copy in progress");
                 assert!(error.message.contains(&kept.display().to_string()));
                 let retry = CopyDestination::create(directory.path(), "Copy").unwrap();
-                assert_eq!(retry.root, destination.root);
+                assert_eq!(retry.root, root);
                 retry.remove().unwrap();
             } else {
                 destination.remove().unwrap();
             }
-            assert!(!destination.root.exists());
+            assert!(!root.exists());
         }
     }
 
@@ -5371,6 +5542,9 @@ mod tests {
         });
 
         let error = result.unwrap_err();
+        #[cfg(windows)]
+        let kept = root.join("inbox");
+        #[cfg(not(windows))]
         let kept = std::fs::read_dir(&root)
             .unwrap()
             .filter_map(Result::ok)
@@ -5379,6 +5553,229 @@ mod tests {
             .expect("the replacement inbox remains in the reported private folder");
         assert!(error.message.contains(&kept.display().to_string()));
         assert!(displaced.is_dir());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_retirement_preserves_a_source_replaced_after_its_last_identity_check() {
+        let directory = tempfile::tempdir().unwrap();
+        let (root, handle) = create_workspace_root(directory.path(), "New").unwrap();
+        let creation = CreationReservation::claim(&root, handle).unwrap();
+        let original = creation.coordination.as_ref().unwrap();
+        let public = root.join("inbox/feed.lock");
+        let private = root.join(&creation.cleanup.as_ref().unwrap().name);
+        let retained = private.join("coordination-0");
+        let displaced = directory.path().join("original.lock");
+        let mut replacement = None;
+        let error = ClaimedInbox::detach_entry(&public, &retained, original, || {
+            std::fs::rename(&public, &displaced).unwrap();
+            std::fs::write(&public, b"Keep this replacement entry").unwrap();
+            replacement = Some(FileHandle::from_path(&public).unwrap());
+        })
+        .unwrap_err();
+        assert!(!public.exists());
+        assert_eq!(std::fs::read(&retained).unwrap(), b"Keep this replacement entry");
+        assert_eq!(FileHandle::from_path(&retained).unwrap(), replacement.unwrap());
+        assert_eq!(&FileHandle::from_path(&displaced).unwrap(), original);
+        assert!(error.for_people().contains(&retained.display().to_string()));
+        let other = std::fs::OpenOptions::new().read(true).write(true).open(displaced).unwrap();
+        assert!(matches!(other.try_lock(), Err(std::fs::TryLockError::WouldBlock)));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_retirement_never_overwrites_a_private_target_created_after_its_source_check() {
+        let directory = tempfile::tempdir().unwrap();
+        let (root, handle) = create_workspace_root(directory.path(), "New").unwrap();
+        let creation = CreationReservation::claim(&root, handle).unwrap();
+        let original = creation.coordination.as_ref().unwrap();
+        let public = root.join("inbox/feed.lock");
+        let private = root.join(&creation.cleanup.as_ref().unwrap().name);
+        let retained = private.join("coordination-0");
+        let mut unexpected = None;
+        let error = ClaimedInbox::detach_entry(&public, &retained, original, || {
+            std::fs::write(&retained, b"Keep this private entry").unwrap();
+            unexpected = Some(FileHandle::from_path(&retained).unwrap());
+        })
+        .unwrap_err();
+        assert_eq!(&FileHandle::from_path(&public).unwrap(), original);
+        assert_eq!(std::fs::metadata(&public).unwrap().len(), 0);
+        assert_eq!(FileHandle::from_path(&retained).unwrap(), unexpected.unwrap());
+        assert_eq!(std::fs::read(&retained).unwrap(), b"Keep this private entry");
+        assert!(error.for_people().contains(&retained.display().to_string()));
+        let other = std::fs::OpenOptions::new().read(true).write(true).open(public).unwrap();
+        assert!(matches!(other.try_lock(), Err(std::fs::TryLockError::WouldBlock)));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_retirement_cleans_projects_under_long_parent_paths() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut parent = directory.path().to_path_buf();
+        for _ in 0..10 {
+            parent.push("a-long-selected-project-parent");
+        }
+        std::fs::create_dir_all(&parent).unwrap();
+        let ws = Workspace::create(&parent, "Managed", "Test", TargetRef::None).unwrap();
+        let root = ws.root.clone();
+        std::fs::write(root.join("personal.txt"), b"Keep my files").unwrap();
+        ws.delete().unwrap();
+        assert!(!root.join(MANIFEST).exists());
+        assert!(!root.join("inbox").exists());
+        assert_eq!(std::fs::read(root.join("personal.txt")).unwrap(), b"Keep my files");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_retirement_preserves_a_late_initializers_new_lock_and_the_old_held_inode() {
+        for keep_open in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let (root, handle) = create_workspace_root(directory.path(), "New").unwrap();
+            let creation = CreationReservation::claim(&root, handle).unwrap();
+            let private = root.join(&creation.cleanup.as_ref().unwrap().name);
+            let original = FileHandle::from_path(root.join("inbox/feed.lock")).unwrap();
+            let mut late = None;
+            let mut late_identity = None;
+            let result = creation.release_empty_after_check(&root, || {
+                let retained = std::fs::read_dir(&private).unwrap().next().unwrap().unwrap().path();
+                let other = std::fs::OpenOptions::new().read(true).write(true).open(retained).unwrap();
+                assert!(matches!(other.try_lock(), Err(std::fs::TryLockError::WouldBlock)), "the old inode stays exclusively held after detachment");
+                let file = craft_anything_platform::fs::open_child_file_for_update(creation.inbox.as_file(), Path::new("feed.lock"), true).unwrap();
+                file.try_lock().unwrap();
+                if keep_open {
+                    late_identity = Some(FileHandle::from_path(root.join("inbox/feed.lock")).unwrap());
+                    late = Some(file);
+                }
+            });
+            let error = result.unwrap_err();
+            let retained = std::fs::read_dir(&private)
+                .unwrap()
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .find(|path| path.is_file())
+                .expect("the original locked inode is retained for inspection");
+            assert_eq!(FileHandle::from_path(&retained).unwrap(), original);
+            let new_path = if keep_open { root.join("inbox/feed.lock") } else { private.join("reservation/feed.lock") };
+            if let Some(identity) = late_identity {
+                assert_eq!(FileHandle::from_path(&new_path).unwrap(), identity);
+            }
+            assert_ne!(FileHandle::from_path(&new_path).unwrap(), original);
+            assert_eq!(std::fs::metadata(&new_path).unwrap().len(), 0);
+            assert!(error.for_people().contains(&private.display().to_string()));
+            assert!(error.for_people().contains(&new_path.parent().unwrap().display().to_string()));
+            assert!(!root.join(MANIFEST).exists());
+            assert!(crate::feed::lock_project(&root).is_err(), "a new lock does not authorize a write to the unavailable project");
+            drop(late);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_retirement_keeps_both_locks_when_an_initializer_arrives_after_the_empty_check() {
+        let directory = tempfile::tempdir().unwrap();
+        let (root, handle) = create_workspace_root(directory.path(), "New").unwrap();
+        let creation = CreationReservation::claim(&root, handle).unwrap();
+        let original = creation.coordination.as_ref().unwrap();
+        let claimed = ClaimedInbox::claim(&root, &creation.directory, &creation.inbox, creation.cleanup.as_ref().unwrap(), Some(original), || {}).unwrap();
+        let retained = claimed.coordination_path(std::ffi::OsStr::new(crate::feed::PROJECT_LOCK_FILE));
+        let mut late = None;
+        let removed = std::cell::Cell::new(false);
+        let result = claimed.release(
+            || {
+                let file = craft_anything_platform::fs::open_child_file_for_update(creation.inbox.as_file(), Path::new("feed.lock"), true).unwrap();
+                file.try_lock().unwrap();
+                late = Some(file);
+            },
+            || {
+                removed.set(true);
+                std::fs::remove_file(&retained).map_err(|error| ToolError::io(retained.display(), error))
+            },
+        );
+        assert!(result.is_err());
+        assert!(!removed.get(), "a newly nonempty claim stops before removing any old coordination link");
+        assert_eq!(&FileHandle::from_path(&retained).unwrap(), original);
+        let new_path = claimed.path.join("feed.lock");
+        assert_ne!(&FileHandle::from_path(&new_path).unwrap(), original);
+        assert_eq!(std::fs::metadata(new_path).unwrap().len(), 0);
+        let other = std::fs::OpenOptions::new().read(true).write(true).open(retained).unwrap();
+        assert!(matches!(other.try_lock(), Err(std::fs::TryLockError::WouldBlock)));
+        drop(late);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_retirement_closes_the_captured_directory_before_removing_its_old_lock() {
+        let directory = tempfile::tempdir().unwrap();
+        let (root, handle) = create_workspace_root(directory.path(), "New").unwrap();
+        let creation = CreationReservation::claim(&root, handle).unwrap();
+        let original = creation.coordination.as_ref().unwrap();
+        let claimed = ClaimedInbox::claim(&root, &creation.directory, &creation.inbox, creation.cleanup.as_ref().unwrap(), Some(original), || {}).unwrap();
+        let retained = claimed.coordination_path(std::ffi::OsStr::new(crate::feed::PROJECT_LOCK_FILE));
+        claimed
+            .release(
+                || {},
+                || {
+                    assert!(craft_anything_platform::fs::open_child_file_for_update(creation.inbox.as_file(), Path::new("feed.lock"), true).is_err());
+                    assert_eq!(&FileHandle::from_path(&retained).unwrap(), original);
+                    std::fs::remove_file(&retained).map_err(|error| ToolError::io(retained.display(), error))
+                },
+            )
+            .unwrap();
+        assert!(!claimed.path.exists());
+        assert!(!retained.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_retirement_preserves_new_manifests_and_replacement_inboxes() {
+        for new_manifest in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let (root, handle) = create_workspace_root(directory.path(), "New").unwrap();
+            let creation = CreationReservation::claim(&root, handle).unwrap();
+            let private = root.join(&creation.cleanup.as_ref().unwrap().name);
+            let original = FileHandle::from_path(root.join("inbox/feed.lock")).unwrap();
+            let displaced = directory.path().join("old-inbox");
+            let manifest = serde_json::to_vec(&Manifest::new("Replacement", "Keep this project", TargetRef::None).unwrap()).unwrap();
+            let result = creation.release_empty_after_check(&root, || {
+                if new_manifest {
+                    std::fs::write(root.join(MANIFEST), &manifest).unwrap();
+                } else {
+                    std::fs::rename(root.join("inbox"), &displaced).unwrap();
+                    std::fs::create_dir(root.join("inbox")).unwrap();
+                    std::fs::write(root.join("inbox/personal.txt"), b"Keep the replacement inbox").unwrap();
+                }
+            });
+            let error = result.unwrap_err();
+            let retained = std::fs::read_dir(&private).unwrap().next().unwrap().unwrap().path();
+            assert_eq!(FileHandle::from_path(retained).unwrap(), original);
+            assert!(error.for_people().contains(&private.display().to_string()));
+            assert!(!private.join("reservation").exists(), "the changed public state is refused before claiming it");
+            if new_manifest {
+                assert_eq!(std::fs::read(root.join(MANIFEST)).unwrap(), manifest);
+            } else {
+                assert_eq!(std::fs::read(root.join("inbox/personal.txt")).unwrap(), b"Keep the replacement inbox");
+                assert_eq!(FileHandle::from_path(displaced).unwrap(), creation.inbox);
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_copy_cleanup_preserves_a_new_project_after_releasing_its_old_reservation() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = CopyDestination::create(directory.path(), "Copy").unwrap();
+        let root = destination.root.clone();
+        let mut replacement = None;
+        let result = destination.remove_after_check(|| {
+            let ws = Workspace::create_at(&root, "Replacement", "Keep this project", TargetRef::None, None).unwrap();
+            std::fs::write(ws.inbox_dir().join("question.json"), b"Keep the next question").unwrap();
+            replacement = Some((std::fs::read(root.join(MANIFEST)).unwrap(), FileHandle::from_path(ws.inbox_dir()).unwrap()));
+        });
+        assert!(result.is_err(), "a new project is not an empty failed copy");
+        let (manifest, inbox) = replacement.unwrap();
+        assert_eq!(std::fs::read(root.join(MANIFEST)).unwrap(), manifest);
+        assert_eq!(FileHandle::from_path(root.join("inbox")).unwrap(), inbox);
+        assert_eq!(std::fs::read(root.join("inbox/question.json")).unwrap(), b"Keep the next question");
     }
 
     #[test]
@@ -5420,15 +5817,27 @@ mod tests {
                 continue;
             }
 
+            #[cfg(not(windows))]
             let kept = std::fs::read_dir(&root)
                 .unwrap()
                 .filter_map(Result::ok)
                 .map(|entry| entry.path().join("reservation"))
                 .find(|path| path.join(crate::feed::PROJECT_LOCK_FILE).is_file())
                 .expect("an unowned or changed lock is retained in the reported private folder");
+            #[cfg(windows)]
+            let kept = std::fs::read_dir(&root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .find(|path| path.join("coordination-0").is_file())
+                .expect("the unowned locked inode remains in the reported private folder");
+            #[cfg(not(windows))]
+            let retained = kept.join(crate::feed::PROJECT_LOCK_FILE);
+            #[cfg(windows)]
+            let retained = kept.join("coordination-0");
             assert!(error.message.contains(&kept.display().to_string()));
-            assert_eq!(lock, FileHandle::from_path(kept.join(crate::feed::PROJECT_LOCK_FILE)).unwrap());
-            assert_eq!(std::fs::read(kept.join(crate::feed::PROJECT_LOCK_FILE)).unwrap(), bytes);
+            assert_eq!(lock, FileHandle::from_path(&retained).unwrap());
+            assert_eq!(std::fs::read(&retained).unwrap(), bytes);
             assert!(!root.join("inbox").exists());
             Workspace::create_at(&root, "Retry", "New request", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
         }
@@ -5456,10 +5865,11 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let destination = CopyDestination::create(directory.path(), "Copy").unwrap();
         let displaced = directory.path().join("displaced-copy");
+        let root = destination.root.clone();
         let result = destination.remove_after_check(|| {
-            std::fs::rename(&destination.root, &displaced).unwrap();
-            std::fs::create_dir(&destination.root).unwrap();
-            std::fs::write(destination.root.join("personal.txt"), b"Keep this replacement").unwrap();
+            std::fs::rename(&root, &displaced).unwrap();
+            std::fs::create_dir(&root).unwrap();
+            std::fs::write(root.join("personal.txt"), b"Keep this replacement").unwrap();
         });
 
         assert!(result.is_err(), "cleanup cannot remove a replacement using the earlier pathname check");
