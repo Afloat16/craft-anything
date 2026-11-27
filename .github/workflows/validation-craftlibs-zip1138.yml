@@ -13,13 +13,13 @@ jobs:
       CARGO_INCREMENTAL: '0'
       CARGO_NET_RETRY: '10'
       RUST_BACKTRACE: '1'
-      CANDIDATE_SHA: '8a0202f40222c86e256295982c02aed77af3f577'
+      CANDIDATE_SHA: '20255dd9735c7e8ee8a08d38125da500069d4036'
     steps:
       - name: Check out immutable shared-library candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: Afloat16/craft-libs
-          ref: '8a0202f40222c86e256295982c02aed77af3f577'
+          ref: '20255dd9735c7e8ee8a08d38125da500069d4036'
           persist-credentials: false
           fetch-depth: 2
       - name: Verify source identity
@@ -79,6 +79,8 @@ jobs:
           rejects(original[:start] + original[end:], "mismatched_local_entries_do_not_supply_bytes", "raw read accepted a mismatched local header")
           no_identity = original.replace("let (name, header_name) = match unicode_name", "let (name, _header_name) = match unicode_name").replace("                header_name,\n                method,", "                header_name: None,\n                method,")
           rejects(no_identity, "verified_unicode_path_overrides_a_legacy_zip_name", "local name disagrees with")
+          alias_bypass = original.replace("    if decode_name(local_name, flags)", "    if e.header_name.is_none() && decode_name(local_name, flags)")
+          rejects(alias_bypass, "verified_unicode_path_overrides_a_legacy_zip_name", "a Unicode Path alias must not hide a changed local name")
           PY
       - name: Confirm unchanged tested source and lockfile
         run: |
