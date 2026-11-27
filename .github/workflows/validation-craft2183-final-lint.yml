@@ -1,0 +1,163 @@
+name: Validate final review lint and native baseline
+on:
+  push:
+    branches: [validation/20261127-craft2183-final-lint]
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+      CARGO_NET_RETRY: '10'
+      RUST_BACKTRACE: '1'
+      RUSTUP_TOOLCHAIN: '1.100.0'
+      CANDIDATE_TREE: '560e29ff6ee32d4bd40d4621752976b2dcc2893c'
+      CANDIDATE_SHA: '93cf75395bf1e7f89a7d4e58620bf374465e3610'
+    steps:
+      - name: Check out immutable final source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: '93cf75395bf1e7f89a7d4e58620bf374465e3610'
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify immutable final identity
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$CANDIDATE_TREE"
+      - name: Repository CI build environment
+        uses: storytold/craft-common-actions/actions/gate-setup@315eb1972c857c839c3abb3d9288bfd40d21b7da
+        with:
+          craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+          require-craft-fonts: 'true'
+          packages: >-
+            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev
+          toolchain: '1.100.0'
+          cache-job: build
+          cache-save: 'false'
+          writes: 'false'
+      - name: Report compiler version
+        run: rustc --version --verbose
+      - name: Final tree policy and formatting gates
+        run: |
+          set -euo pipefail
+          cargo xtask fmt --check
+          cargo xtask layers
+          cargo xtask locks
+          cargo xtask secrets
+      - name: Retry lifecycle assertion after borrowing its expected path
+        run: |
+          python - <<'PY'
+          import re, subprocess
+          name = "rebuild::runs::tests::a_same_path_followup_waits_until_deferred_finished_events_are_delivered"
+          result = subprocess.run(["cargo", "test", "--locked", "-p", "craft-anything-ai", "--lib", name, "--", "--exact", "--nocapture"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+          print(result.stdout, end="", flush=True)
+          assert result.returncode == 0
+          assert re.search(r"test " + re.escape(name) + r" \.\.\. ok", result.stdout)
+          assert "test result: ok. 1 passed; 0 failed; 0 ignored" in result.stdout
+          print("FINAL_RETRY_LIFECYCLE_REGRESSION_PASSED", flush=True)
+          PY
+      - name: Clippy all four reviewed crates and targets
+        run: cargo clippy --locked -p craft-anything-engine -p craft-anything-ai -p craft-anything-ui-egui -p craft-anything-platform --all-targets -- -D warnings
+      - name: Confirm unchanged tested source
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$CANDIDATE_TREE"
+          git diff --exit-code
+          git diff --cached --exit-code
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 100
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+      CARGO_NET_RETRY: '10'
+      RUST_BACKTRACE: '1'
+      RUSTUP_TOOLCHAIN: '1.97.0'
+      CANDIDATE_TREE: '560e29ff6ee32d4bd40d4621752976b2dcc2893c'
+      CANDIDATE_SHA: '93cf75395bf1e7f89a7d4e58620bf374465e3610'
+    steps:
+      - name: Check out immutable final source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: '93cf75395bf1e7f89a7d4e58620bf374465e3610'
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify immutable final identity
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$CANDIDATE_TREE"
+      - name: Repository CI build environment
+        uses: storytold/craft-common-actions/actions/gate-setup@315eb1972c857c839c3abb3d9288bfd40d21b7da
+        with:
+          craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+          require-craft-fonts: 'true'
+          toolchain: '1.97.0'
+          cache-job: build
+          cache-save: 'false'
+          writes: 'false'
+      - name: Report compiler version
+        run: rustc --version --verbose
+      - name: Compare the unchanged native UI enum on the exact parent
+        id: baseline
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin 67d91ffff5990687ca5a2419f43b8c87712b7920
+          git checkout --detach 67d91ffff5990687ca5a2419f43b8c87712b7920
+          test "$(git rev-parse HEAD)" = "67d91ffff5990687ca5a2419f43b8c87712b7920"
+          test "$(git rev-parse 'HEAD^{tree}')" = "26115b24a2dde929acccbe52b09cc7abbd8fbb8e"
+          python - <<'PY'
+          import re, subprocess
+          result = subprocess.run(["cargo", "clippy", "--locked", "-p", "craft-anything-ui-egui", "--lib", "--", "-D", "warnings"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+          print(result.stdout, end="", flush=True)
+          assert result.returncode == 101, "the reported parent native UI lint did not reproduce"
+          errors = re.findall(r"^error(?:\[[^\]]+\])?: (.+)$", result.stdout, re.M)
+          substantive = [message for message in errors if not message.startswith("could not compile")]
+          assert substantive == ["large size difference between variants"], substantive
+          assert "AgentModelChoices" in result.stdout
+          assert "large_enum_variant" in result.stdout
+          assert re.search(r"crates[\\/]ui-egui[\\/]src[\\/]lib.rs:161:", result.stdout)
+          print("EXACT_PARENT_NATIVE_UI_ENUM_LINT_REPRODUCED; this is a diagnostic failure, not a passing UI Clippy gate", flush=True)
+          PY
+          git diff --exit-code
+      - name: Restore immutable final source after baseline comparison
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          git checkout --detach "$CANDIDATE_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$CANDIDATE_TREE"
+          git diff --exit-code
+      - name: Clippy final native Engine AI and Platform targets
+        run: cargo clippy --locked -p craft-anything-engine -p craft-anything-ai -p craft-anything-platform --all-targets -- -D warnings
+      - name: Retry lifecycle assertion after borrowing its expected path
+        run: |
+          python - <<'PY'
+          import re, subprocess
+          name = "rebuild::runs::tests::a_same_path_followup_waits_until_deferred_finished_events_are_delivered"
+          result = subprocess.run(["cargo", "test", "--locked", "-p", "craft-anything-ai", "--lib", name, "--", "--exact", "--nocapture"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+          print(result.stdout, end="", flush=True)
+          assert result.returncode == 0
+          assert re.search(r"test " + re.escape(name) + r" \.\.\. ok", result.stdout)
+          assert "test result: ok. 1 passed; 0 failed; 0 ignored" in result.stdout
+          print("FINAL_RETRY_LIFECYCLE_REGRESSION_PASSED", flush=True)
+          PY
+      - name: Confirm unchanged tested source
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$CANDIDATE_TREE"
+          git diff --exit-code
+          git diff --cached --exit-code
