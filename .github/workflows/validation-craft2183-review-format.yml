@@ -2,6 +2,9 @@ name: Format conversation review candidate
 on:
   push:
     branches: [validation/20261127-craft2183-review-format-8dbb731]
+concurrency:
+  group: craft2183-review-format-validation
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -12,7 +15,7 @@ jobs:
       - name: Check out immutable source candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: '0691aba6a8ec12f2d510a64fa7ff7aeb89ea130a'
+          ref: 'b004b18dc613f9aeda79f6b928a3d2e37c4bbc99'
           persist-credentials: false
           fetch-depth: 1
       - name: Install the repository compiler formatter
@@ -21,7 +24,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "0691aba6a8ec12f2d510a64fa7ff7aeb89ea130a"
+          test "$(git rev-parse HEAD)" = "b004b18dc613f9aeda79f6b928a3d2e37c4bbc99"
           rustfmt +1.100.0 --edition 2024 --config-path rustfmt.toml --config skip_children=true crates/ai/src/rebuild/feed.rs crates/ai/src/rebuild/runs.rs crates/engine/src/workspace.rs crates/engine/src/feed.rs crates/ui-egui/src/project.rs crates/ui-egui/src/lib.rs crates/engine/src/feed/backups.rs
           git diff --check
           python - <<'PY'
