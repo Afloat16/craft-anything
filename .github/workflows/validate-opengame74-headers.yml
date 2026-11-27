@@ -1,7 +1,7 @@
-name: Validate OpenGame header compatibility
+name: Validate OpenGame media prerequisite and original regression
 on:
   push:
-    branches: [validation/20261127-opengame74-headers]
+    branches: [validation/20261127-opengame74-ffmpeg]
 permissions:
   contents: read
 jobs:
@@ -35,17 +35,14 @@ jobs:
           cache-dependency-path: package-lock.json
       - name: Install locked source dependencies
         run: npm ci --no-audit --no-fund
-      - name: Source checks
-        run: npm run check
-      - name: Studio typecheck
-        run: npm run typecheck:studio
-      - name: Build Studio and runtime inputs
+      - name: Install the official CI media probe dependency
         run: |
           set -euo pipefail
-          npm run build:studio
-          npm run build:tracking
-      - name: Existing project and actual HTTP range and preview regressions
-        run: node --experimental-strip-types --test --test-reporter=tap tests/game-projects.test.ts tests/game-asset-range.test.ts tests/local-game-preview.test.ts
+          sudo apt-get -o Acquire::Retries=2 update
+          sudo apt-get -o Acquire::Retries=2 install -y --no-install-recommends ffmpeg
+          ffprobe -version
+      - name: Rerun the concrete media-probe failure on unchanged source
+        run: node --experimental-strip-types --test --test-reporter=tap --test-name-pattern "^headless playtest loads workspace asset versions" tests/game-projects.test.ts
       - name: Confirm existing minimal-request regression rejects the original direct access
         run: |
           python - <<'PY'
