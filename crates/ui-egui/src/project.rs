@@ -131,11 +131,15 @@ impl CraftApp {
         self.projects.retain(|p| p.root != ws.root);
         self.projects.insert(0, ws.clone());
         let root = ws.root.clone();
+        let identity = craft_anything_engine::feed::ProjectIdentity::from_workspace(&ws).ok();
+        if let Some(identity) = &identity {
+            self.runs.detach_other_project(&root, identity);
+        }
         let message = rebuild::project::attached_request(attached, &request);
         // A project already building keeps its live conversation; the request stays in Make for
         // the person to send later, because a second start can't run beside it.
         if self.runs.is_running(&root) || self.runs.position(&root).is_some() {
-            self.state.feed = match self.runs.get_mut(&root).filter(|r| r.is_running()) {
+            self.state.feed = match self.runs.get_mut(&root).filter(|r| identity.is_some() && r.is_running()) {
                 Some(run) => run.feed_now(),
                 None => feed::for_display(&ws),
             };
@@ -217,6 +221,7 @@ impl CraftApp {
             Ok(Started::Queued { .. }) => self.toast(tr("Another build is working, so this one waits its turn."), false),
             Err(e) => self.state.feed.push(FeedItem::Error { message: e.message, remediation: e.remediation, log: None }),
         }
+        self.workspace_identity = craft_anything_engine::feed::ProjectIdentity::from_workspace(&ws).ok();
         self.workspace = Some(ws);
         self.refresh_projects();
     }
@@ -232,25 +237,42 @@ impl CraftApp {
     /// unlisted folder (#2340).
     pub(crate) fn open_workspace_mode(&mut self, ws: Workspace, remember: bool) {
         let root = ws.root.clone();
-        let same = self.workspace.as_ref().is_some_and(|w| w.root == ws.root);
+        let identity = craft_anything_engine::feed::ProjectIdentity::from_workspace(&ws).ok();
+        let detached = identity.as_ref().is_some_and(|identity| self.runs.detach_other_project(&root, identity));
+        let same_path = self.workspace.as_ref().is_some_and(|w| w.root == ws.root);
+        let same = !detached
+            && same_path
+            && self.workspace_identity.as_ref().zip(identity.as_ref()).is_some_and(|(old, current)| old.is_same_project(current));
+        let replaced = same_path
+            && (detached || self.workspace_identity.as_ref().zip(identity.as_ref()).is_some_and(|(old, current)| !old.is_same_project(current)));
         if !same {
             // What was typed here stays with this project; the next one's comes back.
             let typed = (std::mem::take(&mut self.state.project_input), std::mem::take(&mut self.state.project_attachments));
             if let Some(old) = &self.workspace
+                && !replaced
                 && (!typed.0.trim().is_empty() || !typed.1.is_empty())
             {
                 self.state.unsent.insert(old.root.clone(), typed);
+            }
+            if replaced {
+                self.state.unsent.remove(&root);
+                self.last_run.remove(&root);
+                self.usage.remove(&root);
+                self.asking.remove(&root);
+                self.pausing.remove(&root);
+                self.drafts.retain(|_, draft| draft.root != root);
             }
             (self.state.project_input, self.state.project_attachments) = self.state.unsent.remove(&ws.root).unwrap_or_default();
             // Events so far go to the project they belong to before the screen changes.
             self.poll_run();
             self.preview = None;
-            self.state.feed = match self.runs.get_mut(&ws.root).filter(|r| r.is_running()) {
+            self.state.feed = match self.runs.get_mut(&ws.root).filter(|r| identity.is_some() && r.is_running()) {
                 Some(run) => run.feed_now(),
                 None => feed::for_display(&ws),
             };
             self.load_asked(&ws);
         }
+        self.workspace_identity = identity;
         self.workspace = Some(ws.clone());
         if remember {
             if !self.projects.iter().any(|p| p.root == ws.root) {
@@ -350,15 +372,33 @@ impl CraftApp {
     /// Every run's events: the open project's go to the screen (each run keeps its own
     /// project's feed). Queued runs start as others finish.
     pub fn poll_run(&mut self) {
+        self.poll_run_using(|_| {});
+    }
+
+    fn poll_run_using(&mut self, after_poll: impl FnOnce(&mut Self)) {
+        if self.workspace_identity.is_none()
+            && let Some(ws) = &self.workspace
+        {
+            // Confirm the selected project before consuming a batch. A temporary read failure
+            // leaves every event, including Finished, available for the next successful poll.
+            let Ok(identity) = craft_anything_engine::feed::ProjectIdentity::from_workspace(ws) else { return };
+            self.workspace_identity = Some(identity);
+        }
         self.runs.set_limit(self.settings.build.parallel);
         let mut events = self.runs.poll_with_snapshots(&self.hub);
+        after_poll(self);
         if events.is_empty() {
             return;
         }
         let open = self.workspace.as_ref().map(|w| w.root.clone());
+        let mut updated_open = false;
         let mut finished = Vec::new();
         for update in &mut events {
             if open.as_ref() == Some(&update.root) {
+                if !self.workspace_identity.as_ref().is_some_and(|identity| update.is_for_project(&update.root, identity)) {
+                    continue;
+                }
+                updated_open = true;
                 update.update_feed(&mut self.state.feed);
                 if matches!(&update.event, RunEvent::Agent(AgentEvent::ToolFinished { .. } | AgentEvent::TurnDone { .. })) {
                     self.view_dirty = true;
@@ -388,7 +428,7 @@ impl CraftApp {
                 _ => {}
             }
         }
-        if events.iter().any(|update| open.as_ref() == Some(&update.root)) {
+        if updated_open {
             self.refresh_side_panel();
         }
         if finished.is_empty() {
@@ -2410,6 +2450,189 @@ mod tests {
         // A screen reader reads all of it.
         ctx.enable_accesskit();
         assert!(frame(Vec::new(), false).0 * 2 > all);
+    }
+
+    #[test]
+    fn reopening_a_replaced_path_detaches_its_old_conversation_and_late_events() {
+        for replace_directory in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let original = Workspace::create(directory.path(), "Project", "An old project", TargetRef::None).unwrap();
+            let fake = rebuild::StandIns::new();
+            let mut app = crate::demo::app(crate::demo::engine(craft_anything_engine::Mode::Beginner, true));
+            app.runs = rebuild::RunSet::new(1).with_starter(fake.starter());
+            app.open_workspace(original.clone());
+            app.runs.start(&app.hub, original.clone(), RunOptions::default()).unwrap();
+            fake.send(&original.root, RunEvent::Agent(AgentEvent::TextDelta { text: "Old conversation".into() }));
+            app.poll_run();
+            assert!(app.state.feed.iter().any(|item| matches!(item, FeedItem::Agent { text, .. } if text == "Old conversation")));
+            app.state.project_input = "A draft for the old project".into();
+            let manifest = original.root.join("craft.json");
+            let bytes = std::fs::read(&manifest).unwrap();
+            if replace_directory {
+                move_project_with_open_run(&original, &directory.path().join("retired"));
+                let replacement = Workspace::create(directory.path(), "Project", "A replacement", TargetRef::None).unwrap();
+                assert_eq!(replacement.root, original.root);
+                std::fs::write(&manifest, bytes).unwrap();
+            } else {
+                let mut replacement: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                replacement["generation"] = serde_json::json!("ffffffffffffffffffffffffffffffff");
+                std::fs::write(&manifest, serde_json::to_vec(&replacement).unwrap()).unwrap();
+                std::fs::remove_file(original.root.join(feed::FEED_FILE)).unwrap();
+            }
+            let replacement = Workspace::open(&original.root).unwrap();
+
+            app.open_workspace(replacement);
+
+            assert!(app.runs.get(&original.root).is_none());
+            assert!(app.state.project_input.is_empty(), "a draft must not follow a replacement at the same path");
+            assert!(!app.state.feed.iter().any(|item| matches!(item, FeedItem::Agent { text, .. } if text.contains("Old conversation"))));
+            let current = app.state.feed.clone();
+            fake.send(&original.root, RunEvent::Agent(AgentEvent::TextDelta { text: "Late old text".into() }));
+            fake.finish(&original.root);
+            app.poll_run();
+            assert_eq!(app.state.feed, current, "detached events cannot replace the current project's feed");
+        }
+    }
+
+    fn move_project_with_open_run(ws: &Workspace, destination: &Path) {
+        // Retain the live writer, but move its opened descendants before their directory so
+        // this replacement fixture exercises the same identity boundary on Windows too.
+        for (name, retained) in [(feed::FEED_FILE, "retired-feed.json"), (craft_anything_engine::workspace::ACTIVITY_LOG, "retired-activity.log")] {
+            let source = ws.root.join(name);
+            if source.exists() {
+                std::fs::rename(source, destination.parent().unwrap().join(retained)).unwrap();
+            }
+        }
+        std::fs::rename(&ws.root, destination).unwrap();
+    }
+
+    #[test]
+    fn a_manifest_read_failure_after_polling_does_not_drop_finished_lifecycle() {
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Project", "A game", TargetRef::None).unwrap();
+        let fake = rebuild::StandIns::new();
+        let mut app = crate::demo::app(crate::demo::engine(craft_anything_engine::Mode::Beginner, true));
+        app.runs = rebuild::RunSet::new(1).with_starter(fake.starter());
+        app.open_workspace(ws.clone());
+        app.runs.start(&app.hub, ws.clone(), RunOptions::default()).unwrap();
+        fake.send(&ws.root, RunEvent::Agent(AgentEvent::TextDelta { text: "A completed answer".into() }));
+        app.poll_run();
+        app.asking.insert(ws.root.clone());
+        fake.finish(&ws.root);
+        let manifest = ws.root.join("craft.json");
+        let bytes = std::fs::read(&manifest).unwrap();
+
+        app.poll_run_using(|_| std::fs::remove_file(&manifest).unwrap());
+
+        assert!(!app.asking.contains(&ws.root), "the validated Finished event still runs its lifecycle effects");
+        assert!(app.state.feed.iter().any(|item| matches!(item, FeedItem::Agent { text, streaming: false } if text == "A completed answer")));
+        std::fs::write(&manifest, bytes).unwrap();
+    }
+
+    #[test]
+    fn a_missing_selected_identity_leaves_finished_events_for_a_later_poll() {
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Project", "A game", TargetRef::None).unwrap();
+        let fake = rebuild::StandIns::new();
+        let mut app = crate::demo::app(crate::demo::engine(craft_anything_engine::Mode::Beginner, true));
+        app.runs = rebuild::RunSet::new(1).with_starter(fake.starter());
+        app.workspace = Some(ws.clone());
+        app.runs.start(&app.hub, ws.clone(), RunOptions::default()).unwrap();
+        fake.send(&ws.root, RunEvent::Agent(AgentEvent::TextDelta { text: "A completed answer".into() }));
+        fake.finish(&ws.root);
+        app.asking.insert(ws.root.clone());
+        let manifest = ws.root.join("craft.json");
+        let bytes = std::fs::read(&manifest).unwrap();
+        std::fs::remove_file(&manifest).unwrap();
+
+        app.poll_run();
+
+        assert!(app.asking.contains(&ws.root));
+        assert!(!app.state.feed.iter().any(|item| matches!(item, FeedItem::Agent { text, .. } if text == "A completed answer")));
+        std::fs::write(&manifest, bytes).unwrap();
+        app.poll_run();
+        assert!(!app.asking.contains(&ws.root));
+        assert!(app.state.feed.iter().any(|item| matches!(item, FeedItem::Agent { text, streaming: false } if text == "A completed answer")));
+        app.asking.insert(ws.root.clone());
+        app.poll_run();
+        assert!(app.asking.contains(&ws.root), "Finished is delivered only once");
+    }
+
+    #[test]
+    fn a_captured_batch_cannot_replace_a_new_directory_with_the_same_manifest() {
+        let directory = tempfile::tempdir().unwrap();
+        let original = Workspace::create(directory.path(), "Project", "An old project", TargetRef::None).unwrap();
+        let fake = rebuild::StandIns::new();
+        let mut app = crate::demo::app(crate::demo::engine(craft_anything_engine::Mode::Beginner, true));
+        app.runs = rebuild::RunSet::new(1).with_starter(fake.starter());
+        app.open_workspace(original.clone());
+        app.runs.start(&app.hub, original.clone(), RunOptions::default()).unwrap();
+        fake.send(&original.root, RunEvent::Agent(AgentEvent::TextDelta { text: "An old captured answer".into() }));
+        fake.finish(&original.root);
+        let manifest = original.root.join("craft.json");
+        let bytes = std::fs::read(&manifest).unwrap();
+
+        app.poll_run_using(|app| {
+            move_project_with_open_run(&original, &directory.path().join("retired"));
+            let replacement = Workspace::create(directory.path(), "Project", "A replacement", TargetRef::None).unwrap();
+            assert_eq!(replacement.root, original.root);
+            std::fs::write(&manifest, &bytes).unwrap();
+            let replacement = Workspace::open(&original.root).unwrap();
+            assert_eq!(replacement.manifest.created_ms, original.manifest.created_ms);
+            assert_eq!(replacement.manifest.generation, original.manifest.generation);
+            app.open_workspace(replacement);
+            app.state.feed.push(FeedItem::User(UserItem::Text("The new project's message".into())));
+            app.asking.insert(original.root.clone());
+        });
+
+        assert!(!app.state.feed.iter().any(|item| matches!(item, FeedItem::Agent { text, .. } if text == "An old captured answer")));
+        assert!(app.state.feed.iter().any(|item| matches!(item, FeedItem::User(user) if user.text() == "The new project's message")));
+        assert!(app.asking.contains(&original.root), "an old Finished event cannot clear the replacement's question");
+    }
+
+    #[test]
+    fn completed_snapshots_keep_followups_waiting_behind_another_project() {
+        use craft_anything_ai::{AiConfig, BackendConfig, BackendEntry, BackendKind};
+        for composer in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(directory.path(), "Project", "A game", TargetRef::None).unwrap();
+            let other = Workspace::create(directory.path(), "Other", "Another game", TargetRef::None).unwrap();
+            let mut app = crate::demo::app(crate::demo::engine(craft_anything_engine::Mode::Beginner, true));
+            let backend =
+                BackendConfig { name: "Agent".into(), kind: BackendKind::AgentCli, model: "claude-code".into(), base_url: None, ssh_host: None, enabled: true };
+            app.backends = vec![backend.clone()];
+            app.builder = Some("Agent".into());
+            let mut cfg = AiConfig::default();
+            cfg.upsert(BackendEntry { config: backend, options: Default::default() });
+            app.hub.save_config(&cfg).unwrap();
+            app.settings.build.parallel = 1;
+            let fake = rebuild::StandIns::new();
+            app.runs = rebuild::RunSet::new(1).with_starter(fake.starter());
+            app.open_workspace(ws.clone());
+            app.runs.start(&app.hub, ws.clone(), RunOptions::default()).unwrap();
+            app.runs.start(&app.hub, other.clone(), RunOptions::default()).unwrap();
+            fake.finish(&ws.root);
+            if composer {
+                app.state.project_input = "Keep this queued follow-up visible".into();
+                app.send_message();
+            } else {
+                app.follow_up(Some("Keep this queued follow-up visible".into()));
+            }
+            assert!(app.runs.position(&ws.root).is_some());
+
+            app.poll_run();
+
+            let count = |items: &[FeedItem]| {
+                items.iter().filter(|item| matches!(item, FeedItem::User(user) if user.text() == "Keep this queued follow-up visible")).count()
+            };
+            assert!(app.runs.is_running(&other.root));
+            assert_eq!(count(&app.state.feed), 1, "the finished snapshot keeps the newer queued row");
+            fake.finish(&other.root);
+            app.poll_run();
+            fake.send(&ws.root, RunEvent::Step { step: Step::Build, text: "Working on the follow-up".into() });
+            app.poll_run();
+            assert_eq!(count(&app.state.feed), 1, "starting the queued run must not duplicate its already visible row");
+        }
     }
 
     #[test]

@@ -127,6 +127,7 @@ fn copy_tree(from: &Path, to: &Path, skip: &dyn Fn(&Path) -> bool, depth: usize,
 }
 
 /// Open an exclusive output before streaming bytes, retaining the source file's permissions.
+#[cfg(not(windows))]
 fn copy_new_file(from: &Path, to: &Path) -> Result<(), ToolError> {
     let (mut source, metadata) = craft_anything_platform::fs::open_regular_file(from)?;
     let permissions = metadata.permissions();
@@ -142,10 +143,45 @@ fn copy_new_file(from: &Path, to: &Path) -> Result<(), ToolError> {
     output.set_permissions(permissions).map_err(|error| ToolError::io(to.display(), error))
 }
 
+#[cfg(windows)]
+fn copy_new_file(from: &Path, to: &Path) -> Result<(), ToolError> {
+    let (source, metadata) = craft_anything_platform::fs::open_regular_file(from)?;
+    copy_new_windows_file(from, to, &source, &metadata)
+}
+
+/// `std::fs::copy` retains NTFS named streams. Reserve the output exclusively and deny
+/// delete sharing on both names while it runs, so it can only overwrite our new output.
+#[cfg(windows)]
+fn copy_new_windows_file(from: &Path, to: &Path, source: &std::fs::File, metadata: &std::fs::Metadata) -> Result<(), ToolError> {
+    use std::os::windows::fs::OpenOptionsExt as _;
+    const SHARE_READ_WRITE: u32 = 1 | 2;
+    let pinned = std::fs::OpenOptions::new().read(true).share_mode(SHARE_READ_WRITE).open(from).map_err(|error| ToolError::io(from.display(), error))?;
+    let pinned = FileHandle::from_file(pinned).map_err(|error| ToolError::io(from.display(), error))?;
+    let opened = FileHandle::from_file(source.try_clone().map_err(|error| ToolError::io(from.display(), error))?)
+        .map_err(|error| ToolError::io(from.display(), error))?;
+    if pinned != opened {
+        return Err(copy_changed(from));
+    }
+    check_copy_entry(from, metadata)?;
+    let output = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .share_mode(SHARE_READ_WRITE)
+        .open(to)
+        .map_err(|error| ToolError::io(to.display(), error))?;
+    let copied = std::fs::copy(from, to).map_err(|error| ToolError::io(format!("{} to {}", from.display(), to.display()), error))?;
+    if copied != metadata.len() {
+        return Err(copy_changed(from));
+    }
+    check_copy_entry(from, metadata)?;
+    output.set_permissions(metadata.permissions()).map_err(|error| ToolError::io(to.display(), error))
+}
+
 struct CopyBackups<'a> {
     root: &'a Path,
     entries: Vec<(PathBuf, std::fs::Metadata)>,
     owned: Vec<PathBuf>,
+    owned_identities: Vec<(PathBuf, FileHandle)>,
 }
 
 impl<'a> CopyBackups<'a> {
@@ -165,7 +201,19 @@ impl<'a> CopyBackups<'a> {
             }
         }
         let owned = crate::feed::owned_backups_with_cancel(root, stop)?;
-        Ok(Self { root, entries, owned })
+        // Keep verified identities across discovery hooks. A replaced staged proof with
+        // identical bytes must not relabel the original recovery file as personal content.
+        let mut owned_identities = Vec::new();
+        for path in &owned {
+            let (mut file, metadata) = craft_anything_platform::fs::open_regular_file(path)?;
+            if !crate::feed::owns_open_backup_with_cancel(root, path, &mut file, stop)? {
+                return Err(copy_changed(path));
+            }
+            check_copy_entry(path, &metadata)?;
+            let identity = FileHandle::from_file(file).map_err(|error| ToolError::io(path.display(), error))?;
+            owned_identities.push((path.clone(), identity));
+        }
+        Ok(Self { root, entries, owned, owned_identities })
     }
 
     /// A spelling alone is not ownership. On a case-sensitive filesystem an uppercase
@@ -195,13 +243,30 @@ impl<'a> CopyBackups<'a> {
         self.owns_open_with_cancel(path, file, metadata, &CancelToken::default())
     }
 
+    fn owns_missing_alias(&self, path: &Path, file: &mut std::fs::File, stop: &CancelToken) -> Result<bool, ToolError> {
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else { return Ok(false) };
+        let Some(slot) = crate::feed::DAMAGED_BACKUP_NAMES.iter().find(|slot| name.eq_ignore_ascii_case(slot)) else { return Ok(false) };
+        let canonical = self.root.join(slot);
+        match std::fs::symlink_metadata(&canonical) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(ToolError::io(canonical.display(), error)),
+            Ok(_) => return Ok(false), // A distinct personal spelling can coexist with this slot.
+        }
+        let known = self.owned_identities.iter().find_map(|(path, identity)| (path == &canonical).then_some(identity));
+        match crate::feed::classify_open_backup_alias_with_cancel(self.root, slot, file, known, stop)? {
+            Some(owned) => Ok(owned),
+            None if self.owned.contains(&canonical) => Err(copy_changed(path)),
+            None => Ok(false),
+        }
+    }
+
     fn owns_open_with_cancel(&self, path: &Path, file: &mut std::fs::File, metadata: &std::fs::Metadata, stop: &CancelToken) -> Result<bool, ToolError> {
         stop.check()?;
         check_copy_entry(path, metadata)?;
         let slot = self.slot_for(path, file)?;
         let owned = match &slot {
             Some(slot) => crate::feed::owns_open_backup_with_cancel(self.root, slot, file, stop)?,
-            None => false,
+            None => self.owns_missing_alias(path, file, stop)?,
         };
         check_copy_entry(path, metadata)?;
         if let Some(slot) = &slot {
@@ -222,27 +287,34 @@ impl<'a> CopyBackups<'a> {
 /// Recovery may add or replace an entry after discovery. Inspect and copy one open handle;
 /// observed changes stop the copy, rather than silently omitting personal content.
 fn copy_personal_backup(backups: &CopyBackups<'_>, from: &Path, to: &Path) -> Result<(), ToolError> {
-    use std::io::Read as _;
     let (mut file, metadata) = craft_anything_platform::fs::open_regular_file(from)?;
     if backups.owns_open(from, &mut file, &metadata)? {
         return Ok(());
     }
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
+    #[cfg(windows)]
     {
-        use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
-        options.mode(metadata.permissions().mode());
+        copy_new_windows_file(from, to, &file, &metadata)
     }
-    let mut output = options.open(to).map_err(|error| ToolError::io(to.display(), error))?;
-    let copied = std::io::copy(&mut (&mut file).take(metadata.len()), &mut output).map_err(|error| ToolError::io(from.display(), error))?;
-    let mut extra = [0u8; 1];
-    if copied != metadata.len() || file.read(&mut extra).map_err(|error| ToolError::io(from.display(), error))? != 0 {
-        return Err(copy_changed(from));
+    #[cfg(not(windows))]
+    {
+        use std::io::Read as _;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+            options.mode(metadata.permissions().mode());
+        }
+        let mut output = options.open(to).map_err(|error| ToolError::io(to.display(), error))?;
+        let copied = std::io::copy(&mut (&mut file).take(metadata.len()), &mut output).map_err(|error| ToolError::io(from.display(), error))?;
+        let mut extra = [0u8; 1];
+        if copied != metadata.len() || file.read(&mut extra).map_err(|error| ToolError::io(from.display(), error))? != 0 {
+            return Err(copy_changed(from));
+        }
+        check_copy_entry(from, &metadata)?;
+        output.set_permissions(metadata.permissions()).map_err(|error| ToolError::io(to.display(), error))?;
+        Ok(())
     }
-    check_copy_entry(from, &metadata)?;
-    output.set_permissions(metadata.permissions()).map_err(|error| ToolError::io(to.display(), error))?;
-    Ok(())
 }
 
 fn copy_changed(path: &Path) -> ToolError {
@@ -1936,30 +2008,10 @@ impl Workspace {
         // Read the receipts before removing the inbox, and never recursively remove backups.
         let backups = crate::feed::owned_backups(&self.root)?;
         after_discovery(&backups);
-        crate::feed::remove_owned_backups(&self.root, &backups)?;
-        if !self.manifest.app_in_root {
-            gone(&self.app_dir())?;
-        }
-        // Keep the coordination inode until craft.json is gone. Waiting writers then see
-        // an unavailable project before they can start another transaction.
-        for name in OWN_NAMES {
-            if *name == MANIFEST || *name == "inbox" || crate::feed::DAMAGED_BACKUP_NAMES.contains(name) {
-                continue;
-            }
-            gone(&self.root.join(name))?;
-        }
-        // Fallible payload cleanup keeps the project discoverable and its lock inode intact,
-        // so a person can repair access and retry. Only coordination cleanup follows deletion.
         let inbox = self.inbox_dir();
         let inbox_identity = FileHandle::from_path(&inbox).map_err(|error| ToolError::io(inbox.display(), error))?;
-        for entry in std::fs::read_dir(&inbox).map_err(|error| ToolError::io(inbox.display(), error))? {
-            let entry = entry.map_err(|error| ToolError::io(inbox.display(), error))?;
-            if !feed.is_lock_entry(&entry.path())? {
-                gone(&entry.path())?;
-            }
-        }
-        // Allocate while the manifest still permits a retry. Coordination cleanup must not
-        // discover only after deleting it that there is no space for the private claim.
+        // Reserve before removing any project data: allocation failure must leave the
+        // build and conversation intact, not just retain a manifest for an emptied project.
         let cleanup = CreationCleanup::reserve(&self.root, allocate).map_err(|error| {
             let guidance = format!("The project manifest was kept. Inspect {} and restore cleanup access or space before retrying deletion.", inbox.display());
             let guidance = match &error.remediation {
@@ -1969,6 +2021,26 @@ impl Workspace {
             error.with_remediation(guidance)
         })?;
         let removed = (|| {
+            crate::feed::remove_owned_backups(&self.root, &backups)?;
+            if !self.manifest.app_in_root {
+                gone(&self.app_dir())?;
+            }
+            // Keep the coordination inode until craft.json is gone. Waiting writers then
+            // see an unavailable project before they can start another transaction.
+            for name in OWN_NAMES {
+                if *name == MANIFEST || *name == "inbox" || crate::feed::DAMAGED_BACKUP_NAMES.contains(name) {
+                    continue;
+                }
+                gone(&self.root.join(name))?;
+            }
+            // Fallible payload cleanup keeps the project discoverable and its lock inode
+            // intact. Only the private inbox claim follows manifest removal.
+            for entry in std::fs::read_dir(&inbox).map_err(|error| ToolError::io(inbox.display(), error))? {
+                let entry = entry.map_err(|error| ToolError::io(inbox.display(), error))?;
+                if !feed.is_lock_entry(&entry.path())? {
+                    gone(&entry.path())?;
+                }
+            }
             feed.check_workspace(&self)?;
             CreationReservation::check_directory(&inbox, &inbox_identity)?;
             cleanup.empty_path(&self.root)?;
@@ -2785,6 +2857,15 @@ pub fn default_projects_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    fn detach_creation_lock_for_replacement(root: &Path, creation: &CreationReservation, retained: &Path) {
+        // Keep the coordination inode held, but move it outside the directory this fixture
+        // replaces: Windows does not permit a directory move with an open descendant file.
+        let held = creation.coordination.as_ref().unwrap();
+        ClaimedInbox::detach_entry(&root.join("inbox").join(crate::feed::PROJECT_LOCK_FILE), retained, held, || {}).unwrap();
+        assert_eq!(FileHandle::from_path(retained).unwrap(), *held);
+    }
 
     #[test]
     fn a_message_takes_picture_files_up_to_20_mb() {
@@ -3730,6 +3811,39 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn new_file_copies_preserve_ntfs_streams_and_refuse_occupied_destinations() {
+        fn stream(path: &Path) -> PathBuf {
+            let mut name = path.as_os_str().to_owned();
+            name.push(":Zone.Identifier");
+            name.into()
+        }
+        for name in ["document.txt", "feed.json.broken"] {
+            let directory = tempfile::tempdir().unwrap();
+            let root = directory.path().join("source");
+            std::fs::create_dir(&root).unwrap();
+            let from = root.join(name);
+            let to = directory.path().join("copy.txt");
+            std::fs::write(&from, b"Generated ordinary content").unwrap();
+            std::fs::write(stream(&from), b"Generated alternate stream").unwrap();
+            let backups = CopyBackups::discover(&root).unwrap();
+            let copy = || {
+                if name == "feed.json.broken" { copy_personal_backup(&backups, &from, &to) } else { copy_new_file(&from, &to) }
+            };
+
+            copy().unwrap();
+            assert_eq!(std::fs::read(&to).unwrap(), b"Generated ordinary content");
+            assert_eq!(std::fs::read(stream(&to)).unwrap(), b"Generated alternate stream");
+
+            std::fs::write(&to, b"Keep personal bytes").unwrap();
+            std::fs::write(stream(&to), b"Keep personal alternate stream").unwrap();
+            assert!(copy().is_err(), "an occupied output is never overwritten");
+            assert_eq!(std::fs::read(&to).unwrap(), b"Keep personal bytes");
+            assert_eq!(std::fs::read(stream(&to)).unwrap(), b"Keep personal alternate stream");
+        }
+    }
+
     /// A rename survives a stale save, a copy takes the build but not the conversation (nor its
     /// kept session), and a delete leaves the person's own files.
     #[test]
@@ -4493,7 +4607,15 @@ mod tests {
                 let root = directory.path().join("selected");
                 std::fs::create_dir(&root).unwrap();
                 std::fs::write(root.join("index.html"), b"Keep my app").unwrap();
-                let ws = Workspace::create_at(&root, "Original", "Test", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+                let ws = Workspace::create_at(&root, "Original", "Test", TargetRef::None, Some(ExistingFiles::StartFrom)).unwrap();
+                std::fs::create_dir_all(ws.app_dir()).unwrap();
+                let build = ws.app_dir().join("generated.html");
+                std::fs::write(&build, b"Keep the generated build until cleanup can start").unwrap();
+                let mut conversation = crate::feed::load(&ws);
+                conversation.push(crate::feed::FeedItem::User(crate::feed::UserItem::Text("Keep this conversation until cleanup can start".into())));
+                crate::feed::save(&root, &mut conversation).unwrap();
+                let feed_path = root.join(crate::feed::FEED_FILE);
+                let feed_bytes = std::fs::read(&feed_path).unwrap();
                 let manifest_path = root.join(MANIFEST);
                 let manifest = std::fs::read(&manifest_path).unwrap();
                 let inbox = ws.inbox_dir();
@@ -4528,9 +4650,15 @@ mod tests {
                 assert!(error.for_people().contains(&inbox.display().to_string()));
                 assert!(!std::fs::read_dir(&root).unwrap().any(|entry| entry.unwrap().file_name().to_string_lossy().starts_with(".craft-copy-cleanup-")));
                 assert_eq!(std::fs::read(root.join("index.html")).unwrap(), b"Keep my app");
+                if fail_reservation {
+                    assert_eq!(std::fs::read(&build).unwrap(), b"Keep the generated build until cleanup can start");
+                    assert_eq!(std::fs::read(&feed_path).unwrap(), feed_bytes);
+                }
                 Workspace::open(&root).unwrap().delete().unwrap();
                 assert!(!manifest_path.exists());
                 assert!(!inbox.exists());
+                assert!(!build.exists());
+                assert!(!feed_path.exists());
                 assert_eq!(std::fs::read(root.join("index.html")).unwrap(), b"Keep my app");
             }
         }
@@ -4933,6 +5061,8 @@ mod tests {
                     |_, root| {
                         assert_ne!(case, "write", "failed manifest writes cannot reach cleanup or warning reporting");
                         if case == "root" {
+                            #[cfg(windows)]
+                            detach_creation_lock_for_replacement(root, creation, &directory.path().join("retained.lock"));
                             std::fs::rename(root, &displaced).unwrap();
                             std::fs::create_dir(root).unwrap();
                             std::fs::write(root.join("personal.txt"), b"Keep the replacement files").unwrap();
@@ -5843,8 +5973,10 @@ mod tests {
             std::fs::create_dir(&root).unwrap();
             std::fs::write(root.join("personal.txt"), b"Keep the original file").unwrap();
             let displaced = directory.path().join("displaced");
-            let error = Workspace::create_at_with_publisher(&root, "Selected", "A website", TargetRef::None, Some(ExistingFiles::Edit), |ws, _| {
+            let error = Workspace::create_at_with_publisher(&root, "Selected", "A website", TargetRef::None, Some(ExistingFiles::Edit), |ws, _creation| {
                 let entry = if replace_root { ws.root.clone() } else { ws.inbox_dir() };
+                #[cfg(windows)]
+                detach_creation_lock_for_replacement(&ws.root, _creation, &directory.path().join("retained.lock"));
                 std::fs::rename(&entry, &displaced).unwrap();
                 std::fs::create_dir(&entry).unwrap();
                 if replace_root {
@@ -6358,6 +6490,62 @@ mod tests {
         assert!(!copy.app_dir().join("feed.json.broken").exists());
     }
 
+    #[test]
+    fn duplication_classifies_case_renamed_backups_after_discovery() {
+        for case in ["owned", "personal", "missing-proof", "replaced-proof", "unrecognized-receipt"] {
+            let directory = tempfile::tempdir().unwrap();
+            let original = directory.path().join("original");
+            std::fs::create_dir(&original).unwrap();
+            std::fs::write(original.join("index.html"), b"Keep my app").unwrap();
+            let ws = Workspace::create_at(&original, "Site", "A website", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+            let bytes = b"damaged conversation";
+            std::fs::write(original.join(crate::feed::FEED_FILE), bytes).unwrap();
+            crate::feed::save(&original, &mut crate::feed::load(&ws)).unwrap();
+            let reserved = original.join("feed.json.broken");
+            let alias = original.join("FEED.JSON.BROKEN");
+            if case == "personal" {
+                use std::io::Write as _;
+                match std::fs::File::create_new(&alias) {
+                    Ok(mut personal) => personal.write_all(bytes).unwrap(),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue, // A distinct case variant needs a case-sensitive filesystem.
+                    Err(error) => panic!("could not create the independent personal file: {error}"),
+                }
+            }
+            let result = ws.duplicate_after_discovery("Copy", |selected| {
+                assert_eq!(selected, std::slice::from_ref(&reserved));
+                if case == "personal" {
+                    std::fs::remove_file(&reserved).unwrap();
+                } else {
+                    let temporary = directory.path().join("renaming-backup");
+                    std::fs::rename(&reserved, &temporary).unwrap();
+                    std::fs::rename(&temporary, &alias).unwrap();
+                }
+                if case == "missing-proof" {
+                    std::fs::remove_file(original.join("inbox/feed-backups/pending/feed.json.broken")).unwrap();
+                } else if case == "replaced-proof" {
+                    let staged = original.join("inbox/feed-backups/pending/feed.json.broken");
+                    std::fs::rename(&staged, directory.path().join("retained-proof")).unwrap();
+                    std::fs::write(&staged, bytes).unwrap();
+                } else if case == "unrecognized-receipt" {
+                    std::fs::write(original.join("inbox/feed-backups/feed.json.broken.json"), b"unrecognized record").unwrap();
+                }
+            });
+
+            if matches!(case, "missing-proof" | "replaced-proof" | "unrecognized-receipt") {
+                assert_eq!(result.unwrap_err().code, ErrorCode::FileChanged, "uncertain recovery content must not enter the app copy");
+                assert_eq!(Workspace::list(directory.path()).len(), 1);
+            } else {
+                let copy = result.unwrap();
+                if case == "personal" {
+                    assert_eq!(std::fs::read(copy.app_dir().join("FEED.JSON.BROKEN")).unwrap(), bytes);
+                } else {
+                    assert!(!copy.app_dir().join("FEED.JSON.BROKEN").exists(), "renaming a verified recovery file does not turn it into personal app data");
+                }
+            }
+            assert_eq!(std::fs::read(&alias).unwrap(), bytes, "source contents are always retained");
+        }
+    }
+
     #[cfg(windows)]
     #[test]
     fn duplication_excludes_a_case_alias_of_a_generated_backup() {
@@ -6373,9 +6561,6 @@ mod tests {
         let temporary = original.join("renaming-backup");
         std::fs::rename(&reserved, &temporary).unwrap();
         std::fs::rename(&temporary, &renamed).unwrap();
-        if !reserved.exists() {
-            return; // Windows also supports case-sensitive directories; the distinct-file control covers those.
-        }
 
         let copy = ws.duplicate("Copy").unwrap();
 

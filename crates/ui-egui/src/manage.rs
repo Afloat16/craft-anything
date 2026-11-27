@@ -53,6 +53,7 @@ impl CraftApp {
             _ => {
                 if self.workspace.as_ref().is_some_and(|w| Some(&w.root) == root.as_ref()) {
                     self.workspace = None;
+                    self.workspace_identity = None;
                     self.state.feed.clear();
                     self.state.screen = Screen::Home;
                 }
