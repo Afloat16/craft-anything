@@ -1,0 +1,659 @@
+name: Validate final feed review fixes
+on:
+  push:
+    branches: [validation/20261127-craft2183-review-v2]
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+      CARGO_NET_RETRY: '10'
+      RUST_BACKTRACE: '1'
+      RUSTUP_TOOLCHAIN: '1.100.0'
+      CANDIDATE_TREE: '2a3d7d41c2004f3540b9688bf473beea19bb54cc'
+      CANDIDATE_SHA: 'c2f8db04b57b735b2ad911445677efc669416004'
+    steps:
+      - name: Check out immutable source candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 'c2f8db04b57b735b2ad911445677efc669416004'
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify immutable source identity
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$CANDIDATE_TREE"
+      - name: Repository CI build environment
+        id: environment
+        uses: storytold/craft-common-actions/actions/gate-setup@315eb1972c857c839c3abb3d9288bfd40d21b7da
+        with:
+          craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+          require-craft-fonts: 'true'
+          packages: >-
+            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev
+          toolchain: '1.100.0'
+          cache-job: build
+          cache-save: 'false'
+          writes: 'false'
+      - name: Report compiler version
+        run: rustc --version --verbose
+      - name: Required policy and formatting gates
+        run: |
+          set -euo pipefail
+          cargo xtask fmt --check
+          cargo xtask layers
+          cargo xtask locks
+          cargo xtask secrets
+      - name: Build real CLI used by AI integration tests
+        run: cargo build --locked -p craft-anything-cli
+      - name: Complete Engine AI UI and Platform targets
+        id: positive_suites
+        run: cargo test --no-fail-fast --locked -p craft-anything-engine -p craft-anything-ai -p craft-anything-ui-egui -p craft-anything-platform
+      - name: Clippy all changed crates and tests
+        run: cargo clippy --locked -p craft-anything-engine -p craft-anything-ai -p craft-anything-ui-egui -p craft-anything-platform --all-targets -- -D warnings
+      - name: Check round regression rejects original per-event Worker
+        if: ${{ !cancelled() && steps.positive_suites.outcome == 'success' }}
+        run: |
+          python - <<'PY'
+          #!/usr/bin/env python3
+          """Prove the check-round regression at the real Worker producer boundary."""
+          from pathlib import Path
+          import re
+          import subprocess
+          
+          path = Path("crates/ai/src/rebuild/mod.rs")
+          original = path.read_bytes()
+          text = original.decode()
+          start = text.index("    fn emit_checks(&self, checks: &[CheckResult]) {")
+          end = text.index("    fn step(&self,", start)
+          old_producer = """    fn emit_checks(&self, checks: &[CheckResult]) {
+                  for check in checks {
+                      self.emit(RunEvent::Checked(check.clone()));
+                  }
+              }
+          
+          """
+          name = "rebuild::feed::tests::a_recovered_check_round_is_journaled_before_its_first_event_can_save"
+          try:
+              path.write_text(text[:start] + old_producer + text[end:])
+              command = ["cargo", "test", "--locked", "-p", "craft-anything-ai", "--lib", name, "--", "--exact", "--nocapture"]
+              result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+              print(result.stdout, end="", flush=True)
+              assert result.returncode != 0, "the old per-event Worker producer unexpectedly passed"
+              assert "running 1 test" in result.stdout, "the regression did not execute"
+              assert re.search(r"test " + re.escape(name) + r" \.\.\. FAILED", result.stdout), "failure was not the intended test"
+              assert "test result: FAILED. 0 passed; 1 failed; 0 ignored" in result.stdout
+              assert "older, external and repeated checks survive" in result.stdout, "failure did not reach the check reconciliation assertion"
+              print("NEGATIVE_CONTROL_CONFIRMED=worker_per_event_check_round", flush=True)
+          finally:
+              path.write_bytes(original)
+              assert path.read_bytes() == original
+          PY
+      - name: Workspace allocation regression rejects cleanup after deletion
+        if: ${{ !cancelled() && steps.positive_suites.outcome == 'success' }}
+        run: |
+          python - --case allocation <<'PY'
+          #!/usr/bin/env python3
+          """Run one exact workspace regression against a reverted mechanism, then restore bytes.
+          
+          This is validation-only scaffolding; it is not part of the PR source tree.
+          The allocation function is the exact 67d91ffff5990687ca5a2419f43b8c87712b7920 implementation.
+          """
+          import argparse
+          import hashlib
+          import re
+          import subprocess
+          from pathlib import Path
+          
+          OLD_DELETE = '    fn delete_with_cleanup(\n        self,\n        after_discovery: impl FnOnce(&[PathBuf]),\n        mut gone: impl FnMut(&Path) -> Result<(), ToolError>,\n        after_claim: impl FnOnce(),\n        allocate: &dyn Fn(&Path) -> Result<PathBuf, ToolError>,\n    ) -> Result<(), ToolError> {\n        if !self.root.join(MANIFEST).is_file() {\n            return Err(ToolError::invalid(format!("{} isn\'t a project folder.", self.root.display())));\n        }\n        let feed = crate::feed::lock_project(&self.root)?;\n        // The caller may still hold a workspace loaded before this folder was reused.\n        // Acquiring the replacement project\'s lock must not authorize deleting its data.\n        feed.check_workspace(&self)?;\n        // A legacy project can have personal files at a name reserved by a later version.\n        // Read the receipts before removing the inbox, and never recursively remove backups.\n        let backups = crate::feed::owned_backups(&self.root)?;\n        after_discovery(&backups);\n        crate::feed::remove_owned_backups(&self.root, &backups)?;\n        if !self.manifest.app_in_root {\n            gone(&self.app_dir())?;\n        }\n        // Keep the coordination inode until craft.json is gone. Waiting writers then see\n        // an unavailable project before they can start another transaction.\n        for name in OWN_NAMES {\n            if *name == MANIFEST || *name == "inbox" || crate::feed::DAMAGED_BACKUP_NAMES.contains(name) {\n                continue;\n            }\n            gone(&self.root.join(name))?;\n        }\n        // Fallible payload cleanup keeps the project discoverable and its lock inode intact,\n        // so a person can repair access and retry. Only coordination cleanup follows deletion.\n        let inbox = self.inbox_dir();\n        let inbox_identity = FileHandle::from_path(&inbox).map_err(|error| ToolError::io(inbox.display(), error))?;\n        for entry in std::fs::read_dir(&inbox).map_err(|error| ToolError::io(inbox.display(), error))? {\n            let entry = entry.map_err(|error| ToolError::io(inbox.display(), error))?;\n            if !feed.is_lock_entry(&entry.path())? {\n                gone(&entry.path())?;\n            }\n        }\n        // Allocate while the manifest still permits a retry. Coordination cleanup must not\n        // discover only after deleting it that there is no space for the private claim.\n        let cleanup = CreationCleanup::reserve(&self.root, allocate).map_err(|error| {\n            let guidance = format!("The project manifest was kept. Inspect {} and restore cleanup access or space before retrying deletion.", inbox.display());\n            let guidance = match &error.remediation {\n                Some(previous) => format!("{previous} {guidance}"),\n                None => guidance,\n            };\n            error.with_remediation(guidance)\n        })?;\n        let removed = (|| {\n            feed.check_workspace(&self)?;\n            CreationReservation::check_directory(&inbox, &inbox_identity)?;\n            cleanup.empty_path(&self.root)?;\n            let lock = inbox.join(crate::feed::PROJECT_LOCK_FILE);\n            if !feed.is_lock_entry(&lock)? {\n                return Err(copy_changed(&lock));\n            }\n            gone(&self.root.join(MANIFEST))\n        })();\n        if let Err(error) = removed {\n            let released = feed.check_workspace(&self).and_then(|()| cleanup.remove_empty(&self.root));\n            let guidance = match released {\n                Ok(()) => format!("Inspect {} and {} before retrying deletion.", self.root.join(MANIFEST).display(), inbox.display()),\n                Err(cleanup_error) => format!(\n                    "Inspect {} and {}, together with the reserved cleanup folder at {}: {}",\n                    self.root.join(MANIFEST).display(),\n                    inbox.display(),\n                    self.root.join(&cleanup.name).display(),\n                    cleanup_error.for_people()\n                ),\n            };\n            let guidance = match &error.remediation {\n                Some(previous) => format!("{previous} {guidance}"),\n                None => guidance,\n            };\n            return Err(error.with_remediation(guidance));\n        }\n        feed.finish_deletion(&inbox_identity, &cleanup, after_claim)?;\n        if std::fs::read_dir(&self.root).is_ok_and(|mut d| d.next().is_none()) {\n            let _ = std::fs::remove_dir(&self.root);\n        }\n        Ok(())\n    }\n'
+          BYTE_COPY = 'fn copy_new_windows_file(from: &Path, to: &Path, source: &std::fs::File, metadata: &std::fs::Metadata) -> Result<(), ToolError> {\n    use std::io::Seek as _;\n    let mut source = source.try_clone().map_err(|error| ToolError::io(from.display(), error))?;\n    source.rewind().map_err(|error| ToolError::io(from.display(), error))?;\n    let mut output = std::fs::OpenOptions::new().write(true).create_new(true).open(to).map_err(|error| ToolError::io(to.display(), error))?;\n    std::io::copy(&mut source, &mut output).map_err(|error| ToolError::io(from.display(), error))?;\n    output.set_permissions(metadata.permissions()).map_err(|error| ToolError::io(to.display(), error))\n}'
+          TESTS = {
+              "allocation": "workspace::tests::deletion_preclaim_failures_keep_the_manifest_and_inbox_retryable",
+              "alias": "workspace::tests::duplication_classifies_case_renamed_backups_after_discovery",
+              "streams": "workspace::tests::new_file_copies_preserve_ntfs_streams_and_refuse_occupied_destinations",
+          }
+          
+          def mutate(source, case):
+              if case == "allocation":
+                  begin = source.index("    fn delete_with_cleanup(")
+                  end = source.index("\n    /// Start a project", begin)
+                  return source[:begin] + OLD_DELETE + source[end:]
+              if case == "alias":
+                  replaced, count = re.subn(r"None\s*=>\s*self\.owns_missing_alias\(path,\s*file,\s*stop\)\?,", "None => false,", source)
+                  if count != 1:
+                      raise AssertionError(f"expected one missing-alias dispatch, found {count}")
+                  return replaced
+              begin = source.index("fn copy_new_windows_file(")
+              end = source.index("\n}", begin) + 2
+              return source[:begin] + BYTE_COPY + source[end:]
+          
+          def main():
+              parser = argparse.ArgumentParser()
+              parser.add_argument("--case", choices=TESTS, required=True)
+              parser.add_argument("--repo", type=Path, default=Path.cwd())
+              parser.add_argument("--package", default="craft-anything-engine")
+              parser.add_argument("--timeout", type=int, default=900)
+              args = parser.parse_args()
+              repo = args.repo.resolve()
+              path = repo / "crates/engine/src/workspace.rs"
+              original = path.read_bytes()
+              fingerprint = hashlib.sha256(original).hexdigest()
+              test = TESTS[args.case]
+              command = ["cargo", "test", "--locked", "-p", args.package, "--lib", test, "--", "--exact", "--nocapture"]
+              try:
+                  source = original.decode().replace("\r\n", "\n")
+                  changed = mutate(source, args.case)
+                  if changed == source:
+                      raise AssertionError("counterfactual did not change production source")
+                  path.write_text(changed, encoding="utf-8")
+                  result = subprocess.run(command, cwd=repo, capture_output=True, text=True, timeout=args.timeout)
+                  output = result.stdout + result.stderr
+                  print(output, end="" if output.endswith("\n") else "\n", flush=True)
+                  if result.returncode != 101:
+                      raise AssertionError(f"expected cargo test failure 101 for {args.case}, got {result.returncode}")
+                  if not re.search(r"running 1 test\b", output) or not re.search(r"test result: FAILED\. 0 passed; 1 failed;", output) or test not in output:
+                      raise AssertionError("the exact regression did not execute and fail; a build or filter error is not a counterfactual")
+                  print(f"COUNTERFACTUAL CONFIRMED: {args.case}: {test} ran and failed", flush=True)
+              finally:
+                  path.write_bytes(original)
+                  if path.read_bytes() != original:
+                      raise AssertionError("failed to restore the original source bytes")
+                  print(f"RESTORED workspace.rs sha256={fingerprint}", flush=True)
+          
+          if __name__ == "__main__":
+              main()
+          PY
+      - name: Backup alias regression rejects unchecked personal classification
+        if: ${{ !cancelled() && steps.positive_suites.outcome == 'success' }}
+        run: |
+          python - --case alias <<'PY'
+          #!/usr/bin/env python3
+          """Run one exact workspace regression against a reverted mechanism, then restore bytes.
+          
+          This is validation-only scaffolding; it is not part of the PR source tree.
+          The allocation function is the exact 67d91ffff5990687ca5a2419f43b8c87712b7920 implementation.
+          """
+          import argparse
+          import hashlib
+          import re
+          import subprocess
+          from pathlib import Path
+          
+          OLD_DELETE = '    fn delete_with_cleanup(\n        self,\n        after_discovery: impl FnOnce(&[PathBuf]),\n        mut gone: impl FnMut(&Path) -> Result<(), ToolError>,\n        after_claim: impl FnOnce(),\n        allocate: &dyn Fn(&Path) -> Result<PathBuf, ToolError>,\n    ) -> Result<(), ToolError> {\n        if !self.root.join(MANIFEST).is_file() {\n            return Err(ToolError::invalid(format!("{} isn\'t a project folder.", self.root.display())));\n        }\n        let feed = crate::feed::lock_project(&self.root)?;\n        // The caller may still hold a workspace loaded before this folder was reused.\n        // Acquiring the replacement project\'s lock must not authorize deleting its data.\n        feed.check_workspace(&self)?;\n        // A legacy project can have personal files at a name reserved by a later version.\n        // Read the receipts before removing the inbox, and never recursively remove backups.\n        let backups = crate::feed::owned_backups(&self.root)?;\n        after_discovery(&backups);\n        crate::feed::remove_owned_backups(&self.root, &backups)?;\n        if !self.manifest.app_in_root {\n            gone(&self.app_dir())?;\n        }\n        // Keep the coordination inode until craft.json is gone. Waiting writers then see\n        // an unavailable project before they can start another transaction.\n        for name in OWN_NAMES {\n            if *name == MANIFEST || *name == "inbox" || crate::feed::DAMAGED_BACKUP_NAMES.contains(name) {\n                continue;\n            }\n            gone(&self.root.join(name))?;\n        }\n        // Fallible payload cleanup keeps the project discoverable and its lock inode intact,\n        // so a person can repair access and retry. Only coordination cleanup follows deletion.\n        let inbox = self.inbox_dir();\n        let inbox_identity = FileHandle::from_path(&inbox).map_err(|error| ToolError::io(inbox.display(), error))?;\n        for entry in std::fs::read_dir(&inbox).map_err(|error| ToolError::io(inbox.display(), error))? {\n            let entry = entry.map_err(|error| ToolError::io(inbox.display(), error))?;\n            if !feed.is_lock_entry(&entry.path())? {\n                gone(&entry.path())?;\n            }\n        }\n        // Allocate while the manifest still permits a retry. Coordination cleanup must not\n        // discover only after deleting it that there is no space for the private claim.\n        let cleanup = CreationCleanup::reserve(&self.root, allocate).map_err(|error| {\n            let guidance = format!("The project manifest was kept. Inspect {} and restore cleanup access or space before retrying deletion.", inbox.display());\n            let guidance = match &error.remediation {\n                Some(previous) => format!("{previous} {guidance}"),\n                None => guidance,\n            };\n            error.with_remediation(guidance)\n        })?;\n        let removed = (|| {\n            feed.check_workspace(&self)?;\n            CreationReservation::check_directory(&inbox, &inbox_identity)?;\n            cleanup.empty_path(&self.root)?;\n            let lock = inbox.join(crate::feed::PROJECT_LOCK_FILE);\n            if !feed.is_lock_entry(&lock)? {\n                return Err(copy_changed(&lock));\n            }\n            gone(&self.root.join(MANIFEST))\n        })();\n        if let Err(error) = removed {\n            let released = feed.check_workspace(&self).and_then(|()| cleanup.remove_empty(&self.root));\n            let guidance = match released {\n                Ok(()) => format!("Inspect {} and {} before retrying deletion.", self.root.join(MANIFEST).display(), inbox.display()),\n                Err(cleanup_error) => format!(\n                    "Inspect {} and {}, together with the reserved cleanup folder at {}: {}",\n                    self.root.join(MANIFEST).display(),\n                    inbox.display(),\n                    self.root.join(&cleanup.name).display(),\n                    cleanup_error.for_people()\n                ),\n            };\n            let guidance = match &error.remediation {\n                Some(previous) => format!("{previous} {guidance}"),\n                None => guidance,\n            };\n            return Err(error.with_remediation(guidance));\n        }\n        feed.finish_deletion(&inbox_identity, &cleanup, after_claim)?;\n        if std::fs::read_dir(&self.root).is_ok_and(|mut d| d.next().is_none()) {\n            let _ = std::fs::remove_dir(&self.root);\n        }\n        Ok(())\n    }\n'
+          BYTE_COPY = 'fn copy_new_windows_file(from: &Path, to: &Path, source: &std::fs::File, metadata: &std::fs::Metadata) -> Result<(), ToolError> {\n    use std::io::Seek as _;\n    let mut source = source.try_clone().map_err(|error| ToolError::io(from.display(), error))?;\n    source.rewind().map_err(|error| ToolError::io(from.display(), error))?;\n    let mut output = std::fs::OpenOptions::new().write(true).create_new(true).open(to).map_err(|error| ToolError::io(to.display(), error))?;\n    std::io::copy(&mut source, &mut output).map_err(|error| ToolError::io(from.display(), error))?;\n    output.set_permissions(metadata.permissions()).map_err(|error| ToolError::io(to.display(), error))\n}'
+          TESTS = {
+              "allocation": "workspace::tests::deletion_preclaim_failures_keep_the_manifest_and_inbox_retryable",
+              "alias": "workspace::tests::duplication_classifies_case_renamed_backups_after_discovery",
+              "streams": "workspace::tests::new_file_copies_preserve_ntfs_streams_and_refuse_occupied_destinations",
+          }
+          
+          def mutate(source, case):
+              if case == "allocation":
+                  begin = source.index("    fn delete_with_cleanup(")
+                  end = source.index("\n    /// Start a project", begin)
+                  return source[:begin] + OLD_DELETE + source[end:]
+              if case == "alias":
+                  replaced, count = re.subn(r"None\s*=>\s*self\.owns_missing_alias\(path,\s*file,\s*stop\)\?,", "None => false,", source)
+                  if count != 1:
+                      raise AssertionError(f"expected one missing-alias dispatch, found {count}")
+                  return replaced
+              begin = source.index("fn copy_new_windows_file(")
+              end = source.index("\n}", begin) + 2
+              return source[:begin] + BYTE_COPY + source[end:]
+          
+          def main():
+              parser = argparse.ArgumentParser()
+              parser.add_argument("--case", choices=TESTS, required=True)
+              parser.add_argument("--repo", type=Path, default=Path.cwd())
+              parser.add_argument("--package", default="craft-anything-engine")
+              parser.add_argument("--timeout", type=int, default=900)
+              args = parser.parse_args()
+              repo = args.repo.resolve()
+              path = repo / "crates/engine/src/workspace.rs"
+              original = path.read_bytes()
+              fingerprint = hashlib.sha256(original).hexdigest()
+              test = TESTS[args.case]
+              command = ["cargo", "test", "--locked", "-p", args.package, "--lib", test, "--", "--exact", "--nocapture"]
+              try:
+                  source = original.decode().replace("\r\n", "\n")
+                  changed = mutate(source, args.case)
+                  if changed == source:
+                      raise AssertionError("counterfactual did not change production source")
+                  path.write_text(changed, encoding="utf-8")
+                  result = subprocess.run(command, cwd=repo, capture_output=True, text=True, timeout=args.timeout)
+                  output = result.stdout + result.stderr
+                  print(output, end="" if output.endswith("\n") else "\n", flush=True)
+                  if result.returncode != 101:
+                      raise AssertionError(f"expected cargo test failure 101 for {args.case}, got {result.returncode}")
+                  if not re.search(r"running 1 test\b", output) or not re.search(r"test result: FAILED\. 0 passed; 1 failed;", output) or test not in output:
+                      raise AssertionError("the exact regression did not execute and fail; a build or filter error is not a counterfactual")
+                  print(f"COUNTERFACTUAL CONFIRMED: {args.case}: {test} ran and failed", flush=True)
+              finally:
+                  path.write_bytes(original)
+                  if path.read_bytes() != original:
+                      raise AssertionError("failed to restore the original source bytes")
+                  print(f"RESTORED workspace.rs sha256={fingerprint}", flush=True)
+          
+          if __name__ == "__main__":
+              main()
+          PY
+      - name: Project identity lifecycle and queue regressions reject wrong implementations
+        if: ${{ !cancelled() && steps.positive_suites.outcome == 'success' }}
+        run: |
+          python - <<'PY'
+          #!/usr/bin/env python3
+          """Run narrow negative controls against the already-tested Craft candidate.
+          
+          Each control changes production code only, runs one exact existing regression,
+          and requires that regression to execute and fail at its expected assertion.
+          Compilation failures, missing tests and timeouts never count as evidence.
+          All changed files are restored, including on exceptions or interruption.
+          """
+          
+          from __future__ import annotations
+          
+          import argparse
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          import sys
+          import tomllib
+          from dataclasses import dataclass
+          from typing import Callable
+          
+          
+          RUNS = Path("crates/ai/src/rebuild/runs.rs")
+          PROJECT = Path("crates/ui-egui/src/project.rs")
+          
+          
+          def replace_once(source: str, pattern: str, replacement: str) -> str:
+              changed, count = re.subn(pattern, lambda _: replacement, source, flags=re.DOTALL)
+              if count != 1:
+                  raise RuntimeError(f"Mutation anchor must occur once, found {count}: {pattern}")
+              if changed == source:
+                  raise RuntimeError("Mutation made no change")
+              return changed
+          
+          
+          def replace_function_body(source: str, name: str, body: str) -> str:
+              anchor = f"pub fn {name}("
+              if source.count(anchor) != 1:
+                  raise RuntimeError(f"Expected one function {name}")
+              start = source.index("{", source.index(anchor))
+              depth = 1
+              end = start + 1
+              while depth and end < len(source):
+                  depth += (source[end] == "{") - (source[end] == "}")
+                  end += 1
+              if depth:
+                  raise RuntimeError(f"Unbalanced function {name}")
+              return source[: start + 1] + "\n" + body + "\n    " + source[end - 1 :]
+          
+          
+          def path_only_identity(source: str) -> str:
+              return replace_function_body(
+                  source, "is_for_project", "        let _ = project;\n        self.root.as_path() == root"
+              )
+          
+          
+          def post_poll_read(source: str) -> str:
+              return replace_once(
+                  source,
+                  r"update\.is_for_project\(\s*&update\.root,\s*identity\s*\)",
+                  "identity.check_current(&update.root).is_ok() && update.is_for_project(&update.root, identity)",
+              )
+          
+          
+          def lose_pending(source: str) -> str:
+              return replace_once(
+                  source,
+                  r"return error\.code != ErrorCode::FileChanged;",
+                  "tracked.pending.clear();\n                return error.code != ErrorCode::FileChanged;",
+              )
+          
+          
+          def immediate_overwrite(source: str) -> str:
+              return replace_once(source, r"\blet pending\s*=\s*self\.runs\b[^;]*;", "let pending = false;")
+          
+          
+          NEXT_REQUEST = r"\blet next\s*=\s*self\s*\.\s*queue\s*\.\s*iter\s*\(\s*\)[^;]*;"
+          
+          
+          def queued_overwrite(source: str) -> str:
+              return replace_once(source, NEXT_REQUEST, "let next = (!self.queue.is_empty()).then_some(0);")
+          
+          
+          def lose_queued_row(source: str) -> str:
+              return replace_once(source, r"display\.push\(message\.clone\(\)\);", "let _ = (display, message);")
+          
+          
+          def block_at_front(source: str) -> str:
+              return replace_once(
+                  source,
+                  NEXT_REQUEST,
+                  """let next = self.queue.front().and_then(|(ws, _, _)| {
+                          self.runs.get(&ws.root).is_none_or(|tracked| tracked.pending.is_empty()).then_some(0)
+                      });""",
+              )
+          
+          
+          @dataclass(frozen=True)
+          class Control:
+              name: str
+              path: Path
+              crate: str
+              test: str
+              mutate: Callable[[str], str]
+              assertion: str
+          
+          
+          AI = "rebuild::runs::tests::"
+          UI = "project::tests::"
+          CONTROLS = [
+              Control(
+                  "path-only-identity", RUNS, "ui-egui",
+                  UI + "a_captured_batch_cannot_replace_a_new_directory_with_the_same_manifest",
+                  path_only_identity, r"assertion failed:[\s\S]*An old captured answer",
+              ),
+              Control(
+                  "post-poll-second-read", PROJECT, "ui-egui",
+                  UI + "a_manifest_read_failure_after_polling_does_not_drop_finished_lifecycle",
+                  post_poll_read, r"the validated Finished event still runs its lifecycle effects",
+              ),
+              Control(
+                  "lost-pending-events", RUNS, "ai",
+                  AI + "an_unreadable_manifest_keeps_finished_events_until_identity_can_be_checked",
+                  lose_pending, r"assertion `left == right` failed[\s\S]*left:\s*0[\s\S]*right:\s*1",
+              ),
+              Control(
+                  "immediate-same-root-overwrite", RUNS, "ai",
+                  AI + "a_same_path_followup_waits_until_deferred_finished_events_are_delivered",
+                  immediate_overwrite, r"assertion failed:[\s\S]*Started::Queued",
+              ),
+              Control(
+                  "queued-same-root-overwrite", RUNS, "ai",
+                  AI + "a_same_path_followup_waits_until_deferred_finished_events_are_delivered",
+                  queued_overwrite, r"the waiting run cannot overwrite deferred Finished events",
+              ),
+              Control(
+                  "lost-queued-row", RUNS, "ui-egui",
+                  UI + "completed_snapshots_keep_followups_waiting_behind_another_project",
+                  lose_queued_row, r"the finished snapshot keeps the newer queued row",
+              ),
+              Control(
+                  "blocked-queue-front", RUNS, "ai",
+                  AI + "an_unreadable_completion_does_not_block_other_queued_projects",
+                  block_at_front, r"an unreadable completion cannot hold another project's free slot",
+              ),
+          ]
+          
+          
+          def verify_failure(control: Control, result: subprocess.CompletedProcess[str]) -> None:
+              output = result.stdout
+              if result.returncode != 101:
+                  raise RuntimeError(f"Expected Cargo test failure 101, got {result.returncode}")
+              if not re.search(r"(?m)^running 1 test\s*$", output):
+                  raise RuntimeError("The exact regression did not execute as one test")
+              if not re.search(r"(?m)^test " + re.escape(control.test) + r" \.\.\. FAILED\s*$", output):
+                  raise RuntimeError("The named regression did not report FAILED")
+              if not re.search(r"test result: FAILED\. 0 passed; 1 failed; 0 ignored; 0 measured;", output):
+                  raise RuntimeError("Expected exactly one executed assertion failure")
+              if not re.search(r"thread '" + re.escape(control.test) + r"'.*panicked at", output):
+                  raise RuntimeError("No panic from the exact regression")
+              if not re.search(control.assertion, output):
+                  raise RuntimeError("The expected behavioral assertion did not fail")
+          
+          
+          def main() -> int:
+              parser = argparse.ArgumentParser(description=__doc__)
+              parser.add_argument("--repo", type=Path, default=Path.cwd())
+              parser.add_argument("--output", type=Path, default=Path(os.environ.get("RUNNER_TEMP", ".")) / "craft-run-ui-controls")
+              parser.add_argument("--timeout", type=int, default=900)
+              args = parser.parse_args()
+              repo = args.repo.resolve()
+              output_dir = args.output.resolve()
+              output_dir.mkdir(parents=True, exist_ok=True)
+              baselines = {path: (repo / path).read_bytes() for path in {RUNS, PROJECT}}
+              packages = {
+                  crate: tomllib.loads((repo / "crates" / crate / "Cargo.toml").read_text())["package"]["name"]
+                  for crate in {control.crate for control in CONTROLS}
+              }
+              reports = []
+              try:
+                  for control in CONTROLS:
+                      path = repo / control.path
+                      log_path = output_dir / f"{control.name}.log"
+                      record = {"name": control.name, "test": control.test, "file": str(control.path), "log": str(log_path), "verified": False}
+                      print(f"CONTROL {control.name}: {control.test}", flush=True)
+                      try:
+                          for original, data in baselines.items():
+                              if (repo / original).read_bytes() != data:
+                                  raise RuntimeError(f"Unexpected source change before control: {original}")
+                          path.write_text(control.mutate(baselines[control.path].decode("utf-8")))
+                          command = [
+                              "cargo", "test", "--locked", "--color", "never", "-p", packages[control.crate], "--lib", control.test,
+                              "--", "--exact", "--nocapture",
+                          ]
+                          record["command"] = command
+                          result = subprocess.run(
+                              command, cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              timeout=args.timeout, check=False,
+                          )
+                          log_path.write_text(result.stdout)
+                          record["returncode"] = result.returncode
+                          verify_failure(control, result)
+                          record["verified"] = True
+                          print(f"VERIFIED {control.name}: one executed regression failed at its expected assertion", flush=True)
+                          assertion = re.search(control.assertion, result.stdout)
+                          if assertion is not None:
+                              print("MATCHED ASSERTION: " + assertion.group(0)[:1600], flush=True)
+                          print(result.stdout[-1600:], flush=True)
+                      except (Exception, KeyboardInterrupt) as error:
+                          record["error"] = str(error)
+                          if isinstance(error, subprocess.TimeoutExpired):
+                              partial = error.stdout or b""
+                              log_path.write_bytes(partial if isinstance(partial, bytes) else partial.encode())
+                          print(f"INVALID CONTROL {control.name}: {error}", file=sys.stderr, flush=True)
+                          if log_path.exists():
+                              print(log_path.read_text(errors="replace")[-6000:], file=sys.stderr, flush=True)
+                          if isinstance(error, KeyboardInterrupt):
+                              raise
+                      finally:
+                          path.write_bytes(baselines[control.path])
+                          reports.append(record)
+                          (output_dir / "results.json").write_text(json.dumps(reports, indent=2) + "\n")
+              finally:
+                  for path, data in baselines.items():
+                      (repo / path).write_bytes(data)
+                  if any((repo / path).read_bytes() != data for path, data in baselines.items()):
+                      raise RuntimeError("Failed to restore original candidate sources")
+                  print("RESTORED original candidate sources", flush=True)
+              if len(reports) != len(CONTROLS) or not all(record["verified"] for record in reports):
+                  return 1
+              print(f"Verified {len(reports)} behavioral negative controls; compilation failures were not accepted.", flush=True)
+              return 0
+          
+          
+          if __name__ == "__main__":
+              raise SystemExit(main())
+          PY
+      - name: Confirm unchanged tested source
+        if: always()
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          git diff --cached --exit-code
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$CANDIDATE_TREE"
+          printf 'VALIDATED_SOURCE=%s\nVALIDATED_TREE=%s\n' "$CANDIDATE_SHA" "$CANDIDATE_TREE"
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+      CARGO_NET_RETRY: '10'
+      RUST_BACKTRACE: '1'
+      RUSTUP_TOOLCHAIN: '1.97.0'
+      CANDIDATE_TREE: '2a3d7d41c2004f3540b9688bf473beea19bb54cc'
+      CANDIDATE_SHA: 'c2f8db04b57b735b2ad911445677efc669416004'
+    steps:
+      - name: Check out immutable source candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 'c2f8db04b57b735b2ad911445677efc669416004'
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify immutable source identity
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$CANDIDATE_TREE"
+      - name: Repository CI build environment
+        id: environment
+        uses: storytold/craft-common-actions/actions/gate-setup@315eb1972c857c839c3abb3d9288bfd40d21b7da
+        with:
+          craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+          require-craft-fonts: 'true'
+          packages: >-
+            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev
+          toolchain: '1.97.0'
+          cache-job: build
+          cache-save: 'false'
+          writes: 'false'
+      - name: Report compiler version
+        run: rustc --version --verbose
+      - name: Complete native Engine and Platform targets
+        run: cargo test --no-fail-fast --locked -p craft-anything-engine -p craft-anything-platform
+      - name: Native run identity and UI replacement regressions
+        if: ${{ !cancelled() && steps.environment.outcome == 'success' }}
+        run: |
+          python - <<'PY'
+          import subprocess
+          tests={
+            "ai": [
+              "rebuild::runs::tests::replaced_projects_retire_the_old_run_before_publishing_events",
+              "rebuild::runs::tests::an_unreadable_manifest_keeps_finished_events_until_identity_can_be_checked",
+              "rebuild::runs::tests::a_same_path_followup_waits_until_deferred_finished_events_are_delivered",
+              "rebuild::runs::tests::a_replaced_queued_project_is_not_started_or_changed_by_its_old_request",
+              "rebuild::runs::tests::an_unreadable_completion_does_not_block_other_queued_projects"
+            ],
+            "ui": [
+              "project::tests::reopening_a_replaced_path_detaches_its_old_conversation_and_late_events",
+              "project::tests::a_manifest_read_failure_after_polling_does_not_drop_finished_lifecycle",
+              "project::tests::a_missing_selected_identity_leaves_finished_events_for_a_later_poll",
+              "project::tests::a_captured_batch_cannot_replace_a_new_directory_with_the_same_manifest",
+              "project::tests::completed_snapshots_keep_followups_waiting_behind_another_project"
+            ]
+          }
+          failures=[]
+          for crate,names in tests.items():
+              package="craft-anything-ai" if crate=="ai" else "craft-anything-ui-egui"
+              for name in names:
+                  print("WINDOWS_REGRESSION="+name,flush=True)
+                  result=subprocess.run(["cargo","test","--locked","-p",package,"--lib",name,"--","--exact","--nocapture"],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
+                  print(result.stdout,end="",flush=True)
+                  if result.returncode != 0 or "test result: ok. 1 passed; 0 failed; 0 ignored;" not in result.stdout:
+                      failures.append(name)
+          assert not failures, failures
+          print("WINDOWS_RUN_UI_REGRESSIONS=10",flush=True)
+          PY
+      - name: Clippy native changed crates and tests
+        if: ${{ !cancelled() && steps.environment.outcome == 'success' }}
+        run: cargo clippy --locked -p craft-anything-engine -p craft-anything-ai -p craft-anything-ui-egui -p craft-anything-platform --all-targets -- -D warnings
+      - name: Stream preservation regression rejects default-stream-only copy
+        if: ${{ !cancelled() && steps.environment.outcome == 'success' }}
+        run: |
+          python - --case streams <<'PY'
+          #!/usr/bin/env python3
+          """Run one exact workspace regression against a reverted mechanism, then restore bytes.
+          
+          This is validation-only scaffolding; it is not part of the PR source tree.
+          The allocation function is the exact 67d91ffff5990687ca5a2419f43b8c87712b7920 implementation.
+          """
+          import argparse
+          import hashlib
+          import re
+          import subprocess
+          from pathlib import Path
+          
+          OLD_DELETE = '    fn delete_with_cleanup(\n        self,\n        after_discovery: impl FnOnce(&[PathBuf]),\n        mut gone: impl FnMut(&Path) -> Result<(), ToolError>,\n        after_claim: impl FnOnce(),\n        allocate: &dyn Fn(&Path) -> Result<PathBuf, ToolError>,\n    ) -> Result<(), ToolError> {\n        if !self.root.join(MANIFEST).is_file() {\n            return Err(ToolError::invalid(format!("{} isn\'t a project folder.", self.root.display())));\n        }\n        let feed = crate::feed::lock_project(&self.root)?;\n        // The caller may still hold a workspace loaded before this folder was reused.\n        // Acquiring the replacement project\'s lock must not authorize deleting its data.\n        feed.check_workspace(&self)?;\n        // A legacy project can have personal files at a name reserved by a later version.\n        // Read the receipts before removing the inbox, and never recursively remove backups.\n        let backups = crate::feed::owned_backups(&self.root)?;\n        after_discovery(&backups);\n        crate::feed::remove_owned_backups(&self.root, &backups)?;\n        if !self.manifest.app_in_root {\n            gone(&self.app_dir())?;\n        }\n        // Keep the coordination inode until craft.json is gone. Waiting writers then see\n        // an unavailable project before they can start another transaction.\n        for name in OWN_NAMES {\n            if *name == MANIFEST || *name == "inbox" || crate::feed::DAMAGED_BACKUP_NAMES.contains(name) {\n                continue;\n            }\n            gone(&self.root.join(name))?;\n        }\n        // Fallible payload cleanup keeps the project discoverable and its lock inode intact,\n        // so a person can repair access and retry. Only coordination cleanup follows deletion.\n        let inbox = self.inbox_dir();\n        let inbox_identity = FileHandle::from_path(&inbox).map_err(|error| ToolError::io(inbox.display(), error))?;\n        for entry in std::fs::read_dir(&inbox).map_err(|error| ToolError::io(inbox.display(), error))? {\n            let entry = entry.map_err(|error| ToolError::io(inbox.display(), error))?;\n            if !feed.is_lock_entry(&entry.path())? {\n                gone(&entry.path())?;\n            }\n        }\n        // Allocate while the manifest still permits a retry. Coordination cleanup must not\n        // discover only after deleting it that there is no space for the private claim.\n        let cleanup = CreationCleanup::reserve(&self.root, allocate).map_err(|error| {\n            let guidance = format!("The project manifest was kept. Inspect {} and restore cleanup access or space before retrying deletion.", inbox.display());\n            let guidance = match &error.remediation {\n                Some(previous) => format!("{previous} {guidance}"),\n                None => guidance,\n            };\n            error.with_remediation(guidance)\n        })?;\n        let removed = (|| {\n            feed.check_workspace(&self)?;\n            CreationReservation::check_directory(&inbox, &inbox_identity)?;\n            cleanup.empty_path(&self.root)?;\n            let lock = inbox.join(crate::feed::PROJECT_LOCK_FILE);\n            if !feed.is_lock_entry(&lock)? {\n                return Err(copy_changed(&lock));\n            }\n            gone(&self.root.join(MANIFEST))\n        })();\n        if let Err(error) = removed {\n            let released = feed.check_workspace(&self).and_then(|()| cleanup.remove_empty(&self.root));\n            let guidance = match released {\n                Ok(()) => format!("Inspect {} and {} before retrying deletion.", self.root.join(MANIFEST).display(), inbox.display()),\n                Err(cleanup_error) => format!(\n                    "Inspect {} and {}, together with the reserved cleanup folder at {}: {}",\n                    self.root.join(MANIFEST).display(),\n                    inbox.display(),\n                    self.root.join(&cleanup.name).display(),\n                    cleanup_error.for_people()\n                ),\n            };\n            let guidance = match &error.remediation {\n                Some(previous) => format!("{previous} {guidance}"),\n                None => guidance,\n            };\n            return Err(error.with_remediation(guidance));\n        }\n        feed.finish_deletion(&inbox_identity, &cleanup, after_claim)?;\n        if std::fs::read_dir(&self.root).is_ok_and(|mut d| d.next().is_none()) {\n            let _ = std::fs::remove_dir(&self.root);\n        }\n        Ok(())\n    }\n'
+          BYTE_COPY = 'fn copy_new_windows_file(from: &Path, to: &Path, source: &std::fs::File, metadata: &std::fs::Metadata) -> Result<(), ToolError> {\n    use std::io::Seek as _;\n    let mut source = source.try_clone().map_err(|error| ToolError::io(from.display(), error))?;\n    source.rewind().map_err(|error| ToolError::io(from.display(), error))?;\n    let mut output = std::fs::OpenOptions::new().write(true).create_new(true).open(to).map_err(|error| ToolError::io(to.display(), error))?;\n    std::io::copy(&mut source, &mut output).map_err(|error| ToolError::io(from.display(), error))?;\n    output.set_permissions(metadata.permissions()).map_err(|error| ToolError::io(to.display(), error))\n}'
+          TESTS = {
+              "allocation": "workspace::tests::deletion_preclaim_failures_keep_the_manifest_and_inbox_retryable",
+              "alias": "workspace::tests::duplication_classifies_case_renamed_backups_after_discovery",
+              "streams": "workspace::tests::new_file_copies_preserve_ntfs_streams_and_refuse_occupied_destinations",
+          }
+          
+          def mutate(source, case):
+              if case == "allocation":
+                  begin = source.index("    fn delete_with_cleanup(")
+                  end = source.index("\n    /// Start a project", begin)
+                  return source[:begin] + OLD_DELETE + source[end:]
+              if case == "alias":
+                  replaced, count = re.subn(r"None\s*=>\s*self\.owns_missing_alias\(path,\s*file,\s*stop\)\?,", "None => false,", source)
+                  if count != 1:
+                      raise AssertionError(f"expected one missing-alias dispatch, found {count}")
+                  return replaced
+              begin = source.index("fn copy_new_windows_file(")
+              end = source.index("\n}", begin) + 2
+              return source[:begin] + BYTE_COPY + source[end:]
+          
+          def main():
+              parser = argparse.ArgumentParser()
+              parser.add_argument("--case", choices=TESTS, required=True)
+              parser.add_argument("--repo", type=Path, default=Path.cwd())
+              parser.add_argument("--package", default="craft-anything-engine")
+              parser.add_argument("--timeout", type=int, default=900)
+              args = parser.parse_args()
+              repo = args.repo.resolve()
+              path = repo / "crates/engine/src/workspace.rs"
+              original = path.read_bytes()
+              fingerprint = hashlib.sha256(original).hexdigest()
+              test = TESTS[args.case]
+              command = ["cargo", "test", "--locked", "-p", args.package, "--lib", test, "--", "--exact", "--nocapture"]
+              try:
+                  source = original.decode().replace("\r\n", "\n")
+                  changed = mutate(source, args.case)
+                  if changed == source:
+                      raise AssertionError("counterfactual did not change production source")
+                  path.write_text(changed, encoding="utf-8")
+                  result = subprocess.run(command, cwd=repo, capture_output=True, text=True, timeout=args.timeout)
+                  output = result.stdout + result.stderr
+                  print(output, end="" if output.endswith("\n") else "\n", flush=True)
+                  if result.returncode != 101:
+                      raise AssertionError(f"expected cargo test failure 101 for {args.case}, got {result.returncode}")
+                  if not re.search(r"running 1 test\b", output) or not re.search(r"test result: FAILED\. 0 passed; 1 failed;", output) or test not in output:
+                      raise AssertionError("the exact regression did not execute and fail; a build or filter error is not a counterfactual")
+                  print(f"COUNTERFACTUAL CONFIRMED: {args.case}: {test} ran and failed", flush=True)
+              finally:
+                  path.write_bytes(original)
+                  if path.read_bytes() != original:
+                      raise AssertionError("failed to restore the original source bytes")
+                  print(f"RESTORED workspace.rs sha256={fingerprint}", flush=True)
+          
+          if __name__ == "__main__":
+              main()
+          PY
+      - name: Confirm unchanged tested source
+        if: always()
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          git diff --cached --exit-code
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$CANDIDATE_TREE"
+          printf 'VALIDATED_SOURCE=%s\nVALIDATED_TREE=%s\n' "$CANDIDATE_SHA" "$CANDIDATE_TREE"
