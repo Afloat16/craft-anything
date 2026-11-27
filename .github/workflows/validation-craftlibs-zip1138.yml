@@ -1,0 +1,95 @@
+name: Validate shared ZIP entry identity
+on:
+  push:
+    branches: [validation/20261127-craftlibs-zip1138]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+      CARGO_NET_RETRY: '10'
+      RUST_BACKTRACE: '1'
+      CANDIDATE_SHA: '8a0202f40222c86e256295982c02aed77af3f577'
+    steps:
+      - name: Check out immutable shared-library candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Afloat16/craft-libs
+          ref: '8a0202f40222c86e256295982c02aed77af3f577'
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Verify source identity
+        run: test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: '1.95.0'
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          key: zip-local-identity-rust195
+          save-if: 'false'
+      - name: Format and record the exact tested source
+        run: |
+          rustfmt --edition 2024 crates/zip/src/lenient.rs crates/zip/src/lenient/tests.rs crates/zip/tests/it/lenient_zip_decoded_size.rs
+          python3 - <<'PY'
+          import os, pathlib, subprocess
+          allowed = {"crates/zip/src/lenient.rs", "crates/zip/src/lenient/tests.rs", "crates/zip/tests/it/lenient_zip_decoded_size.rs"}
+          changed = subprocess.check_output(["git", "diff", "--name-only"], text=True).splitlines()
+          assert set(changed) <= allowed, changed
+          out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "zip-identity-validation"
+          out.mkdir(exist_ok=True)
+          patch = subprocess.check_output(["git", "diff", "--binary"], text=True)
+          (out / "format.patch").write_text(patch)
+          print("FORMAT_PATCH_BEGIN\n" + patch + "FORMAT_PATCH_END")
+          subprocess.run(["git", "add", "--update"], check=True)
+          tree = subprocess.check_output(["git", "write-tree"], text=True).strip()
+          (out / "tested-tree.txt").write_text(tree + "\n")
+          print("TESTED_TREE=" + tree)
+          PY
+      - name: Repository formatting gate
+        run: cargo fmt --all --check
+      - name: Complete ZIP package targets and features
+        run: cargo test --no-fail-fast --locked -p craft-zip --all-features
+      - name: ZIP all-target Clippy
+        run: cargo clippy --locked -p craft-zip --all-targets --all-features -- -D warnings
+      - name: Reject both incorrect production implementations
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          source = Path("crates/zip/src/lenient.rs")
+          original = source.read_text()
+          def rejects(mutated, test, expected):
+              assert mutated != original
+              try:
+                  source.write_text(mutated)
+                  result = subprocess.run(["cargo", "test", "--locked", "-p", "craft-zip", "--all-features", "--lib", test, "--", "--nocapture"], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                  print(result.stdout[-14000:])
+                  assert result.returncode != 0 and "FAILED" in result.stdout and expected in result.stdout, "negative control failed for another reason"
+                  print("NEGATIVE_CONTROL_PASS " + test)
+              finally:
+                  source.write_text(original)
+          fn = original.index("pub fn raw_entry_data")
+          start = original.index("    let flags = r.u16_le(off + 6)", fn)
+          end = original.index("    let start = off.checked_add", start)
+          rejects(original[:start] + original[end:], "mismatched_local_entries_do_not_supply_bytes", "raw read accepted a mismatched local header")
+          no_identity = original.replace("let (name, header_name) = match unicode_name", "let (name, _header_name) = match unicode_name").replace("                header_name,\n                method,", "                header_name: None,\n                method,")
+          rejects(no_identity, "verified_unicode_path_overrides_a_legacy_zip_name", "local name disagrees with")
+          PY
+      - name: Confirm unchanged tested source and lockfile
+        run: |
+          git diff --exit-code
+          test "$(git write-tree)" = "$(cat "$RUNNER_TEMP/zip-identity-validation/tested-tree.txt")"
+          printf '%s\n' "$CANDIDATE_SHA" > "$RUNNER_TEMP/zip-identity-validation/source-commit.txt"
+      - name: Preserve source identity
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: zip-identity-validation
+          path: '${{ runner.temp }}/zip-identity-validation'
+          if-no-files-found: warn
+          retention-days: 7
