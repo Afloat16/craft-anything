@@ -180,6 +180,45 @@ pub(crate) fn owns_open_backup_with_cancel(root: &Path, path: &Path, file: &mut 
     matches_owned_file(path, file, &proof, &mut || stop.check())
 }
 
+/// A missing canonical name can still have a case-renamed recovery file. Only retained
+/// identity proof distinguishes it from a personal case variant with identical bytes.
+/// `None` means there is no recognized record; an incomplete recognized proof is an error.
+pub(crate) fn classify_open_backup_alias_with_cancel(
+    root: &Path,
+    name: &str,
+    file: &mut std::fs::File,
+    known: Option<&same_file::Handle>,
+    stop: &CancelToken,
+) -> Result<Option<bool>, ToolError> {
+    stop.check()?;
+    let path = root.join(name);
+    file.rewind().map_err(|error| ToolError::io(path.display(), error))?;
+    if !valid_name(name) {
+        return Ok(None);
+    }
+    let Some(proof) = ownership(root, name)? else { return Ok(None) };
+    let unverified = || {
+        ToolError::new(ErrorCode::FileChanged, format!("The recovery-copy identity for {} could not be verified.", path.display()))
+            .with_remediation("The original files were kept. Inspect the recovery records and retry copying the project.")
+    };
+    let Some(staged) = &proof.staged else { return Err(unverified()) };
+    if !std::fs::symlink_metadata(staged).is_ok_and(|metadata| metadata.is_file() && !metadata.file_type().is_symlink()) {
+        return Err(unverified());
+    }
+    let (mut retained, _) = craft_anything_platform::fs::open_regular_file(staged)?;
+    let retained_identity = same_file::Handle::from_file(retained.try_clone().map_err(|error| ToolError::io(staged.display(), error))?)
+        .map_err(|error| ToolError::io(staged.display(), error))?;
+    if known.is_some_and(|known| *known != retained_identity) {
+        return Err(unverified());
+    }
+    if !matches_open_file(staged, &mut retained, &proof.receipt, &mut || stop.check())? || !same_file_at(staged, &retained_identity)? {
+        return Err(unverified());
+    }
+    let opened = same_file::Handle::from_file(file.try_clone().map_err(|error| ToolError::io(path.display(), error))?)
+        .map_err(|error| ToolError::io(path.display(), error))?;
+    Ok(Some(opened == retained_identity))
+}
+
 struct Ownership {
     receipt: Receipt,
     staged: Option<PathBuf>,

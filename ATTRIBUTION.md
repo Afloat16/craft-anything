@@ -12,9 +12,12 @@ crates.io under their own licences (see `Cargo.lock`) and are not listed here.
 ## Feed coordination regression inputs
 
 The directory-binding, first-capture, creation-lock, failed managed-publication, Windows
-retirement races and publication-cleanup guidance regressions in `crates/engine/src/feed/transaction.rs`,
-`crates/engine/src/workspace.rs`, `crates/ai/src/rebuild/tools.rs` and
-`crates/platform/src/fs.rs` create their inputs from
+retirement races, stream-preserving copies, cleanup-allocation failures, case-renamed backup
+classification, check-round recovery, replaced-project runs, queued follow-up displays and
+publication-cleanup guidance regressions in `crates/engine/src/feed/transaction.rs`,
+`crates/engine/src/workspace.rs`, `crates/ai/src/rebuild/feed.rs`, `crates/ai/src/rebuild/runs.rs`,
+`crates/ai/src/rebuild/tools.rs`, `crates/ui-egui/src/project.rs` and `crates/platform/src/fs.rs`
+create their inputs from
 literal project metadata, file contents and temporary directories in the committed tests.
 These original regression inputs are contributed by Afloat16 under MIT OR Apache-2.0;
 they contain no external dataset or third-party application files. Interleaving cases use explicit

@@ -325,5 +325,6 @@ pub fn fill_project(app: &mut CraftApp) {
         ..Default::default()
     };
     app.workspace = Some(ws);
+    app.workspace_identity = None;
     app.state.screen = Screen::Project;
 }
