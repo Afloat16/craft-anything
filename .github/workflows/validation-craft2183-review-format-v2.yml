@@ -1,0 +1,38 @@
+name: Format exact feed review candidate
+on:
+  push:
+    branches: [validation/20261127-craft2183-review-format-v2]
+permissions:
+  contents: read
+jobs:
+  format:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the immutable source candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 'c2f8db04b57b735b2ad911445677efc669416004'
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: '1.100.0'
+          components: rustfmt
+      - name: Format and report exact changes
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 'c2f8db04b57b735b2ad911445677efc669416004'
+          test "$(git rev-parse 'HEAD^{tree}')" = '2a3d7d41c2004f3540b9688bf473beea19bb54cc'
+          cargo fmt --all
+          git diff --check
+          python - <<'PY'
+          import base64,json,subprocess
+          allowed=set(["crates/ui-egui/src/folders.rs","crates/ai/src/rebuild/runs.rs","docs/file-formats.md","crates/ui-egui/src/demo.rs","crates/ui-egui/src/manage.rs","ATTRIBUTION.md","crates/engine/src/feed.rs","crates/engine/src/feed/backups.rs","docs/pitfalls.md","crates/ai/src/rebuild/mod.rs","crates/ui-egui/src/lib.rs","crates/ai/src/rebuild/feed.rs","crates/ui-egui/src/project.rs","crates/engine/src/workspace.rs","crates/ui-egui/tests/headless_parity.rs","crates/engine/src/feed/transaction.rs"])
+          changed=set(subprocess.check_output(['git','diff','--name-only']).decode().splitlines())
+          assert changed <= allowed, sorted(changed - allowed)
+          patch=subprocess.check_output(['git','diff','--binary'])
+          subprocess.run(['git','add','--update'],check=True)
+          tree=subprocess.check_output(['git','write-tree']).decode().strip()
+          print('FORMATTED_RESULT='+json.dumps({'files':sorted(changed),'patch_base64':base64.b64encode(patch).decode(),'tree':tree}))
+          PY
