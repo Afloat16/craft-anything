@@ -17,13 +17,13 @@ jobs:
       CARGO_NET_RETRY: '10'
       RUST_BACKTRACE: '1'
       RUSTUP_TOOLCHAIN: '1.100.0'
-      CANDIDATE_TREE: '73429db3bc9d0bd80aef991fc9e17a4be0b1cc34'
-      CANDIDATE_SHA: 'a9e4902afb553273eda6b0b04ec3726ddba36b7b'
+      CANDIDATE_TREE: 'e6d1cdd504da2d7ecf65331525c774fdfc035433'
+      CANDIDATE_SHA: '6fa5cf5094f40ded41051125572331f833b5c861'
     steps:
       - name: Check out immutable source candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: 'a9e4902afb553273eda6b0b04ec3726ddba36b7b'
+          ref: '6fa5cf5094f40ded41051125572331f833b5c861'
           persist-credentials: false
           fetch-depth: 1
       - name: Verify immutable source identity
@@ -80,13 +80,13 @@ jobs:
       CARGO_NET_RETRY: '10'
       RUST_BACKTRACE: '1'
       RUSTUP_TOOLCHAIN: '1.97.0'
-      CANDIDATE_TREE: '73429db3bc9d0bd80aef991fc9e17a4be0b1cc34'
-      CANDIDATE_SHA: 'a9e4902afb553273eda6b0b04ec3726ddba36b7b'
+      CANDIDATE_TREE: 'e6d1cdd504da2d7ecf65331525c774fdfc035433'
+      CANDIDATE_SHA: '6fa5cf5094f40ded41051125572331f833b5c861'
     steps:
       - name: Check out immutable source candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: 'a9e4902afb553273eda6b0b04ec3726ddba36b7b'
+          ref: '6fa5cf5094f40ded41051125572331f833b5c861'
           persist-credentials: false
           fetch-depth: 1
       - name: Verify immutable source identity

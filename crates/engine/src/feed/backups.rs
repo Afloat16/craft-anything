@@ -1213,10 +1213,13 @@ mod tests {
 
     #[test]
     fn recovery_copies_remain_personal_when_hard_links_are_unsupported() {
-        use crate::workspace::{TargetRef, Workspace};
+        use crate::workspace::{ExistingFiles, TargetRef, Workspace};
         for interrupted in [false, true] {
             let directory = tempfile::tempdir().unwrap();
-            let ws = Workspace::create(directory.path(), "Project", "Keep my conversation", TargetRef::None).unwrap();
+            let root = directory.path().join("original");
+            std::fs::create_dir(&root).unwrap();
+            std::fs::write(root.join("index.html"), "Keep my app").unwrap();
+            let ws = Workspace::create_at(&root, "Project", "Keep my conversation", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
             let backup = ws.root.join("feed.json.broken");
             let bytes = b"complete damaged original";
             let staged = interrupted.then(|| stage_interrupted_copy(&ws.root, &backup, bytes));
@@ -1235,8 +1238,8 @@ mod tests {
                 assert!(read_receipt(&record, "feed.json.broken").unwrap().is_some());
             }
             let copied = ws.duplicate("Copy").unwrap();
-            assert_eq!(std::fs::read(copied.root.join("feed.json.broken")).unwrap(), bytes);
-            assert!(ws.delete().is_err(), "without historical identity proof, deletion must keep this complete recovery copy");
+            assert_eq!(std::fs::read(copied.app_dir().join("feed.json.broken")).unwrap(), bytes);
+            ws.delete().unwrap();
             assert_eq!(std::fs::read(&backup).unwrap(), bytes);
         }
     }
@@ -1294,9 +1297,12 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_named_stream_keeps_a_completed_backup_on_the_personal_file_path() {
-        use crate::workspace::{TargetRef, Workspace};
+        use crate::workspace::{ExistingFiles, TargetRef, Workspace};
         let directory = tempfile::tempdir().unwrap();
-        let ws = Workspace::create(directory.path(), "Project", "Keep my conversation", TargetRef::None).unwrap();
+        let root = directory.path().join("original");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("index.html"), "Keep my app").unwrap();
+        let ws = Workspace::create_at(&root, "Project", "Keep my conversation", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
         let backup = ws.root.join("feed.json.broken");
         assert!(publish(&ws.root, &backup, b"generated damaged bytes").unwrap());
         assert_eq!(owned_backups(&ws.root).unwrap(), vec![backup.clone()]);
@@ -1307,10 +1313,10 @@ mod tests {
 
         assert!(owned_backups(&ws.root).unwrap().is_empty());
         let copied = ws.duplicate("Copy").unwrap();
-        let mut copied_name = copied.root.join("feed.json.broken").into_os_string();
+        let mut copied_name = copied.app_dir().join("feed.json.broken").into_os_string();
         copied_name.push(":personal-note");
         assert_eq!(std::fs::read(PathBuf::from(copied_name)).unwrap(), b"Keep my named-stream notes");
-        assert!(ws.delete().is_err());
+        ws.delete().unwrap();
         assert_eq!(std::fs::read(&stream).unwrap(), b"Keep my named-stream notes");
     }
 
