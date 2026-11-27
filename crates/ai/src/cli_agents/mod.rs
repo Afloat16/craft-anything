@@ -1108,6 +1108,9 @@ fn agent_env(builder: bool, effort: Option<crate::model::Effort>) -> Vec<(&'stat
         ("CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS", if builder { "0" } else { "120000" }.into()),
         ("BASH_DEFAULT_TIMEOUT_MS", ms(shell / 2)),
         ("BASH_MAX_TIMEOUT_MS", ms(shell)),
+        // After its last turn `claude -p` waits for the background subagents it started, but stops
+        // them after 10 quiet minutes by default (#2428); a builder's may work for hours.
+        ("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS", ms(shell)),
         // High effort for Claude Code unless chosen. An environment variable rather than
         // `--effort`: it ranks highest, and an older Claude Code that doesn't know it ignores it.
         ("CLAUDE_CODE_EFFORT_LEVEL", crate::prompt::choose_effort(effort).as_str().into()),
@@ -2494,6 +2497,9 @@ mod tests {
             assert!(tools.split(',').any(|tool| tool == "Write"), "{access:?}: {tools}");
             // #1105: a Deep builder can start subagents; Clean room keeps them out.
             assert_eq!(tools.split(',').any(|tool| tool == "Agent"), access == Access::Build, "{access:?}: {tools}");
+            // #2428: and is told how to wait for them, which a builder without them isn't.
+            let prompt = &builder[builder.iter().position(|x| x == "--append-system-prompt").unwrap() + 1];
+            assert_eq!(prompt.starts_with("PRE") && prompt.contains("notification"), access == Access::Build, "{access:?}: {prompt}");
         }
         assert_eq!(a[pos("--resume") + 1], "sess-1");
         assert_eq!(a[pos("--allowedTools") + 1], "mcp__craft-anything__*");

@@ -1329,9 +1329,10 @@ Owner: open · Status: in progress
       still resume it (#1115). Until there is a safe way to tell such a session from the person's
       own, say so where the sweep reports, with the commands to remove one by hand
       (`opencode session list`, then `opencode session delete <id>`)
-- [ ] A recorded session on an SSH host that can't be reached three times running is dropped from
+- [x] A recorded session on an SSH host that can't be reached three times running is dropped from
       the records while it may still be alive on the host (#1115). Keep the record and say which
       host still holds a session, rather than forgetting it
+      — claimed: Plastic-time, branch bugfix/r2.2-keep-unreachable-ssh-session-record
 - [ ] Removing the app through the system's own uninstaller or a launcher runs none of our
       clean-up, so recorded OpenCode sessions stay (#1115); only `craft-anything-cli uninstall`
       sweeps them. Say so in the uninstall docs, and sweep from each package's removal step
@@ -1831,11 +1832,12 @@ Gaps found while using the app for real projects.
       inbox directory before conversation persistence, including repeated staging attempts.
       — claimed: Afloat16, branch bugfix/r2.9-feed-read-errors-20261120
 
-- [ ] The headless app the UI tests use builds its engine with `Session::new` (`ui-egui`'s
+- [x] The headless app the UI tests use builds its engine with `Session::new` (`ui-egui`'s
       `demo::engine`), not the isolated test session, so a UI test that reaches a tool which
       saves, or looks for an installed program, touches the real config folder and finds what
       this computer has. Build it from a session kept in a temp folder with
       `engines.only_configured`, as `engine::testing::session()` does
+      — claimed: Plastic-time, branch bugfix/r2.9-isolate-demo-engine-session
 - [x] `i18n::trf` filled placeholders with repeated replacements, so a value containing a later
       placeholder was rewritten. It now fills them in one pass over the template: inserted names
       and other values stay literal, and unknown names and stray braces are kept as written. The
@@ -1996,9 +1998,10 @@ Gaps found while using the app for real projects.
       regression in `session.rs` covers the switch, the target it closes and the annotation it
       keeps apart, the same-project reopen and returning to the first project
       — claimed: AlexJoaquimPereira, branch bugfix/r2.9-project-switch-targets
-- [ ] A target opened before any project keeps its empty annotations when the first project opens,
+- [x] A target opened before any project keeps its empty annotations when the first project opens,
       so a later edit can overwrite that project's stored annotations for the same target: load
       them when the first project opens (a switch closes its targets instead)
+      — claimed: Plastic-time, branch bugfix/r2.9-load-annotations-on-first-project-open
 - [ ] A build attaches its investigation to the app's engine, so starting a build closes the target
       the person had open (the app shows the project screen, and the target is gone when they go
       back), and parallel builds share one session and project: give each build its own session,
@@ -2468,9 +2471,12 @@ Gaps found while using the app for real projects.
       the smallest window, a normal one and 200% zoom, that the row holds still, and that a click
       or Enter opens the menu
       - claimed: ilijachrchev, branch bugfix/2435-approvals-link-gap
-- [ ] At the smallest window (760 x 520) and 200% zoom the project screen is 260 points tall, and
-      the row under the prompt box (Approvals, Change it / Just ask) is drawn below the window's
-      bottom edge, out of reach (found while fixing #2435; it was so before that change too)
+- [x] At the smallest window (760 x 520) and 200% zoom the project screen is 260 points tall, and
+      the row under the prompt box (Approvals, Change it / Just ask) was drawn below the window's
+      bottom edge, out of reach (found while fixing #2435; it was so before that change too). The
+      feed keeps a few lines and the prompt box scrolls, so the row stays reachable, including with
+      a long prompt
+      — claimed: AlexJoaquimPereira, branch bugfix/r2.9-small-window-project-row
 - [x] Esc while typing in a project's prompt box stays on the project and keeps the draft; it went
       to the new-project screen, because egui lets go of a field's focus on Esc before the app
       looked at it (#2434). Esc with nothing focused still goes home, and still closes the palette,

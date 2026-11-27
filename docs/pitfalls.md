@@ -1646,3 +1646,9 @@ inbox again before publishing the copy, while preserving normal publisher coordi
 jobs, focus and cursors need layout-independent identities. Test continued typing without
 refocusing and tab activation across both rail orientations. On resize, egui keeps only the last
 scroll request: combine selection and focus when both fit, otherwise keep focus visible.
+
+**A scroll area's minimum height pushed a fixed row offscreen.** egui's `ScrollArea` keeps a
+64-point minimum even when its parent has less, so at 760 x 520 and 200% zoom the project feed's
+reserved 40 points became 64 and the row under the prompt box fell below the window. Where a
+fixed part must fit, set `min_scrolled_height(0.0)` and `max_height` on the scrolling part, and
+test the smallest window at the highest zoom.

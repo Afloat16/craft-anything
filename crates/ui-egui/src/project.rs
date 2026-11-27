@@ -975,6 +975,8 @@ fn current_step(app: &CraftApp, ws: &Workspace) -> Option<(Step, bool)> {
 /// The side panel's width, and the room the screen needs to keep it beside the feed.
 const SIDE_W: f32 = 300.0;
 const SIDE_BESIDE: f32 = 860.0;
+/// The least the feed keeps when a tall composer needs the room: a few lines, still scrollable.
+const MIN_FEED_HEIGHT: f32 = 80.0;
 
 pub fn show(app: &mut CraftApp, ui: &mut Ui) {
     let Some(ws) = app.workspace.clone() else {
@@ -1000,13 +1002,17 @@ pub fn show(app: &mut CraftApp, ui: &mut Ui) {
         let max_w = width.min(720.0);
         let pad = ((width - max_w) / 2.0).max(0.0);
         // The feed gets what the prompt box leaves; the box grows with its text, so its height
-        // is measured each frame and used on the next.
+        // is measured each frame and used on the next. It keeps a few lines even when a tall
+        // composer needs the room, and the composer scrolls instead.
         let comp_id = ui.id().with("project-composer-h");
         let comp_h = ui.data(|d| d.get_temp::<f32>(comp_id)).unwrap_or(110.0);
-        let rest = Vec2::new(width, (ui.available_height() - comp_h - chat::COMPOSER_GAP).max(40.0));
-        ui.allocate_ui_with_layout(rest, egui::Layout::top_down(egui::Align::Min), |ui| {
+        let available = ui.available_height().max(0.0);
+        let min_feed = MIN_FEED_HEIGHT.min(available * 0.5);
+        let feed_h = (available - comp_h - chat::COMPOSER_GAP - ui.spacing().item_spacing.y).max(min_feed);
+        let rest = Vec2::new(width, feed_h);
+        let feed_area = ui.allocate_ui_with_layout(rest, egui::Layout::top_down(egui::Align::Min), |ui| {
             ui.set_min_height(rest.y);
-            egui::ScrollArea::vertical().auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
+            egui::ScrollArea::vertical().min_scrolled_height(0.0).max_height(rest.y).auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.add_space(pad);
                     ui.vertical(|ui| {
@@ -1021,14 +1027,23 @@ pub fn show(app: &mut CraftApp, ui: &mut Ui) {
                         feed(app, ui, &ws, &waiting);
                     });
                 });
-            });
+            })
         });
         ui.add_space(chat::COMPOSER_GAP);
-        let r = ui.horizontal(|ui| {
-            ui.add_space(pad);
-            ui.vertical(|ui| composer(app, ui, max_w, &t, waiting.last()));
+        let room = ui.available_height().max(0.0);
+        let r = egui::ScrollArea::vertical().id_salt("project-composer").min_scrolled_height(0.0).max_height(room).auto_shrink([false, true]).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.add_space(pad);
+                ui.vertical(|ui| composer(app, ui, max_w, &t, waiting.last()));
+            })
         });
-        chat::remember_composer_height(ui, comp_id, comp_h, r.response.rect.height());
+        chat::remember_composer_height(ui, comp_id, comp_h, r.content_size.y);
+        // The layout regressions check the composer's own viewport, not only the window.
+        ui.data_mut(|d| {
+            d.insert_temp(egui::Id::new("project-feed-height"), feed_area.inner.inner_rect.height());
+            d.insert_temp(egui::Id::new("project-composer-clip"), r.inner_rect);
+            d.insert_temp(egui::Id::new("project-composer-content"), r.content_size.y);
+        });
     });
 }
 
