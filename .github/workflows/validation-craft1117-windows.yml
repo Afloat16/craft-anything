@@ -1,0 +1,44 @@
+name: Validate Windows platform integration
+on:
+  push:
+    branches: [validation/20261127-craft1117-windows]
+permissions:
+  contents: read
+jobs:
+  windows-platform:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+      CARGO_NET_RETRY: '10'
+      RUST_BACKTRACE: '1'
+      CANDIDATE_SHA: '122a678a339bdc2eee02fb1d81afaf5c0c534f1c'
+      CANDIDATE_TREE: 'e3405010670a8ea159f8afc8c6122a2f3e2169bb'
+    steps:
+      - name: Check out immutable integrated source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: '122a678a339bdc2eee02fb1d81afaf5c0c534f1c'
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Verify source identity
+        shell: pwsh
+        run: |
+          if ((git rev-parse HEAD) -ne $env:CANDIDATE_SHA) { throw "Unexpected source commit" }
+          if ((git rev-parse "HEAD^{tree}") -ne $env:CANDIDATE_TREE) { throw "Unexpected source tree" }
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+      - name: Complete Windows platform targets
+        run: cargo test --locked -p craft-anything-platform
+      - name: Confirm unchanged source and lockfile
+        shell: pwsh
+        run: |
+          git diff --exit-code
+          if ($LASTEXITCODE -ne 0) { throw "Source changed during validation" }
+          git diff --cached --exit-code
+          if ($LASTEXITCODE -ne 0) { throw "Index changed during validation" }
+          Write-Output "VALIDATED_SOURCE=$env:CANDIDATE_SHA"
+          Write-Output "VALIDATED_TREE=$env:CANDIDATE_TREE"
