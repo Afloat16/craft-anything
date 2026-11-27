@@ -1,0 +1,164 @@
+name: Validate conversation ownership review fixes
+on:
+  push:
+    branches: [validation/20261127-craft2183-review-a9e4902]
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+      CARGO_NET_RETRY: '10'
+      RUST_BACKTRACE: '1'
+      RUSTUP_TOOLCHAIN: '1.100.0'
+      CANDIDATE_TREE: '73429db3bc9d0bd80aef991fc9e17a4be0b1cc34'
+      CANDIDATE_SHA: 'a9e4902afb553273eda6b0b04ec3726ddba36b7b'
+    steps:
+      - name: Check out immutable source candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 'a9e4902afb553273eda6b0b04ec3726ddba36b7b'
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify immutable source identity
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$CANDIDATE_TREE"
+      - name: Repository CI build environment
+        id: environment
+        uses: storytold/craft-common-actions/actions/gate-setup@315eb1972c857c839c3abb3d9288bfd40d21b7da
+        with:
+          craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+          require-craft-fonts: 'true'
+          packages: >-
+            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev
+          toolchain: '1.100.0'
+          cache-job: build
+          cache-save: 'false'
+          writes: 'false'
+      - name: Report compiler version
+        run: rustc --version --verbose
+      - name: Required policy and formatting gates
+        run: |
+          set -euo pipefail
+          cargo xtask fmt --check
+          cargo xtask layers
+          cargo xtask locks
+          cargo xtask secrets
+      - name: Build real CLI used by AI integration tests
+        run: cargo build --locked -p craft-anything-cli
+      - name: Complete Engine AI UI and Platform targets
+        id: positive_suites
+        run: cargo test --no-fail-fast --locked -p craft-anything-engine -p craft-anything-ai -p craft-anything-ui-egui -p craft-anything-platform
+      - name: Clippy all changed crates and tests
+        run: cargo clippy --locked -p craft-anything-engine -p craft-anything-ai -p craft-anything-ui-egui -p craft-anything-platform --all-targets -- -D warnings
+      - name: Confirm unchanged tested source
+        if: always()
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          git diff --cached --exit-code
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$CANDIDATE_TREE"
+          printf 'VALIDATED_SOURCE=%s\nVALIDATED_TREE=%s\n' "$CANDIDATE_SHA" "$CANDIDATE_TREE"
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+      CARGO_NET_RETRY: '10'
+      RUST_BACKTRACE: '1'
+      RUSTUP_TOOLCHAIN: '1.97.0'
+      CANDIDATE_TREE: '73429db3bc9d0bd80aef991fc9e17a4be0b1cc34'
+      CANDIDATE_SHA: 'a9e4902afb553273eda6b0b04ec3726ddba36b7b'
+    steps:
+      - name: Check out immutable source candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 'a9e4902afb553273eda6b0b04ec3726ddba36b7b'
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify immutable source identity
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$CANDIDATE_TREE"
+      - name: Repository CI build environment
+        id: environment
+        uses: storytold/craft-common-actions/actions/gate-setup@315eb1972c857c839c3abb3d9288bfd40d21b7da
+        with:
+          craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+          require-craft-fonts: 'true'
+          packages: >-
+            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev
+          toolchain: '1.97.0'
+          cache-job: build
+          cache-save: 'false'
+          writes: 'false'
+      - name: Report compiler version
+        run: rustc --version --verbose
+      - name: Complete native Engine and Platform targets
+        run: cargo test --no-fail-fast --locked -p craft-anything-engine -p craft-anything-platform
+      - name: Native run identity and UI replacement regressions
+        if: ${{ !cancelled() && steps.environment.outcome == 'success' }}
+        run: |
+          python - <<'PY'
+          import subprocess
+          tests={
+            "ai": [
+              "rebuild::runs::tests::replaced_projects_retire_the_old_run_before_publishing_events",
+              "rebuild::runs::tests::an_unreadable_manifest_keeps_finished_events_until_identity_can_be_checked",
+              "rebuild::runs::tests::a_same_path_followup_waits_until_deferred_finished_events_are_delivered",
+              "rebuild::runs::tests::a_replaced_queued_project_is_not_started_or_changed_by_its_old_request",
+              "rebuild::runs::tests::an_unreadable_completion_does_not_block_other_queued_projects",
+              "rebuild::runs::tests::a_direct_retry_preserves_an_unread_completion_but_does_not_wait_for_a_delivered_one",
+              "rebuild::runs::tests::a_project_replaced_while_reopening_a_queued_request_is_not_started",
+              "rebuild::feed::tests::a_saved_tool_completion_keeps_its_call_when_another_writer_appends_the_same_tool",
+              "rebuild::feed::tests::pending_tool_calls_keep_their_new_positions_after_replay_and_a_later_save",
+              "rebuild::feed::tests::a_tool_completion_does_not_claim_a_replacement_row_with_the_same_name",
+              "rebuild::feed::tests::same_name_calls_finishing_out_of_order_keep_their_individual_results"
+            ],
+            "ui": [
+              "project::tests::reopening_a_replaced_path_detaches_its_old_conversation_and_late_events",
+              "project::tests::a_manifest_read_failure_after_polling_does_not_drop_finished_lifecycle",
+              "project::tests::a_missing_selected_identity_leaves_finished_events_for_a_later_poll",
+              "project::tests::a_captured_batch_cannot_replace_a_new_directory_with_the_same_manifest",
+              "project::tests::completed_snapshots_keep_followups_waiting_behind_another_project",
+              "project::tests::returning_to_a_replaced_project_does_not_restore_or_send_its_old_draft"
+            ]
+          }
+          failures=[]
+          for crate,names in tests.items():
+              package="craft-anything-ai" if crate=="ai" else "craft-anything-ui-egui"
+              for name in names:
+                  print("WINDOWS_REGRESSION="+name,flush=True)
+                  result=subprocess.run(["cargo","test","--locked","-p",package,"--lib",name,"--","--exact","--nocapture"],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
+                  print(result.stdout,end="",flush=True)
+                  if result.returncode != 0 or "test result: ok. 1 passed; 0 failed; 0 ignored;" not in result.stdout:
+                      failures.append(name)
+          assert not failures, failures
+          print("WINDOWS_RUN_UI_REGRESSIONS="+str(sum(len(names) for names in tests.values())),flush=True)
+          PY
+      - name: Clippy native changed crates and tests
+        if: ${{ !cancelled() && steps.environment.outcome == 'success' }}
+        run: cargo clippy --locked -p craft-anything-engine -p craft-anything-ai -p craft-anything-ui-egui -p craft-anything-platform --all-targets -- -D warnings
+      - name: Confirm unchanged tested source
+        if: always()
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          git diff --cached --exit-code
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$CANDIDATE_TREE"
+          printf 'VALIDATED_SOURCE=%s\nVALIDATED_TREE=%s\n' "$CANDIDATE_SHA" "$CANDIDATE_TREE"
