@@ -138,15 +138,18 @@ impl CraftApp {
         self.default_builder().is_some()
     }
 
+    /// Resolve the saved choice or the default before a build commits it.
+    pub(crate) fn resolve_builder(&self, wanted: Option<&str>) -> Option<String> {
+        wanted.filter(|name| self.builder_choices().iter().any(|choice| choice.name == *name)).map(str::to_string).or_else(|| self.default_builder())
+    }
+
     /// The AI to build with: `wanted` while it can build, else the default. An agent app that was
     /// only found is set up now (it needs no key, and the person pressed Start).
     pub fn builder_backend(&mut self, wanted: Option<&str>) -> Option<String> {
-        let choices = self.builder_choices();
-        let kept = wanted.filter(|w| choices.iter().any(|c| c.name == *w));
-        let name = kept.map(str::to_string).or_else(|| self.default_builder())?;
+        let name = self.resolve_builder(wanted)?;
         // A saved choice that was turned off or removed is replaced. The notice waits until a
         // builder is committed, so a failed setup doesn't claim one will build.
-        let replaced = wanted.filter(|w| !w.is_empty() && kept.is_none() && *w != name.as_str());
+        let replaced = wanted.filter(|w| !w.is_empty() && *w != name.as_str());
         let Some(found) = self.found_agents().find(|b| b.name == name).cloned() else {
             if let Some(saved) = replaced {
                 self.toast(replaced_builder_notice(saved, &name), false);

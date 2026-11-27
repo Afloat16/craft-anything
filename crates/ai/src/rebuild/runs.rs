@@ -6,7 +6,8 @@
 use super::*;
 use std::collections::{HashMap, VecDeque};
 
-/// How a run is started; [`RebuildRun::start`] unless a fork or a test swaps it.
+/// How a prepared run is started; the built-in worker unless a fork or a test swaps it.
+/// `RunSet` has already restored its request and owns cleanup of the saved record.
 pub type Starter = Box<dyn FnMut(&AiHub, Workspace, RunOptions) -> Result<RebuildRun, ToolError> + Send>;
 
 /// What [`RunSet::start`] did.
@@ -24,7 +25,7 @@ pub enum Started {
 pub enum Stopped {
     /// Asked to stop; its `Finished` event follows.
     Stopping,
-    /// Taken out of the queue before it started.
+    /// Paused before it started. Its request stays for the next manual start.
     Unqueued,
     Nothing,
 }
@@ -72,7 +73,7 @@ impl std::fmt::Debug for RunSet {
 impl RunSet {
     /// At most `limit` runs work at once (at least one).
     pub fn new(limit: usize) -> RunSet {
-        RunSet { limit: limit.max(1), runs: HashMap::new(), queue: VecDeque::new(), starter: Box::new(RebuildRun::start), watched: false }
+        RunSet { limit: limit.max(1), runs: HashMap::new(), queue: VecDeque::new(), starter: Box::new(RebuildRun::start_prepared), watched: false }
     }
 
     /// Start runs another way (a fork's runner, or a test's).
@@ -92,21 +93,28 @@ impl RunSet {
 
     /// Start a run on `ws`, or queue it when `limit` are already working. A project that is
     /// working or queued is refused.
-    pub fn start(&mut self, hub: &AiHub, ws: Workspace, opts: RunOptions) -> Result<Started, ToolError> {
+    pub fn start(&mut self, hub: &AiHub, mut ws: Workspace, mut opts: RunOptions) -> Result<Started, ToolError> {
         if self.is_running(&ws.root) || self.position(&ws.root).is_some() {
             return Err(
                 ToolError::new(ErrorCode::BadInput, "This project is already building.").with_remediation("Add to it while it works, or stop it first.")
             );
         }
+        // Queueing saves its waiting status too. Keep the last run's final session and builder
+        // choices, rather than writing them back from the caller's older project snapshot.
+        ws.reload()?;
+        let saved = queued_request::restore(&ws, &mut opts)?;
         if self.active() < self.limit && self.queue.is_empty() {
             let root = ws.root.clone();
-            let run = (self.starter)(hub, ws, opts)?;
+            let run = (self.starter)(hub, ws.clone(), opts)?;
+            queued_request::finished(&ws, saved.as_ref());
             self.runs.insert(root, run);
             return Ok(Started::Running);
         }
         // Fail now, not when its turn comes, when no coding agent is set up.
         let cfg = hub.config();
         builder_backend(&cfg, opts.backend.as_deref().or_else(|| super::project_builder(&cfg, &ws)))?;
+        queued_request::save(&ws, &opts)?;
+        ws.set_status(Status::Stopped, "Waiting for a build slot.")?;
         self.queue.push_back((ws, opts));
         Ok(Started::Queued { position: self.queue.len() })
     }
@@ -142,8 +150,11 @@ impl RunSet {
             let ws = Workspace::open(&ws.root).unwrap_or(ws);
             let root = ws.root.clone();
             let mut keep = ws.clone();
-            match (self.starter)(hub, ws, opts) {
+            let saved = queued_request::QueuedRequest::from_options(&opts);
+            let started = queued_request::validate(&ws).and_then(|()| (self.starter)(hub, ws, opts));
+            match started {
                 Ok(run) => {
+                    queued_request::finished(&keep, saved.as_ref());
                     self.runs.insert(root, run);
                 }
                 Err(e) => {
@@ -277,6 +288,226 @@ mod tests {
         s.settings.ai = toml::from_str("[[backends]]\nname = \"Agent\"\nkind = \"agent_cli\"\nmodel = \"claude-code\"\n").unwrap();
         assert!(builder_backend(&crate::AiConfig::from_settings(&s.settings), None).is_ok());
         AiHub::new(Arc::new(Engine::new(s)))
+    }
+
+    type SeenRequest = (Option<String>, Option<String>, Vec<PathBuf>);
+
+    fn remembering_requests(seen: Arc<Mutex<Vec<SeenRequest>>>) -> Starter {
+        let mut start = StandIns::new().starter();
+        Box::new(move |hub, ws, opts| {
+            seen.lock().unwrap().push((opts.message.clone(), opts.shown.clone(), opts.shown_pictures.clone()));
+            start(hub, ws, opts)
+        })
+    }
+
+    #[test]
+    fn a_queued_request_survives_shutdown_and_an_abruptly_lost_queue() {
+        for stopped in [false, true] {
+            let d = tempfile::tempdir().unwrap();
+            let a = Workspace::create(d.path(), "A", "A game", TargetRef::None).unwrap();
+            let b = Workspace::create(d.path(), "B", "A game", TargetRef::None).unwrap();
+            let picture = b.root.join("pictures/reference.png");
+            let opts = RunOptions {
+                message: Some("Keep the exact request\nwith its attachment path".into()),
+                shown: Some("Keep the exact request".into()),
+                shown_pictures: vec![picture.clone()],
+                ..RunOptions::default()
+            };
+            let hub = hub();
+            let mut set = RunSet::new(1).with_starter(StandIns::new().starter());
+            set.start(&hub, a, RunOptions::default()).unwrap();
+            assert_eq!(set.start(&hub, b.clone(), opts).unwrap(), Started::Queued { position: 1 });
+            assert_eq!(Workspace::open(&b.root).unwrap().manifest.status, Status::Stopped, "a reopened project offers Continue");
+            if stopped {
+                set.stop_all();
+            }
+            drop(set);
+
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let mut reopened = RunSet::new(1).with_starter(remembering_requests(seen.clone()));
+            assert_eq!(reopened.start(&hub, Workspace::open(&b.root).unwrap(), RunOptions::default()).unwrap(), Started::Running);
+            assert_eq!(
+                *seen.lock().unwrap(),
+                [(Some("Keep the exact request\nwith its attachment path".into()), Some("Keep the exact request".into()), vec![picture])],
+                "the next run receives the request, its display text and its pictures after the queue is gone"
+            );
+        }
+    }
+
+    #[test]
+    fn a_queued_request_is_not_accepted_when_it_cannot_be_saved() {
+        let d = tempfile::tempdir().unwrap();
+        let a = Workspace::create(d.path(), "A", "A game", TargetRef::None).unwrap();
+        let b = Workspace::create(d.path(), "B", "A game", TargetRef::None).unwrap();
+        // Preserve the coordination directory created with the workspace, then
+        // install the same non-directory storage blocker this case exercises.
+        std::fs::rename(b.inbox_dir(), b.root.join("saved-inbox")).unwrap();
+        std::fs::write(b.inbox_dir(), b"not a folder").unwrap();
+        let hub = hub();
+        let mut set = RunSet::new(1).with_starter(StandIns::new().starter());
+        set.start(&hub, a, RunOptions::default()).unwrap();
+        let result = set.start(&hub, b.clone(), RunOptions { message: Some("Keep this request".into()), ..RunOptions::default() });
+        assert!(result.is_err(), "an accepted request must outlive the in-memory queue");
+        assert_eq!(set.position(&b.root), None, "a failed save must not enqueue the request");
+    }
+
+    #[test]
+    fn a_queued_request_survives_a_failure_to_start() {
+        let d = tempfile::tempdir().unwrap();
+        let a = Workspace::create(d.path(), "A", "A game", TargetRef::None).unwrap();
+        let b = Workspace::create(d.path(), "B", "A game", TargetRef::None).unwrap();
+        let hub = hub();
+        let fake = StandIns::new().failing("B");
+        let mut set = RunSet::new(1).with_starter(fake.starter());
+        set.start(&hub, a.clone(), RunOptions::default()).unwrap();
+        set.start(&hub, b.clone(), RunOptions { message: Some("Retry this request".into()), ..RunOptions::default() }).unwrap();
+        fake.finish(&a.root);
+        assert!(set.poll(&hub).iter().any(|(root, e)| root == &b.root && matches!(e, RunEvent::Finished { ok: false, .. })));
+        drop(set);
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut reopened = RunSet::new(1).with_starter(remembering_requests(seen.clone()));
+        reopened.start(&hub, b, RunOptions::default()).unwrap();
+        assert_eq!(seen.lock().unwrap()[0].0.as_deref(), Some("Retry this request"));
+    }
+
+    #[test]
+    fn a_changed_unreadable_request_stops_its_queued_start_and_leaves_the_next_project_free() {
+        for (case, contents) in
+            [("malformed", Some(b"{broken".as_slice())), ("newer", Some(br#"{"version":4,"message":"A later request"}"#.as_slice())), ("unreadable", None)]
+        {
+            let d = tempfile::tempdir().unwrap();
+            let blocker = Workspace::create(d.path(), "Blocker", "A game", TargetRef::None).unwrap();
+            let queued = Workspace::create(d.path(), "Queued", "A game", TargetRef::None).unwrap();
+            let next = Workspace::create(d.path(), "Next", "A game", TargetRef::None).unwrap();
+            let hub = hub();
+            let fake = StandIns::new();
+            let mut set = RunSet::new(1).with_starter(fake.starter());
+            set.start(&hub, blocker.clone(), RunOptions::default()).unwrap();
+            let opts = RunOptions { message: Some("The queued request".into()), ..Default::default() };
+            assert_eq!(set.start(&hub, queued.clone(), opts).unwrap(), Started::Queued { position: 1 });
+            assert_eq!(set.start(&hub, next.clone(), RunOptions::default()).unwrap(), Started::Queued { position: 2 });
+            let record = queued.inbox_dir().join("queued-request.json");
+            if let Some(contents) = contents {
+                std::fs::write(&record, contents).unwrap();
+            } else {
+                std::fs::remove_file(&record).unwrap();
+                std::fs::create_dir(&record).unwrap();
+                std::fs::write(record.join("keep"), b"leave unchanged").unwrap();
+            }
+            fake.finish(&blocker.root);
+            let events = set.poll(&hub);
+            assert!(
+                events.iter().any(|(root, event)| {
+                    root == &queued.root && matches!(event, RunEvent::Finished { ok: false, message, paused: false } if message.contains("queued request"))
+                }),
+                "{case}: the existing failed-start path must report the record error"
+            );
+            assert_eq!(fake.started(), [blocker.root.clone(), next.root.clone()], "{case}: the unreadable request must not reach the starter");
+            assert!(set.get(&queued.root).is_none() && set.position(&queued.root).is_none());
+            assert_eq!(Workspace::open(&queued.root).unwrap().manifest.status, Status::NeedsYou);
+            if let Some(contents) = contents {
+                assert_eq!(std::fs::read(&record).unwrap(), contents, "{case}: the saved bytes remain unchanged");
+            } else {
+                assert_eq!(std::fs::read(record.join("keep")).unwrap(), b"leave unchanged");
+            }
+        }
+    }
+
+    #[test]
+    fn a_successfully_started_request_is_not_replayed() {
+        let d = tempfile::tempdir().unwrap();
+        let a = Workspace::create(d.path(), "A", "A game", TargetRef::None).unwrap();
+        let b = Workspace::create(d.path(), "B", "A game", TargetRef::None).unwrap();
+        let hub = hub();
+        let fake = StandIns::new();
+        let mut start = fake.starter();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let requests = seen.clone();
+        let mut set = RunSet::new(1).with_starter(Box::new(move |hub, ws, opts| {
+            requests.lock().unwrap().push(opts.message.clone());
+            start(hub, ws, opts)
+        }));
+        set.start(&hub, a.clone(), RunOptions::default()).unwrap();
+        set.start(&hub, b.clone(), RunOptions { message: Some("Send once".into()), ..RunOptions::default() }).unwrap();
+        fake.finish(&a.root);
+        set.poll(&hub);
+        assert_eq!(*seen.lock().unwrap(), [None, Some("Send once".into())]);
+        drop(set);
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut reopened = RunSet::new(1).with_starter(remembering_requests(seen.clone()));
+        reopened.start(&hub, b, RunOptions::default()).unwrap();
+        assert_eq!(seen.lock().unwrap()[0].0, None);
+    }
+
+    #[test]
+    fn the_default_starter_keeps_a_request_saved_after_queueing() {
+        let d = tempfile::tempdir().unwrap();
+        let blocker = Workspace::create(d.path(), "Blocker", "A game", TargetRef::None).unwrap();
+        let ws = Workspace::create(d.path(), "Queued", "A game", TargetRef::None).unwrap();
+        let hub = AiHub::with_stores(hub().engine.clone(), d.path().join("settings.toml"), crate::KeyStore::file_only(d.path().join("keys.toml")));
+        let fake = StandIns::new();
+        let mut set = RunSet::new(1);
+        // Only the occupied slot is a stand-in. Poll must use the real default starter for A.
+        set.runs.insert(blocker.root.clone(), fake.starter()(&hub, blocker.clone(), RunOptions::default()).unwrap());
+        let opts = RunOptions { message: Some("Queued request A".into()), shown: Some("Queued request A".into()), ..Default::default() };
+        assert_eq!(set.start(&hub, ws.clone(), opts).unwrap(), Started::Queued { position: 1 });
+        queued_request::save(&ws, &RunOptions { message: Some("Later request B".into()), ..Default::default() }).unwrap();
+        fake.finish(&blocker.root);
+        set.poll(&hub);
+        let run = set.get_mut(&ws.root).expect("the queued run started");
+        assert!(run.feed_now().iter().any(|item| matches!(item, feed::FeedItem::User(user) if user.text() == "Queued request A")));
+        run.stop();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while run.is_running() {
+            assert!(Instant::now() < deadline, "the run did not stop");
+            let _ = run.rx.recv_timeout(Duration::from_millis(50));
+        }
+        let mut next = RunOptions::default();
+        queued_request::restore(&ws, &mut next).unwrap();
+        assert_eq!(next.message.as_deref(), Some("Later request B"), "starting A must not retire B's backup");
+    }
+
+    #[test]
+    fn queueing_keeps_the_last_runs_saved_session() {
+        let d = tempfile::tempdir().unwrap();
+        let a = Workspace::create(d.path(), "A", "A game", TargetRef::None).unwrap();
+        let b = Workspace::create(d.path(), "B", "A game", TargetRef::None).unwrap();
+        let mut current = Workspace::open(&b.root).unwrap();
+        current.manifest.agent_session = Some("the-last-runs-session".into());
+        current.save().unwrap();
+        current.set_person(|m| m.builder = Some("Agent".into())).unwrap();
+        let hub = hub();
+        let mut set = RunSet::new(1).with_starter(StandIns::new().starter());
+        set.start(&hub, a, RunOptions::default()).unwrap();
+        assert_eq!(
+            set.start(&hub, b.clone(), RunOptions { message: Some("Keep going".into()), ..Default::default() }).unwrap(),
+            Started::Queued { position: 1 }
+        );
+        let saved = Workspace::open(&b.root).unwrap();
+        assert_eq!(saved.manifest.agent_session.as_deref(), Some("the-last-runs-session"));
+        assert_eq!(saved.manifest.builder.as_deref(), Some("Agent"));
+        assert_eq!(saved.manifest.status, Status::Stopped);
+    }
+
+    #[test]
+    fn pausing_a_queued_request_keeps_it_for_manual_continue() {
+        let d = tempfile::tempdir().unwrap();
+        let a = Workspace::create(d.path(), "A", "A game", TargetRef::None).unwrap();
+        let b = Workspace::create(d.path(), "B", "A game", TargetRef::None).unwrap();
+        let hub = hub();
+        let mut set = RunSet::new(1).with_starter(StandIns::new().starter());
+        set.start(&hub, a, RunOptions::default()).unwrap();
+        set.start(&hub, b.clone(), RunOptions { message: Some("Resume my change".into()), ..Default::default() }).unwrap();
+        assert_eq!(set.stop(&b.root), Stopped::Unqueued);
+        assert_eq!(set.position(&b.root), None);
+        // Continuing while the other build still works must keep the restored words when it is
+        // queued a second time, and survive another restart before a slot comes free.
+        assert_eq!(set.start(&hub, b.clone(), RunOptions::default()).unwrap(), Started::Queued { position: 1 });
+        drop(set);
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut reopened = RunSet::new(1).with_starter(remembering_requests(seen.clone()));
+        reopened.start(&hub, b, RunOptions::default()).unwrap();
+        assert_eq!(seen.lock().unwrap()[0].0.as_deref(), Some("Resume my change"));
     }
 
     #[test]

@@ -121,7 +121,8 @@ impl Anthropic {
     /// Model ids available to this key.
     pub fn list_models(&self, timeout: std::time::Duration) -> Result<Vec<String>, ToolError> {
         let agent = http::quick_agent(timeout);
-        let v = http::get_json(&agent, "Anthropic", &self.url("models"), &self.headers())?;
+        let deadline = std::time::Instant::now() + timeout;
+        let v = http::get_json(&agent, "Anthropic", &self.url("models"), &self.headers(), deadline)?;
         Ok(v.get("data")
             .and_then(Value::as_array)
             .map(|a| a.iter().filter_map(|m| m.get("id").and_then(Value::as_str).map(str::to_string)).collect())

@@ -1067,6 +1067,80 @@ mod typed_retries {
         assert_eq!(agent.sent.len(), 1);
     }
 
+    /// #2379: a rate limit is waited out past the three tries, with capped waits, and a failure
+    /// after it still gets its own three.
+    #[test]
+    fn a_rate_limit_is_retried_until_it_lifts() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(dir.path(), "x", "Build a thing", TargetRef::None).unwrap();
+        let mut worker = check_worker(&ws, false);
+        let limited = Some(TurnFailure::new(FailureKind::RateLimited));
+        let busy = Some(TurnFailure::new(FailureKind::Transient));
+        let mut agent = FailingConversation::new([limited; 12].into_iter().chain([busy, busy, None]), false);
+        let mut waits = Vec::new();
+        let result = worker.turn_with_wait(&mut ws, &mut agent, "Build it", true, None, |_, seconds| {
+            waits.push(seconds);
+            Ok(())
+        });
+        assert_eq!(result.unwrap(), "Done");
+        assert_eq!(agent.sent.len(), 15, "every rate limit and both busy answers were tried again");
+        assert!(waits[..12].windows(2).all(|w| w[0] <= w[1]) && waits[0] < waits[11] && waits[10] == waits[11], "waits grow, then stop growing: {waits:?}");
+    }
+
+    /// #2379: a limit that never lifts ends the run with its reason, for a coding agent's saved
+    /// session (whose tries can cost money) as for an API, and short waits from the service don't
+    /// use the tries up at once.
+    #[test]
+    fn a_rate_limit_that_never_lifts_stops_the_build() {
+        for saved in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut ws = Workspace::create(dir.path(), "x", "Build a thing", TargetRef::None).unwrap();
+            let mut worker = check_worker(&ws, false);
+            let (tx, rx) = std::sync::mpsc::channel();
+            worker.tx = tx;
+            let failure = TurnFailure { kind: FailureKind::RateLimited, retry_after_secs: Some(1) };
+            let mut agent = FailingConversation::new([Some(failure); 100], saved);
+            let mut waits = Vec::new();
+            let error = worker
+                .turn_with_wait(&mut ws, &mut agent, "Build it", true, None, |_, seconds| {
+                    waits.push(seconds);
+                    Ok(())
+                })
+                .unwrap_err();
+            assert_eq!(error.code, ErrorCode::ProgramFailed);
+            assert!(error.message.contains("rate limit") && error.message.contains("provider response"), "{error:?}");
+            assert!(agent.sent.len() < 100 && agent.sent.len() == waits.len() + 1, "the last try isn't waited after");
+            assert!(waits[0] < waits[waits.len() - 1], "{waits:?}");
+            let said: Vec<String> = rx.try_iter().filter_map(|e| if let RunEvent::Step { text, .. } = e { Some(text) } else { None }).collect();
+            assert_eq!(said.len(), waits.len());
+            for (text, wait) in said.iter().zip(&waits) {
+                assert!(text.contains("rate limit") && text.contains(&format!("in {wait} s")) && text.contains(&format!("of {}", waits.len())), "{text}");
+            }
+        }
+    }
+
+    /// #2379: Pause pressed during a rate limit's wait ends the run there.
+    #[test]
+    fn a_pause_ends_the_wait_for_a_rate_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(dir.path(), "x", "Build a thing", TargetRef::None).unwrap();
+        let mut worker = check_worker(&ws, false);
+        let (tx, rx) = std::sync::mpsc::channel();
+        worker.tx = tx;
+        let stop = worker.stop.clone();
+        let pause = std::thread::spawn(move || {
+            // The step is said right before the wait starts.
+            while !matches!(rx.recv().unwrap(), RunEvent::Step { text, .. } if text.contains("rate limit")) {}
+            std::thread::sleep(Duration::from_millis(100));
+            stop.cancel();
+        });
+        let mut agent = FailingConversation::new([Some(TurnFailure::new(FailureKind::RateLimited))], false);
+        let error = worker.turn(&mut ws, &mut agent, "Build it", true, None).unwrap_err();
+        pause.join().unwrap();
+        assert_eq!(error.code, ErrorCode::Cancelled);
+        assert_eq!(agent.sent.len(), 1, "nothing is sent after a pause");
+    }
+
     #[test]
     fn a_local_self_check_write_error_is_not_retried_as_a_backend_rate_limit() {
         #[derive(Clone)]
@@ -2200,6 +2274,92 @@ mod picking_up_a_build {
         std::fs::create_dir_all(ws.capture_dir()).unwrap();
         std::fs::create_dir_all(ws.app_dir()).unwrap();
         ws
+    }
+
+    #[test]
+    fn a_direct_start_recovers_the_queued_request_without_duplicating_waiting_notes() {
+        let b = bench();
+        let ws = worked_on(&b);
+        let picture = ws.root.join("attachments/search.png");
+        let words = "Add a search box and keep the current layout";
+        let left = notes::Left { text: "Add a search box".into(), shown: "Add search".into(), pictures: vec![picture.clone()], added: None };
+        // The UI already carries these old waiting notes in the queued message. Recovery must
+        // not feed them a second time from inbox/notes, or send the old brief instead.
+        notes::hand_over(&notes::notes_dir(&ws.inbox_dir()), 7, "Add a search box", Some(&left)).unwrap();
+        queued_request::save(
+            &ws,
+            &RunOptions {
+                message: Some(words.into()),
+                shown: Some("Add search".into()),
+                shown_pictures: vec![picture.clone()],
+                carried_notes: vec![notes::Carried { id: 7, note: left }],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let (ok, feed) = try_it(&b, &ws);
+        assert!(ok);
+        assert!(!studied(&feed), "the restored follow-up keeps the finished study");
+        let prompts = std::fs::read_to_string(&b.prompts).unwrap();
+        assert_eq!(prompts.matches("Add a search box").count(), 1, "{prompts}");
+        assert!(prompts.contains(words), "{prompts}");
+        assert!(feed.iter().any(|item| matches!(item, feed::FeedItem::User(user) if user.text() == "Add search" && user.pictures() == [picture.clone()])));
+        assert!(queued_request::restore(&ws, &mut RunOptions::default()).unwrap().is_none(), "a started request is no longer queued");
+        assert!(notes::take_left(&notes::notes_dir(&ws.inbox_dir()), true).is_empty());
+    }
+
+    #[test]
+    fn a_restored_queued_request_keeps_separate_waiting_notes() {
+        for version in [1, 2, 3] {
+            let b = bench();
+            let ws = worked_on(&b);
+            let picture = ws.root.join("attachments/colors.png");
+            let left = notes::Left { text: "Make the header blue".into(), shown: "Use this blue".into(), pictures: vec![picture.clone()], added: None };
+            notes::hand_over(&notes::notes_dir(&ws.inbox_dir()), 7, &left.text, Some(&left)).unwrap();
+            if version == 1 {
+                std::fs::write(ws.inbox_dir().join("queued-request.json"), r#"{"version":1,"message":"Add a search box","shown":null,"shown_pictures":[]}"#)
+                    .unwrap();
+            } else if version == 2 {
+                std::fs::write(
+                    ws.inbox_dir().join("queued-request.json"),
+                    r#"{"version":2,"message":"Add a search box","shown":null,"shown_pictures":[],"carried_notes":[]}"#,
+                )
+                .unwrap();
+            } else {
+                queued_request::save(&ws, &RunOptions { message: Some("Add a search box".into()), ..Default::default() }).unwrap();
+            }
+            // A fresh start, as after reopening the app: no request or note lives in memory.
+            let (ok, feed) = try_it(&b, &Workspace::open(&ws.root).unwrap());
+            assert!(ok);
+            let prompts = std::fs::read_to_string(&b.prompts).unwrap();
+            assert_eq!(prompts.matches("Add a search box").count(), 1, "{prompts}");
+            assert_eq!(prompts.matches(&left.text).count(), 1, "the independent waiting note must reach the builder: {prompts}");
+            assert!(feed.iter().any(|item| matches!(item, feed::FeedItem::User(user) if user.text() == left.shown && user.pictures() == [picture.clone()])));
+            assert!(queued_request::restore(&ws, &mut RunOptions::default()).unwrap().is_none());
+        }
+    }
+
+    #[test]
+    fn a_restored_follow_up_keeps_a_ghidra_stop_made_after_it_was_queued() {
+        use craft_anything_engine::tools::deep;
+        let b = bench();
+        let ws = worked_on(&b);
+        let asked = std::time::UNIX_EPOCH + Duration::from_nanos(1_234_567_890);
+        queued_request::save(&ws, &RunOptions { message: Some("Keep the earlier request".into()), asked, ..Default::default() }).unwrap();
+        let root = ws.root.clone();
+        drop(ws);
+        deep::stop_for(&root).unwrap();
+        let marker = std::fs::read(root.join(deep::STOPPED)).unwrap();
+        let reopened = Workspace::open(&root).unwrap();
+        let opts = RunOptions { asked: std::time::SystemTime::now() + Duration::from_secs(1), ..Default::default() };
+
+        let (ok, _) = try_with(&b, &reopened, opts);
+
+        assert!(ok);
+        assert!(deep::stopped(&root), "the real worker must not mistake a restored request for one made after the stop");
+        assert_eq!(std::fs::read(root.join(deep::STOPPED)).unwrap(), marker);
+        assert!(std::fs::read_to_string(&b.prompts).unwrap().contains("Keep the earlier request"));
+        assert!(queued_request::restore(&reopened, &mut RunOptions::default()).unwrap().is_none());
     }
 
     /// #91: with the helper missing, the build stops before studying or asking the agent, and

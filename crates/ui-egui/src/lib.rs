@@ -560,6 +560,8 @@ pub struct CraftApp {
     open_url: Option<String>,
     /// The open project's screenshot thumbnails (dropped when another project opens).
     pub thumbs: std::collections::HashMap<PathBuf, project::Thumb>,
+    /// How tall each item of the open conversation was last drawn.
+    feed_heights: project::FeedHeights,
     /// Pictures of the attachments in the prompt boxes (`CraftApp::previews`).
     pub previews: std::collections::HashMap<PathBuf, project::Thumb>,
     /// The kinds of thing this app can make; a fork registers its own here.
@@ -596,6 +598,9 @@ pub struct CraftApp {
     pub ghidra: engine_ui::GhidraFlow,
     /// When each toast appeared, in the same order (confirmations hide after a few seconds).
     toast_at: Vec<Instant>,
+    /// Whether a text field had keyboard focus as the last frame ended. egui lets go of focus on
+    /// Esc as a frame begins, before [`Self::shortcuts`] runs, so that frame can't ask (#2434).
+    text_was_focused: bool,
     /// Distinguish repeated error occurrences without changing the persisted toast representation.
     pub(crate) toast_error_revision: u64,
     settings_dirty: bool,
@@ -703,6 +708,7 @@ impl CraftApp {
             pins_read_at: None,
             open_url: None,
             thumbs: Default::default(),
+            feed_heights: Default::default(),
             previews: Default::default(),
             kinds: craft_anything_ai::rebuild::KindRegistry::built_in(),
             game_engines: None,
@@ -718,6 +724,7 @@ impl CraftApp {
             engine_flow: Default::default(),
             ghidra: Default::default(),
             toast_at: Vec::new(),
+            text_was_focused: false,
             toast_error_revision: 0,
             settings_dirty: false,
             save_due: None,
@@ -2146,6 +2153,12 @@ impl CraftApp {
 
     /// Draw the whole interface.
     pub fn show(&mut self, ui: &mut egui::Ui) {
+        self.draw(ui);
+        // Read after drawing, on every path out of it: the next frame's Esc needs it.
+        self.text_was_focused = ui.ctx().text_edit_focused();
+    }
+
+    fn draw(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -2341,8 +2354,10 @@ impl CraftApp {
                 home::dismiss(self);
             } else if self.state.settings_open {
                 self.state.settings_open = false;
-            } else if !matches!(self.state.screen, Screen::Home | Screen::Workbench) && ctx.memory(|m| m.focused().is_none()) {
-                // Back to Home, unless Esc was meant for a text field.
+            } else if !matches!(self.state.screen, Screen::Home | Screen::Workbench) && !self.text_was_focused {
+                // Back to Home, unless Esc was meant for a text field. egui has already let go of
+                // the field's focus this frame, so ask the last one; the field keeps its text,
+                // and a second Esc, with nothing focused, goes home.
                 self.state.screen = Screen::Home;
             }
         }

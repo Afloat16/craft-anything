@@ -724,7 +724,7 @@ impl AiHub {
             }
         });
         let models = listed.map_err(|e| {
-            if e.code == ErrorCode::Cancelled {
+            if e.code == ErrorCode::Cancelled || http::interrupted(&e) {
                 return e;
             }
             // A server that took the request has the right address: it may still be starting, or

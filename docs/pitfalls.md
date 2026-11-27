@@ -619,6 +619,11 @@ through pipes, as Windows does.
 
 ## Design
 
+**A readiness flag outlived the provider it described.** A Deep export cached success after a
+bridge failure removed its provider. The next function restarted the bridge after the startup
+budget check and decompiled past the deadline. Cache unavailable results for the call, but
+reconfirm successful readiness through the provider slot before checking the remaining budget.
+
 **A bounded modal still grew with its children.** Settings' minimum width and page height ran
 outside a 380×260 logical viewport. Removing those minima alone still let AI fields and nested
 dropdowns widen it; a wrapping row does not always constrain a control that measures a child UI.
@@ -1556,6 +1561,12 @@ answer, so a 512k-window build that called `web_search` stopped its turn after 3
 failed its check. Text recovery that only knows the formats seen so far ends a turn silently on
 the next one: read a model's own call format, and when it names a tool it doesn't have, tell it
 so and name the ones it has, rather than ending.
+
+**A focus check made after the library had let go of focus.** Esc on a project went home
+"unless Esc was meant for a text field", tested with `memory.focused().is_none()`. egui clears
+focus on Esc as the frame begins, before any app code runs, so the check always passed and Esc
+in the prompt box left the project (#2434). Ask about focus as the previous frame ended
+(`text_was_focused`), and test a key with a field focused, not only the key alone.
 
 **A view that asked to be scrolled on every frame.** The command palette called `scroll_to_me` on
 the selected row each frame, so the wheel's scroll was pulled back to it at once and the list
