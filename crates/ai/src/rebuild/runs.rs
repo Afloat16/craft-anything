@@ -129,7 +129,12 @@ impl RunSet {
         // choices, rather than writing them back from the caller's older project snapshot.
         ws.reload()?;
         let saved = queued_request::restore(&ws, &mut opts)?;
-        let pending = self.runs.get(&ws.root).is_some_and(|tracked| !tracked.pending.is_empty());
+        let pending = self.runs.get_mut(&ws.root).is_some_and(|tracked| {
+            // The worker can finish between UI polls. Keep its unread completion before a
+            // direct retry is allowed to replace the receiver that owns those events.
+            tracked.pending.extend(tracked.run.poll());
+            !tracked.pending.is_empty()
+        });
         if self.active() < self.limit && self.queue.is_empty() && !pending {
             let root = ws.root.clone();
             let run = TrackedRun::new((self.starter)(hub, ws.clone(), opts)?)?;
@@ -183,6 +188,15 @@ impl RunSet {
     fn poll_using<T>(
         &mut self,
         hub: &AiHub,
+        collect: impl FnMut(PathBuf, RunEvent, Option<&RebuildRun>, Option<&feed::ProjectIdentity>, bool) -> T,
+    ) -> Vec<T> {
+        self.poll_using_open(hub, Workspace::open, collect)
+    }
+
+    fn poll_using_open<T>(
+        &mut self,
+        hub: &AiHub,
+        mut open: impl FnMut(&Path) -> Result<Workspace, ToolError>,
         mut collect: impl FnMut(PathBuf, RunEvent, Option<&RebuildRun>, Option<&feed::ProjectIdentity>, bool) -> T,
     ) -> Vec<T> {
         let mut out = Vec::new();
@@ -211,11 +225,21 @@ impl RunSet {
             // The project as it is now (its Builder may have been changed while it waited), the copy
             // `RebuildRun::start` reads too.
             let current = project.check_current(&ws.root);
-            let ws = Workspace::open(&ws.root).unwrap_or(ws);
+            let ws = open(&ws.root).unwrap_or(ws);
             let root = ws.root.clone();
             let mut keep = ws.clone();
             let saved = queued_request::QueuedRequest::from_options(&opts);
-            let started = current.and_then(|()| queued_request::validate(&ws)).and_then(|()| (self.starter)(hub, ws, opts)).and_then(TrackedRun::new);
+            let started = current
+                .and_then(|()| {
+                    let opened = feed::ProjectIdentity::from_workspace(&ws)?;
+                    if !project.is_same_project(&opened) {
+                        return Err(ToolError::new(ErrorCode::FileChanged, "The project changed while its request was waiting.")
+                            .with_remediation("Open the original project to continue its saved request."));
+                    }
+                    queued_request::validate(&ws)
+                })
+                .and_then(|()| (self.starter)(hub, ws, opts))
+                .and_then(TrackedRun::new);
             match started {
                 Ok(run) => {
                     queued_request::finished(&keep, saved.as_ref());
@@ -240,6 +264,15 @@ impl RunSet {
 
     pub fn get_mut(&mut self, root: &Path) -> Option<&mut RebuildRun> {
         self.runs.get_mut(root).map(|tracked| &mut tracked.run)
+    }
+
+    /// Completed runs can still own events waiting for a readable project identity. Collect
+    /// unread events too, so the UI keeps scheduling polls even after the worker stops.
+    pub fn has_pending_events(&mut self) -> bool {
+        self.runs.values_mut().any(|tracked| {
+            tracked.pending.extend(tracked.run.poll());
+            !tracked.pending.is_empty()
+        })
     }
 
     /// Detach a run or queued request belonging to an earlier project at this path. Reuse
@@ -436,12 +469,48 @@ mod tests {
         let bytes = std::fs::read(&manifest).unwrap();
         std::fs::remove_file(&manifest).unwrap();
 
+        assert!(!set.any_busy());
+        assert!(set.has_pending_events(), "an unread completion still needs another scheduled poll");
         assert!(set.poll_with_snapshots(&hub).is_empty());
+        assert!(set.has_pending_events(), "a temporarily unreadable manifest must not stop polling");
         assert!(set.get(&ws.root).is_some(), "an unavailable manifest is not proof of replacement");
         std::fs::write(&manifest, bytes).unwrap();
         let updates = set.poll_with_snapshots(&hub);
         assert_eq!(updates.iter().filter(|update| matches!(&update.event, RunEvent::Finished { .. })).count(), 1);
         assert!(set.poll_with_snapshots(&hub).is_empty(), "the deferred Finished event is delivered once");
+        assert!(!set.has_pending_events(), "delivered completions need no further repaint");
+    }
+
+    #[test]
+    fn a_direct_retry_preserves_an_unread_completion_but_does_not_wait_for_a_delivered_one() {
+        for delivered in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(directory.path(), "Project", "A game", TargetRef::None).unwrap();
+            let hub = hub();
+            let fake = StandIns::new();
+            let mut set = RunSet::new(1).with_starter(fake.starter());
+            set.start(&hub, ws.clone(), RunOptions::default()).unwrap();
+            fake.finish(&ws.root);
+            if delivered {
+                assert_eq!(set.poll(&hub).iter().filter(|(_, event)| matches!(event, RunEvent::Finished { .. })).count(), 1);
+            }
+
+            let started = set.start(&hub, ws.clone(), RunOptions::default()).unwrap();
+
+            if delivered {
+                assert_eq!(started, Started::Running);
+                assert!(set.poll(&hub).is_empty());
+            } else {
+                assert_eq!(started, Started::Queued { position: 1 });
+                assert_eq!(fake.started(), [ws.root.clone()]);
+                let updates = set.poll_with_snapshots(&hub);
+                assert_eq!(updates.iter().filter(|update| matches!(&update.event, RunEvent::Finished { .. })).count(), 1);
+                assert!(updates.iter().all(|update| update.display_feed.is_some()));
+                assert!(set.poll(&hub).is_empty(), "the original completion is delivered exactly once");
+            }
+            assert!(set.is_running(&ws.root));
+            assert_eq!(fake.started(), [ws.root.clone(), ws.root]);
+        }
     }
 
     #[test]
@@ -541,6 +610,40 @@ mod tests {
         let updates = set.poll_with_snapshots(&hub);
         assert_eq!(updates.iter().filter(|update| update.root == ws.root && matches!(&update.event, RunEvent::Finished { .. })).count(), 1);
         assert!(set.is_running(&ws.root), "the original request starts after its pending completion is delivered");
+    }
+
+    #[test]
+    fn a_project_replaced_while_reopening_a_queued_request_is_not_started() {
+        let directory = tempfile::tempdir().unwrap();
+        let blocker = Workspace::create(directory.path(), "Blocker", "A game", TargetRef::None).unwrap();
+        let waiting = Workspace::create(directory.path(), "Waiting", "Original", TargetRef::None).unwrap();
+        let retired = directory.path().join("retired");
+        let hub = hub();
+        let fake = StandIns::new();
+        let mut set = RunSet::new(1).with_starter(fake.starter());
+        set.start(&hub, blocker.clone(), RunOptions::default()).unwrap();
+        set.start(&hub, waiting.clone(), RunOptions { message: Some("Keep the original request".into()), ..Default::default() }).unwrap();
+        let request = std::fs::read(waiting.inbox_dir().join("queued-request.json")).unwrap();
+        fake.finish(&blocker.root);
+        let mut replacement_manifest = Vec::new();
+
+        let events = set.poll_using_open(
+            &hub,
+            |root| {
+                assert_eq!(root, waiting.root);
+                std::fs::rename(root, &retired).unwrap();
+                let replacement = Workspace::create(directory.path(), "Waiting", "Replacement", TargetRef::None).unwrap();
+                replacement_manifest = std::fs::read(replacement.root.join("craft.json")).unwrap();
+                Workspace::open(root)
+            },
+            |root, event, _, _, _| (root, event),
+        );
+
+        assert_eq!(fake.started(), [blocker.root]);
+        assert!(events.iter().any(|(root, event)| root == &waiting.root && matches!(event, RunEvent::Finished { ok: false, .. })));
+        assert_eq!(std::fs::read(waiting.root.join("craft.json")).unwrap(), replacement_manifest);
+        assert_eq!(std::fs::read(retired.join("inbox/queued-request.json")).unwrap(), request);
+        assert!(!waiting.inbox_dir().join("queued-request.json").exists());
     }
 
     #[test]
