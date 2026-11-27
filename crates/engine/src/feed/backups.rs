@@ -143,7 +143,12 @@ fn matches_open_file(path: &Path, file: &mut std::fs::File, receipt: &Receipt, c
     Ok(matches)
 }
 
-fn matches_open_contents(path: &Path, file: &mut std::fs::File, receipt: &Receipt, check: &mut dyn FnMut() -> Result<(), ToolError>) -> Result<bool, ToolError> {
+fn matches_open_contents(
+    path: &Path,
+    file: &mut std::fs::File,
+    receipt: &Receipt,
+    check: &mut dyn FnMut() -> Result<(), ToolError>,
+) -> Result<bool, ToolError> {
     check()?;
     let opened = file.metadata().map_err(|error| ToolError::io(path.display(), error))?;
     if !opened.is_file() || opened.len() != receipt.length {
@@ -193,8 +198,7 @@ fn only_default_stream(path: &Path, file: &std::fs::File) -> Result<bool, ToolEr
     if pinned != opened {
         return Err(record_conflict(path));
     }
-    let powershell = PathBuf::from(std::env::var_os("SystemRoot").ok_or_else(unverified)?)
-        .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+    let powershell = PathBuf::from(std::env::var_os("SystemRoot").ok_or_else(unverified)?).join("System32/WindowsPowerShell/v1.0/powershell.exe");
     let result = craft_anything_platform::process::Process::new(powershell)
         .args([
             "-NoLogo",
@@ -493,7 +497,7 @@ fn publish_with_link(
         match link(&staged, backup) {
             Ok(()) => published = true,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(false),
-            Err(error) if hard_links_unsupported(&error) => return publish_preserved_copy(root, backup, bytes, &receipt, after_publish),
+            Err(error) if can_copy_without_hard_link(&error) => return publish_preserved_copy(root, backup, bytes, &receipt, None, after_publish),
             Err(error) => return Err(ToolError::io(backup.display(), error)),
         }
         super::recovery::sync_directory(root)?;
@@ -556,12 +560,18 @@ pub(super) fn is_unverifiable_staging(error: &ToolError) -> bool {
     error.details.as_ref().and_then(|details| details.get("unverifiable_staging")).and_then(serde_json::Value::as_bool) == Some(true)
 }
 
-fn hard_links_unsupported(error: &std::io::Error) -> bool {
+fn can_copy_without_hard_link(error: &std::io::Error) -> bool {
     if error.kind() == std::io::ErrorKind::Unsupported {
         return true;
     }
     #[cfg(windows)]
     if matches!(error.raw_os_error(), Some(1 | 50)) {
+        return true;
+    }
+    // Linux also reports EPERM when the filesystem has no link operation. The exclusive
+    // copy still checks destination write permissions; it never replaces an existing file.
+    #[cfg(target_os = "linux")]
+    if error.raw_os_error() == Some(1) {
         return true;
     }
     false
@@ -594,6 +604,7 @@ fn publish_preserved_copy(
     backup: &Path,
     bytes: &[u8],
     receipt: &Receipt,
+    source: Option<(&Path, &std::fs::File)>,
     after_publish: impl FnOnce() -> Result<(), ToolError>,
 ) -> Result<bool, ToolError> {
     let mut options = std::fs::OpenOptions::new();
@@ -611,8 +622,24 @@ fn publish_preserved_copy(
     let identity = same_file::Handle::from_file(file).map_err(|error| ToolError::io(backup.display(), error))?;
     let mut complete = false;
     let result = (|| {
-        let mut file = identity.as_file();
-        file.write_all(bytes).and_then(|()| file.sync_all()).map_err(|error| ToolError::io(backup.display(), error))?;
+        #[cfg(windows)]
+        let copied = if let Some((path, file)) = source {
+            let metadata = file.metadata().map_err(|error| ToolError::io(path.display(), error))?;
+            crate::workspace::copy_windows_into_reserved(path, backup, file, &metadata, identity.as_file())?;
+            true
+        } else {
+            false
+        };
+        #[cfg(not(windows))]
+        let copied = {
+            let _ = source;
+            false
+        };
+        if !copied {
+            let mut file = identity.as_file();
+            file.write_all(bytes).map_err(|error| ToolError::io(backup.display(), error))?;
+        }
+        identity.as_file().sync_all().map_err(|error| ToolError::io(backup.display(), error))?;
         complete = true;
         super::recovery::sync_directory(root)?;
         after_publish()?;
@@ -710,7 +737,7 @@ fn resume_staged(
         match link(&staged, backup) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(false),
-            Err(error) if hard_links_unsupported(&error) => {
+            Err(error) if can_copy_without_hard_link(&error) => {
                 let mut raw = raw_identity.as_file();
                 raw.rewind().map_err(|error| ToolError::io(staged.display(), error))?;
                 let mut bytes = Vec::new();
@@ -718,7 +745,7 @@ fn resume_staged(
                 if bytes.len() as u64 != expected.length || sha256_hex(&bytes) != expected.sha256 {
                     return Err(record_conflict(&staged));
                 }
-                return publish_preserved_copy(root, backup, &bytes, expected, after_publish);
+                return publish_preserved_copy(root, backup, &bytes, expected, Some((&staged, raw_identity.as_file())), after_publish);
             }
             Err(error) => return Err(ToolError::io(backup.display(), error)),
         }
@@ -1203,22 +1230,21 @@ mod tests {
 
     #[test]
     fn recovery_copies_remain_personal_when_hard_links_are_unsupported() {
-        use crate::workspace::{TargetRef, Workspace};
+        use crate::workspace::{ExistingFiles, TargetRef, Workspace};
         for interrupted in [false, true] {
             let directory = tempfile::tempdir().unwrap();
-            let ws = Workspace::create(directory.path(), "Project", "Keep my conversation", TargetRef::None).unwrap();
+            let root = directory.path().join("original");
+            std::fs::create_dir(&root).unwrap();
+            std::fs::write(root.join("index.html"), "Keep my app").unwrap();
+            let ws = Workspace::create_at(&root, "Project", "Keep my conversation", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
             let backup = ws.root.join("feed.json.broken");
             let bytes = b"complete damaged original";
             let staged = interrupted.then(|| stage_interrupted_copy(&ws.root, &backup, bytes));
             assert!(
-                publish_with_link(
-                    &ws.root,
-                    &backup,
-                    bytes,
-                    |_| Ok(()),
-                    || Ok(()),
-                    &mut |_, _| Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "No hard links on this volume")),
-                )
+                publish_with_link(&ws.root, &backup, bytes, |_| Ok(()), || Ok(()), &mut |_, _| Err(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "No hard links on this volume"
+                )),)
                 .unwrap()
             );
             assert_eq!(std::fs::read(&backup).unwrap(), bytes);
@@ -1229,8 +1255,8 @@ mod tests {
                 assert!(read_receipt(&record, "feed.json.broken").unwrap().is_some());
             }
             let copied = ws.duplicate("Copy").unwrap();
-            assert_eq!(std::fs::read(copied.root.join("feed.json.broken")).unwrap(), bytes);
-            assert!(ws.delete().is_err(), "without historical identity proof, deletion must keep this complete recovery copy");
+            assert_eq!(std::fs::read(copied.app_dir().join("feed.json.broken")).unwrap(), bytes);
+            ws.delete().unwrap();
             assert_eq!(std::fs::read(&backup).unwrap(), bytes);
         }
     }
@@ -1255,6 +1281,21 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_eperm_link_failure_keeps_a_complete_personal_recovery_copy() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let backup = root.join("feed.json.broken");
+        let bytes = b"complete damaged original";
+
+        assert!(publish_with_link(root, &backup, bytes, |_| Ok(()), || Ok(()), &mut |_, _| Err(std::io::Error::from_raw_os_error(1))).unwrap());
+
+        assert_eq!(std::fs::read(backup).unwrap(), bytes);
+        assert!(owned_backups(root).unwrap().is_empty());
+        assert!(matching_copy(root, bytes).unwrap().is_none());
+    }
+
     #[test]
     fn staging_cleanup_does_not_unlink_a_new_entry_after_claiming_its_file() {
         let directory = tempfile::tempdir().unwrap();
@@ -1273,9 +1314,12 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_named_stream_keeps_a_completed_backup_on_the_personal_file_path() {
-        use crate::workspace::{TargetRef, Workspace};
+        use crate::workspace::{ExistingFiles, TargetRef, Workspace};
         let directory = tempfile::tempdir().unwrap();
-        let ws = Workspace::create(directory.path(), "Project", "Keep my conversation", TargetRef::None).unwrap();
+        let root = directory.path().join("original");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("index.html"), "Keep my app").unwrap();
+        let ws = Workspace::create_at(&root, "Project", "Keep my conversation", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
         let backup = ws.root.join("feed.json.broken");
         assert!(publish(&ws.root, &backup, b"generated damaged bytes").unwrap());
         assert_eq!(owned_backups(&ws.root).unwrap(), vec![backup.clone()]);
@@ -1286,11 +1330,51 @@ mod tests {
 
         assert!(owned_backups(&ws.root).unwrap().is_empty());
         let copied = ws.duplicate("Copy").unwrap();
-        let mut copied_name = copied.root.join("feed.json.broken").into_os_string();
+        let mut copied_name = copied.app_dir().join("feed.json.broken").into_os_string();
         copied_name.push(":personal-note");
         assert_eq!(std::fs::read(PathBuf::from(copied_name)).unwrap(), b"Keep my named-stream notes");
-        assert!(ws.delete().is_err());
+        ws.delete().unwrap();
         assert_eq!(std::fs::read(&stream).unwrap(), b"Keep my named-stream notes");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_resumed_copy_keeps_named_streams_when_hard_links_are_unsupported() {
+        use crate::workspace::{ExistingFiles, TargetRef, Workspace};
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("original");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("index.html"), "Keep my app").unwrap();
+        let ws = Workspace::create_at(&root, "Project", "Keep my conversation", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+        let backup = root.join("feed.json.broken");
+        let bytes = b"complete damaged original";
+        let (staged, _) = stage_interrupted_copy(&root, &backup, bytes);
+        let mut stream = staged.into_os_string();
+        stream.push(":personal-note");
+        let notes = b"Keep the interrupted file's named-stream notes";
+        std::fs::write(PathBuf::from(stream), notes).unwrap();
+
+        assert!(publish_with_link(
+            &root,
+            &backup,
+            bytes,
+            |_| Ok(()),
+            || Ok(()),
+            &mut |_, _| Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "No hard links on this volume")),
+        ).unwrap());
+
+        assert_eq!(std::fs::read(&backup).unwrap(), bytes);
+        let mut stream = backup.into_os_string();
+        stream.push(":personal-note");
+        let stream = PathBuf::from(stream);
+        assert_eq!(std::fs::read(&stream).unwrap(), notes);
+        assert!(owned_backups(&root).unwrap().is_empty());
+        let copied = ws.duplicate("Copy").unwrap();
+        let mut copied_stream = copied.app_dir().join("feed.json.broken").into_os_string();
+        copied_stream.push(":personal-note");
+        assert_eq!(std::fs::read(PathBuf::from(copied_stream)).unwrap(), notes);
+        ws.delete().unwrap();
+        assert_eq!(std::fs::read(stream).unwrap(), notes);
     }
 
     #[test]

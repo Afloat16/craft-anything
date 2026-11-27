@@ -154,6 +154,22 @@ fn copy_new_file(from: &Path, to: &Path) -> Result<(), ToolError> {
 #[cfg(windows)]
 fn copy_new_windows_file(from: &Path, to: &Path, source: &std::fs::File, metadata: &std::fs::Metadata) -> Result<(), ToolError> {
     use std::os::windows::fs::OpenOptionsExt as _;
+    let output = std::fs::OpenOptions::new().write(true).create_new(true).share_mode(1 | 2).open(to)
+        .map_err(|error| ToolError::io(to.display(), error))?;
+    copy_windows_into_reserved(from, to, source, metadata, &output)
+}
+
+/// Preserve all Windows streams while copying into an output exclusively reserved by the
+/// caller. Both pinned names must still identify the supplied handles before CopyFile runs.
+#[cfg(windows)]
+pub(crate) fn copy_windows_into_reserved(
+    from: &Path,
+    to: &Path,
+    source: &std::fs::File,
+    metadata: &std::fs::Metadata,
+    output: &std::fs::File,
+) -> Result<(), ToolError> {
+    use std::os::windows::fs::OpenOptionsExt as _;
     const SHARE_READ_WRITE: u32 = 1 | 2;
     let pinned = std::fs::OpenOptions::new().read(true).share_mode(SHARE_READ_WRITE).open(from).map_err(|error| ToolError::io(from.display(), error))?;
     let pinned = FileHandle::from_file(pinned).map_err(|error| ToolError::io(from.display(), error))?;
@@ -163,8 +179,14 @@ fn copy_new_windows_file(from: &Path, to: &Path, source: &std::fs::File, metadat
         return Err(copy_changed(from));
     }
     check_copy_entry(from, metadata)?;
-    let output =
-        std::fs::OpenOptions::new().write(true).create_new(true).share_mode(SHARE_READ_WRITE).open(to).map_err(|error| ToolError::io(to.display(), error))?;
+    let pinned_output = std::fs::OpenOptions::new().write(true).share_mode(SHARE_READ_WRITE).open(to)
+        .map_err(|error| ToolError::io(to.display(), error))?;
+    let pinned_output = FileHandle::from_file(pinned_output).map_err(|error| ToolError::io(to.display(), error))?;
+    let reserved = FileHandle::from_file(output.try_clone().map_err(|error| ToolError::io(to.display(), error))?)
+        .map_err(|error| ToolError::io(to.display(), error))?;
+    if pinned_output != reserved {
+        return Err(copy_changed(to));
+    }
     let copied = std::fs::copy(from, to).map_err(|error| ToolError::io(format!("{} to {}", from.display(), to.display()), error))?;
     if copied != metadata.len() {
         return Err(copy_changed(from));
