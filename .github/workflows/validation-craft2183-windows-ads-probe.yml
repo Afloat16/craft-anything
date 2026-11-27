@@ -1,0 +1,30 @@
+name: Probe Windows stream-preserving copy
+on:
+  push:
+    branches: [validation/20261127-craft2183-windows-ads-probe]
+permissions:
+  contents: read
+jobs:
+  windows-ntfs-probe:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+      - name: Compile and run std-only NTFS copy probes
+        shell: pwsh
+        run: |
+          rustc --version
+          rustc --edition=2024 --test .validation/windows-copy-probe.rs -o "$env:RUNNER_TEMP\windows-copy-probe.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Probe compilation failed" }
+          & "$env:RUNNER_TEMP\windows-copy-probe.exe" --nocapture
+          if ($LASTEXITCODE -ne 0) { throw "Native copy probe failed" }
+          git diff --exit-code
+          if ($LASTEXITCODE -ne 0) { throw "Probe source changed" }
+          Write-Output "PROBE_SOURCE=$(git rev-parse HEAD)"
+          Write-Output "PROBE_BLOB=$(git hash-object .validation/windows-copy-probe.rs)"
