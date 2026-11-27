@@ -515,11 +515,14 @@ mod tests {
             let lock = inbox.join(PROJECT_LOCK_FILE);
 
             if replace_inbox {
-                // A hard link retains the locked inode while the directory identity changes.
+                // Move the held child file first so Windows can relocate its parent.
+                // A hard link retains that same locked inode in the replacement inbox.
+                let retained_lock = ws.root.join("retained.lock");
+                std::fs::rename(&lock, &retained_lock).unwrap();
                 let retained = ws.root.join("retained-inbox");
                 std::fs::rename(&inbox, &retained).unwrap();
                 std::fs::create_dir(&inbox).unwrap();
-                std::fs::hard_link(retained.join(PROJECT_LOCK_FILE), &lock).unwrap();
+                std::fs::hard_link(&retained_lock, &lock).unwrap();
                 assert_eq!(same_file::Handle::from_path(&lock).unwrap(), guard.guard._file);
                 assert_eq!(lock_for(&ws.root, Duration::ZERO).unwrap_err().code, ErrorCode::TimedOut);
             } else {
@@ -620,6 +623,8 @@ mod tests {
         std::fs::write(&manifest, serde_json::to_vec_pretty(&ws.manifest).unwrap()).unwrap();
         assert_eq!(guard.check_project().unwrap_err().code, ErrorCode::FileChanged);
         let replacement = directory.path().join("replacement");
+        // Keep the guard alive while moving its held child outside the relocated root.
+        std::fs::rename(ws.inbox_dir().join(PROJECT_LOCK_FILE), directory.path().join("retained.lock")).unwrap();
         std::fs::rename(&ws.root, &replacement).unwrap();
         std::fs::create_dir(&ws.root).unwrap();
         ws.manifest.created_ms = ws.manifest.created_ms.saturating_sub(1);

@@ -309,6 +309,10 @@ fn retains_explanation(feed: &[FeedItem], origin: &[FeedItem]) -> bool {
 }
 
 impl FeedLog {
+    pub(super) fn project_identity(&self) -> Option<ProjectIdentity> {
+        self.feed.project_identity()
+    }
+
     pub(super) fn open(ws: &Workspace) -> FeedLog {
         let activity = Arc::new(Activity::new(vec![ws.app_dir(), ws.root.clone()]));
         let history_at_open = HistoryAtOpen {
@@ -341,11 +345,29 @@ impl FeedLog {
         self.record_using(e, (save, save_if_unchanged));
     }
 
+    /// A manifest records the whole round before publishing its individual events. Journal all
+    /// of them before a save can reconcile that projection, including equal check occurrences.
+    pub(super) fn record_checks(&mut self, checks: &[CheckResult]) {
+        for check in checks {
+            self.record_pending(&RunEvent::Checked(check.clone()));
+        }
+        self.save(false);
+    }
+
     fn record_using(
         &mut self,
         e: &RunEvent,
         commits: (impl FnOnce(&Path, &mut LoadedFeed) -> Result<(), ToolError>, impl FnOnce(&Path, &mut LoadedFeed) -> Result<(), ToolError>),
     ) {
+        self.record_pending(e);
+        let finished = matches!(e, RunEvent::Finished { .. });
+        self.save_using(finished, commits);
+        if finished && self.save_error.is_some() && (!self.pending.is_empty() || self.feed.save_needs_sync()) {
+            self.keep_recovery_copy();
+        }
+    }
+
+    fn record_pending(&mut self, e: &RunEvent) {
         let lines = self.activity.record(e);
         self.log.append(&lines, &self.activity);
         let retain = !matches!(e, RunEvent::Preview(_) | RunEvent::Agent(AgentEvent::Output { .. }));
@@ -367,11 +389,6 @@ impl FeedLog {
             self.pending.push(change);
         } else {
             apply_run_event(&mut self.feed, e, &mut self.failure_explained);
-        }
-        let finished = matches!(e, RunEvent::Finished { .. });
-        self.save_using(finished, commits);
-        if finished && self.save_error.is_some() && (!self.pending.is_empty() || self.feed.save_needs_sync()) {
-            self.keep_recovery_copy();
         }
     }
 
@@ -1189,6 +1206,50 @@ mod tests {
         assert_eq!(saved.iter().filter(|item| matches!(item, FeedItem::Check(value) if value == &check)).count(), 4);
         assert_eq!(saved.iter().filter(|item| matches!(item, FeedItem::User(note) if note.text() == "Keep the external note")).count(), 1);
         assert!(saved.iter().any(|item| matches!(item, FeedItem::Ask { answer: Some(value), .. } if value == "Blue")));
+    }
+
+    #[test]
+    fn a_recovered_check_round_is_journaled_before_its_first_event_can_save() {
+        for repeated_check in [false, true] {
+            let d = tempfile::tempdir().unwrap();
+            let mut ws = Workspace::create(d.path(), "x", "A game", TargetRef::None).unwrap();
+            let mut first = CheckResult::new("build", 1, true, "The build passed.");
+            first.at_ms = 17;
+            let mut second = CheckResult::new("preview", 1, true, "The preview opened.");
+            second.at_ms = 19;
+            ws.manifest.checks.push(first.clone());
+            ws.save().unwrap();
+            let mut log = a_live_feed_with_busy_recovery_names(&ws);
+            let mut round = vec![first.clone(), second.clone()];
+            if repeated_check {
+                round.push(second.clone());
+            }
+            // The manifest has the whole round, but its individual events have not arrived.
+            ws.manifest.checks.extend(round.iter().cloned());
+            ws.save().unwrap();
+            recover_the_conversation_through_the_cli(&ws);
+            let mut external = load(&ws);
+            external.push(FeedItem::Check(second.clone()));
+            external.push(FeedItem::User(UserItem::Text("Keep the other client's note".into())));
+            save(&ws.root, &mut external).unwrap();
+
+            log.saved_at = None; // The first event is eligible to save; do not rely on batching by time.
+            let feed = Arc::new(Mutex::new(log));
+            let (tx, rx) = std::sync::mpsc::channel();
+            let mut worker = super::super::tests::check_worker(&ws, false);
+            worker.feed = feed.clone();
+            worker.tx = tx;
+            worker.emit_checks(&round);
+            feed.lock().unwrap().save(true);
+
+            let saved = load(&ws);
+            let actual: Vec<_> = saved.iter().filter_map(|item| if let FeedItem::Check(check) = item { Some(check.clone()) } else { None }).collect();
+            let expected: Vec<_> = [first, second].into_iter().chain(round.iter().cloned()).collect();
+            assert_eq!(actual, expected, "older, external and repeated checks survive without leaving projected copies of later events");
+            assert_eq!(rx.try_iter().collect::<Vec<_>>(), round.into_iter().map(RunEvent::Checked).collect::<Vec<_>>());
+            assert_eq!(saved.iter().filter(|item| matches!(item, FeedItem::User(note) if note.text() == "Keep the other client's note")).count(), 1);
+            assert!(saved.iter().any(|item| matches!(item, FeedItem::Ask { answer: Some(value), .. } if value == "Blue")));
+        }
     }
 
     #[test]

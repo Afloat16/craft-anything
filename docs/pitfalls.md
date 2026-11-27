@@ -1146,9 +1146,11 @@ and check the loaded identity for ordinary app/ sources too: an old handle must 
 project's app with the old project's settings. Actual write-access denial can use an existing regular
 empty lock through a read-only shared guard that excludes writers; keep that guard distinct from a
 write transaction. Recheck the original inbox directory and held lock identity before publication;
-a matching manifest alone cannot detect an externally replaced coordination namespace. A missing
-or invalid existing lock, contention or unsupported locking must not
-become an unlocked copy. A readable read-only legacy source with no inbox
+a matching manifest alone cannot detect an externally replaced coordination namespace. After actual
+write denial, a legacy source with an existing inbox directory but no coordination file can use an
+uncoordinated copy only while the original directory identity and absent lock remain unchanged
+before and after copying. An existing invalid or unusable lock file, a lock timeout, contention or
+unsupported locking must not become an unlocked copy. A readable read-only legacy source with no inbox
 can use a read-only copy path only after actual permission or read-only-filesystem denial; keep manifest and ownership checks,
 and never swallow lock timeouts or unreadable records. Match case variants by the opened file's identity, not by lowercasing
 all names: a case-sensitive filesystem can hold a distinct personal file with that spelling.

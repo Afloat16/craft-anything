@@ -544,6 +544,8 @@ pub struct CraftApp {
     last_run: std::collections::HashMap<PathBuf, usage::RunTally>,
     /// The project shown on the Project screen.
     pub workspace: Option<craft_anything_engine::workspace::Workspace>,
+    /// The selected project's directory and manifest identity, captured before polling runs.
+    pub(crate) workspace_identity: Option<craft_anything_engine::feed::ProjectIdentity>,
     /// Every project in the projects folder, newest first.
     pub projects: Vec<craft_anything_engine::workspace::Workspace>,
     /// A preview server for a project opened without a run.
@@ -699,6 +701,7 @@ impl CraftApp {
             session_usage: Default::default(),
             last_run: Default::default(),
             workspace: None,
+            workspace_identity: None,
             projects: Vec::new(),
             preview: None,
             pins: Vec::new(),
