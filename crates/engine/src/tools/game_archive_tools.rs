@@ -6,8 +6,9 @@ use super::native_common::{params_json, spec};
 use super::static_input::{builder, format_err};
 use super::web_common::{Image, encode_png};
 use crate::tool::{CancelToken, Ctx, Effects, Requires, ToolOutput, ToolSpec, Toolset, parse_params, schema_of};
-use craft_anything_evidence::{Confidence, Coverage, ErrorCode, Limitation, Location, Subject, ToolError};
+use craft_anything_evidence::{Confidence, Coverage, CoverageStatus, ErrorCode, Limitation, Location, Subject, ToolError};
 use craft_anything_formats::godot_pck;
+use craft_anything_formats::unity_audio;
 use craft_anything_formats::unity_bundle;
 use craft_anything_formats::unity_serialized;
 use craft_anything_formats::unity_texture;
@@ -87,8 +88,8 @@ pub fn specs() -> Vec<ToolSpec> {
         spec(
             "game_unity_asset_export",
             "Take an asset out of a Unity game",
-            "Save one object of a Unity serialized file (absolute path of a .assets or level file, or of a bundle: then `file` picks the serialized file inside, the first by default) as a file anyone can open: a texture (Texture2D, by its path_id from game_unity_list) becomes a PNG at `output` (an absolute path that doesn't exist yet). Pixels are read inside the object or from the .resS file it streams from. Formats: Alpha8, R8, RGB24, RGBA32, ARGB32, BGRA32, RGB565, RGBA4444, ARGB4444, RHalf, RGHalf, RGBAHalf, RFloat, RGFloat, RGBAFloat, DXT1, DXT5, BC4, BC5, BC6H and BC7. Floating-point colours are shown in 8-bit sRGB and clip at white. Other formats (crunched, ASTC, ETC…) are refused with their name. Unity 2017.3 and later.",
-            "Save a picture from a Unity game as a PNG.",
+            "Save one object of a Unity serialized file (absolute path of a .assets or level file, or of a bundle: then `file` picks the serialized file inside, the first by default) as a file anyone can open, at `output` (an absolute path that doesn't exist yet), by its path_id from game_unity_list. A texture (Texture2D) becomes a PNG. A sound (AudioClip, Unity 5 and later) is read from the .resource file it's stored in: one in 16-bit PCM (Unity's uncompressed sound), mono or stereo, becomes a WAV, others (Vorbis, ADPCM…) are saved as the FMOD sound bank (FSB5) they're stored in; `output`'s extension is set to .wav or .fsb to match, and `saved_as` says which. Pixels are read inside the object or from the .resS file it streams from. Formats: Alpha8, R8, RGB24, RGBA32, ARGB32, BGRA32, RGB565, RGBA4444, ARGB4444, RHalf, RGHalf, RGBAHalf, RFloat, RGFloat, RGBAFloat, DXT1, DXT5, BC4, BC5, BC6H and BC7. Floating-point colours are shown in 8-bit sRGB and clip at white. Other formats (crunched, ASTC, ETC…) are refused with their name. Textures from Unity 2017.3 on.",
+            "Save a picture or a sound from a Unity game.",
             Toolset::Formats,
             Effects::EVIDENCE.union(Effects::WRITES_FILESYSTEM),
             Requires::Nothing,
@@ -186,7 +187,7 @@ fn read_at(file: &mut File, path: &Path, at: u64, len: u64) -> Result<Vec<u8>, T
 }
 
 /// An opened pak: its footer and the files its index lists.
-struct Pak {
+pub(super) struct Pak {
     file: File,
     path: PathBuf,
     len: u64,
@@ -429,19 +430,28 @@ fn game_unity_list(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolE
     let p: UnityListParams = parse_params(params)?;
     let name = Path::new(&p.path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let first = Serialized::open(&p.path, p.file.as_deref())?;
+    let invalid_serialized = match &first {
+        Serialized::Bundle { nodes, .. } if p.file.is_none() => nodes.iter().filter(|n| n.flags & 4 != 0 && !n.range_valid).count(),
+        _ => 0,
+    };
+    let mut lims: Vec<_> = match &first {
+        Serialized::Bundle { nodes, .. } => invalid_member_ranges(nodes).into_iter().collect(),
+        _ => Vec::new(),
+    };
     // A bundle is read file by file: every serialized file inside it, or only the one asked for.
     let (inner, inside) = match &first {
         Serialized::Bundle { nodes, .. } if p.file.is_none() => {
-            let all: Vec<String> = nodes.iter().filter(|n| n.flags & 4 != 0).map(|n| n.path.clone()).collect();
-            let inside = all.len();
-            (all.into_iter().take(MAX_COUNTED).collect::<Vec<_>>(), inside)
+            let inside = nodes.iter().filter(|n| n.flags & 4 != 0 && n.range_valid).count();
+            let members = nodes.iter().filter(|n| n.flags & 4 != 0 && n.range_valid).take(MAX_COUNTED).cloned().collect::<Vec<_>>();
+            (members, inside)
         }
-        Serialized::Bundle { node, .. } => (vec![node.path.clone()], 1),
+        Serialized::Bundle { node, .. } => (vec![node.clone()], 1),
         Serialized::File { .. } => (Vec::new(), 0),
     };
-    let mut sources = vec![(inner.first().cloned(), first)];
-    for f in inner.iter().skip(1) {
-        sources.push((Some(f.clone()), Serialized::open(&p.path, Some(f))?));
+    let mut sources = vec![(inner.first().map(|node| node.path.clone()), first)];
+    for node in inner.iter().skip(1) {
+        let source = sources[0].1.member(node)?;
+        sources.push((Some(node.path.clone()), source));
     }
     let (mut srcs, mut files) = (Vec::new(), Vec::new());
     for (file, mut src) in sources {
@@ -506,26 +516,32 @@ fn game_unity_list(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolE
         "offset": p.offset,
         "objects": page,
     });
-    let mut lims = Vec::new();
+    let incomplete = invalid_serialized > 0 || inside > inner.len();
     let summary = if inner.is_empty() {
         format!("{name}: a Unity {version} file for {platform} with {object_count} object(s).")
     } else {
-        result["serialized_files"] = json!(inner);
+        result["serialized_files"] = json!(inner.iter().map(|node| node.path.as_str()).collect::<Vec<_>>());
         if inside > inner.len() {
             lims.push(Limitation::new(
                 "files_unread",
                 format!("Only the first {} of the bundle's {inside} serialized files were read; pass `file` for the others.", inner.len()),
             ));
         }
-        format!("{name}: a Unity {version} bundle for {platform}; {} serialized file(s) with {object_count} object(s).", inner.len())
+        let at_least = if incomplete { "at least " } else { "" };
+        format!("{name}: a Unity {version} bundle for {platform}; {} serialized file(s) with {at_least}{object_count} object(s).", inner.len())
     };
     let shown_count = page.len() as u64;
+    let mut coverage = Coverage::page(shown_count, rows.len() as u64, p.offset as u64);
+    if incomplete {
+        coverage.status = CoverageStatus::Partial;
+        coverage.total = None;
+    }
     let b = builder(ctx, "game_unity_list", Subject { kind: "archive".into(), sha256: None, name: Some(name) }, params_json(&p))
         .result(result)
         .summary(summary)
         .confidence(Confidence::Observed)
         .limitations(lims)
-        .coverage(Coverage::page(shown_count, rows.len() as u64, p.offset as u64))
+        .coverage(coverage)
         .location(Location::new("path", p.path.clone()));
     Ok(ToolOutput::evidence(b.build()?))
 }
@@ -558,11 +574,32 @@ const MAX_BUNDLE_READ: u64 = 256 << 20;
 /// Serialized files inside a bundle whose objects are counted.
 const MAX_COUNTED: usize = 16;
 
+fn invalid_member_ranges(nodes: &[unity_bundle::Node]) -> Option<Limitation> {
+    let invalid = nodes.iter().filter(|n| !n.range_valid).count();
+    (invalid > 0).then(|| {
+        Limitation::new(
+            "invalid_member_ranges",
+            format!("{invalid} member range(s) lie outside the bundle's uncompressed data; their directory entries are kept but their contents are not read."),
+        )
+    })
+}
+
+fn check_bundle_member(node: &unity_bundle::Node) -> Result<(), ToolError> {
+    if !node.range_valid {
+        return Err(format_err(
+            craft_anything_formats::FormatError::Malformed(format!("{:?} lies outside the bundle's uncompressed data", node.path)),
+            "a Unity bundle member",
+        ));
+    }
+    Ok(())
+}
+
 /// The bundle block decompressed last (its index and bytes), so many small reads (objects'
 /// names) decompress each block once.
 type BlockCache = Option<(usize, Vec<u8>)>;
 
-/// A range of a bundle's uncompressed data, decompressing only the blocks it touches.
+/// A range of a bundle's uncompressed data. Stored blocks are read directly; compressed blocks
+/// are decompressed only when touched and kept for subsequent reads from the same block.
 fn bundle_range(
     file: &mut File,
     path: &Path,
@@ -580,16 +617,29 @@ fn bundle_range(
     for (i, b) in blocks.iter().enumerate() {
         let uend = ustart + u64::from(b.uncompressed_size);
         if uend > start && ustart < end {
-            if cache.as_ref().is_none_or(|(at, _)| *at != i) {
-                let raw = read_at(file, path, cstart, u64::from(b.compressed_size))?;
-                let data =
-                    unity_bundle::decompress(u32::from(b.flags & 0x3f), &raw, b.uncompressed_size).map_err(|e| format_err(e, "a Unity bundle's data"))?;
-                *cache = Some((i, data));
+            let from = start.saturating_sub(ustart);
+            let to = end.min(uend) - ustart;
+            if b.flags & 0x3f == 0 {
+                if b.compressed_size != b.uncompressed_size {
+                    return Err(format_err(
+                        craft_anything_formats::FormatError::Malformed("stored block size differs from its output size".into()),
+                        "a Unity bundle's data",
+                    ));
+                }
+                let at = cstart.checked_add(from).ok_or_else(|| {
+                    format_err(craft_anything_formats::FormatError::Malformed("stored block offset overflow".into()), "a Unity bundle's data")
+                })?;
+                out.extend_from_slice(&read_at(file, path, at, to - from)?);
+            } else {
+                if cache.as_ref().is_none_or(|(at, _)| *at != i) {
+                    let raw = read_at(file, path, cstart, u64::from(b.compressed_size))?;
+                    let data =
+                        unity_bundle::decompress(u32::from(b.flags & 0x3f), &raw, b.uncompressed_size).map_err(|e| format_err(e, "a Unity bundle's data"))?;
+                    *cache = Some((i, data));
+                }
+                let data = cache.as_ref().map_or(&[][..], |(_, d)| d.as_slice());
+                out.extend_from_slice(data.get(from as usize..to as usize).unwrap_or_default());
             }
-            let data = cache.as_ref().map_or(&[][..], |(_, d)| d.as_slice());
-            let from = start.saturating_sub(ustart) as usize;
-            let to = (end.min(uend) - ustart) as usize;
-            out.extend_from_slice(data.get(from..to).unwrap_or_default());
         }
         if uend >= end {
             break;
@@ -641,32 +691,42 @@ fn game_unity_bundle_list(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput
     ctx.report(None, format!("Reading {name}"));
     let table = read_at(&mut file, &path, h.table_offset, u64::from(h.table_size))?;
     let (blocks, nodes) = unity_bundle::table(&table, &h).map_err(|e| format_err(e, "a Unity bundle's block table"))?;
-    let mut lims = Vec::new();
+    let mut lims: Vec<_> = invalid_member_ranges(&nodes).into_iter().collect();
     let mut counted = BTreeMap::new();
-    for node in nodes.iter().filter(|n| n.flags & 4 != 0).take(MAX_COUNTED) {
+    for (index, node) in nodes.iter().enumerate().filter(|(_, n)| n.flags & 4 != 0 && n.range_valid).take(MAX_COUNTED) {
         ctx.cancel.check()?;
         match bundle_objects(&mut file, &path, &h, &blocks, node) {
             Ok(v) => {
-                counted.insert(node.path.as_str(), v);
+                counted.insert(index, v);
             }
             Err(e) => lims.push(Limitation::new("objects_unread", format!("{}'s objects couldn't be read: {}", node.path, e.message))),
         }
     }
     let serialized_total = nodes.iter().filter(|n| n.flags & 4 != 0).count();
-    if serialized_total > MAX_COUNTED {
+    let serialized_valid = nodes.iter().filter(|n| n.flags & 4 != 0 && n.range_valid).count();
+    if serialized_valid > MAX_COUNTED {
         lims.push(Limitation::new(
             "files_unread",
             format!(
-                "Only the first {MAX_COUNTED} of the bundle's {serialized_total} serialized files were read; pass `file` to game_unity_list for the others."
+                "Only the first {MAX_COUNTED} of the bundle's {serialized_valid} serialized files with valid ranges were read; pass `file` to game_unity_list for the others."
             ),
         ));
     }
-    let matching = matching(&nodes, |n| n.path.as_str(), p.filter.as_deref());
+    let needle = p.filter.as_deref().map(str::to_lowercase).filter(|f| !f.is_empty());
+    let matching: Vec<usize> = nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| needle.as_deref().is_none_or(|filter| n.path.to_lowercase().contains(filter)))
+        .map(|(index, _)| index)
+        .collect();
     let page: Vec<Value> = matching
         .iter()
         .skip(p.offset)
         .take(p.limit.clamp(1, 20_000))
-        .map(|n| json!({"path": n.path, "size": n.size, "offset": n.offset, "serialized": n.flags & 4 != 0, "objects": counted.get(n.path.as_str())}))
+        .map(|index| {
+            let n = &nodes[*index];
+            json!({"path": n.path, "size": n.size, "offset": n.offset, "serialized": n.flags & 4 != 0, "range_valid": n.range_valid, "objects": counted.get(index)})
+        })
         .collect();
     let block_compression = by_compression(blocks.iter().map(|b| unity_bundle::compression_name(u32::from(b.flags & 0x3f))));
     let result = json!({
@@ -683,7 +743,7 @@ fn game_unity_bundle_list(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput
         "files": page,
     });
     let objects: usize = counted.values().filter_map(|v| v["object_count"].as_u64()).sum::<u64>() as usize;
-    let at_least = if serialized_total > MAX_COUNTED { "at least " } else { "" };
+    let at_least = if counted.len() < serialized_total { "at least " } else { "" };
     let summary = format!("{name}: a Unity {} bundle with {} file(s) and {at_least}{objects} object(s).", h.unity_revision, nodes.len());
     let shown_count = page.len() as u64;
     let b = builder(ctx, "game_unity_bundle_list", Subject { kind: "archive".into(), sha256: None, name: Some(name) }, params_json(&p))
@@ -747,14 +807,36 @@ impl Serialized {
         let table = read_at(&mut file, &path, header.table_offset, u64::from(header.table_size))?;
         let (blocks, nodes) = unity_bundle::table(&table, &header).map_err(|e| format_err(e, "a Unity bundle's block table"))?;
         let node = match inner {
-            Some(want) => nodes.iter().find(|n| n.path.eq_ignore_ascii_case(want.trim())),
-            None => nodes.iter().find(|n| n.flags & 4 != 0),
+            Some(want) => nodes
+                .iter()
+                .find(|n| n.range_valid && n.path.eq_ignore_ascii_case(want.trim()))
+                .or_else(|| nodes.iter().find(|n| n.path.eq_ignore_ascii_case(want.trim()))),
+            None => nodes.iter().find(|n| n.flags & 4 != 0 && n.range_valid),
         }
         .cloned()
         .ok_or_else(|| {
             ToolError::new(ErrorCode::NotFound, "That serialized file isn't in the bundle.").with_remediation("game_unity_bundle_list shows the files inside.")
         })?;
+        check_bundle_member(&node)?;
         Ok(Serialized::Bundle { file, path, header: Box::new(header), blocks, nodes, node, cache: None })
+    }
+
+    /// Read another exact directory entry from this bundle. Paths can repeat, so reopening by
+    /// name could select a different member (including an invalid one).
+    fn member(&self, node: &unity_bundle::Node) -> Result<Self, ToolError> {
+        check_bundle_member(node)?;
+        let Self::Bundle { file, path, header, blocks, nodes, .. } = self else {
+            return Err(ToolError::invalid("A bundle member requires a Unity bundle source."));
+        };
+        Ok(Self::Bundle {
+            file: file.try_clone().map_err(|e| ToolError::io(path.display(), e))?,
+            path: path.clone(),
+            header: header.clone(),
+            blocks: blocks.clone(),
+            nodes: nodes.clone(),
+            node: node.clone(),
+            cache: None,
+        })
     }
 
     /// The serialized file's size.
@@ -787,7 +869,12 @@ impl Serialized {
                 read_at(&mut file, &other, offset, len)
             }
             Serialized::Bundle { file, path, header, blocks, nodes, cache, .. } => {
-                let node = nodes.iter().find(|n| n.path == name).ok_or_else(|| damaged(format!("{name} isn't in the bundle")))?;
+                let node = nodes
+                    .iter()
+                    .find(|n| n.path == name && n.range_valid)
+                    .or_else(|| nodes.iter().find(|n| n.path == name))
+                    .ok_or_else(|| damaged(format!("{name} isn't in the bundle")))?;
+                check_bundle_member(node)?;
                 if offset.checked_add(len).is_none_or(|end| end > node.size) {
                     return Err(damaged(format!("data lies outside {name}")));
                 }
@@ -809,19 +896,23 @@ fn game_unity_asset_export(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutpu
         ToolError::new(ErrorCode::NotFound, format!("There's no object with path id {}.", p.path_id))
             .with_remediation("game_unity_list (or game_unity_bundle_list for a bundle) shows the objects and their path ids.")
     })?;
-    if object.class_id != 28 {
+    if object.class_id != 28 && object.class_id != 83 {
         return Err(ToolError::unsupported(format!(
-            "{} objects can't be taken out yet; textures (Texture2D) can.",
+            "{} objects can't be taken out yet; textures (Texture2D) and sounds (AudioClip) can.",
             unity_serialized::class_name(object.class_id)
         )));
     }
-    ctx.report(None, format!("Reading texture {}", p.path_id));
+    let what = if object.class_id == 83 { "sound" } else { "texture" };
+    ctx.report(None, format!("Reading {what} {}", p.path_id));
     let version = known_version(&m.unity_version, Path::new(&p.path));
     if stripped(&version) {
-        return Err(ToolError::unsupported("This file doesn't say which Unity version wrote it, so its textures' layout isn't known.")
+        return Err(ToolError::unsupported(format!("This file doesn't say which Unity version wrote it, so its {what}s' layout isn't known."))
             .with_remediation("Pass a bundle that's inside the game's <Game>_Data folder, beside its globalgamemanagers file."));
     }
     let bytes = src.read(object.offset, u64::from(object.size))?;
+    if object.class_id == 83 {
+        return unity_sound_export(ctx, &p, &out, &mut src, &bytes, &version, h.big_endian);
+    }
     let t = unity_texture::parse(&bytes, &version, h.big_endian).map_err(|e| format_err(e, "a Unity texture"))?;
     let format = unity_texture::format_name(t.format);
     if u64::from(t.width) * u64::from(t.height) > MAX_PIXELS {
@@ -860,6 +951,110 @@ fn game_unity_asset_export(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutpu
     Ok(ToolOutput::evidence(b.build()?))
 }
 
+/// The largest sound taken out (256 MiB).
+const MAX_SOUND_BYTES: u64 = 256 * 1024 * 1024;
+
+/// `out` ending in `.extension`: a `.wav`, `.fsb` or `.ogg` it has is swapped, any other dot in its name kept.
+pub(super) fn with_sound_extension(out: &Path, extension: &str) -> PathBuf {
+    match out.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
+        Some("wav" | "fsb" | "ogg") => out.with_extension(extension),
+        _ => {
+            let mut name = out.as_os_str().to_owned();
+            name.push(".");
+            name.push(extension);
+            PathBuf::from(name)
+        }
+    }
+}
+
+/// Save an AudioClip: a WAV when its FSB5 bank holds one plain PCM sound, else the stored bytes.
+fn unity_sound_export(
+    ctx: &mut Ctx<'_>,
+    p: &ExportParams,
+    out: &Path,
+    src: &mut Serialized,
+    bytes: &[u8],
+    version: &str,
+    big_endian: bool,
+) -> Result<ToolOutput, ToolError> {
+    let clip = unity_audio::parse(bytes, version, big_endian).map_err(|e| format_err(e, "a Unity sound"))?;
+    let compression = unity_audio::compression_name(clip.compression);
+    if clip.stream.size > MAX_SOUND_BYTES {
+        return Err(ToolError::new(ErrorCode::OverLimit, format!("{} is {} bytes; the limit is 256 MiB", clip.name, clip.stream.size)));
+    }
+    let stored = src.stream(&clip.stream.path, clip.stream.offset, clip.stream.size)?;
+    let mut lims = Vec::new();
+    let (saved, codec, wav) = if stored.starts_with(unity_audio::FSB5) {
+        match unity_audio::bank(&stored) {
+            Ok(bank) => {
+                let codec = unity_audio::codec_name(bank.codec);
+                let wav = match bank.samples.as_slice() {
+                    [one] => unity_audio::wav(&bank, one, &stored),
+                    _ => None,
+                };
+                if wav.is_none() {
+                    lims.push(Limitation::new(
+                        "stored_as_is",
+                        format!(
+                            "{} is stored as {codec} in an FMOD sound bank (FSB5) of {} sample(s); it's saved as that bank, which tools that read FSB files can convert.",
+                            clip.name,
+                            bank.samples.len()
+                        ),
+                    ));
+                }
+                (if wav.is_some() { "wav" } else { "fsb5" }, Some(codec), wav)
+            }
+            Err(e) => {
+                lims.push(Limitation::new("stored_as_is", format!("{}'s FMOD sound bank isn't one that's read here ({e}); it's saved as it is.", clip.name)));
+                ("fsb5", None, None)
+            }
+        }
+    } else {
+        lims.push(Limitation::new("stored_as_is", format!("{}'s stored sound isn't an FMOD sound bank; its bytes are saved as they are.", clip.name)));
+        ("stored", None, None)
+    };
+    // What's saved isn't known before the sound is read, so the file gets the extension it needs.
+    let out = match saved {
+        "wav" => with_sound_extension(out, "wav"),
+        "fsb5" => with_sound_extension(out, "fsb"),
+        _ => out.to_path_buf(),
+    };
+    if out.exists() {
+        return Err(ToolError::invalid(format!("{} already exists", out.display())).with_remediation("Pick a new file name; nothing is overwritten."));
+    }
+    let file = wav.unwrap_or(stored);
+    crate::project::write_atomic(&out, &file)?;
+    let result = json!({
+        "path_id": p.path_id,
+        "name": clip.name,
+        "class": "AudioClip",
+        "channels": clip.channels,
+        "frequency": clip.frequency,
+        "seconds": clip.length,
+        "compression": compression,
+        "codec": codec,
+        "saved_as": saved,
+        "streamed_from": clip.stream.path,
+        "output": out.display().to_string(),
+        "size": file.len(),
+        "sha256": craft_anything_evidence::sha256_hex(&file),
+    });
+    let shown = match saved {
+        "wav" => "a WAV file".to_string(),
+        "fsb5" => "its FMOD sound bank".to_string(),
+        _ => "its stored bytes".to_string(),
+    };
+    let name = Path::new(&p.path).file_name().map(|n| n.to_string_lossy().into_owned());
+    let b = builder(ctx, "game_unity_asset_export", Subject { kind: "archive".into(), sha256: None, name }, params_json(p))
+        .result(result)
+        .summary(format!("Saved sound \"{}\" ({:.2} s, {compression}) as {shown} at {}.", clip.name, clip.length, out.display()))
+        .confidence(Confidence::Observed)
+        .coverage(Coverage::complete(1))
+        .limitations(lims)
+        .location(Location::new("path", out.display().to_string()));
+    Ok(ToolOutput::evidence(b.build()?))
+}
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UnrealTextureParams {
@@ -876,7 +1071,7 @@ pub struct UnrealTextureParams {
 }
 
 /// Where a package's files come from.
-enum PackageSource {
+pub(super) enum PackageSource {
     /// Inside a pak: the entries named `<stem>.<extension>` (`stem` lower case, as shown).
     Pak { pak: Box<Pak>, stem: String },
     /// Loose files: `<stem>.<extension>` on disk.
@@ -885,7 +1080,7 @@ enum PackageSource {
 
 impl PackageSource {
     /// One of the package's files, or None when it has none with that extension.
-    fn part(&mut self, extension: &str, cancel: &CancelToken) -> Result<Option<Vec<u8>>, ToolError> {
+    pub(super) fn part(&mut self, extension: &str, cancel: &CancelToken) -> Result<Option<Vec<u8>>, ToolError> {
         match self {
             PackageSource::Pak { pak, stem } => {
                 let want = format!("{stem}.{extension}");
@@ -905,19 +1100,35 @@ impl PackageSource {
     }
 }
 
-fn game_unreal_texture_export(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolError> {
-    let p: UnrealTextureParams = parse_params(params)?;
-    if !p.permission {
-        return Err(ToolError::new(
-            ErrorCode::ConsentRequired,
-            "Unpacking a game's files needs your confirmation that you may: you made the game, or its rights holder allows it.",
-        )
-        .with_remediation("If that's so, ask again with permission set to true."));
+/// Unpacking a game's files needs the person's word that they may.
+pub(super) fn unpack_permission(permission: bool) -> Result<(), ToolError> {
+    if permission {
+        return Ok(());
     }
-    let out = new_output(&p.output)?;
-    let raw = PathBuf::from(&p.path);
+    Err(ToolError::new(
+        ErrorCode::ConsentRequired,
+        "Unpacking a game's files needs your confirmation that you may: you made the game, or its rights holder allows it.",
+    )
+    .with_remediation("If that's so, ask again with permission set to true."))
+}
+
+/// A cooked package's first export of one class, with where its other files are.
+pub(super) struct UnrealExport {
+    pub(super) source: PackageSource,
+    /// The package as the person named it.
+    pub(super) shown_name: String,
+    pub(super) names: Vec<String>,
+    pub(super) export: unreal_texture::Export,
+    /// The export's data, from the .uexp.
+    pub(super) data: Vec<u8>,
+}
+
+/// Open `path` (a .pak with the package's .uasset `file` inside, or a loose .uasset) and read its
+/// first export of `class`, a `what` (texture, sound) to the person.
+pub(super) fn unreal_export(ctx: &mut Ctx<'_>, path: &str, file: Option<&str>, class: &str, what: &str) -> Result<UnrealExport, ToolError> {
+    let raw = PathBuf::from(path);
     if !raw.is_absolute() {
-        return Err(ToolError::invalid(format!("{:?} is not an absolute path", p.path)).with_remediation("Pass the full path of the .pak or .uasset file."));
+        return Err(ToolError::invalid(format!("{path:?} is not an absolute path")).with_remediation("Pass the full path of the .pak or .uasset file."));
     }
     let cancel = ctx.cancel.clone();
     let loose = raw.extension().is_some_and(|x| x.eq_ignore_ascii_case("uasset"));
@@ -925,12 +1136,12 @@ fn game_unreal_texture_export(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOu
         let name = raw.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         (PackageSource::Loose { stem: raw.with_extension("") }, name)
     } else {
-        let pak = open_pak(ctx, &p.path)?;
+        let pak = open_pak(ctx, path)?;
         if pak.footer.encrypted_index {
             return Err(ToolError::unsupported(format!("{}'s index is encrypted, so its files can't be found without the game's AES key.", pak.name)));
         }
-        let file = p.file.as_deref().map(str::trim).filter(|f| !f.is_empty()).ok_or_else(|| {
-            ToolError::invalid("file is needed for a pak: the texture's .uasset path inside it")
+        let file = file.map(str::trim).filter(|f| !f.is_empty()).ok_or_else(|| {
+            ToolError::invalid(format!("file is needed for a pak: the {what}'s .uasset path inside it"))
                 .with_remediation("game_pak_list shows the paths; filter it by .uasset.")
         })?;
         let lower = file.trim_start_matches("../").to_lowercase();
@@ -940,21 +1151,31 @@ fn game_unreal_texture_export(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOu
     ctx.report(None, format!("Reading {shown_name}"));
     let missing = |ext: &str| {
         ToolError::new(ErrorCode::NotFound, format!("There's no .{ext} for {shown_name}."))
-            .with_remediation("A cooked texture is a .uasset with a .uexp beside it; game_pak_list shows what the pak holds.")
+            .with_remediation(format!("A cooked {what} is a .uasset with a .uexp beside it; game_pak_list shows what the pak holds."))
     };
     let uasset = source.part("uasset", &cancel)?.ok_or_else(|| missing("uasset"))?;
     let uexp = source.part("uexp", &cancel)?.ok_or_else(|| missing("uexp"))?;
     let package = unreal_texture::package(&uasset).map_err(|e| format_err(e, "an Unreal package"))?;
-    let export = package.exports.iter().find(|e| e.class == "Texture2D").ok_or_else(|| {
+    let export = package.exports.iter().find(|e| e.class == class).cloned().ok_or_else(|| {
         let classes: Vec<&str> = package.exports.iter().map(|e| e.class.as_str()).collect();
-        ToolError::unsupported(format!("{shown_name} isn't a texture (it holds {}).", classes.join(", ")))
+        ToolError::unsupported(format!("{shown_name} isn't a {what} (it holds {}).", classes.join(", ")))
     })?;
-    let start = export.serial_offset.checked_sub(package.header_size).ok_or_else(|| damaged("a texture's data lies before its .uexp"))?;
+    let start = export.serial_offset.checked_sub(package.header_size).ok_or_else(|| damaged(format!("a {what}'s data lies before its .uexp")))?;
     let data = usize::try_from(start)
         .ok()
         .and_then(|s| uexp.get(s..s.checked_add(usize::try_from(export.serial_size).ok()?)?))
-        .ok_or_else(|| damaged("a texture's data lies outside its .uexp"))?;
-    let texture = unreal_texture::texture(data, &package.names).map_err(|e| format_err(e, "an Unreal texture"))?;
+        .ok_or_else(|| damaged(format!("a {what}'s data lies outside its .uexp")))?
+        .to_vec();
+    Ok(UnrealExport { source, shown_name, names: package.names, export, data })
+}
+
+fn game_unreal_texture_export(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolError> {
+    let p: UnrealTextureParams = parse_params(params)?;
+    unpack_permission(p.permission)?;
+    let out = new_output(&p.output)?;
+    let UnrealExport { mut source, shown_name, names, export, data } = unreal_export(ctx, &p.path, p.file.as_deref(), "Texture2D", "texture")?;
+    let cancel = ctx.cancel.clone();
+    let texture = unreal_texture::texture(&data, &names).map_err(|e| format_err(e, "an Unreal texture"))?;
     let layout = unreal_texture::layout(&texture.pixel_format)
         .ok_or_else(|| ToolError::unsupported(format!("{} is a {} texture, which isn't decoded here.", export.name, texture.pixel_format)))?;
     // The largest mip whose pixels the game ships (bigger ones can be stripped or kept elsewhere).
@@ -1156,13 +1377,13 @@ fn game_archives_list(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, To
     Ok(ToolOutput::evidence(b.build()?))
 }
 
-fn damaged(what: impl Into<String>) -> ToolError {
+pub(super) fn damaged(what: impl Into<String>) -> ToolError {
     ToolError::new(ErrorCode::NotSupported, format!("The pak looks damaged: {}", what.into()))
         .with_remediation("Check the game's files (Steam: Verify integrity).")
 }
 
 /// A new output file's path: absolute, not there yet, in a folder that is.
-fn new_output(raw: &str) -> Result<PathBuf, ToolError> {
+pub(super) fn new_output(raw: &str) -> Result<PathBuf, ToolError> {
     let out = PathBuf::from(raw);
     if !out.is_absolute() {
         return Err(ToolError::invalid("output must be an absolute path"));
@@ -1493,6 +1714,123 @@ mod tests {
         assert!(call(json!({"path": bundle})).unwrap_err().message.contains("Unity bundle"));
     }
 
+    /// Write one stored block with a small serialized file at any offset, leaving the rest sparse.
+    fn unity_stored_fixture(path: &std::path::Path, uncompressed: u32, stored: u32, offset: u64) {
+        use std::io::{Seek, SeekFrom, Write};
+        let assets = craft_anything_testkit::games::unity_assets();
+        assert!(offset + assets.len() as u64 <= u64::from(stored));
+        let mut table = vec![0; 16];
+        table.extend_from_slice(&1i32.to_be_bytes());
+        table.extend_from_slice(&uncompressed.to_be_bytes());
+        table.extend_from_slice(&stored.to_be_bytes());
+        table.extend_from_slice(&0u16.to_be_bytes());
+        table.extend_from_slice(&1i32.to_be_bytes());
+        table.extend_from_slice(&offset.to_be_bytes());
+        table.extend_from_slice(&(assets.len() as u64).to_be_bytes());
+        table.extend_from_slice(&4u32.to_be_bytes());
+        table.extend_from_slice(b"CAB-stored\0");
+        let mut prefix = b"UnityFS\0".to_vec();
+        prefix.extend_from_slice(&8u32.to_be_bytes());
+        prefix.extend_from_slice(b"fixture\0fixture\0");
+        let size_at = prefix.len();
+        prefix.extend_from_slice(&0u64.to_be_bytes());
+        prefix.extend_from_slice(&(table.len() as u32).to_be_bytes());
+        prefix.extend_from_slice(&(table.len() as u32).to_be_bytes());
+        prefix.extend_from_slice(&0x240u32.to_be_bytes());
+        prefix.resize(prefix.len().next_multiple_of(16), 0);
+        prefix.extend_from_slice(&table);
+        prefix.resize(prefix.len().next_multiple_of(16), 0);
+        let data_at = prefix.len() as u64;
+        let size = data_at + u64::from(stored);
+        prefix[size_at..size_at + 8].copy_from_slice(&size.to_be_bytes());
+        let mut file = std::fs::File::create(path).unwrap();
+        file.write_all(&prefix).unwrap();
+        file.set_len(size).unwrap();
+        file.seek(SeekFrom::Start(data_at + offset)).unwrap();
+        file.write_all(&assets).unwrap();
+    }
+
+    /// Metadata at either end of a large stored block remains readable without taking the block.
+    #[cfg(unix)]
+    #[test]
+    fn unity_stored_large_blocks_support_bundle_listing() {
+        let e = Engine::new(crate::testing::session());
+        let dir = tempfile::tempdir().unwrap();
+        let block_size = (512 << 20) + 1;
+        let tail = u64::from(block_size) - craft_anything_testkit::games::unity_assets().len() as u64;
+        for offset in [0, tail] {
+            let path = dir.path().join(format!("stored-{offset}.bundle"));
+            unity_stored_fixture(&path, block_size, block_size, offset);
+            let v = e.call("game_unity_bundle_list", json!({"path": path}), CallOptions::new(Caller::Mcp)).unwrap().to_json();
+            assert_eq!(v["result"]["files"][0]["objects"]["object_count"], 4, "{v}");
+            assert!(!v["limitations"].as_array().unwrap().iter().any(|l| l["code"] == "objects_unread"), "{v}");
+        }
+    }
+
+    /// The public object-listing tool can read an object's name near a large block's end.
+    #[cfg(unix)]
+    #[test]
+    fn unity_stored_large_blocks_support_object_listing() {
+        let e = Engine::new(crate::testing::session());
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stored.bundle");
+        let block_size = (512 << 20) + 1;
+        let offset = u64::from(block_size) - craft_anything_testkit::games::unity_assets().len() as u64;
+        unity_stored_fixture(&path, block_size, block_size, offset);
+        let v = e.call("game_unity_list", json!({"path": path, "filter": "Grass"}), CallOptions::new(Caller::Mcp)).unwrap().to_json();
+        assert_eq!(v["result"]["matching"], 1, "{v}");
+        assert_eq!(v["result"]["objects"][0]["name"], "Grass");
+    }
+
+    /// A range shortcut must preserve the stored-versus-decoded length check for touched blocks.
+    #[test]
+    fn unity_stored_small_blocks_preserve_size_validation() {
+        let e = Engine::new(crate::testing::session());
+        let dir = tempfile::tempdir().unwrap();
+        let block_size = 1 << 20;
+        for stored in [block_size, block_size - 1, block_size + 1] {
+            let path = dir.path().join(format!("stored-{stored}.bundle"));
+            unity_stored_fixture(&path, block_size, stored, 0);
+            let result = e.call("game_unity_list", json!({"path": path}), CallOptions::new(Caller::Mcp));
+            if stored == block_size {
+                assert_eq!(result.unwrap().to_json()["result"]["object_count"], 4);
+            } else {
+                assert!(result.is_err(), "inconsistent stored block sizes must not become readable");
+            }
+        }
+    }
+
+    /// Mixed blocks and repeated reads keep their byte offsets across the two reading paths.
+    #[test]
+    fn unity_stored_ranges_cross_compressed_blocks() {
+        use craft_anything_formats::unity_bundle::{Block, Header};
+        let packed = craft_anything_testkit::games::lz4_literals(b"cde");
+        let bytes = [b"ab".as_slice(), packed.as_slice(), b"fgh".as_slice()].concat();
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut file, &bytes).unwrap();
+        let h = Header {
+            format_version: 8,
+            unity_version: "fixture".into(),
+            unity_revision: "fixture".into(),
+            size: bytes.len() as u64,
+            flags: 0,
+            table_offset: 0,
+            table_size: 0,
+            table_uncompressed_size: 0,
+            data_offset: 0,
+        };
+        let blocks = [
+            Block { uncompressed_size: 2, compressed_size: 2, flags: 0 },
+            Block { uncompressed_size: 3, compressed_size: packed.len() as u32, flags: 2 },
+            Block { uncompressed_size: 3, compressed_size: 3, flags: 0 },
+        ];
+        let path = file.path().to_path_buf();
+        let mut cache = None;
+        for (start, want) in [(1, b"bcdefg".as_slice()), (3, b"de"), (0, b"abcdefgh"), (7, b"h"), (4, b"")] {
+            assert_eq!(super::bundle_range(file.as_file_mut(), &path, &h, &blocks, start, want.len() as u64, &mut cache).unwrap(), want);
+        }
+    }
+
     #[test]
     fn lists_and_saves_the_textures_of_a_bundles_serialized_files() {
         use craft_anything_testkit::games::{unity_assets, unity_bundle_files, unity_serialized_file, unity_texture2d};
@@ -1531,6 +1869,194 @@ mod tests {
         assert_eq!(v["result"]["name"].as_str(), Some("Wall"), "{v}");
         let png = crate::tools::web_common::decode_png(&std::fs::read(&out).unwrap()).unwrap();
         assert!(png.rgba.as_chunks::<4>().0.iter().all(|p| *p == [255, 0, 0, 255]));
+    }
+
+    fn unity_nodes_fixture(data: &[u8], nodes: &[(&str, u64, u64, u32)]) -> Vec<u8> {
+        let mut table = vec![0; 16];
+        table.extend_from_slice(&1i32.to_be_bytes());
+        table.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        table.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        table.extend_from_slice(&0u16.to_be_bytes());
+        table.extend_from_slice(&(nodes.len() as i32).to_be_bytes());
+        for (name, offset, size, flags) in nodes {
+            table.extend_from_slice(&offset.to_be_bytes());
+            table.extend_from_slice(&size.to_be_bytes());
+            table.extend_from_slice(&flags.to_be_bytes());
+            table.extend_from_slice(name.as_bytes());
+            table.push(0);
+        }
+        let mut bytes = b"UnityFS\0".to_vec();
+        bytes.extend_from_slice(&8u32.to_be_bytes());
+        bytes.extend_from_slice(b"fixture\0fixture\0");
+        let size_at = bytes.len();
+        bytes.extend_from_slice(&0u64.to_be_bytes());
+        bytes.extend_from_slice(&(table.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(&(table.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(&0x240u32.to_be_bytes());
+        bytes.resize(bytes.len().next_multiple_of(16), 0);
+        bytes.extend_from_slice(&table);
+        bytes.resize(bytes.len().next_multiple_of(16), 0);
+        bytes.extend_from_slice(data);
+        let file_len = bytes.len() as u64;
+        bytes[size_at..size_at + 8].copy_from_slice(&file_len.to_be_bytes());
+        bytes
+    }
+
+    #[test]
+    fn unity_nodes_bundle_listing_preserves_valid_siblings() {
+        let e = Engine::new(crate::testing::session());
+        let assets = craft_anything_testkit::games::unity_assets();
+        let n = assets.len() as u64;
+        let data = [assets.as_slice(), assets.as_slice()].concat();
+        let nodes = [
+            ("bad-start", 2 * n + 1, 0, 4),
+            ("first", 0, n, 4),
+            ("bad-end", 2 * n - 1, 2, 4),
+            ("second", n, n, 4),
+            ("bad-overflow", u64::MAX, 1, 0),
+            ("empty-end", 2 * n, 0, 0),
+        ];
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mixed.bundle");
+        std::fs::write(&path, unity_nodes_fixture(&data, &nodes)).unwrap();
+        let v = e.call("game_unity_bundle_list", json!({"path": path}), CallOptions::new(Caller::Mcp)).unwrap().to_json();
+        let files = v["result"]["files"].as_array().unwrap();
+        assert_eq!(v["result"]["file_count"], 6);
+        assert_eq!(files.iter().map(|f| f["range_valid"].as_bool().unwrap()).collect::<Vec<_>>(), [false, true, false, true, false, true]);
+        for i in [1, 3] {
+            assert_eq!(files[i]["objects"]["object_count"], 4);
+            assert_eq!(files[i]["offset"], nodes[i].1);
+        }
+        assert!(files[0]["objects"].is_null());
+        assert_eq!(v["coverage"]["status"], "complete", "all directory entries, including invalid ones, were listed");
+        assert!(v["summary"].as_str().unwrap().contains("at least 8 object(s)"), "{v}");
+        assert!(
+            v["limitations"].as_array().unwrap().iter().any(|l| l["code"] == "invalid_member_ranges" && l["message"].as_str().unwrap().contains("3")),
+            "{v}"
+        );
+        std::fs::write(&path, unity_nodes_fixture(&data, &[nodes[0], nodes[2], nodes[4]])).unwrap();
+        let v = e.call("game_unity_bundle_list", json!({"path": path}), CallOptions::new(Caller::Mcp)).unwrap().to_json();
+        assert_eq!(v["result"]["file_count"], 3);
+        assert!(v["result"]["files"].as_array().unwrap().iter().all(|f| f["range_valid"] == false));
+    }
+
+    #[test]
+    fn unity_nodes_object_listing_skips_invalid_members() {
+        let e = Engine::new(crate::testing::session());
+        let assets = craft_anything_testkit::games::unity_assets();
+        let n = assets.len() as u64;
+        let data = [assets.as_slice(), assets.as_slice()].concat();
+        let nodes = [("bad-first", 2 * n, 1, 4), ("first", 0, n, 4), ("bad-middle", u64::MAX, 2, 4), ("second", n, n, 4)];
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mixed.bundle");
+        std::fs::write(&path, unity_nodes_fixture(&data, &nodes)).unwrap();
+        let v = e.call("game_unity_list", json!({"path": path, "filter": "Grass"}), CallOptions::new(Caller::Mcp)).unwrap().to_json();
+        assert_eq!(v["result"]["serialized_files"], json!(["first", "second"]));
+        assert_eq!(v["result"]["object_count"], 8);
+        assert_eq!(v["result"]["matching"], 2);
+        assert_eq!(v["result"]["objects"][1]["file"], "second");
+        assert_eq!(v["coverage"]["status"], "partial");
+        assert!(v["coverage"]["total"].is_null());
+        assert!(v["summary"].as_str().unwrap().contains("at least 8 object(s)"));
+        assert!(v["limitations"].as_array().unwrap().iter().any(|l| l["code"] == "invalid_member_ranges"), "{v}");
+        let v = e.call("game_unity_list", json!({"path": path, "file": "second"}), CallOptions::new(Caller::Mcp)).unwrap().to_json();
+        assert_eq!(v["result"]["object_count"], 4);
+        assert_eq!(v["coverage"]["status"], "complete");
+        let v = e.call("game_unity_list", json!({"path": path, "offset": 100}), CallOptions::new(Caller::Mcp)).unwrap().to_json();
+        assert!(v["result"]["objects"].as_array().unwrap().is_empty());
+        assert_eq!(v["coverage"]["status"], "partial");
+        assert!(v["coverage"]["total"].is_null());
+    }
+
+    #[test]
+    fn unity_nodes_bad_members_do_not_use_the_metadata_read_allowance() {
+        let e = Engine::new(crate::testing::session());
+        let assets = craft_anything_testkit::games::unity_assets();
+        let n = assets.len() as u64;
+        let names: Vec<_> = (0..20).map(|i| format!("bad-{i}")).collect();
+        let mut nodes: Vec<_> = names.iter().map(|name| (name.as_str(), n, 1, 4)).collect();
+        nodes.push(("good", 0, n, 4));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("many-bad.bundle");
+        std::fs::write(&path, unity_nodes_fixture(&assets, &nodes)).unwrap();
+        let v = e.call("game_unity_bundle_list", json!({"path": path}), CallOptions::new(Caller::Mcp)).unwrap().to_json();
+        assert_eq!(v["result"]["files"][20]["objects"]["object_count"], 4);
+        assert!(v["limitations"].as_array().unwrap().iter().any(|l| l["code"] == "invalid_member_ranges"), "{v}");
+    }
+
+    #[test]
+    fn unity_nodes_duplicate_paths_keep_their_member_identity() {
+        use craft_anything_testkit::games::{unity_assets, unity_serialized_file};
+        let e = Engine::new(crate::testing::session());
+        let assets = unity_assets();
+        let empty = unity_serialized_file("2022.3.62f1", &[]);
+        let n = assets.len() as u64;
+        let data = [assets.as_slice(), assets.as_slice(), empty.as_slice()].concat();
+        let nodes = [("shared", u64::MAX, 1, 4), ("first", 0, n, 4), ("shared", n, n, 4), ("shared", 2 * n, empty.len() as u64, 4)];
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("same-name.bundle");
+        std::fs::write(&path, unity_nodes_fixture(&data, &nodes)).unwrap();
+        let v = e.call("game_unity_bundle_list", json!({"path": path}), CallOptions::new(Caller::Mcp)).unwrap().to_json();
+        let files = &v["result"]["files"];
+        assert!(files[0]["objects"].is_null(), "invalid members must not inherit a same-name member's metadata: {v}");
+        assert_eq!(files[1]["objects"]["object_count"], 4);
+        assert_eq!(files[2]["objects"]["object_count"], 4);
+        assert_eq!(files[3]["objects"]["object_count"], 0);
+        let v = e
+            .call("game_unity_bundle_list", json!({"path": path, "filter": "SHARED", "offset": 2, "limit": 1}), CallOptions::new(Caller::Mcp))
+            .unwrap()
+            .to_json();
+        assert_eq!(v["result"]["files"][0]["objects"]["object_count"], 0);
+        let v = e.call("game_unity_list", json!({"path": path}), CallOptions::new(Caller::Mcp)).unwrap().to_json();
+        assert_eq!(v["result"]["serialized_files"], json!(["first", "shared", "shared"]));
+        assert_eq!(v["result"]["object_count"], 8);
+        let v = e.call("game_unity_list", json!({"path": path, "file": "shared"}), CallOptions::new(Caller::Mcp)).unwrap().to_json();
+        assert_eq!(v["result"]["object_count"], 4, "select the first valid matching member");
+    }
+
+    #[test]
+    fn unity_nodes_texture_export_preserves_valid_members_and_refuses_bad_ranges() {
+        use craft_anything_testkit::games::{unity_serialized_file, unity_texture2d};
+        let e = Engine::new(crate::testing::session());
+        let dir = tempfile::tempdir().unwrap();
+        let red = [255, 0, 0, 255];
+        let texture = unity_texture2d("2022.3.62f1", "Wall", 1, 1, 4, None, Some(("archive:/good/pixels.resS", 0, 4)));
+        let assets = unity_serialized_file("2022.3.62f1", &[(28, texture)]);
+        let n = assets.len() as u64;
+        let data = [assets.as_slice(), &red].concat();
+        let nodes = [("bad", u64::MAX, 1, 4), ("good", 0, n, 4), ("pixels.resS", u64::MAX, 4, 0), ("pixels.resS", n, 4, 0)];
+        let path = dir.path().join("texture.bundle");
+        std::fs::write(&path, unity_nodes_fixture(&data, &nodes)).unwrap();
+        let out = dir.path().join("wall.png");
+        let v = e.call("game_unity_asset_export", json!({"path": path, "path_id": 1, "output": out}), CallOptions::new(Caller::Mcp)).unwrap().to_json();
+        assert_eq!(v["result"]["name"], "Wall");
+        assert_eq!(crate::tools::web_common::decode_png(&std::fs::read(&out).unwrap()).unwrap().rgba, red);
+        for tool in ["game_unity_list", "game_unity_asset_export"] {
+            let mut params = json!({"path": path, "file": "bad"});
+            if tool == "game_unity_asset_export" {
+                params["path_id"] = json!(1);
+                params["output"] = json!(dir.path().join("bad.png"));
+            }
+            let err = e.call(tool, params, CallOptions::new(Caller::Mcp)).unwrap_err();
+            assert!(err.message.contains("outside the bundle's uncompressed data"), "{err:?}");
+        }
+        assert!(!dir.path().join("bad.png").exists());
+    }
+
+    #[test]
+    fn unity_nodes_invalid_streams_are_not_read() {
+        use craft_anything_testkit::games::{unity_serialized_file, unity_texture2d};
+        let e = Engine::new(crate::testing::session());
+        let texture = unity_texture2d("2022.3.62f1", "Wall", 1, 1, 4, None, Some(("pixels.resS", 0, 4)));
+        let assets = unity_serialized_file("2022.3.62f1", &[(28, texture)]);
+        let nodes = [("good", 0, assets.len() as u64, 4), ("pixels.resS", u64::MAX, 4, 0)];
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad-stream.bundle");
+        std::fs::write(&path, unity_nodes_fixture(&assets, &nodes)).unwrap();
+        let out = dir.path().join("bad.png");
+        let err = e.call("game_unity_asset_export", json!({"path": path, "path_id": 1, "output": out}), CallOptions::new(Caller::Mcp)).unwrap_err();
+        assert!(err.message.contains("outside the bundle's uncompressed data"), "{err:?}");
+        assert!(!out.exists());
     }
 
     #[test]
@@ -1629,6 +2155,80 @@ mod tests {
         let v = call(&b, 2, "from-bundle.png").unwrap().to_json();
         assert_eq!(v["result"]["width"].as_u64(), Some(4), "{v}");
         assert!(decode("from-bundle.png").rgba.as_chunks::<4>().0.iter().all(|p| *p == [255, 0, 0, 255]));
+    }
+
+    #[test]
+    fn saves_unity_sounds_as_wav_or_as_their_bank() {
+        use craft_anything_testkit::games::{fsb5_bank, unity_audioclip, unity_bundle_files, unity_serialized_file};
+        let e = Engine::new(crate::testing::session());
+        let dir = tempfile::tempdir().unwrap();
+        // A PCM16 mono bank and a Vorbis one, one after the other in the .resource file.
+        let pcm: Vec<u8> = (1..=8).collect();
+        let wav_bank = fsb5_bank(2, &[(8, 1, 4, &pcm)]);
+        let vorbis_bank = fsb5_bank(15, &[(9, 2, 960, &[5; 40])]);
+        let mut resource = wav_bank.clone();
+        resource.extend_from_slice(&vorbis_bank);
+        let at = wav_bank.len() as u64;
+        let mut broken = fsb5_bank(2, &[(8, 1, 4, &pcm)]);
+        broken[4] = 9; // a version that isn't read
+        let broken_at = resource.len() as u64;
+        resource.extend_from_slice(&broken);
+        let resource_name = "sharedassets0.resource";
+        let objects = [
+            (83, unity_audioclip("2019.4.19f1", "Click", 1, 44100, 0.0001, 0, (resource_name, 0, at))),
+            (83, unity_audioclip("2019.4.19f1", "Theme", 2, 48000, 0.02, 1, (resource_name, at, vorbis_bank.len() as u64))),
+            (83, unity_audioclip("2019.4.19f1", "Raw", 1, 8000, 0.1, 0, (resource_name, 2, 6))),
+            (83, unity_audioclip("2019.4.19f1", "Huge", 1, 8000, 0.1, 0, (resource_name, 0, 1 << 40))),
+            (83, unity_audioclip("2019.4.19f1", "Odd", 1, 44100, 0.0001, 0, (resource_name, broken_at, broken.len() as u64))),
+        ];
+        std::fs::write(dir.path().join("sharedassets0.assets"), unity_serialized_file("2019.4.19f1", &objects)).unwrap();
+        std::fs::write(dir.path().join(resource_name), &resource).unwrap();
+        let file = dir.path().join("sharedassets0.assets");
+        let call = |path: &std::path::Path, id: i64, out: &str| {
+            e.call("game_unity_asset_export", json!({"path": path, "path_id": id, "output": dir.path().join(out)}), CallOptions::new(Caller::Mcp))
+        };
+        let v = call(&file, 1, "click.wav").unwrap().to_json();
+        let r = &v["result"];
+        assert_eq!(
+            (r["class"].as_str(), r["compression"].as_str(), r["codec"].as_str(), r["saved_as"].as_str()),
+            (Some("AudioClip"), Some("PCM"), Some("PCM16"), Some("wav")),
+            "{v}"
+        );
+        assert!(v["limitations"].as_array().unwrap().is_empty(), "{v}");
+        let wav = std::fs::read(dir.path().join("click.wav")).unwrap();
+        assert_eq!((&wav[..4], &wav[44..]), (b"RIFF".as_slice(), pcm.as_slice()));
+        assert_eq!(r["sha256"].as_str(), Some(craft_anything_evidence::sha256_hex(&wav).as_str()));
+        // Vorbis is saved as the bank it's stored in, and says so.
+        let v = call(&file, 2, "theme.fsb").unwrap().to_json();
+        assert_eq!((v["result"]["codec"].as_str(), v["result"]["saved_as"].as_str()), (Some("Vorbis"), Some("fsb5")));
+        assert_eq!(v["limitations"][0]["code"].as_str(), Some("stored_as_is"));
+        assert_eq!(std::fs::read(dir.path().join("theme.fsb")).unwrap(), vorbis_bank);
+        // Asked for a WAV, a bank gets the extension it needs; a bank that isn't read is still saved.
+        let v = call(&file, 2, "theme-again.wav").unwrap().to_json();
+        assert_eq!(v["result"]["output"].as_str(), Some(dir.path().join("theme-again.fsb").to_str().unwrap()));
+        assert!(!dir.path().join("theme-again.wav").exists());
+        assert!(call(&file, 2, "theme.wav").unwrap_err().message.contains("already exists"), "theme.fsb is there");
+        let v = call(&file, 5, "odd.sharedassets0-5").unwrap().to_json();
+        assert_eq!((v["result"]["saved_as"].as_str(), v["result"]["codec"].as_str()), (Some("fsb5"), None));
+        assert!(v["limitations"][0]["message"].as_str().unwrap().contains("FSB5 version 9"), "{v}");
+        assert_eq!(std::fs::read(dir.path().join("odd.sharedassets0-5.fsb")).unwrap(), broken, "a dot in the name is kept");
+        // Stored bytes that aren't a bank are saved as they are; a size past the limit isn't read.
+        let v = call(&file, 3, "raw.bin").unwrap().to_json();
+        assert_eq!((v["result"]["saved_as"].as_str(), v["result"]["codec"].as_str()), (Some("stored"), None));
+        assert_eq!(std::fs::read(dir.path().join("raw.bin")).unwrap(), &resource[2..8]);
+        let err = call(&file, 4, "huge.wav").unwrap_err();
+        assert_eq!(err.code, craft_anything_evidence::ErrorCode::OverLimit, "{err:?}");
+        assert!(!dir.path().join("huge.wav").exists());
+
+        // Inside a bundle, the sound is in the bundle's .resource.
+        let clip = unity_audioclip("2022.3.43f1", "Click", 1, 44100, 0.0001, 0, ("archive:/CAB-0123456789abcdef/CAB-0123456789abcdef.resource", 0, at));
+        let assets = unity_serialized_file("2022.3.43f1", &[(83, clip)]);
+        let bundle = unity_bundle_files(&[("CAB-0123456789abcdef", &assets, true), ("CAB-0123456789abcdef.resource", &resource, false)]);
+        let b = dir.path().join("sounds.bundle");
+        std::fs::write(&b, bundle).unwrap();
+        let v = call(&b, 1, "from-bundle.wav").unwrap().to_json();
+        assert_eq!(v["result"]["saved_as"].as_str(), Some("wav"), "{v}");
+        assert_eq!(std::fs::read(dir.path().join("from-bundle.wav")).unwrap(), wav);
     }
 
     #[test]

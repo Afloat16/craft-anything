@@ -24,6 +24,13 @@ mod linux_gpu;
 /// Opens the window on the engine and AI hub (a path on the command line opens as the first
 /// target); if the window can't start, says why and where its log is.
 fn main() -> eframe::Result {
+    if let Some(result) = craft_anything_ui_egui::updates::finish_helper() {
+        let failed = result.is_err();
+        if let Err(error) = result {
+            eprintln!("Update failed: {error}");
+        }
+        std::process::exit(i32::from(failed));
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--version" || a == "-V") {
         println!("craft-anything {}", env!("CARGO_PKG_VERSION"));
@@ -60,6 +67,22 @@ fn main() -> eframe::Result {
         Ok(false) => {}
         Err(e) => log::warn!("couldn't save the OpenCode Go session id: {e}"),
     }
+    // Sessions a turn left unfinished when Craft Anything was killed mid-turn (#1115): they are
+    // otherwise swept at the next agent turn or on uninstall, and the agent's own service can
+    // resume one in the meantime. Off this thread: a delete over SSH can wait on a host that's
+    // away, and a start must not wait for it.
+    let startup_config = config.clone();
+    // The built-in adapters alone: a fork's adapters register elsewhere, and records they own are
+    // kept and cleaned at the next turn.
+    if let Err(e) = std::thread::Builder::new().name("unfinished-sessions".into()).spawn(move || {
+        let said =
+            craft_anything_ai::cli_agents::unfinished::sweep_at_startup(&startup_config, &craft_anything_ai::cli_agents::adapters::AgentAdapters::built_in());
+        for text in said {
+            log::info!("{text}");
+        }
+    }) {
+        log::warn!("couldn't start the unfinished-session sweep: {e}");
+    }
     log::info!("engine and AI ready; opening the window");
 
     let viewport = eframe::egui::ViewportBuilder::default()
@@ -81,8 +104,19 @@ fn main() -> eframe::Result {
     // the bundle's; no icon at all would bring eframe's own.
     let icon = if cfg!(target_os = "macos") { None } else { eframe::icon_data::from_png_bytes(craft_anything_ui_egui::APP_ICON_PNG).ok() };
     let viewport = viewport.with_icon(Arc::new(icon.unwrap_or_default()));
-    #[cfg_attr(not(any(windows, target_os = "linux")), expect(unused_mut, reason = "only Windows and Linux pick their own graphics adapter"))]
     let mut options = eframe::NativeOptions { viewport, ..Default::default() };
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup {
+        // egui-wgpu asks every GPU for textures of 8192 px at most, and the window's surface can't
+        // be larger, so on a display wider than that (5120 points at 2x) the app aborted before
+        // its window showed (#1639). Ask for what the GPU supports; never less than before.
+        let base = Arc::clone(&setup.device_descriptor);
+        setup.device_descriptor = Arc::new(move |adapter| {
+            let mut descriptor = base(adapter);
+            let limits = &mut descriptor.required_limits;
+            limits.max_texture_dimension_2d = limits.max_texture_dimension_2d.max(adapter.limits().max_texture_dimension_2d);
+            descriptor
+        });
+    }
     #[cfg(target_os = "linux")]
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup {
         // egui-wgpu's default is the discrete GPU; on a laptop whose integrated GPU drives the
@@ -115,6 +149,7 @@ fn main() -> eframe::Result {
                 log::info!("window open");
                 CraftApp::setup_context(&cc.egui_ctx);
                 let mut app = CraftApp::new(engine, hub);
+                app.show_update_outcome_on_start();
                 // The window is built hidden and its first frame is drawn afterwards, where a graphics
                 // driver may still crash: the mark stays until frames have been shown (#74).
                 app.after_first_frames(move || {

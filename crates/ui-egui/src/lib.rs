@@ -7,6 +7,7 @@
 //! holding it never freezes a frame; the last snapshot ([`SessionView`]) is shown meanwhile.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod activity_box;
 pub mod approvals;
 pub mod builders;
 pub mod chat;
@@ -45,12 +46,13 @@ pub mod usage;
 pub mod widgets;
 pub mod workbench;
 
-use craft_anything_ai::{AgentEvent, AiHub, BackendConfig, Conversation, Detected};
+use craft_anything_ai::{AgentEvent, AiHub, BackendConfig, BackendEntry, BackendOptions, Conversation, Detected};
 use craft_anything_engine::evidence::{ErrorCode, Evidence, ToolError, Unknown};
+use craft_anything_engine::tools::site_sign_in::{self, SIGN_IN_TOOL, SIGN_OUT_TOOL};
 use craft_anything_engine::{CallOptions, Caller, Consent, Engine, Mode, Settings, TargetKind, ToolOutput, clean_room};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use state::{CenterTab, ChatItem, ConsentAnswer, Fill, RailKind, Screen, UiState};
+use state::{CenterTab, ChatItem, ConsentAnswer, Fill, GameJob, RailKind, Screen, UiState};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -123,6 +125,7 @@ pub const USED_ICONS: &[&str] = &[
     "user",
     "wand-sparkles",
     "workflow",
+    "wrap-text",
     "wrench",
     "x",
     "zap",
@@ -143,6 +146,17 @@ pub enum Route {
     Silent,
 }
 
+/// A complete Settings view, numbered when its worker starts reading the hub.
+/// Saves and refreshes share this ordering, so a late result cannot restore older values.
+pub struct BackendSnapshot {
+    read: u64,
+    backends: Vec<BackendConfig>,
+    builder: Option<String>,
+    extractor: Option<String>,
+    options: std::collections::BTreeMap<String, craft_anything_ai::BackendOptions>,
+    replaced: std::collections::BTreeMap<String, String>,
+}
+
 /// What a worker hands back to the UI thread.
 pub enum Done {
     Tool {
@@ -157,9 +171,9 @@ pub enum Done {
     },
     /// What a scan found, and why an expected coding agent may be missing.
     Detected(Vec<Detected>, Vec<craft_anything_ai::detect::DetectHint>),
-    /// The configured backends, the ones chosen to build with and to extract with, and each one's
-    /// options.
-    Backends(Vec<BackendConfig>, Option<String>, Option<String>, std::collections::BTreeMap<String, craft_anything_ai::BackendOptions>),
+    AgentConnection(String, Result<String, String>),
+    /// The configured backends, selected roles, options, and replaced programs (see [`backends`]).
+    Backends(BackendSnapshot),
     /// The models an AI can be set to (Settings → AI's model picker).
     ModelChoices {
         name: String,
@@ -177,12 +191,10 @@ pub enum Done {
     },
     ModelChanged {
         name: String,
-        model: String,
-        result: Result<craft_anything_ai::BackendOptions, ToolError>,
+        result: Result<BackendSnapshot, ToolError>,
     },
     ModelOptionsSaved {
-        params: craft_anything_ai::model_options::SetModelOptions,
-        result: Result<(), ToolError>,
+        result: Result<BackendSnapshot, ToolError>,
     },
     Picked {
         pick: Pick,
@@ -222,10 +234,27 @@ pub enum Done {
     /// A tool started by a button finished (see `CraftApp::act`).
     Acted {
         tool: &'static str,
+        params: Value,
         result: Result<Value, ToolError>,
     },
     /// Which asset providers have a key set up (provider id → stored).
     AssetKeys(std::collections::BTreeMap<String, bool>),
+    /// Which API backends have a key saved in the app (backend name → stored; #1358), and the
+    /// check that asked: a result from before a save or another check is stale.
+    BackendKeys {
+        request: u64,
+        keys: std::collections::BTreeMap<String, bool>,
+    },
+    /// A saved-key mutation finished: the refreshed status, the error to report (if any), and the
+    /// key that was saved so a matching draft can be cleared.
+    BackendKeyResult {
+        request: u64,
+        name: String,
+        keys: std::collections::BTreeMap<String, bool>,
+        error: Option<String>,
+        saved_key: Option<String>,
+        forgot: bool,
+    },
     Wrote {
         what: String,
         path: Option<PathBuf>,
@@ -235,6 +264,13 @@ pub enum Done {
         result: Result<(), ToolError>,
         /// `CraftApp::backend_choices` when the add started: a choice made since then stands.
         choices: u64,
+        /// The address that was asked, as sent (trimmed); empty when the AI wasn't added by
+        /// address. A list of models to choose from belongs to this address, not to whatever the
+        /// form shows when the answer arrives.
+        address: String,
+        /// The remote command submitted with the add, trimmed; `None` when it carried none. A
+        /// draft edited while the SSH check runs is newer than this and must not be cleared.
+        submitted_command: Option<String>,
     },
     /// The projects folder was listed.
     Projects(Vec<craft_anything_engine::workspace::Workspace>),
@@ -245,6 +281,8 @@ pub enum Done {
         backend: String,
         /// Why the pictures couldn't be copied, if they couldn't.
         pictures: Option<String>,
+        /// The folder already held a project: the request is its follow-up, not a new project's.
+        attached: bool,
     },
     /// A message's pictures were copied into its project (see `CraftApp::deliver`).
     Attached {
@@ -276,9 +314,18 @@ pub enum Done {
 pub struct ServerForm {
     pub name: String,
     pub address: String,
-    /// Empty: the first model it lists that can chat.
+    /// Empty: the one it has loaded, or its only chat model; with several, the person chooses.
     pub model: String,
     pub key: String,
+    /// The server being asked for its models (the job, its name, when it started); the form says
+    /// it's connecting and for how long (#1429).
+    pub connecting: Option<(u64, String, Instant)>,
+    /// The chat models the server at `address` listed when it couldn't be told which one is in use
+    /// (#1434): the form offers them to choose from while the address stays the same.
+    pub choices: Option<(String, Vec<String>)>,
+    /// The address and model last picked from `choices`: that model belongs to that server, so it
+    /// goes from `model` once the address is another. A model typed by hand isn't tracked.
+    pub picked: Option<(String, String)>,
 }
 
 /// What a file dialog was for.
@@ -337,8 +384,12 @@ pub struct ModelTuningDraft {
 impl ModelTuningDraft {
     /// Drop an override the selected model does not advertise before presenting its controls.
     pub fn set_choices(&mut self, choices: craft_anything_ai::model_options::ModelTuning) {
-        self.context = self.context.filter(|value| choices.context.iter().any(|choice| choice.value == *value));
         self.choices = Some(choices);
+        self.restore_context(self.context);
+    }
+
+    fn restore_context(&mut self, context: Option<craft_anything_ai::config::CliContext>) {
+        self.context = context.filter(|value| self.choices.as_ref().is_none_or(|choices| choices.context.iter().any(|choice| choice.value == *value)));
     }
 
     pub fn params(&self) -> craft_anything_ai::model_options::SetModelOptions {
@@ -415,6 +466,8 @@ struct FirstFrames {
 }
 
 pub struct CraftApp {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) updates: updates::Updates,
     pub engine: Arc<Engine>,
     pub hub: Arc<AiHub>,
     pub state: UiState,
@@ -435,12 +488,16 @@ pub struct CraftApp {
     pub backends: Vec<BackendConfig>,
     /// Each backend's options (an agent app's program and model), by name (Settings → AI).
     pub backend_options: std::collections::BTreeMap<String, craft_anything_ai::BackendOptions>,
+    /// Agent apps whose saved program is gone, and the program that runs in its place (#721).
+    pub program_replaced: std::collections::BTreeMap<String, String>,
     /// The AI whose model is being chosen in Settings → AI, and the models it offers once they've
     /// come (`None`: still asking).
     pub model_picker: Option<(String, Option<Vec<String>>)>,
     pub agent_model_picker: Option<builders::AgentModelPicker>,
     model_request: u64,
     pub model_tuning: std::collections::BTreeMap<String, ModelTuningDraft>,
+    /// The current model/options save for each backend; an older completion cannot settle its controls.
+    model_save_jobs: std::collections::BTreeMap<String, u64>,
     /// The agent app whose program the file dialog is choosing.
     pub picking_program_for: Option<String>,
     /// Claude Code folders being typed in Settings → AI, by AI, until they're saved.
@@ -453,6 +510,10 @@ pub struct CraftApp {
     /// Why an expected coding agent may be missing, from the last scan.
     pub detect_hints: Vec<craft_anything_ai::detect::DetectHint>,
     pub detecting: bool,
+    /// Local agent checks: None while the worker runs, then a credential-free status or error.
+    pub agent_connections: std::collections::BTreeMap<String, Option<Result<String, String>>>,
+    /// Which agent owns each pending check, including failures before the worker body starts.
+    pub(crate) agent_connection_jobs: std::collections::BTreeMap<u64, String>,
     /// Counts AI choices, so an add that finishes later doesn't undo one made meanwhile.
     pub backend_choices: u64,
     pub log: Vec<LogLine>,
@@ -479,6 +540,8 @@ pub struct CraftApp {
     pub usage: std::collections::HashMap<PathBuf, usage::ProjectClock>,
     /// All AI use since the app opened: builds and chat.
     pub session_usage: craft_anything_engine::workspace::ProjectUsage,
+    /// What each project's latest run has used so far, shown beside Try again when it fails.
+    last_run: std::collections::HashMap<PathBuf, usage::RunTally>,
     /// The project shown on the Project screen.
     pub workspace: Option<craft_anything_engine::workspace::Workspace>,
     /// Every project in the projects folder, newest first.
@@ -487,6 +550,8 @@ pub struct CraftApp {
     pub preview: Option<String>,
     /// Questions asked about each project's build this session, and their answers (`just_ask`).
     pub asked: std::collections::HashMap<PathBuf, Vec<just_ask::Asked>>,
+    /// Builds whose activity has a window of its own ([`activity_box::windows`]).
+    pub activity_windows: Vec<activity_box::PoppedOut>,
     /// Every project's pinned builds, and whether they're running (read by `refresh_pins`).
     pub pins: Vec<pins::PinRow>,
     pub pinned_copy_bytes: Option<u64>,
@@ -495,15 +560,34 @@ pub struct CraftApp {
     open_url: Option<String>,
     /// The open project's screenshot thumbnails (dropped when another project opens).
     pub thumbs: std::collections::HashMap<PathBuf, project::Thumb>,
+    /// How tall each item of the open conversation was last drawn.
+    feed_heights: project::FeedHeights,
     /// Pictures of the attachments in the prompt boxes (`CraftApp::previews`).
     pub previews: std::collections::HashMap<PathBuf, project::Thumb>,
     /// The kinds of thing this app can make; a fork registers its own here.
     pub kinds: craft_anything_ai::rebuild::KindRegistry,
     /// Game engines on this computer (`None` until the first look finishes).
     pub game_engines: Option<craft_anything_engines::game::Inventory>,
+    /// Where Cargo builds, read from the session once, for finding the project's build by its
+    /// files ([`project::Facts`]).
+    pub cargo_env: craft_anything_engine::outputs::CargoEnv,
     /// Which asset providers have a key set up, by provider id (`None` until checked; the keys
     /// themselves never come into the app).
     pub asset_keys: Option<std::collections::BTreeMap<String, bool>>,
+    /// Which API backends have a key saved in the app, by backend name (`None` until checked; the
+    /// keys themselves never come into the app). `backend_keys_request` drops a result from before
+    /// a save or a newer check.
+    pub backend_keys: Option<std::collections::BTreeMap<String, bool>>,
+    backend_keys_request: u64,
+    /// The newest backends snapshot shown (`Done::Backends`): one read before it, from a job that
+    /// finished later, is dropped, so a slow refresh can't put back what a save just changed.
+    backends_read: u64,
+    /// What has been typed in each API backend's key field, kept across frames and after a failed
+    /// save.
+    pub backend_key_inputs: std::collections::BTreeMap<String, String>,
+    /// Backends whose key save or forget is still running: their key controls stay disabled so a
+    /// later action can't be overtaken by an earlier worker. Other backends keep working.
+    pub backend_key_pending: std::collections::BTreeSet<String>,
     /// What the open project's files say (built result, pictures, assets, open questions), read
     /// on a worker.
     pub facts: project::Facts,
@@ -514,6 +598,11 @@ pub struct CraftApp {
     pub ghidra: engine_ui::GhidraFlow,
     /// When each toast appeared, in the same order (confirmations hide after a few seconds).
     toast_at: Vec<Instant>,
+    /// Whether a text field had keyboard focus as the last frame ended. egui lets go of focus on
+    /// Esc as a frame begins, before [`Self::shortcuts`] runs, so that frame can't ask (#2434).
+    text_was_focused: bool,
+    /// Distinguish repeated error occurrences without changing the persisted toast representation.
+    pub(crate) toast_error_revision: u64,
     settings_dirty: bool,
     /// When to write the settings to disk: a moment after the last change, so typing a path
     /// saves once, not once per letter.
@@ -522,6 +611,11 @@ pub struct CraftApp {
     saving: Option<u64>,
     /// A new project being made (Start waits for it).
     pub creating: Option<u64>,
+    /// A website sign-in window open from Make (one at a time; Start waits for it).
+    pub signing_in: Option<u64>,
+    /// The site Make last asked about (its sign-in key) and whether a sign-in is saved for it:
+    /// read from disk once, not every frame, and read again after any job or chat tool ends.
+    sign_in_known: Option<(String, bool)>,
     /// Tools the UI started that wait for the person's consent, by the id on their card.
     pending_consent: std::collections::HashMap<u64, (String, Value, Route)>,
     next_consent: u64,
@@ -536,18 +630,31 @@ pub struct CraftApp {
     chat_jobs: Vec<u64>,
     view_dirty: bool,
     last_view: Option<Instant>,
-    applied_theme: Option<(ThemeKind, bool)>,
+    applied_theme: Option<ThemeKind>,
+    /// The system's light or dark appearance, read each frame: the System theme follows it.
+    system_theme: Option<egui::Theme>,
     started: bool,
 }
 
 impl CraftApp {
+    /// Show the last update's result once the native window begins drawing.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn show_update_outcome_on_start(&mut self) {
+        self.updates.startup();
+    }
+
     /// Initialize UI state from the shared engine's saved settings, waiting rather than substituting defaults.
     pub fn new(engine: Arc<Engine>, hub: Arc<AiHub>) -> Self {
         // Wait for the engine if it's busy: defaults here would show Clean room and no AI, and the
         // next settings change would save them over the person's own.
-        let settings = engine.session().settings.clone();
+        let (settings, cargo_env) = {
+            let session = engine.session();
+            (session.settings.clone(), session.cargo())
+        };
         i18n::set_language(&settings.language);
-        CraftApp {
+        let mut app = CraftApp {
+            #[cfg(not(target_arch = "wasm32"))]
+            updates: Default::default(),
             engine,
             hub,
             state: UiState::default(),
@@ -562,10 +669,12 @@ impl CraftApp {
             conversation: None,
             backends: Vec::new(),
             backend_options: Default::default(),
+            program_replaced: Default::default(),
             model_picker: None,
             agent_model_picker: None,
             model_request: 0,
             model_tuning: Default::default(),
+            model_save_jobs: Default::default(),
             picking_program_for: None,
             folder_inputs: Default::default(),
             builder: None,
@@ -573,6 +682,8 @@ impl CraftApp {
             detected: None,
             detect_hints: Vec::new(),
             detecting: false,
+            agent_connections: Default::default(),
+            agent_connection_jobs: Default::default(),
             backend_choices: 0,
             log: Vec::new(),
             key_inputs: Default::default(),
@@ -586,28 +697,41 @@ impl CraftApp {
             start_after_pictures: None,
             usage: Default::default(),
             session_usage: Default::default(),
+            last_run: Default::default(),
             workspace: None,
             projects: Vec::new(),
             preview: None,
             pins: Vec::new(),
             pinned_copy_bytes: None,
             asked: Default::default(),
+            activity_windows: Vec::new(),
             pins_read_at: None,
             open_url: None,
             thumbs: Default::default(),
+            feed_heights: Default::default(),
             previews: Default::default(),
             kinds: craft_anything_ai::rebuild::KindRegistry::built_in(),
             game_engines: None,
+            cargo_env,
             asset_keys: None,
+            backend_keys: None,
+            backend_keys_request: 0,
+            backends_read: 0,
+            backend_key_inputs: Default::default(),
+            backend_key_pending: Default::default(),
             facts: Default::default(),
             facts_reader: Default::default(),
             engine_flow: Default::default(),
             ghidra: Default::default(),
             toast_at: Vec::new(),
+            text_was_focused: false,
+            toast_error_revision: 0,
             settings_dirty: false,
             save_due: None,
             saving: None,
             creating: None,
+            signing_in: None,
+            sign_in_known: None,
             chat_jobs: Vec::new(),
             asking: Default::default(),
             pausing: Default::default(),
@@ -617,8 +741,15 @@ impl CraftApp {
             view_dirty: true,
             last_view: None,
             applied_theme: None,
+            system_theme: None,
             started: false,
+        };
+        // A config.toml that couldn't be read or set aside is said here, where the person is
+        // looking, and not only in the log: every save is refused until it's fixed.
+        if let Some(said) = settings_ui::not_loaded_warning(&app.settings) {
+            app.toast(said, true);
         }
+        app
     }
 
     /// Fonts and image loaders; call once with the egui context.
@@ -626,7 +757,10 @@ impl CraftApp {
         theme::install_fonts(ctx);
         egui_extras::install_image_loaders(ctx);
         // The zoom keys are ours (`shortcuts`), so zoom stays inside ZOOM_RANGE.
-        ctx.options_mut(|o| o.zoom_with_keyboard = false);
+        ctx.options_mut(|o| {
+            o.zoom_with_keyboard = false;
+            o.input_options.line_scroll_speed = theme::WHEEL_STEP;
+        });
     }
 
     /// Gives the macOS app its menu bar (nothing elsewhere). Call once the window is open.
@@ -672,8 +806,9 @@ impl CraftApp {
         }
         self.state.unsent = p.unsent.into_iter().map(|(root, text)| (root, (text, Vec::new()))).collect();
         // Back to the project that was open, with its conversation, if it's still there.
+        // Restoring `last_project` must not silently re-add an unlisted folder to `project_folders` (#2340).
         if let Some(ws) = p.last_project.and_then(|root| craft_anything_engine::workspace::Workspace::open(&root).ok()) {
-            self.open_workspace(ws);
+            self.open_workspace_mode(ws, false);
         }
     }
 
@@ -710,8 +845,9 @@ impl CraftApp {
         self.settings.mode == Mode::Beginner
     }
 
+    /// The theme drawn with: the one chosen, or with System, the system's appearance.
     pub fn theme_kind(&self) -> ThemeKind {
-        ThemeKind::from_id(&self.settings.theme)
+        theme::resolve(&self.settings.theme, self.system_theme)
     }
 
     pub fn log(&mut self, error: bool, text: impl Into<String>) {
@@ -730,11 +866,24 @@ impl CraftApp {
     pub fn toast(&mut self, text: impl Into<String>, error: bool) {
         const KEPT: usize = 4;
         let text = text.into();
+        if error {
+            self.toast_error_revision = self.toast_error_revision.wrapping_add(1);
+        }
         // The same message again moves to the front instead of stacking up.
         if let Some(i) = self.state.toasts.iter().position(|(t, _)| *t == text) {
             self.state.toasts.remove(i);
             if i < self.toast_at.len() {
                 self.toast_at.remove(i);
+            }
+        }
+        // A confirmation takes the place of the one before it: two in a row (a switch flipped
+        // and flipped back) would only pile up over the screen.
+        if !error {
+            while let Some(i) = self.state.toasts.iter().position(|(_, e)| !e) {
+                self.state.toasts.remove(i);
+                if i < self.toast_at.len() {
+                    self.toast_at.remove(i);
+                }
             }
         }
         self.state.toasts.push((text, error));
@@ -773,7 +922,7 @@ impl CraftApp {
         {
             // The Ghidra folder changed: look for it again.
             if s.settings.engines.ghidra.install_dir != self.settings.engines.ghidra.install_dir {
-                self.ghidra.ready = None;
+                self.ghidra.found = None;
             }
             // The `ai` table belongs to the ai crate (it edits it in the session); keep its copy.
             self.settings.ai = s.settings.ai.clone();
@@ -799,7 +948,7 @@ impl CraftApp {
             // by an older settings snapshot. This runs on the worker, never the UI thread.
             let session = engine.session();
             session.label("Save settings");
-            session.settings.save().map_err(|e| e.message)?;
+            session.settings.save().map_err(|e| settings_ui::settings_not_saved(&e))?;
             Ok(Done::Nothing)
         }));
     }
@@ -944,18 +1093,49 @@ impl CraftApp {
     }
 
     /// Run a tool for a button on a worker (play, preview, open a folder…); the result comes back
-    /// as `Done::Acted` and is shown by `acted`. A click is the person's consent.
-    pub fn act(&mut self, tool: &'static str, params: Value, title: String) {
+    /// as `Done::Acted` and is shown by `acted`. A click is the person's consent. The job's id lets
+    /// a screen ignore an answer that a newer request has replaced.
+    pub fn act(&mut self, tool: &'static str, params: Value, title: String) -> u64 {
         let engine = self.engine.clone();
+        let scope = params.clone();
         self.jobs.spawn(title, false, move |j| {
             let progress = j.reporter();
             let opts = CallOptions::new(Caller::Ui).with_consent(Consent::Granted).with_cancel(j.cancel.clone()).with_progress(&progress);
             let result = engine.call(tool, params, opts).map(|o| o.to_json().get("result").cloned().unwrap_or(Value::Null));
-            Ok(Done::Acted { tool, result })
-        });
+            Ok(Done::Acted { tool, params: scope, result })
+        })
     }
 
-    fn acted(&mut self, tool: &str, result: Result<Value, ToolError>) {
+    /// Open a browser window on a website for the person to sign in to it themselves, so studies
+    /// of that site see it signed in (`web_site_sign_in`). One window at a time, and not while a
+    /// new project is being made: its build would start and study the site before the sign-in ends.
+    pub fn sign_in_to_site(&mut self, url: &str) {
+        if self.signing_in.is_none() && self.creating.is_none() {
+            self.signing_in = Some(self.act(SIGN_IN_TOOL, json!({ "url": url }), tr("Sign in to a website")));
+        }
+    }
+
+    /// Forget the sign-in saved for a website (`web_site_sign_out`), so studies of it start signed
+    /// out again. Not while a sign-in window is open or a new project is being made, as for signing in.
+    pub fn forget_site_sign_in(&mut self, url: &str) {
+        if self.signing_in.is_none() && self.creating.is_none() {
+            self.act(SIGN_OUT_TOOL, json!({ "url": url }), tr("Forget a website sign-in"));
+        }
+    }
+
+    /// Whether a sign-in is saved for `url`'s site. False too when it can't be read just now (a
+    /// tool holds the session): asked again next frame rather than waiting on the lock.
+    pub fn sign_in_saved(&mut self, url: &str) -> bool {
+        let Ok(key) = site_sign_in::site_key(url) else { return false };
+        if let Some((_, saved)) = self.sign_in_known.as_ref().filter(|(known, _)| *known == key) {
+            return *saved;
+        }
+        let Some(saved) = self.engine.try_session().map(|s| site_sign_in::saved(&s, &key).is_some()) else { return false };
+        self.sign_in_known = Some((key, saved));
+        saved
+    }
+
+    fn acted(&mut self, job: u64, tool: &str, params: &Value, result: Result<Value, ToolError>) {
         match (tool, result) {
             ("project_preview", Ok(v)) => {
                 let url = v.get("url").and_then(Value::as_str).map(str::to_string);
@@ -998,7 +1178,23 @@ impl CraftApp {
                 if let Some(s) = self.engine.try_session() {
                     self.settings.plugins = s.settings.plugins.clone();
                 }
+                // Only the form that was added: one edited meanwhile keeps the new entry.
+                if tool == "plugins_add" && self.state.plugin_form.params().as_ref() == Some(params) {
+                    self.state.plugin_form = Default::default();
+                }
                 self.toast(tr(if tool == "plugins_add" { "Plugin added. Read its tools to start using them." } else { "Plugin removed." }), false);
+            }
+            ("plugins_test", Ok(v)) => {
+                let tools: Vec<&str> = v["tools"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                let words = match tools.as_slice() {
+                    [] => tr("It answered, with no tools."),
+                    _ => i18n::trf("It answered with {n} tools: {names}.", &[("n", &tools.len().to_string()), ("names", &tools.join(", "))]),
+                };
+                self.toast(words, false);
+            }
+            ("plugins_test", Err(e)) => {
+                let why = tr("The plugin's test failed.");
+                self.toast(format!("{why} {}", e.for_people()), true);
             }
             ("plugins_refresh", Ok(v)) => {
                 let failed: Vec<String> = v["refreshed"]
@@ -1013,6 +1209,32 @@ impl CraftApp {
                     self.toast(format!("{} {}", tr("Some plugins couldn't be read:"), failed.join("; ")), true);
                 }
             }
+            // Each message names the site it was for: the address on Make may have changed since.
+            (SIGN_IN_TOOL, Ok(v)) => {
+                let (words, warn) = make::sign_in_words(&v);
+                self.toast(format!("{}: {words}", make::site_name(params)), warn);
+            }
+            // "Stop waiting" before the window was up (or while another tool held the session).
+            (SIGN_IN_TOOL, Err(e)) if e.code == ErrorCode::Cancelled => {
+                let stopped = tr("Stopped the sign-in.");
+                self.toast(format!("{}: {stopped}", make::site_name(params)), false)
+            }
+            (SIGN_IN_TOOL, Err(e)) if !clean_room::is_refusal(&e) => {
+                let failed = tr("Couldn't sign in to the site.");
+                self.toast(format!("{}: {failed} {}", make::site_name(params), e.for_people()), true);
+            }
+            (SIGN_OUT_TOOL, Ok(v)) => {
+                let words = tr(if v["removed"].as_bool() == Some(true) {
+                    "Forgot the saved sign-in. Studies of this site start signed out again."
+                } else {
+                    "No sign-in was saved, so there was nothing to forget."
+                });
+                self.toast(format!("{}: {words}", make::site_name(params)), false);
+            }
+            (SIGN_OUT_TOOL, Err(e)) if !clean_room::is_refusal(&e) => {
+                let failed = tr("Couldn't forget the sign-in.");
+                self.toast(format!("{}: {failed} {}", make::site_name(params), e.for_people()), true);
+            }
             ("project_open_folder", Err(e)) => self.toast(format!("{} {}", tr("Couldn't open the folder."), e.message), true),
             (
                 "game_archives_list"
@@ -1023,9 +1245,9 @@ impl CraftApp {
                 | "game_unreal_texture_export"
                 | "game_unity_asset_export",
                 r,
-            ) => game_files::tool_done(self, tool, r),
+            ) => game_files::tool_done(self, job, tool, params, r),
             // The Game files screen's look at a picked game.
-            ("core_target_triage", r) => game_files::tool_done(self, tool, r),
+            ("core_target_triage", r) => game_files::tool_done(self, job, tool, params, r),
             (_, Ok(_)) => {}
             (_, Err(e)) if clean_room::is_refusal(&e) => self.state.modal = Some(state::Modal::DeepMode),
             (_, Err(e)) => self.toast(e.for_people(), true),
@@ -1041,9 +1263,9 @@ impl CraftApp {
             ProblemKind::Broken => "Part of the app got stuck, so it was stopped and the rest carried on. Your work is kept.",
             _ => "Part of the app is stuck. Restarting clears it, and your work is kept.",
         };
-        egui::Panel::top("stuck-banner").frame(egui::Frame::new().fill(t.card).inner_margin(egui::Margin::symmetric(14, 8))).show(ui, |ui| {
+        egui::Panel::top("stuck-banner").frame(egui::Frame::new().fill(t.card).inner_margin(theme::pad::BAR)).show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                icons::show(ui, "triangle-alert", 16.0, t.danger);
+                icons::show(ui, "triangle-alert", crate::theme::icon::MD, t.danger);
                 ui.label(egui::RichText::new(i18n::tr(text)).color(t.text)).on_hover_text(problem.summary.clone());
                 if let Some(path) = &problem.log
                     && widgets::secondary(ui, None, "Open log").on_hover_text(path.display().to_string()).clicked()
@@ -1194,6 +1416,42 @@ impl CraftApp {
         self.jobs.spawn("Read AI settings", false, move |_| Ok(backends(&hub)));
     }
 
+    /// Find out which API backends have a key saved in the app, rather than only in the environment
+    /// (in the background: the keychain can be slow). Run after the backends are read.
+    pub fn check_backend_keys(&mut self) {
+        if self.headless {
+            return;
+        }
+        self.backend_keys_request = self.backend_keys_request.wrapping_add(1);
+        let (request, hub) = (self.backend_keys_request, self.hub.clone());
+        self.jobs.spawn("Read AI settings", false, move |_| Ok(Done::BackendKeys { request, keys: hub.stored_backend_keys() }));
+    }
+
+    /// Replace the key saved for an API backend, keeping the backend and its options (#1358).
+    pub fn save_backend_key(&mut self, name: String, key: String) {
+        self.backend_keys_request = self.backend_keys_request.wrapping_add(1);
+        self.backend_key_pending.insert(name.clone());
+        let (request, hub) = (self.backend_keys_request, self.hub.clone());
+        self.jobs.spawn(tr("Save the key"), true, move |_| {
+            let result = hub.set_backend_key(&name, &key);
+            let saved_key = result.is_ok().then(|| key.clone());
+            let error = result.err().map(|e| e.message);
+            Ok(Done::BackendKeyResult { request, name: name.clone(), keys: hub.stored_backend_keys(), error, saved_key, forgot: false })
+        });
+    }
+
+    /// Forget the key saved for an API backend, so the one in the environment is used again. The
+    /// backend itself stays.
+    pub fn remove_backend_key(&mut self, name: String) {
+        self.backend_keys_request = self.backend_keys_request.wrapping_add(1);
+        self.backend_key_pending.insert(name.clone());
+        let (request, hub) = (self.backend_keys_request, self.hub.clone());
+        self.jobs.spawn(tr("Forget the key"), true, move |_| {
+            let error = hub.remove_backend_key(&name).err().map(|e| e.message);
+            Ok(Done::BackendKeyResult { request, name: name.clone(), keys: hub.stored_backend_keys(), error, saved_key: None, forgot: true })
+        });
+    }
+
     /// Choose the backend that builds or extracts (`None`: its default).
     pub fn set_role(&mut self, role: craft_anything_ai::Role, name: Option<String>) {
         let hub = self.hub.clone();
@@ -1212,13 +1470,35 @@ impl CraftApp {
         self.jobs.spawn("Look for AI on this computer", true, move |_| Ok(Done::Detected(hub.detect(), hub.detect_hints())));
     }
 
+    /// Check a selected local agent through the headless API without blocking the UI.
+    pub fn check_agent_connection(&mut self, name: String) {
+        if self.agent_connections.get(&name) == Some(&None) {
+            return;
+        }
+        self.agent_connections.insert(name.clone(), None);
+        let hub = self.hub.clone();
+        let agent = name.clone();
+        let job = self.jobs.spawn("Check", true, move |_| {
+            let status = hub.test_backend(&agent).map(|report| report.reply).map_err(|error| error.for_people());
+            Ok(Done::AgentConnection(agent, status))
+        });
+        self.agent_connection_jobs.insert(job, name);
+    }
+
     pub fn add_backend(&mut self, config: BackendConfig, key: Option<String>) {
+        self.add_backend_with_options(config, BackendOptions::default(), key);
+    }
+
+    /// Add a backend with options (an SSH agent's remote command), cancellable with its job.
+    pub fn add_backend_with_options(&mut self, config: BackendConfig, options: BackendOptions, key: Option<String>) {
         let hub = self.hub.clone();
         let name = config.name.clone();
         let choices = self.backend_choices;
-        self.jobs.spawn(i18n::trf("Connect {name}", &[("name", &name)]), true, move |_| {
-            let result = hub.add_backend(config, key);
-            Ok(Done::BackendAdded { name, result, choices })
+        let submitted_command = options.command.as_deref().map(str::trim).filter(|c| !c.is_empty()).map(str::to_string);
+        self.jobs.spawn(i18n::trf("Connect {name}", &[("name", &name)]), true, move |j| {
+            let entry = BackendEntry { config, options };
+            let result = hub.add_backend_with_until(entry, key, &j.cancel);
+            Ok(Done::BackendAdded { name, result, choices, address: String::new(), submitted_command })
         });
     }
 
@@ -1309,12 +1589,18 @@ impl CraftApp {
         for e in events {
             chat::apply_event(&mut self.state.chat, e.clone());
             match e {
-                AgentEvent::ToolFinished { .. } => self.view_dirty = true,
-                AgentEvent::TurnDone { backend, input_tokens, output_tokens, cost_usd, cost_is_estimate } => {
+                // A chat answer's tool may have saved or forgotten a sign-in, and no job ends for it.
+                AgentEvent::ToolFinished { .. } => {
                     self.view_dirty = true;
+                    self.sign_in_known = None;
+                }
+                AgentEvent::TurnDone { backend, input_tokens, output_tokens, tokens_unknown, cost_usd, cost_is_estimate } => {
+                    self.view_dirty = true;
+                    self.session_usage.tokens_incomplete |= tokens_unknown;
                     self.session_usage.add_turn(input_tokens, output_tokens, cost_usd, cost_is_estimate);
                     let cost = cost_usd.map(|c| format!(", ${c:.4}")).unwrap_or_default();
-                    self.log(false, format!("{backend}: {input_tokens} in / {output_tokens} out{cost}"));
+                    let usage = if tokens_unknown { "token count unknown".into() } else { format!("{input_tokens} in / {output_tokens} out") };
+                    self.log(false, format!("{backend}: {usage}{cost}"));
                 }
                 AgentEvent::Error { message, .. } => self.log(true, message),
                 _ => {}
@@ -1389,19 +1675,88 @@ impl CraftApp {
 
     // ---- results ----------------------------------------------------------------------------
 
+    /// Apply a whole hub read, keeping edits whose worker has not answered yet.
+    fn apply_backends(&mut self, snapshot: BackendSnapshot) -> bool {
+        let BackendSnapshot { read, backends, builder, extractor, options, replaced } = snapshot;
+        if read < self.backends_read {
+            return false;
+        }
+        self.backends_read = read;
+        if self.state.backend.as_ref().is_some_and(|n| !backends.iter().any(|c| &c.name == n)) {
+            self.state.backend = None;
+        }
+        self.backends = backends;
+        self.builder = builder;
+        self.extractor = extractor;
+        self.backend_options = options;
+        self.program_replaced = replaced;
+        self.model_tuning.retain(|name, state| {
+            let keep = self.backends.iter().any(|backend| backend.name == *name && craft_anything_ai::model_options::supported(backend))
+                && self.backend_options.get(name).and_then(|options| options.cli_model.as_ref()) == state.cli_model.as_ref();
+            if keep && !state.saving {
+                state.restore_context(self.backend_options.get(name).and_then(|options| options.cli_context));
+            }
+            keep
+        });
+        // Settings shows which backends have a saved key; the list may have changed.
+        self.check_backend_keys();
+        true
+    }
+
     /// Apply a completed background job, reporting failures and accepting picker results only for matching requests.
     fn handle_done(&mut self, done: jobs::Finished<Done>) {
         let job = done.job;
+        let checked_agent = self.agent_connection_jobs.remove(&job);
+        let model_save = self.model_save_jobs.iter().find_map(|(name, id)| (*id == job).then(|| name.clone()));
+        if let Some(name) = &model_save {
+            self.model_save_jobs.remove(name);
+            if let Some(state) = self.model_tuning.get_mut(name) {
+                state.saving = false;
+                if let Some(options) = self.backend_options.get(name)
+                    && options.cli_model == state.cli_model
+                {
+                    state.restore_context(options.cli_context);
+                }
+            }
+        }
         if self.saving == Some(job) {
             self.saving = None;
         }
         if self.creating == Some(job) {
             self.creating = None;
         }
+        if self.signing_in == Some(job) {
+            self.signing_in = None;
+        }
+        // Any job may have saved or forgotten a sign-in (a button, the palette).
+        self.sign_in_known = None;
+        // The form's own request: a newer Add replaces it, and an older answer is then stale.
+        let form_request = self.server_form.connecting.as_ref().is_some_and(|(id, ..)| *id == job);
+        if form_request {
+            self.server_form.connecting = None;
+        }
         self.chat_jobs.retain(|id| *id != job);
         let done = match done.result {
             Ok(d) => d,
             Err(e) => {
+                self.log(true, e.clone());
+                // A Game files job that failed in the worker settles only its own request; one a
+                // newer pick replaced is logged above and says nothing.
+                if let Some(pending) = self.state.game.finish(job) {
+                    if pending.current {
+                        match pending.kind {
+                            GameJob::FolderScan => self.state.game.looking = false,
+                            GameJob::Listing => self.state.game.loading = false,
+                            // What the game is made of holds neither spinner.
+                            GameJob::Triage => {}
+                        }
+                        self.toast(e, true);
+                    }
+                    return;
+                }
+                if let Some(agent) = checked_agent {
+                    self.agent_connections.insert(agent, Some(Err(e.clone())));
+                }
                 self.detecting = false;
                 self.facts_read(job, None);
                 // A failed or cancelled engine download frees the button to try again.
@@ -1411,7 +1766,6 @@ impl CraftApp {
                 if self.ghidra.job == Some(job) {
                     self.ghidra.job = None;
                 }
-                self.log(true, e.clone());
                 self.toast(e, true);
                 return;
             }
@@ -1419,7 +1773,9 @@ impl CraftApp {
         match done {
             Done::Nothing => {}
             Done::Projects(mut p) => {
+                p.retain(|w| self.settings.lists_project(&w.root));
                 if let Some(ws) = &self.workspace
+                    && self.settings.lists_project(&ws.root)
                     && !p.iter().any(|w| w.root == ws.root)
                 {
                     p.insert(0, ws.clone());
@@ -1429,11 +1785,11 @@ impl CraftApp {
             }
             Done::Facts(f) => self.facts_read(job, Some(f)),
             Done::PicturesAdded(added) => self.pictures_added(added),
-            Done::Created { ws, request, backend, pictures } => self.created(*ws, request, backend, pictures),
+            Done::Created { ws, request, backend, pictures, attached } => self.created(*ws, request, backend, pictures, attached),
             Done::Thumb { path, image } => self.thumb_ready(path, image),
             Done::Preview { path, image } => self.preview_ready(path, image),
             Done::Tool { tool, params, route, result } => self.tool_done(tool, params, route, result),
-            Done::Acted { tool, result } => self.acted(tool, result),
+            Done::Acted { tool, params, result } => self.acted(job, tool, &params, result),
             Done::Opened { path, result } => match result {
                 Ok(v) => {
                     // Another target: a new conversation, so answers about two things don't mix.
@@ -1476,18 +1832,36 @@ impl CraftApp {
                 self.log(false, format!("Found {} AI option(s) on this computer", d.len()));
                 self.detected = Some(d);
             }
-            Done::Backends(b, builder, extractor, options) => {
-                if self.state.backend.as_ref().is_some_and(|n| !b.iter().any(|c| &c.name == n)) {
-                    self.state.backend = None;
+            Done::AgentConnection(name, result) => {
+                self.agent_connections.insert(name, Some(result));
+            }
+            Done::Backends(snapshot) => {
+                self.apply_backends(snapshot);
+            }
+            Done::BackendKeys { request, keys } => {
+                if request == self.backend_keys_request {
+                    self.backend_keys = Some(keys);
                 }
-                self.backends = b;
-                self.builder = builder;
-                self.extractor = extractor;
-                self.backend_options = options;
-                self.model_tuning.retain(|name, state| {
-                    self.backends.iter().any(|backend| backend.name == *name && craft_anything_ai::model_options::supported(backend))
-                        && self.backend_options.get(name).and_then(|options| options.cli_model.as_ref()) == state.cli_model.as_ref()
-                });
+            }
+            Done::BackendKeyResult { request, name, keys, error, saved_key, forgot } => {
+                self.backend_key_pending.remove(&name);
+                if forgot && error.is_none() {
+                    self.backend_key_inputs.remove(&name);
+                } else if let Some(key) = saved_key
+                    && self.backend_key_inputs.get(&name).is_some_and(|draft| draft.trim() == key)
+                {
+                    self.backend_key_inputs.remove(&name);
+                }
+                if request == self.backend_keys_request {
+                    self.backend_keys = Some(keys);
+                } else {
+                    // A later check superseded this mutation and may have read before it landed.
+                    self.check_backend_keys();
+                }
+                if let Some(error) = error {
+                    self.log(true, error.clone());
+                    self.toast(error, true);
+                }
             }
             Done::ModelChoices { name, result } => match result {
                 // Kept only while the picker is still open for that AI.
@@ -1526,57 +1900,54 @@ impl CraftApp {
                     }
                 }
             }
-            Done::ModelChanged { name, model, result } => match result {
-                Ok(options) => {
-                    if let Some(backend) = self.backends.iter_mut().find(|backend| backend.name == name) {
-                        if backend.kind != craft_anything_ai::BackendKind::AgentCli {
-                            backend.model = model;
-                        }
-                        self.backend_options.insert(name.clone(), options);
+            Done::ModelChanged { name, result } => match result {
+                Ok(snapshot) => {
+                    if self.apply_backends(snapshot) && model_save.as_deref() == Some(name.as_str()) {
+                        self.model_tuning.remove(&name);
                     }
-                    self.model_tuning.remove(&name);
                 }
                 Err(error) => {
-                    if let Some(state) = self.model_tuning.get_mut(&name) {
-                        state.saving = false;
-                    }
                     self.toast(error.for_people(), true);
                 }
             },
-            Done::ModelOptionsSaved { params, result } => {
-                let current = self.backend_options.get(&params.backend).and_then(|options| options.cli_model.clone());
-                if current == params.expected_cli_model {
-                    if result.is_ok()
-                        && let Some(options) = self.backend_options.get_mut(&params.backend)
-                    {
-                        options.cli_context = params.context;
-                    }
-                    if let Some(state) = self.model_tuning.get_mut(&params.backend) {
-                        state.saving = false;
-                        if result.is_err()
-                            && let Some(options) = self.backend_options.get(&params.backend)
-                        {
-                            state.context = options.cli_context;
-                        }
-                    }
+            Done::ModelOptionsSaved { result } => match result {
+                Ok(snapshot) => {
+                    self.apply_backends(snapshot);
                 }
-                if let Err(error) = result {
+                Err(error) => {
                     self.toast(error.for_people(), true);
                 }
-            }
-            Done::BackendAdded { name, result, choices } => match result {
+            },
+            Done::BackendAdded { name, result, choices, address, submitted_command } => match result {
                 Ok(()) => {
                     if self.server_form.name.trim() == name {
                         self.server_form = ServerForm::default();
                     }
                     self.toast(i18n::trf("{name} is ready", &[("name", &name)]), false);
+                    // Clear only the draft this add sent: a command edited while the check ran is
+                    // newer and stays.
+                    if self.state.remote_commands.get(&name).is_some_and(|draft| draft.trim() == submitted_command.as_deref().unwrap_or("")) {
+                        self.state.remote_commands.remove(&name);
+                    }
                     // Picking another AI (or none) while this one connected wins.
                     if choices == self.backend_choices {
                         self.select_backend(Some(name));
                     }
                     self.refresh_backends();
                 }
-                Err(e) => self.toast(e.for_people(), true),
+                // Stopping an add says nothing new about the server: a list it offered stays.
+                Err(e) if e.code == ErrorCode::Cancelled => self.toast(i18n::trf("Stopped adding {name}.", &[("name", &name)]), false),
+                Err(e) => {
+                    // The form's own request answered: several chat models and none known to be
+                    // loaded are offered in the form, for the address that was asked, and only
+                    // while the form still shows that server. Any other failure leaves no list.
+                    if form_request {
+                        let models = craft_anything_ai::models_to_choose(&e);
+                        let same = self.server_form.name.trim() == name && self.server_form.address.trim() == address;
+                        self.server_form.choices = (!models.is_empty() && same).then_some((address, models));
+                    }
+                    self.toast(e.for_people(), true);
+                }
             },
             Done::Picked { pick, path } => {
                 if let Some(path) = path {
@@ -1713,9 +2084,11 @@ impl CraftApp {
                 }
             }
         }
-        let want = (self.theme_kind(), self.beginner());
+        // eframe reports the system's appearance in each frame's input, and again when it changes.
+        self.system_theme = ctx.system_theme();
+        let want = self.theme_kind();
         if self.applied_theme != Some(want) {
-            theme::apply(ctx, want.0, want.1);
+            theme::apply(ctx, want);
             self.applied_theme = Some(want);
         }
         self.take_finished_jobs();
@@ -1764,9 +2137,36 @@ impl CraftApp {
         }
     }
 
+    /// Whether an update may install now: it closes the app, so not while work is running or
+    /// unsaved, nor while a sign-in window is open (its job is invisible, and closing would lose
+    /// the sign-in before the browser profile is saved).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn safe_to_install(&self) -> bool {
+        !self.jobs.busy()
+            && !self.runs.any_busy()
+            && !self.conversation.as_ref().is_some_and(|c| c.is_busy())
+            && !self.settings_dirty
+            && self.save_due.is_none()
+            && self.saving.is_none()
+            && self.signing_in.is_none()
+    }
+
     /// Draw the whole interface.
     pub fn show(&mut self, ui: &mut egui::Ui) {
+        self.draw(ui);
+        // Read after drawing, on every path out of it: the next frame's Esc needs it.
+        self.text_was_focused = ui.ctx().text_edit_focused();
+    }
+
+    fn draw(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let safe = self.safe_to_install();
+            if self.updates.show(&ctx, safe) {
+                return;
+            }
+        }
         self.tick(&ctx);
         self.shortcuts(&ctx);
         #[cfg(target_os = "macos")]
@@ -1788,7 +2188,7 @@ impl CraftApp {
             egui::Panel::left("app-sidebar")
                 .exact_size(sidebar::width(self, &ctx))
                 .resizable(false)
-                .frame(egui::Frame::new().fill(t.chrome).inner_margin(egui::Margin::symmetric(8, 0)))
+                .frame(egui::Frame::new().fill(t.chrome).inner_margin(theme::pad::GUTTER))
                 .show(ui, |ui| guard_ui(ui, "sidebar", |ui| sidebar::show(self, ui)));
             egui::CentralPanel::default().frame(egui::Frame::new().fill(t.canvas)).show(ui, |ui| {
                 guard_ui(ui, "simple", |ui| match self.state.screen {
@@ -1804,7 +2204,9 @@ impl CraftApp {
         palette::show(self, &ctx);
         settings_ui::show(self, &ctx);
         home::modals(self, &ctx);
+        activity_box::windows(self, &ctx);
         self.toasts(&ctx);
+        widgets::text_focus_ring(&ctx);
         self.drop_overlay(&ctx);
         titlebar::window_edge(&ctx);
         titlebar::resize_edges(&ctx);
@@ -1829,37 +2231,72 @@ impl CraftApp {
         if let Some(next) = self.state.toasts.iter().zip(&self.toast_at).filter(|((_, e), _)| !e).map(|(_, t)| CONFIRMATION.saturating_sub(t.elapsed())).min() {
             ctx.request_repaint_after(next);
         }
-        if self.state.toasts.is_empty() {
+        // Settings already renders errors inside its bounded page. Keep them stored for its
+        // dismissal controls (and for when Settings closes), without painting a second copy.
+        let settings_errors = self.state.settings_open && self.settings.first_run_done;
+        if self.state.toasts.iter().all(|(_, error)| settings_errors && *error) {
             return;
         }
         let t = theme::Tokens::get(ctx);
-        let width = (ctx.content_rect().width() - 32.0).clamp(200.0, 640.0);
+        // Under the title bar, in the middle. Anywhere a message sits it is over something (at
+        // the bottom, the prompt box's switches just pressed; in a corner, a side panel; here, a
+        // screen's tabs), so the card lets clicks through to what is under it. Only its close
+        // button, drawn in a layer of its own, takes a click.
+        let width = (ctx.content_rect().width() - 2.0 * theme::space::LG).clamp(200.0, 420.0);
         let mut dismiss = None;
-        egui::Area::new(egui::Id::new("toasts")).order(egui::Order::Foreground).anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -16.0)).show(ctx, |ui| {
-            ui.set_width(width);
-            for (i, (text, error)) in self.state.toasts.iter().enumerate() {
-                egui::Frame::new()
-                    .fill(t.raised)
-                    .stroke(egui::Stroke::new(1.0, if *error { t.danger.gamma_multiply(0.6) } else { t.card_border }))
-                    .corner_radius(t.r_lg())
-                    .shadow(egui::Shadow { offset: [0, 4], blur: 16, spread: 0, color: t.shadow })
-                    .inner_margin(egui::Margin::symmetric(14, 8))
-                    .show(ui, |ui| {
-                        ui.set_width(width - 28.0);
-                        ui.horizontal(|ui| {
-                            let (icon, col) = if *error { ("triangle-alert", t.danger) } else { ("check", t.success) };
-                            icons::show(ui, icon, 15.0, col);
-                            ui.add(egui::Label::new(egui::RichText::new(text).color(if *error { t.text } else { t.text_dim })).wrap());
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if icons::button(ui, "x", 28.0, false, "Dismiss").clicked() {
-                                    dismiss = Some(i);
-                                }
+        // Where each card keeps room for its close button.
+        let mut close_at = Vec::with_capacity(self.state.toasts.len());
+        egui::Area::new(egui::Id::new("toasts"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, titlebar::HEIGHT + theme::space::SM))
+            .interactable(false)
+            .fade_in(true)
+            .show(ctx, |ui| {
+                ui.set_width(width);
+                ui.spacing_mut().item_spacing = egui::vec2(theme::space::SM, theme::space::XS);
+                // The mark and the close button are boxes of one size, and the words between
+                // them sit on that box's middle line: the same room on every side, however many
+                // lines the message takes.
+                let side = theme::ControlSize::Small.height();
+                let line = theme::leading(theme::SMALL);
+                let nudge = ((side - line) / 2.0).max(0.0);
+                let inner = width - 2.0 * theme::space::MD - 2.0;
+                for (i, (text, error)) in self.state.toasts.iter().enumerate() {
+                    if settings_errors && *error {
+                        continue;
+                    }
+                    egui::Frame::new()
+                        .fill(t.field)
+                        .stroke(egui::Stroke::new(1.0, t.card_border))
+                        .corner_radius(t.r_lg())
+                        .shadow(egui::Shadow { offset: [0, 8], blur: 24, spread: 0, color: t.shadow })
+                        .inner_margin(theme::pad::PANEL)
+                        .show(ui, |ui| {
+                            ui.set_width(inner);
+                            ui.horizontal_top(|ui| {
+                                let (icon, col) = if *error { ("triangle-alert", t.danger) } else { ("check", t.success) };
+                                let (mark, _) = ui.allocate_exact_size(egui::Vec2::splat(side), egui::Sense::hover());
+                                icons::paint(ui, mark, icon, theme::icon::MD, col);
+                                ui.vertical(|ui| {
+                                    ui.spacing_mut().item_spacing.y = 0.0;
+                                    ui.set_width(inner - 2.0 * (side + theme::space::SM));
+                                    ui.add_space(nudge);
+                                    ui.add(egui::Label::new(egui::RichText::new(text).size(theme::SMALL).line_height(Some(line)).color(t.text)).wrap());
+                                    ui.add_space(nudge);
+                                });
+                                let (slot, _) = ui.allocate_exact_size(egui::Vec2::splat(side), egui::Sense::hover());
+                                close_at.push((i, slot));
                             });
                         });
-                    });
-                ui.add_space(6.0);
-            }
-        });
+                }
+            });
+        for (i, slot) in close_at {
+            egui::Area::new(egui::Id::new(("toast-close", i))).order(egui::Order::Tooltip).fixed_pos(slot.min).show(ctx, |ui| {
+                if icons::button(ui, "x", theme::ControlSize::Small, false, "Dismiss").clicked() {
+                    dismiss = Some(i);
+                }
+            });
+        }
         if let Some(i) = dismiss {
             self.state.toasts.remove(i);
             if i < self.toast_at.len() {
@@ -1917,8 +2354,10 @@ impl CraftApp {
                 home::dismiss(self);
             } else if self.state.settings_open {
                 self.state.settings_open = false;
-            } else if !matches!(self.state.screen, Screen::Home | Screen::Workbench) && ctx.memory(|m| m.focused().is_none()) {
-                // Back to Home, unless Esc was meant for a text field.
+            } else if !matches!(self.state.screen, Screen::Home | Screen::Workbench) && !self.text_was_focused {
+                // Back to Home, unless Esc was meant for a text field. egui has already let go of
+                // the field's focus this frame, so ask the last one; the field keeps its text,
+                // and a second Esc, with nothing focused, goes home.
                 self.state.screen = Screen::Home;
             }
         }
@@ -1950,7 +2389,20 @@ pub fn app_icon(size: f32) -> egui::Image<'static> {
 /// Run an action; a panic is logged and swallowed so one bad action never takes the app down.
 /// The configured backends and the ones chosen to build and to extract (read off the UI thread).
 pub(crate) fn backends(hub: &AiHub) -> Done {
-    Done::Backends(hub.backends(), hub.chosen(craft_anything_ai::Role::Builder), hub.chosen(craft_anything_ai::Role::Extractor), hub.options())
+    Done::Backends(read_backends(hub))
+}
+
+pub(crate) fn read_backends(hub: &AiHub) -> BackendSnapshot {
+    // Numbered before reading: a snapshot read after a save always outnumbers one read before it.
+    static READS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    BackendSnapshot {
+        read: READS.fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+        backends: hub.backends(),
+        builder: hub.chosen(craft_anything_ai::Role::Builder),
+        extractor: hub.chosen(craft_anything_ai::Role::Extractor),
+        options: hub.options(),
+        replaced: hub.replaced_programs(),
+    }
 }
 
 impl CraftApp {
@@ -2073,10 +2525,303 @@ pub fn kind_icon(k: TargetKind) -> &'static str {
         TargetKind::Zip | TargetKind::Asar => "package",
         TargetKind::Directory => "folder",
         TargetKind::Script => "file-code",
+        TargetKind::Text => "file",
         TargetKind::NetworkCapture => "network",
         TargetKind::Plist => "list-tree",
         TargetKind::Evm => "zap",
         TargetKind::Sqlite => "database",
         TargetKind::Unknown => "file",
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub mod updates;
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for CraftApp {
+    fn drop(&mut self) {
+        self.updates.finish();
+    }
+}
+
+#[cfg(test)]
+mod backend_snapshot_tests {
+    use super::*;
+
+    fn configured_app() -> CraftApp {
+        let app = demo::app(demo::engine(Mode::Experienced, true));
+        for (name, kind, model) in [
+            ("First", craft_anything_ai::BackendKind::OpenaiCompatible, "first-old"),
+            ("Second", craft_anything_ai::BackendKind::OpenaiCompatible, "second-old"),
+            ("Copilot", craft_anything_ai::BackendKind::AgentCli, "copilot"),
+        ] {
+            app.hub.add_backend(BackendConfig { name: name.into(), kind, model: model.into(), base_url: None, ssh_host: None, enabled: true }, None).unwrap();
+        }
+        let mut app = app;
+        app.handle_done(jobs::Finished { job: 0, result: Ok(backends(&app.hub)) });
+        app
+    }
+
+    /// Hold a real worker result back while a later snapshot is shown. The save itself and the
+    /// result construction both run through the same path as Settings; no race timing is needed.
+    fn take_last_job(app: &mut CraftApp) -> jobs::Finished<Done> {
+        let job = app.jobs.list.last().unwrap().id;
+        let started = Instant::now();
+        loop {
+            let mut picked = None;
+            for finished in app.jobs.poll() {
+                if finished.job == job {
+                    picked = Some(finished);
+                } else {
+                    app.handle_done(finished);
+                }
+            }
+            if let Some(finished) = picked {
+                assert!(finished.result.is_ok());
+                return finished;
+            }
+            assert!(started.elapsed() < Duration::from_secs(20), "settings worker did not finish");
+            std::thread::park_timeout(Duration::from_millis(1));
+        }
+    }
+
+    fn options(context: craft_anything_ai::config::CliContext) -> craft_anything_ai::model_options::SetModelOptions {
+        craft_anything_ai::model_options::SetModelOptions { backend: "Copilot".into(), expected_cli_model: None, context: Some(context) }
+    }
+
+    fn shown_model<'a>(app: &'a CraftApp, name: &str) -> &'a str {
+        &app.backends.iter().find(|backend| backend.name == name).unwrap().model
+    }
+
+    fn tuning(context: craft_anything_ai::config::CliContext) -> ModelTuningDraft {
+        ModelTuningDraft { backend: "Copilot".into(), cli_model: None, choices: None, context: Some(context), saving: false, error: None }
+    }
+
+    #[test]
+    fn a_model_save_outnumbers_a_refresh_read_before_it() {
+        let mut app = configured_app();
+        let old = backends(&app.hub);
+        app.set_model("First", "first-new");
+        let saved = take_last_job(&mut app);
+        app.handle_done(saved);
+        assert_eq!(shown_model(&app, "First"), "first-new");
+        app.handle_done(jobs::Finished { job: 0, result: Ok(old) });
+        assert_eq!(shown_model(&app, "First"), "first-new", "a delayed refresh cannot undo a completed model save");
+    }
+
+    #[test]
+    fn a_delayed_model_result_cannot_replace_a_newer_snapshot() {
+        let mut app = configured_app();
+        app.set_model("First", "first-intermediate");
+        let delayed = take_last_job(&mut app);
+        app.hub.set_model("First", "first-newest").unwrap();
+        app.handle_done(jobs::Finished { job: 0, result: Ok(backends(&app.hub)) });
+        app.handle_done(delayed);
+        assert_eq!(shown_model(&app, "First"), "first-newest");
+    }
+
+    #[test]
+    fn a_model_options_save_outnumbers_a_refresh_read_before_it() {
+        let mut app = configured_app();
+        let old = backends(&app.hub);
+        app.set_model_options(options(craft_anything_ai::config::CliContext::Long));
+        let saved = take_last_job(&mut app);
+        app.handle_done(saved);
+        app.handle_done(jobs::Finished { job: 0, result: Ok(old) });
+        assert_eq!(app.backend_options["Copilot"].cli_context, Some(craft_anything_ai::config::CliContext::Long));
+    }
+
+    #[test]
+    fn a_delayed_options_result_cannot_replace_a_newer_snapshot() {
+        let mut app = configured_app();
+        app.set_model_options(options(craft_anything_ai::config::CliContext::Long));
+        let delayed = take_last_job(&mut app);
+        app.hub.set_model_options(&options(craft_anything_ai::config::CliContext::Standard)).unwrap();
+        app.handle_done(jobs::Finished { job: 0, result: Ok(backends(&app.hub)) });
+        app.handle_done(delayed);
+        assert_eq!(app.backend_options["Copilot"].cli_context, Some(craft_anything_ai::config::CliContext::Standard));
+    }
+
+    #[test]
+    fn model_saves_on_different_backends_survive_reversed_results() {
+        let mut app = configured_app();
+        app.set_model("First", "first-new");
+        let first = take_last_job(&mut app);
+        app.set_model("Second", "second-new");
+        let second = take_last_job(&mut app);
+        app.handle_done(second);
+        app.handle_done(first);
+        assert_eq!(shown_model(&app, "First"), "first-new");
+        assert_eq!(shown_model(&app, "Second"), "second-new");
+    }
+
+    #[test]
+    fn a_failed_model_save_keeps_the_current_settings_and_reports_the_error() {
+        let mut app = configured_app();
+        app.set_model("First", "");
+        let failed = take_last_job(&mut app);
+        app.handle_done(failed);
+        assert_eq!(shown_model(&app, "First"), "first-old");
+        assert!(app.state.toasts.iter().any(|(message, error)| *error && message.contains("Name a model")));
+    }
+
+    #[test]
+    fn an_older_options_result_does_not_settle_a_newer_save() {
+        use craft_anything_ai::config::CliContext::{Long, Standard};
+        let mut app = configured_app();
+        app.model_tuning.insert("Copilot".into(), tuning(Long));
+        app.set_model_options(options(Long));
+        let old = take_last_job(&mut app);
+        app.model_tuning.get_mut("Copilot").unwrap().context = Some(Standard);
+        app.set_model_options(options(Standard));
+        let new = take_last_job(&mut app);
+
+        app.handle_done(old);
+        assert!(app.model_tuning["Copilot"].saving, "the newer worker still owns the controls");
+        assert_eq!(app.model_tuning["Copilot"].context, Some(Standard));
+        app.handle_done(new);
+        assert!(!app.model_tuning["Copilot"].saving);
+        assert_eq!(app.model_tuning["Copilot"].context, Some(Standard));
+        assert_eq!(app.backend_options["Copilot"].cli_context, Some(Standard));
+    }
+
+    #[test]
+    fn a_superseded_options_save_settles_to_the_newest_shown_values() {
+        use craft_anything_ai::config::CliContext::{Long, Standard};
+        let mut app = configured_app();
+        app.model_tuning.insert("Copilot".into(), tuning(Long));
+        app.set_model_options(options(Long));
+        let delayed = take_last_job(&mut app);
+        app.hub.set_model_options(&options(Standard)).unwrap();
+        app.handle_done(jobs::Finished { job: 0, result: Ok(backends(&app.hub)) });
+
+        app.handle_done(delayed);
+        assert!(!app.model_tuning["Copilot"].saving);
+        assert_eq!(app.model_tuning["Copilot"].context, Some(Standard));
+    }
+
+    fn context_choices(values: Option<Vec<craft_anything_ai::config::CliContext>>) -> ModelTuningDraft {
+        let mut draft = tuning(craft_anything_ai::config::CliContext::Long);
+        if let Some(values) = values {
+            draft.set_choices(craft_anything_ai::model_options::ModelTuning {
+                model: "test-model".into(),
+                context: values
+                    .into_iter()
+                    .map(|value| craft_anything_ai::model_options::ModelOption { value, label: "Context".into(), description: None })
+                    .collect(),
+                reasoning: Vec::new(),
+            });
+        }
+        draft
+    }
+
+    #[test]
+    fn a_refreshed_context_respects_loaded_model_choices() {
+        use craft_anything_ai::config::CliContext::{Long, Standard};
+        for (choices, expected) in [(None, Some(Long)), (Some(vec![Long]), Some(Long)), (Some(vec![Standard]), None), (Some(Vec::new()), None)] {
+            let mut app = configured_app();
+            app.hub.set_model_options(&options(Long)).unwrap();
+            let draft = context_choices(choices);
+            app.model_tuning.insert("Copilot".into(), draft);
+            app.handle_done(jobs::Finished { job: 0, result: Ok(backends(&app.hub)) });
+            assert_eq!(app.model_tuning["Copilot"].params().context, expected);
+            assert_eq!(app.backend_options["Copilot"].cli_context, Some(Long), "discovery filters controls, not the saved configuration");
+        }
+    }
+
+    #[test]
+    fn a_settled_context_respects_loaded_model_choices() {
+        use craft_anything_ai::config::CliContext::{Long, Standard};
+        for (choices, expected) in [(None, Some(Long)), (Some(vec![Long]), Some(Long)), (Some(vec![Standard]), None), (Some(Vec::new()), None)] {
+            let mut app = configured_app();
+            let mut draft = context_choices(choices);
+            draft.context = None;
+            app.model_tuning.insert("Copilot".into(), draft);
+            app.set_model_options(craft_anything_ai::model_options::SetModelOptions { backend: "Copilot".into(), expected_cli_model: None, context: None });
+            let delayed = take_last_job(&mut app);
+            app.hub.set_model_options(&options(Long)).unwrap();
+            app.handle_done(jobs::Finished { job: 0, result: Ok(backends(&app.hub)) });
+            app.handle_done(delayed);
+            assert!(!app.model_tuning["Copilot"].saving);
+            assert_eq!(app.model_tuning["Copilot"].params().context, expected);
+            assert_eq!(app.backend_options["Copilot"].cli_context, Some(Long));
+        }
+    }
+
+    #[test]
+    fn a_delayed_model_result_keeps_controls_for_the_newer_backend_configuration() {
+        let mut app = configured_app();
+        app.set_model("First", "intermediate-model");
+        let delayed = take_last_job(&mut app);
+        // A later configuration read replaced this API backend with a CLI backend. Its model
+        // controls must survive the older API save's result; no installed CLI is needed here.
+        let mut config = app.backends.iter().find(|backend| backend.name == "First").unwrap().clone();
+        config.kind = craft_anything_ai::BackendKind::AgentCli;
+        config.model = "copilot".into();
+        app.hub
+            .add_backend_with(
+                craft_anything_ai::BackendEntry {
+                    config,
+                    options: craft_anything_ai::BackendOptions { cli_model: Some("newest-model".into()), ..Default::default() },
+                },
+                None,
+            )
+            .unwrap();
+        app.handle_done(jobs::Finished { job: 0, result: Ok(backends(&app.hub)) });
+        let mut draft = tuning(craft_anything_ai::config::CliContext::Long);
+        draft.backend = "First".into();
+        draft.cli_model = Some("newest-model".into());
+        draft.error = Some("Fresh discovery".into());
+        app.model_tuning.insert("First".into(), draft);
+
+        app.handle_done(delayed);
+        assert_eq!(app.backend_options["First"].cli_model.as_deref(), Some("newest-model"));
+        assert_eq!(app.model_tuning["First"].error.as_deref(), Some("Fresh discovery"));
+    }
+
+    #[test]
+    fn a_rejected_options_save_restores_the_controls_and_reports_the_error() {
+        let mut app = configured_app();
+        app.model_tuning.insert("Copilot".into(), tuning(craft_anything_ai::config::CliContext::Long));
+        let mut params = options(craft_anything_ai::config::CliContext::Long);
+        params.expected_cli_model = Some("a-model-that-is-no-longer-selected".into());
+        app.set_model_options(params);
+        let failed = take_last_job(&mut app);
+
+        app.handle_done(failed);
+        assert!(!app.model_tuning["Copilot"].saving);
+        assert_eq!(app.model_tuning["Copilot"].context, None);
+        assert_eq!(app.backend_options["Copilot"].cli_context, None);
+        assert!(app.state.toasts.iter().any(|(_, error)| *error));
+    }
+
+    /// A backends snapshot read before the one already shown (a slow refresh finishing after a
+    /// save's) is dropped, so it can't put back what the save changed.
+    #[test]
+    fn an_older_backends_snapshot_does_not_replace_a_newer_one() {
+        let mut app = demo::app(demo::engine(Mode::Experienced, true));
+        let snapshot = |read: u64, name: &str| {
+            let backend = BackendConfig {
+                name: name.into(),
+                kind: craft_anything_ai::BackendKind::AgentCli,
+                model: "claude-code".into(),
+                base_url: None,
+                ssh_host: None,
+                enabled: true,
+            };
+            Done::Backends(BackendSnapshot {
+                read,
+                backends: vec![backend],
+                builder: None,
+                extractor: None,
+                options: Default::default(),
+                replaced: Default::default(),
+            })
+        };
+        app.handle_done(jobs::Finished { job: 1, result: Ok(snapshot(10, "New")) });
+        app.handle_done(jobs::Finished { job: 2, result: Ok(snapshot(5, "Old")) });
+        assert_eq!(app.backends.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(), ["New"]);
+        app.handle_done(jobs::Finished { job: 3, result: Ok(snapshot(11, "Newer")) });
+        assert_eq!(app.backends.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(), ["Newer"]);
     }
 }

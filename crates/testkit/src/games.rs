@@ -408,6 +408,64 @@ pub fn unity_texture2d(
     out
 }
 
+/// A Unity AudioClip object's bytes (little-endian) as `unity_version` (5.0 or later) writes it:
+/// `channels` at `frequency` Hz, `seconds` long, in compression format `compression`, stored at
+/// `(path, offset, size)`.
+pub fn unity_audioclip(unity_version: &str, name: &str, channels: i32, frequency: i32, seconds: f32, compression: i32, stream: (&str, u64, u64)) -> Vec<u8> {
+    let major = unity_version.split('.').next().and_then(|p| p.parse::<u32>().ok()).unwrap_or(0);
+    let mut out = Vec::new();
+    let string = |out: &mut Vec<u8>, s: &str| {
+        out.extend_from_slice(&(s.len() as i32).to_le_bytes());
+        out.extend_from_slice(s.as_bytes());
+        out.resize(out.len().div_ceil(4) * 4, 0);
+    };
+    string(&mut out, name);
+    for x in [1, channels, frequency, 16] {
+        out.extend_from_slice(&x.to_le_bytes()); // load type, channels, frequency, bits per sample
+    }
+    out.extend_from_slice(&seconds.to_le_bytes());
+    out.push(0); // tracker format
+    if major >= 2017 {
+        out.push(0); // ambisonic
+    }
+    out.resize(out.len().div_ceil(4) * 4, 0);
+    out.extend_from_slice(&0i32.to_le_bytes()); // subsound index
+    out.extend_from_slice(&[1, 0, 0]); // preload, load in background, legacy 3D
+    out.resize(out.len().div_ceil(4) * 4, 0);
+    string(&mut out, stream.0);
+    out.extend_from_slice(&stream.1.to_le_bytes());
+    out.extend_from_slice(&stream.2.to_le_bytes());
+    out.extend_from_slice(&compression.to_le_bytes());
+    out
+}
+
+/// An FSB5 bank (version 1) in `codec` holding one sample per `(rate index, channels, frames,
+/// data)`: mono or stereo in the header, other counts in a channels chunk. Each sample's data is
+/// padded to 32 bytes, as FMOD writes it.
+pub fn fsb5_bank(codec: u32, samples: &[(u64, u8, u64, &[u8])]) -> Vec<u8> {
+    let mut headers = Vec::new();
+    let mut data = Vec::new();
+    for (rate, channels, frames, bytes) in samples {
+        let chunk = *channels > 2;
+        let raw = u64::from(chunk) | rate << 1 | u64::from(*channels == 2) << 5 | (data.len() as u64 / 16) << 6 | frames << 34;
+        headers.extend_from_slice(&raw.to_le_bytes());
+        if chunk {
+            headers.extend_from_slice(&(1u32 << 1 | 1 << 25).to_le_bytes()); // one byte: the channel count
+            headers.push(*channels);
+        }
+        data.extend_from_slice(bytes);
+        data.resize(data.len().div_ceil(32) * 32, 0);
+    }
+    let mut out = b"FSB5".to_vec();
+    for x in [1, samples.len() as u32, headers.len() as u32, 0, data.len() as u32, codec] {
+        out.extend_from_slice(&x.to_le_bytes());
+    }
+    out.extend_from_slice(&[0; 32]);
+    out.extend_from_slice(&headers);
+    out.extend_from_slice(&data);
+    out
+}
+
 /// A cooked Unreal 4.27 texture package (`.uasset`, `.uexp`) named `name` in `pixel_format`: one
 /// Texture2D export with tagged properties, its first mip optionally in the `.ubulk`
 /// (`(width, height, length)` at offset 0), then a `width`×`height` mip with `pixels` inline.
@@ -480,11 +538,20 @@ pub fn unreal_texture_package(name: &str, pixel_format: &str, width: i32, height
     i32s(&mut d, &[0]); // not virtual
     fname(&mut d, "None");
 
-    // The .uasset: summary, names, one import (the class), one export.
+    unreal_package(&names, "Texture2D", name, d)
+}
+
+/// A cooked Unreal 4.27 package's `.uasset` and `.uexp`: the name table `names` (holding "None",
+/// `class`, "/Script/Engine", "Class" and `name`), one import (the class) and one export `name` whose
+/// data `d` is the `.uexp` (ending with the package tag).
+fn unreal_package(names: &[&str], class: &str, name: &str, mut d: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
+    let idx = |n: &str| names.iter().position(|x| *x == n).unwrap_or(0) as i32;
+    let i32s = |v: &mut Vec<u8>, xs: &[i32]| xs.iter().for_each(|x| v.extend_from_slice(&x.to_le_bytes()));
+    let fname = |v: &mut Vec<u8>, n: &str| i32s(v, &[idx(n), 0]);
     let summary_len = 4 * 6 + 4 + (4 + 5) + 4 + 4 * 2 + 8 + 4 * 2 + 4 * 2 + 4 * 2;
     let mut name_table = Vec::new();
     for n in names {
-        fstring(&mut name_table, n);
+        name_table.extend_from_slice(&fstring(n));
         name_table.extend_from_slice(&[0; 4]);
     }
     let name_offset = summary_len as i32;
@@ -494,7 +561,7 @@ pub fn unreal_texture_package(name: &str, pixel_format: &str, width: i32, height
     let mut u = Vec::new();
     u.extend_from_slice(&0x9E2A_83C1u32.to_le_bytes());
     i32s(&mut u, &[-7, 0, 0, 0, 0, header_size]);
-    fstring(&mut u, "None");
+    u.extend_from_slice(&fstring("None"));
     u.extend_from_slice(&0x8000_0000u32.to_le_bytes());
     i32s(&mut u, &[names.len() as i32, name_offset, 0, 0, 1, export_offset, 1, import_offset, 0, 0]);
     assert_eq!(u.len(), summary_len);
@@ -502,7 +569,7 @@ pub fn unreal_texture_package(name: &str, pixel_format: &str, width: i32, height
     fname(&mut u, "/Script/Engine");
     fname(&mut u, "Class");
     i32s(&mut u, &[0]);
-    fname(&mut u, "Texture2D");
+    fname(&mut u, class);
     i32s(&mut u, &[-1, 0, 0, 0]);
     fname(&mut u, name);
     i32s(&mut u, &[0]);
@@ -512,6 +579,95 @@ pub fn unreal_texture_package(name: &str, pixel_format: &str, width: i32, height
     assert_eq!(u.len(), header_size as usize);
     d.extend_from_slice(&0x9E2A_83C1u32.to_le_bytes());
     (u, d)
+}
+
+/// A cooked Unreal 4.27 sound package (`.uasset`, `.uexp`) named `name`: one SoundWave export with
+/// tagged properties, then fields the sound reader steps over (a cooked flag, a count and the name
+/// `format`), a bulk-data record holding `sound` inline or, with `in_ubulk`, pointing at offset 0
+/// of the `.ubulk` (the caller writes `sound` there), and a guid.
+pub fn unreal_sound_package(name: &str, format: &str, sound: &[u8], in_ubulk: bool) -> (Vec<u8>, Vec<u8>) {
+    let names = ["None", "SoundWave", "/Script/Engine", "Class", "Duration", "FloatProperty", "bLooping", "BoolProperty", format, name];
+    let idx = |n: &str| names.iter().position(|x| *x == n).unwrap_or(0) as i32;
+    let i32s = |v: &mut Vec<u8>, xs: &[i32]| xs.iter().for_each(|x| v.extend_from_slice(&x.to_le_bytes()));
+    let fname = |v: &mut Vec<u8>, n: &str| i32s(v, &[idx(n), 0]);
+    let mut d = Vec::new();
+    fname(&mut d, "Duration");
+    fname(&mut d, "FloatProperty");
+    i32s(&mut d, &[4, 0]);
+    d.push(0);
+    d.extend_from_slice(&0.5f32.to_le_bytes());
+    fname(&mut d, "bLooping");
+    fname(&mut d, "BoolProperty");
+    i32s(&mut d, &[0, 0]);
+    d.extend_from_slice(&[1, 0]);
+    fname(&mut d, "None");
+    i32s(&mut d, &[0]); // no guid
+    i32s(&mut d, &[1, 1]);
+    fname(&mut d, format);
+    let len = sound.len() as i32;
+    if in_ubulk {
+        i32s(&mut d, &[0x10501, len, len]);
+        d.extend_from_slice(&0i64.to_le_bytes());
+    } else {
+        i32s(&mut d, &[0x48, len, len]);
+        d.extend_from_slice(&0i64.to_le_bytes());
+        d.extend_from_slice(sound);
+    }
+    d.extend_from_slice(&[7; 16]);
+    unreal_package(&names, "SoundWave", name, d)
+}
+
+/// A WAV file: one `fmt ` chunk (`format_tag`, `channels` at `rate` Hz, 16 bits) and `data`.
+pub fn wav_file(format_tag: u16, channels: u16, rate: u32, data: &[u8]) -> Vec<u8> {
+    let mut v = b"RIFF".to_vec();
+    v.extend_from_slice(&(4 + 8 + 16 + 8 + data.len() as u32).to_le_bytes());
+    v.extend_from_slice(b"WAVEfmt ");
+    v.extend_from_slice(&16u32.to_le_bytes());
+    v.extend_from_slice(&format_tag.to_le_bytes());
+    v.extend_from_slice(&channels.to_le_bytes());
+    v.extend_from_slice(&rate.to_le_bytes());
+    v.extend_from_slice(&(rate * u32::from(channels) * 2).to_le_bytes());
+    v.extend_from_slice(&(channels * 2).to_le_bytes());
+    v.extend_from_slice(&16u16.to_le_bytes());
+    v.extend_from_slice(b"data");
+    v.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    v.extend_from_slice(data);
+    v
+}
+
+/// An Ogg stream of `pages` pages (CRCs left zero): the first holds an identification packet
+/// starting with `magic` (`\x01vorbis` or `OpusHead`) for `channels` at `rate` Hz, the others 10
+/// bytes each, the last marked end of stream.
+pub fn ogg_file(magic: &[u8], channels: u8, rate: u32, pages: u32) -> Vec<u8> {
+    let mut id = magic.to_vec();
+    if magic == b"OpusHead" {
+        id.extend_from_slice(&[1, channels, 0, 0]);
+    } else {
+        id.extend_from_slice(&[0, 0, 0, 0, channels]);
+    }
+    id.extend_from_slice(&rate.to_le_bytes());
+    id.extend_from_slice(&[0; 4]);
+    let mut v = Vec::new();
+    for page in 0..pages {
+        let body = if page == 0 { id.clone() } else { vec![page as u8; 10] };
+        let flags = if page == 0 {
+            2
+        } else if page + 1 == pages {
+            4
+        } else {
+            0
+        };
+        v.extend_from_slice(b"OggS\0");
+        v.push(flags);
+        v.extend_from_slice(&u64::from(page).to_le_bytes());
+        v.extend_from_slice(&1u32.to_le_bytes());
+        v.extend_from_slice(&page.to_le_bytes());
+        v.extend_from_slice(&[0; 4]);
+        v.push(1);
+        v.push(body.len() as u8);
+        v.extend_from_slice(&body);
+    }
+    v
 }
 
 /// One file of a test Godot pack.
@@ -595,8 +751,9 @@ pub fn godot_embedded(program: &[u8], pack: &[u8]) -> Vec<u8> {
 /// The shape of a test IL2CPP metadata file.
 pub struct Il2cppSample {
     pub version: i32,
+    /// 256 or 264; 380 for version 39, which also takes its other shapes from the version.
     pub header_size: u32,
-    /// 88 from version 27 on; 92 for later 24.x files.
+    /// 88 from version 27 on; 92 for later 24.x files; 82 for version 39.
     pub type_size: usize,
     /// 32, or 36 with a return-parameter token.
     pub method_size: usize,
@@ -606,6 +763,9 @@ pub struct Il2cppSample {
 /// Game.Enemy, Game.Player), four methods (Enemy.Update; Player..ctor, Player.Update,
 /// Player.TakeDamage), seven fields and three string literals ("Hello, player", "Game over", "").
 pub fn il2cpp_metadata(s: &Il2cppSample) -> Vec<u8> {
+    if s.version == 39 {
+        return il2cpp_metadata_39(s);
+    }
     let mut strings = Vec::new();
     let mut name = |text: &str| {
         let at = strings.len() as u32;
@@ -688,6 +848,95 @@ pub fn il2cpp_metadata(s: &Il2cppSample) -> Vec<u8> {
                 let offset = out.len() as u32;
                 out[at..at + 4].copy_from_slice(&offset.to_le_bytes());
             }
+        }
+    }
+    out
+}
+
+/// [`il2cpp_metadata`] in version 39's shape: a 31-section header that also counts each section's
+/// records, literals found by their start offsets, and two-byte type indexes.
+fn il2cpp_metadata_39(s: &Il2cppSample) -> Vec<u8> {
+    let mut strings = Vec::new();
+    let mut name = |text: &str| {
+        let at = strings.len() as u32;
+        strings.extend_from_slice(text.as_bytes());
+        strings.push(0);
+        at
+    };
+    let empty = name("");
+    let images_named = [name("mscorlib.dll"), name("Assembly-CSharp.dll")];
+    let game = name("Game");
+    let types_named = [(name("<Module>"), empty), (name("Enemy"), game), (name("Player"), game)];
+    let methods_named = [name("Update"), name(".ctor"), name("Update"), name("TakeDamage")];
+
+    let put = |rec: &mut [u8], at: usize, v: u32| rec[at..at + 4].copy_from_slice(&v.to_le_bytes());
+    let put16 = |rec: &mut [u8], at: usize, v: u16| rec[at..at + 2].copy_from_slice(&v.to_le_bytes());
+
+    // Each literal runs from its start to the next; the last start is where the data ends.
+    let (mut literals, mut literal_data) = (Vec::new(), Vec::new());
+    for text in ["Hello, player", "Game over", ""] {
+        literals.extend_from_slice(&(literal_data.len() as u32).to_le_bytes());
+        literal_data.extend_from_slice(text.as_bytes());
+    }
+    literals.extend_from_slice(&(literal_data.len() as u32).to_le_bytes());
+
+    // The declaring type is a two-byte index.
+    let mut methods = Vec::new();
+    for (i, (named, owner, params, flags)) in [(0usize, 1u16, 0u16, 0x81u16), (1, 2, 0, 0x1886), (2, 2, 0, 0x81), (3, 2, 2, 0x86)].iter().enumerate() {
+        let mut rec = vec![0u8; s.method_size];
+        put(&mut rec, 0, methods_named[*named]);
+        put16(&mut rec, 4, *owner);
+        put(&mut rec, 20, 0x0600_0001 + i as u32);
+        put16(&mut rec, 24, *flags);
+        put16(&mut rec, 30, *params);
+        methods.extend_from_slice(&rec);
+    }
+
+    let mut types = Vec::new();
+    for (i, (start, count, fields, flags)) in [(-1i32, 0u16, 0u16, 0u32), (0, 1, 2, 1), (1, 3, 5, 0x0010_0001)].iter().enumerate() {
+        let mut rec = vec![0u8; s.type_size];
+        put(&mut rec, 0, types_named[i].0);
+        put(&mut rec, 4, types_named[i].1);
+        put(&mut rec, 22, *flags);
+        put(&mut rec, 30, *start as u32);
+        put16(&mut rec, 58, *count);
+        put16(&mut rec, 62, *fields);
+        put(&mut rec, 78, 0x0200_0001 + i as u32);
+        types.extend_from_slice(&rec);
+    }
+
+    let mut images = Vec::new();
+    for (i, (start, count)) in [(0u16, 1u16), (1, 2)].iter().enumerate() {
+        let mut rec = vec![0u8; 36];
+        put(&mut rec, 0, images_named[i]);
+        put(&mut rec, 4, i as u32);
+        put16(&mut rec, 8, *start);
+        put16(&mut rec, 10, *count);
+        images.extend_from_slice(&rec);
+    }
+    let assemblies = vec![0u8; 2 * 68];
+
+    // (section, bytes, record size); those not read here stay empty.
+    let parts: [(usize, &[u8], usize); 7] = [
+        (0, &literals, 4),
+        (1, &literal_data, 1),
+        (2, &strings, 1),
+        (5, &methods, s.method_size),
+        (19, &types, s.type_size),
+        (20, &images, 36),
+        (21, &assemblies, 68),
+    ];
+    let mut out = vec![0u8; s.header_size as usize];
+    out[0..4].copy_from_slice(&0xFAB1_1BAFu32.to_le_bytes());
+    out[4..8].copy_from_slice(&s.version.to_le_bytes());
+    for i in 0..31 {
+        let at = 8 + i * 12;
+        let offset = out.len() as u32;
+        out[at..at + 4].copy_from_slice(&offset.to_le_bytes());
+        if let Some((_, bytes, record)) = parts.iter().find(|(which, _, _)| *which == i) {
+            out[at + 4..at + 8].copy_from_slice(&(bytes.len() as u32).to_le_bytes());
+            out[at + 8..at + 12].copy_from_slice(&((bytes.len() / record) as u32).to_le_bytes());
+            out.extend_from_slice(bytes);
         }
     }
     out

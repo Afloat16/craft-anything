@@ -7,11 +7,16 @@
 
 pub mod clean_room;
 
-/// Tools an agent app may be told to approve on its own side (Codex's `approval_mode`): each one
-/// asks the person itself (`Effects::needs_consent`), so approving it there skips nothing.
-/// Everything else keeps the app's own policy; a test in the AI crate checks each is registered
-/// and asks for consent.
-pub const AGENT_APP_PREAPPROVED_TOOLS: &[&str] = &["rebuild_start"];
+/// Tools an agent app may be told to approve on its own side (Codex's `approval_mode`), because
+/// we limit each one ourselves, so approving it there skips nothing: `rebuild_start` asks the
+/// person (`Effects::needs_consent`), and the asset tools run only when the person turned on
+/// generated assets for the project, within its budget, asking before going over it (#1464).
+/// Everything else keeps the app's own policy; a test in the AI crate checks each is registered.
+pub const AGENT_APP_PREAPPROVED_TOOLS: &[&str] = &["rebuild_start", ASSETS_SPENDING_TOOLS[0], ASSETS_SPENDING_TOOLS[1]];
+
+/// The tools that spend the person's money on generated assets, within the project's budget.
+pub const ASSETS_SPENDING_TOOLS: [&str; 2] = ["assets_image_generate", "assets_model_generate"];
+pub mod failure_log;
 pub mod feed;
 pub mod inbox;
 pub mod journal;
@@ -112,6 +117,26 @@ impl Availability {
 pub struct Engine {
     registry: Registry,
     session: Mutex<Session>,
+    /// Sign-in evidence that couldn't reach the ledger because Stop came while another tool held
+    /// the session, with the project root it belongs to. Taken in whenever the session is next
+    /// locked (see [`Engine::settle`]). Locked only briefly, and never while waiting for the session.
+    pending: Mutex<Vec<(Option<std::path::PathBuf>, craft_anything_evidence::Evidence)>>,
+    /// The engine this one works beside ([`Engine::for_a_run`]).
+    app: Option<std::sync::Weak<Engine>>,
+    /// The asset keys this engine and the runs beside it spend from, once a run loaded them. Kept
+    /// outside every session's lock, so a key saved or removed through any of them reaches the rest
+    /// at their next tool call, and nobody waits for a busy session to say so (#943 review).
+    asset_keys: AssetKeysCell,
+}
+
+type AssetKeysCell = std::sync::Arc<KeysCell>;
+
+/// The asset keys in use, and a lock that loads take in turn, so the keychain is read outside
+/// the lock every tool call takes and a slow load still can't land after a newer one.
+#[derive(Default)]
+struct KeysCell {
+    loading: Mutex<()>,
+    keys: Mutex<Option<std::sync::Arc<tools::asset_tools::AssetKeys>>>,
 }
 
 /// A handle to the engine a tool runs in, for tools that start work which calls back into it (a
@@ -120,7 +145,13 @@ pub struct EngineRef(pub std::sync::Weak<Engine>);
 
 impl Engine {
     pub fn new(session: Session) -> Self {
-        Engine { registry: Registry::with_all_tools(), session: Mutex::new(session) }
+        Engine {
+            registry: Registry::with_all_tools(),
+            session: Mutex::new(session),
+            pending: Mutex::new(Vec::new()),
+            app: None,
+            asset_keys: AssetKeysCell::default(),
+        }
     }
 
     /// The engine as most apps use it: shared, with tools from higher layers (`extra`, e.g. the
@@ -139,8 +170,55 @@ impl Engine {
         std::sync::Arc::new_cyclic(|me| {
             let mut session = session;
             session.ext.insert(std::sync::Arc::new(EngineRef(me.clone())));
-            Engine { registry: Registry::new(tools).with_runtime(runtime), session: Mutex::new(session) }
+            Engine {
+                registry: Registry::new(tools).with_runtime(runtime),
+                session: Mutex::new(session),
+                pending: Mutex::new(Vec::new()),
+                app: None,
+                asset_keys: AssetKeysCell::default(),
+            }
         })
+    }
+
+    /// An engine of its own for work whose tools point its session at one project: the same tools,
+    /// with a session that takes on the person's changes here before each tool call
+    /// ([`Session::follow`]). It's what lets two API-key builds work at once. Never waits: while
+    /// this session is busy (a tool starting the run holds it), the run starts from `busy` (the
+    /// saved settings) and catches up at its first tool call that finds this one free.
+    pub fn for_a_run(self: &std::sync::Arc<Self>, busy: impl FnOnce() -> Session) -> std::sync::Arc<Engine> {
+        let session = self.try_session().map(|s| s.for_a_run()).unwrap_or_else(busy);
+        let (registry, asset_keys) = (self.registry.clone(), self.asset_keys.clone());
+        std::sync::Arc::new_cyclic(|me| {
+            let mut session = session;
+            session.ext.insert(std::sync::Arc::new(EngineRef(me.clone())));
+            Engine { registry, session: Mutex::new(session), pending: Mutex::new(Vec::new()), app: Some(std::sync::Arc::downgrade(self)), asset_keys }
+        })
+    }
+
+    /// Load the asset keys this engine and the runs beside it spend from, and use them in
+    /// `session` (this engine's, which the caller holds). Loads take turns, so keys read before a
+    /// change can't land after it; tool calls don't wait for `read` (the keychain can be slow).
+    pub fn load_asset_keys(
+        &self,
+        session: &mut Session,
+        read: impl FnOnce() -> tools::asset_tools::AssetKeys,
+    ) -> std::sync::Arc<tools::asset_tools::AssetKeys> {
+        let turn = self.asset_keys.loading.lock().unwrap_or_else(PoisonError::into_inner);
+        turn.label("Read the asset keys");
+        let keys = std::sync::Arc::new(read());
+        *self.asset_keys.keys.lock().unwrap_or_else(PoisonError::into_inner) = Some(keys.clone());
+        session.ext.insert(keys.clone());
+        keys
+    }
+
+    /// A run here (or beside this engine) loaded asset keys.
+    pub fn asset_keys_loaded(&self) -> bool {
+        self.asset_keys.keys.lock().unwrap_or_else(PoisonError::into_inner).is_some()
+    }
+
+    /// The engine this one works beside, if it was made with [`Engine::for_a_run`].
+    pub fn app(&self) -> Option<std::sync::Arc<Engine>> {
+        self.app.as_ref().and_then(std::sync::Weak::upgrade)
     }
 
     pub fn registry(&self) -> &Registry {
@@ -150,16 +228,35 @@ impl Engine {
     /// Lock the session (recovering from a poisoned lock rather than cascading a panic).
     #[track_caller]
     pub fn session(&self) -> MutexGuard<'_, Session> {
-        self.session.lock().unwrap_or_else(PoisonError::into_inner)
+        let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
+        self.settle(&mut session);
+        session
     }
 
     /// Try to lock without blocking (the UI uses this so a long tool never freezes a frame).
     #[track_caller]
     pub fn try_session(&self) -> Option<MutexGuard<'_, Session>> {
-        match self.session.try_lock() {
-            Ok(g) => Some(g),
-            Err(std::sync::TryLockError::Poisoned(p)) => Some(p.into_inner()),
-            Err(std::sync::TryLockError::WouldBlock) => None,
+        let mut session = match self.session.try_lock() {
+            Ok(g) => g,
+            Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+        };
+        self.settle(&mut session);
+        Some(session)
+    }
+
+    /// Take pending sign-in evidence into `session`'s ledger when it belongs to the project open
+    /// now (or to no project, with none open). Evidence for another project is already in that
+    /// project's store, so it's dropped from memory here, not recorded in the wrong ledger.
+    fn settle(&self, session: &mut Session) {
+        let pending = std::mem::take(&mut *self.pending.lock().unwrap_or_else(PoisonError::into_inner));
+        let open = session.project.as_ref().map(|p| p.root.clone());
+        for (root, ev) in pending {
+            if root == open
+                && let Err(e) = session.record(ev)
+            {
+                log::warn!("couldn't record a stopped sign-in's evidence: {}", e.message);
+            }
         }
     }
 
@@ -215,7 +312,8 @@ impl Engine {
         let started = std::time::Instant::now();
         let logged_params = journal::bounded(&params);
         let caller = opts.caller;
-        let result = self.call_inner(id, params, opts);
+        let mut journal_at = JournalAt::Live;
+        let result = self.call_inner(id, params, opts, &mut journal_at);
         let outcome = match &result {
             Ok(ToolOutput::Evidence(ev)) => serde_json::json!({"ok": true, "evidence_id": ev.id}),
             Ok(ToolOutput::Value(_)) => serde_json::json!({"ok": true}),
@@ -225,7 +323,12 @@ impl Engine {
         if let (Some(m), serde_json::Value::Object(o)) = (entry.as_object_mut(), outcome) {
             m.extend(o);
         }
-        self.journal("tool_call", entry);
+        match journal_at {
+            JournalAt::Live => self.journal("tool_call", entry),
+            // Written without the session: the call may have been stopped while another tool holds it.
+            JournalAt::Project(Some(root)) => journal::append(&root, "tool_call", entry),
+            JournalAt::Project(None) => {}
+        }
         result
     }
 
@@ -237,7 +340,7 @@ impl Engine {
         }
     }
 
-    fn call_inner(&self, id: &str, params: Value, opts: CallOptions<'_>) -> Result<ToolOutput, ToolError> {
+    fn call_inner(&self, id: &str, params: Value, opts: CallOptions<'_>, journal_at: &mut JournalAt) -> Result<ToolOutput, ToolError> {
         let spec = *self.registry.get(id).ok_or_else(|| {
             ToolError::invalid(format!("No tool named {id}")).with_remediation("List tools with `craft-anything-cli commands` or the command palette.")
         })?;
@@ -245,7 +348,11 @@ impl Engine {
         // not a wait forever. Tools are long jobs: the label says so (they have their own deadlines).
         let cancel = opts.cancel.clone();
         let mut session = match self.session.lock_unless(&|| cancel.is_cancelled()) {
-            Ok(g) => g.unwrap_or_else(PoisonError::into_inner),
+            Ok(g) => {
+                let mut g = g.unwrap_or_else(PoisonError::into_inner);
+                self.settle(&mut g);
+                g
+            }
             Err(craft_anything_platform::sync::GaveUp::Stopped) => return Err(ToolError::cancelled()),
             Err(craft_anything_platform::sync::GaveUp::Stuck(why)) => {
                 return Err(ToolError::new(ErrorCode::TimedOut, format!("{} couldn't start because another part of the app is stuck.", spec.title))
@@ -254,6 +361,15 @@ impl Engine {
             }
         };
         session.label(spec.id);
+        // Never waits: if the app's session is busy, this call goes by what it last saw, except for
+        // approvals (below), which it can't then check.
+        let followed = match self.app() {
+            Some(app) => app.try_session().map(|app| session.follow(&app)).is_some(),
+            None => true,
+        };
+        if let Some(keys) = self.asset_keys.keys.lock().unwrap_or_else(PoisonError::into_inner).clone() {
+            session.ext.insert(keys);
+        }
         if session.clean_room() && !clean_room::allows(spec.id) {
             return Err(clean_room::refusal(spec.id));
         }
@@ -274,36 +390,318 @@ impl Engine {
             return Err(err);
         }
         if spec.effects.needs_consent() && opts.consent != Consent::Granted {
-            let allowed = !session.settings.ask_before_running || session.project.as_ref().is_some_and(|p| p.is_allowed(spec.id));
+            // Approvals last seen aren't approvals now: the person may have turned asking back on.
+            let allowed = followed && (!session.settings.ask_before_running || session.project.as_ref().is_some_and(|p| p.is_allowed(spec.id)));
             if !allowed {
                 return Err(ToolError::new(ErrorCode::ConsentRequired, format!("{} runs code or changes a device, so it needs your OK first.", spec.title))
                     .with_remediation("Approve it when asked, or allow it for this project in Settings.")
                     .with_details(serde_json::json!({"tool": spec.id})));
             }
         }
+        // A model sometimes writes a number or a boolean as text (`"limit": "200"`): where the
+        // tool's schema says the value is one, it's read as one rather than refused. A builder
+        // used to retry the refused call until the run was out of room (#1825).
+        let params = tool::params_as_schema(&self.registry.input_schema(&spec), params);
         let run = spec.run;
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut ctx = Ctx { tool: spec.id, session: &mut session, cancel: opts.cancel.clone(), progress: opts.progress, caller: opts.caller };
-            run(&mut ctx, params)
-        }));
-        let output = match result {
-            Ok(r) => r?,
-            Err(panic) => {
-                let what = panic.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| panic.downcast_ref::<String>().cloned()).unwrap_or_default();
-                log::error!("tool {id} panicked: {what}");
-                return Err(ToolError::internal(format!("{} hit a bug and stopped safely. Your work is kept. ({what})", spec.title)));
-            }
+        let invoke = |session: &mut Session| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut ctx = Ctx { tool: spec.id, session, cancel: opts.cancel.clone(), progress: opts.progress, caller: opts.caller };
+                run(&mut ctx, params)
+            }))
         };
+        if spec.id == tools::site_sign_in::SIGN_IN_TOOL {
+            // Sign-in needs launch settings, not exclusive access to the person's live session.
+            let mut isolated = Session::isolated(&session.config_dir());
+            isolated.settings = session.settings.clone();
+            isolated.deep_for_run = session.deep_for_run;
+            // The window may stay open while the person opens another project: what it saved
+            // belongs to the project it was started from.
+            let started_in = session.project.clone();
+            *journal_at = JournalAt::Project(started_in.as_ref().map(|p| p.root.clone()));
+            drop(session);
+            let output = Self::finished(spec.id, spec.title, invoke(&mut isolated))?;
+            self.record_sign_in(spec.id, &output, started_in.as_ref(), &cancel)?;
+            return Ok(output);
+        }
+        let output = Self::finished(spec.id, spec.title, invoke(&mut session))?;
         if let ToolOutput::Evidence(ev) = &output {
             session.record((**ev).clone())?;
         }
         Ok(output)
     }
+
+    /// A tool's own result, or its panic as an error (logged) instead of a crash.
+    fn finished(id: &str, title: &str, result: std::thread::Result<Result<ToolOutput, ToolError>>) -> Result<ToolOutput, ToolError> {
+        match result {
+            Ok(r) => r,
+            Err(panic) => {
+                let what = panic.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| panic.downcast_ref::<String>().cloned()).unwrap_or_default();
+                log::error!("tool {id} panicked: {what}");
+                Err(ToolError::internal(format!("{title} hit a bug and stopped safely. Your work is kept. ({what})")))
+            }
+        }
+    }
+
+    /// Record a finished sign-in's evidence in the project it started in. The live session is
+    /// waited for only until Stop; then, or when another project is open by now, the evidence goes
+    /// straight to the starting project's store, so a saved profile is never left unrecorded.
+    fn record_sign_in(&self, tool: &'static str, output: &ToolOutput, started_in: Option<&project::Project>, cancel: &CancelToken) -> Result<(), ToolError> {
+        let ToolOutput::Evidence(ev) = output else { return Ok(()) };
+        let root = started_in.map(|p| &p.root);
+        if let Ok(guard) = self.session.lock_unless(&|| cancel.is_cancelled()) {
+            let mut session = guard.unwrap_or_else(PoisonError::into_inner);
+            self.settle(&mut session);
+            session.label(tool);
+            if session.project.as_ref().map(|p| &p.root) == root {
+                return session.record((**ev).clone());
+            }
+            // Another project is open now: its ledger isn't where this belongs.
+            return started_in.map_or(Ok(()), |project| project.store_evidence(ev));
+        }
+        // Stopped while another tool holds the session: keep it on disk now and in the ledger later.
+        if let Some(project) = started_in {
+            project.store_evidence(ev)?;
+        }
+        self.pending.lock().unwrap_or_else(PoisonError::into_inner).push((root.cloned(), (**ev).clone()));
+        Ok(())
+    }
+}
+
+/// Where [`Engine::call`] journals a call: the live session's project, or one fixed when the call
+/// started (a sign-in that ran without holding the session).
+enum JournalAt {
+    Live,
+    Project(Option<std::path::PathBuf>),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Replace only the browser callback; authorization and dispatch remain the real path.
+    fn sign_in_engine(run: tool::ToolFn) -> std::sync::Arc<Engine> {
+        let mut session = crate::testing::session();
+        session.settings.engines.tools.chromium = Some(std::env::current_exe().unwrap());
+        let mut specs = tools::all();
+        specs.iter_mut().find(|s| s.id == tools::site_sign_in::SIGN_IN_TOOL).unwrap().run = run;
+        std::sync::Arc::new(Engine {
+            registry: Registry::new(specs),
+            session: Mutex::new(session),
+            pending: Mutex::new(Vec::new()),
+            app: None,
+            asset_keys: AssetKeysCell::default(),
+        })
+    }
+
+    #[test]
+    fn sign_in_wait_leaves_session_available_and_records_even_after_stop() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        };
+        use std::time::{Duration, Instant};
+        fn waiting(ctx: &mut Ctx<'_>, _: Value) -> Result<ToolOutput, ToolError> {
+            assert!(ctx.session.settings.deep_mode);
+            assert!(ctx.session.settings.engines.tools.chromium.is_some());
+            assert!(ctx.session.project.is_none());
+            assert!(ctx.session.ext.get::<EngineRef>().is_none());
+            ctx.report(None, "waiting for the person");
+            assert!(ctx.cancel.is_cancelled());
+            ctx.session.settings.deep_mode = false;
+            let forget = tools::site_sign_in::specs().into_iter().find(|s| s.id == tools::site_sign_in::SIGN_OUT_TOOL).unwrap();
+            (forget.run)(ctx, serde_json::json!({"url": "https://example.com"}))
+        }
+        let e = sign_in_engine(waiting);
+        let config = e.session().config_dir();
+        let release = Arc::new(AtomicBool::new(false));
+        let gate = release.clone();
+        let (started, entered) = mpsc::channel();
+        let cancel = CancelToken::default();
+        let stop = cancel.clone();
+        let worker = e.clone();
+        let sign_in = std::thread::spawn(move || {
+            let progress = move |_: Progress| {
+                started.send(()).unwrap();
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while !gate.load(Ordering::Acquire) && Instant::now() < deadline {
+                    std::thread::park_timeout(Duration::from_millis(5));
+                }
+            };
+            worker.call(
+                tools::site_sign_in::SIGN_IN_TOOL,
+                Value::Null,
+                CallOptions::new(Caller::Cli).with_consent(Consent::Granted).with_cancel(cancel).with_progress(&progress),
+            )
+        });
+        let waiting = entered.recv_timeout(Duration::from_secs(5));
+        let worker = e.clone();
+        let (sent, received) = mpsc::channel();
+        let other = std::thread::spawn(move || {
+            let result = worker.call("core_session_show", Value::Null, CallOptions::new(Caller::Cli));
+            let _ = sent.send(result);
+        });
+        let concurrent = received.recv_timeout(Duration::from_secs(2));
+        stop.cancel();
+        release.store(true, Ordering::Release);
+        let output = sign_in.join().unwrap().unwrap();
+        other.join().unwrap();
+        waiting.unwrap();
+        concurrent.expect("another tool must complete before sign-in is released").unwrap();
+        let ToolOutput::Evidence(ev) = output else { panic!("expected saved evidence") };
+        let session = e.session();
+        assert_eq!(session.config_dir(), config);
+        assert!(session.settings.deep_mode, "the snapshot must not overwrite live settings");
+        assert_eq!(session.ledger().filter(|record| record.id == ev.id).count(), 1);
+    }
+
+    /// A sign-in held at its window until `gate` opens; it then returns sign-out evidence.
+    fn gated_sign_in(
+        e: &std::sync::Arc<Engine>,
+        cancel: CancelToken,
+        gate: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> (std::thread::JoinHandle<Result<ToolOutput, ToolError>>, std::sync::mpsc::Receiver<()>) {
+        let (started, entered) = std::sync::mpsc::channel();
+        let worker = e.clone();
+        let handle = std::thread::spawn(move || {
+            let progress = move |_: Progress| {
+                let _ = started.send(());
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                while !gate.load(std::sync::atomic::Ordering::Acquire) && std::time::Instant::now() < deadline {
+                    std::thread::park_timeout(std::time::Duration::from_millis(5));
+                }
+            };
+            worker.call(
+                tools::site_sign_in::SIGN_IN_TOOL,
+                Value::Null,
+                CallOptions::new(Caller::Cli).with_consent(Consent::Granted).with_cancel(cancel).with_progress(&progress),
+            )
+        });
+        (handle, entered)
+    }
+
+    fn signs_out(ctx: &mut Ctx<'_>, _: Value) -> Result<ToolOutput, ToolError> {
+        ctx.report(None, "waiting for the person");
+        let forget = tools::site_sign_in::specs().into_iter().find(|s| s.id == tools::site_sign_in::SIGN_OUT_TOOL).unwrap();
+        (forget.run)(ctx, serde_json::json!({"url": "https://example.com"}))
+    }
+
+    fn journalled_sign_ins(root: &std::path::Path) -> usize {
+        journal::days(root)
+            .iter()
+            .flat_map(|d| journal::read_day(root, d))
+            .filter(|entry| entry.to_string().contains(tools::site_sign_in::SIGN_IN_TOOL))
+            .count()
+    }
+
+    /// Review of #1459: another project opened while the window is open doesn't get the sign-in's record.
+    #[test]
+    fn sign_in_records_in_the_project_it_started_in() {
+        use std::sync::{Arc, atomic::AtomicBool};
+        let dirs = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let a = project::Project::create(&dirs.0.path().join("a"), "A", project::Purpose::default()).unwrap();
+        let b = project::Project::create(&dirs.1.path().join("b"), "B", project::Purpose::default()).unwrap();
+        let e = sign_in_engine(signs_out);
+        e.session().project = Some(a.clone());
+        let gate = Arc::new(AtomicBool::new(false));
+        let (sign_in, entered) = gated_sign_in(&e, CancelToken::default(), gate.clone());
+        entered.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        e.session().project = Some(b.clone());
+        gate.store(true, std::sync::atomic::Ordering::Release);
+        let ToolOutput::Evidence(ev) = sign_in.join().unwrap().unwrap() else { panic!("expected evidence") };
+        assert!(a.load_evidence(&ev.id).is_ok(), "the starting project keeps the record");
+        assert!(b.load_evidence(&ev.id).is_err(), "the project opened meanwhile doesn't get it");
+        assert!(e.session().evidence(&ev.id).is_none(), "nor its ledger");
+        assert_eq!((journalled_sign_ins(&a.root), journalled_sign_ins(&b.root)), (1, 0));
+    }
+
+    /// Review of #1459: Stop ends the wait for a session another tool holds; the record is still kept.
+    #[test]
+    fn a_stopped_sign_in_does_not_wait_for_a_busy_session_and_keeps_its_record() {
+        use std::sync::{Arc, atomic::AtomicBool};
+        let dir = tempfile::tempdir().unwrap();
+        let a = project::Project::create(&dir.path().join("a"), "A", project::Purpose::default()).unwrap();
+        for with_project in [true, false] {
+            let e = sign_in_engine(signs_out);
+            if with_project {
+                e.session().project = Some(a.clone());
+            }
+            let gate = Arc::new(AtomicBool::new(false));
+            let cancel = CancelToken::default();
+            let (sign_in, entered) = gated_sign_in(&e, cancel.clone(), gate.clone());
+            entered.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+            let busy = e.session();
+            cancel.cancel();
+            gate.store(true, std::sync::atomic::Ordering::Release);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while !sign_in.is_finished() && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let finished = sign_in.is_finished();
+            drop(busy);
+            assert!(finished, "a stopped sign-in must not wait for the session (project: {with_project})");
+            let ToolOutput::Evidence(ev) = sign_in.join().unwrap().unwrap() else { panic!("expected evidence") };
+            if with_project {
+                assert!(a.load_evidence(&ev.id).is_ok(), "the saved profile's evidence is kept");
+                assert_eq!(journalled_sign_ins(&a.root), 1);
+            }
+            // Once the other tool lets go, the ledger has it too, once.
+            let session = e.session();
+            assert_eq!(session.ledger().filter(|r| r.id == ev.id).count(), 1, "project: {with_project}");
+        }
+    }
+
+    /// A stopped sign-in's evidence waits for the project it started in, never another one.
+    #[test]
+    fn pending_sign_in_evidence_reaches_only_its_own_ledger() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = project::Project::create(&dir.path().join("a"), "A", project::Purpose::default()).unwrap();
+        let e = sign_in_engine(signs_out);
+        let mut s = crate::testing::session();
+        let ToolOutput::Evidence(ev) = signs_out(
+            &mut Ctx { tool: tools::site_sign_in::SIGN_IN_TOOL, session: &mut s, cancel: CancelToken::default(), progress: &no_progress, caller: Caller::Cli },
+            Value::Null,
+        )
+        .unwrap() else {
+            panic!("expected evidence")
+        };
+        e.pending.lock().unwrap().push((Some(a.root.clone()), (*ev).clone()));
+        assert!(e.session().evidence(&ev.id).is_none(), "no project is open: not this ledger");
+        assert!(e.pending.lock().unwrap().is_empty(), "and it isn't kept waiting forever");
+        e.session().project = Some(a.clone());
+        e.pending.lock().unwrap().push((Some(a.root.clone()), (*ev).clone()));
+        assert!(e.session().evidence(&ev.id).is_some(), "its own project is open: recorded");
+    }
+
+    /// #943 review: a run whose app session is busy can't see whether the person turned asking
+    /// back on, so it doesn't run what needs consent on the approvals it last saw.
+    #[test]
+    fn a_run_asks_when_it_cant_read_the_apps_approvals() {
+        let mut s = crate::testing::session();
+        s.settings.ask_before_running = false;
+        let app = Engine::shared(s, Vec::new());
+        let run = app.for_a_run(crate::testing::session);
+        let p = serde_json::json!({"program": std::env::temp_dir().join("no-such-program.exe")});
+        let capture = || run.call("native_window_capture", p.clone(), CallOptions::new(Caller::Mcp));
+        assert!(capture().unwrap_err().message.contains("isn't a program file"), "the app says not to ask: past consent");
+        let busy = app.session();
+        assert_eq!(capture().unwrap_err().code, ErrorCode::ConsentRequired, "the app's session is busy");
+        drop(busy);
+        assert!(capture().unwrap_err().message.contains("isn't a program file"), "and once it's free, as before");
+    }
+
+    #[test]
+    fn isolated_sign_in_still_requires_consent_and_contains_panics() {
+        fn broken(_: &mut Ctx<'_>, _: Value) -> Result<ToolOutput, ToolError> {
+            panic!("stand-in browser bug");
+        }
+        let e = sign_in_engine(broken);
+        let refused = e.call(tools::site_sign_in::SIGN_IN_TOOL, Value::Null, CallOptions::new(Caller::Cli)).unwrap_err();
+        assert_eq!(refused.code, ErrorCode::ConsentRequired);
+        let failed = e.call(tools::site_sign_in::SIGN_IN_TOOL, Value::Null, CallOptions::new(Caller::Cli).with_consent(Consent::Granted)).unwrap_err();
+        assert_eq!(failed.code, ErrorCode::Internal);
+        assert!(e.call("core_session_show", Value::Null, CallOptions::new(Caller::Cli)).is_ok());
+    }
 
     #[test]
     fn unknown_tool_is_an_error_not_a_panic() {
@@ -321,6 +719,83 @@ mod tests {
         let err = e.call("web_site_open", serde_json::json!({"url": "https://example.com"}), CallOptions::new(Caller::Cli)).unwrap_err();
         assert_eq!(err.code, ErrorCode::EngineMissing);
         assert!(err.message.contains("isn't there") && err.message.contains("brave"), "{}", err.message);
+    }
+
+    /// Two API-key builds in one session wrote into whichever project started last.
+    #[test]
+    fn runs_with_their_own_engines_keep_to_their_own_projects() {
+        use crate::inbox::InboxDir;
+        use crate::workspace::{TargetRef, Workspace};
+        let d = tempfile::tempdir().unwrap();
+        let app = Engine::shared(crate::testing::session(), Vec::new());
+        let start = |name: &str| {
+            let ws = Workspace::create(d.path(), name, "A game", TargetRef::None).unwrap();
+            let run = app.for_a_run(crate::testing::session);
+            run.session().ext.insert(std::sync::Arc::new(InboxDir(ws.inbox_dir())));
+            (ws, run)
+        };
+        let ((ws_a, a), (ws_b, b)) = (start("A"), start("B"));
+        for (run, who) in [(&a, "a"), (&b, "b")] {
+            run.call(
+                "build_file_write",
+                serde_json::json!({"path": "app/who.txt", "content": who}),
+                CallOptions::new(Caller::Mcp).with_consent(Consent::Granted),
+            )
+            .unwrap();
+        }
+        assert_eq!(std::fs::read_to_string(ws_a.app_dir().join("who.txt")).unwrap(), "a");
+        assert_eq!(std::fs::read_to_string(ws_b.app_dir().join("who.txt")).unwrap(), "b");
+        assert!(app.session().ext.get::<InboxDir>().is_none(), "the app's session isn't pointed anywhere by them");
+    }
+
+    /// What the person changes in the app reaches a run that's working: settings, a removed key,
+    /// and what they've allowed for its project.
+    #[test]
+    fn a_run_with_its_own_engine_takes_on_changes_made_in_the_app() {
+        use crate::project::{Project, Purpose};
+        use crate::tools::asset_tools::AssetKeys;
+        let d = tempfile::tempdir().unwrap();
+        let project = Project::create(d.path(), "A", Purpose::default()).unwrap();
+        let app = Engine::shared(crate::testing::session(), Vec::new());
+        let run = app.for_a_run(crate::testing::session);
+        run.load_asset_keys(&mut run.session(), || AssetKeys([("fal".to_string(), "k-1".to_string())].into()));
+        assert!(app.asset_keys_loaded(), "the app's engine goes by them too");
+        assert!(std::sync::Arc::ptr_eq(&run.app().unwrap(), &app));
+        let (mut with_app, mut with_run) = (project.clone(), project);
+        with_app.meta.allowed_tools.clear();
+        with_run.meta.allowed_tools.clear();
+        app.session().project = Some(with_app);
+        run.session().project = Some(with_run);
+
+        let auto = !app.session().settings.auto_mode;
+        {
+            let mut s = app.session();
+            s.settings.auto_mode = auto;
+            app.load_asset_keys(&mut s, AssetKeys::default);
+            s.project.as_mut().unwrap().meta.allowed_tools.push("some_tool".into());
+        }
+        let _ = run.call("core_session_show", Value::Null, CallOptions::new(Caller::Cli));
+        let s = run.session();
+        assert_eq!(s.settings.auto_mode, auto);
+        assert_eq!(s.ext.get::<AssetKeys>().unwrap().get("fal"), None, "a removed key stops being spent");
+        assert!(s.project.as_ref().unwrap().is_allowed("some_tool"));
+    }
+
+    /// A run keeps the mode it started in: Deep mode turned on in the app mustn't open the Deep
+    /// tools to a Clean room run, nor Clean room close them on a Deep one midway.
+    #[test]
+    fn a_run_keeps_the_mode_it_started_in() {
+        for deep in [false, true] {
+            let mut s = crate::testing::session();
+            s.settings.deep_mode = deep;
+            let app = Engine::shared(s, Vec::new());
+            let run = app.for_a_run(crate::testing::session);
+            app.session().settings.deep_mode = !deep;
+            let _ = run.call("core_session_show", Value::Null, CallOptions::new(Caller::Cli));
+            let s = run.session();
+            assert_eq!(s.settings.deep_mode, !deep, "the setting is still taken on");
+            assert_eq!(s.clean_room(), !deep, "but not by the run");
+        }
     }
 
     #[test]
@@ -408,5 +883,11 @@ mod tests {
         assert_eq!(serde_json::to_value(group).unwrap(), "demo_plugin");
         assert!(custom_toolset("No Spaces").is_none());
         assert_eq!(custom_toolset("core"), Some(Toolset::Core), "a built-in id is the built-in group");
+        // A run-time tool's params follow the schema it was registered with, as a built-in tool's
+        // do: its number written as text is read as a number, its text stays text (#1825).
+        let numeric = tool("demo_four", serde_json::json!({"type": "object", "properties": {"count": {"type": "integer"}, "note": {"type": "string"}}}));
+        let e = Engine::shared_with(crate::testing::session(), Vec::new(), vec![numeric]);
+        let out = e.call("demo_four", serde_json::json!({"count": "200", "note": "200"}), CallOptions::new(Caller::Cli)).unwrap().to_json();
+        assert_eq!(out["result"]["params"], serde_json::json!({"count": 200, "note": "200"}));
     }
 }

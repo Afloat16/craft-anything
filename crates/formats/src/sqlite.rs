@@ -10,6 +10,7 @@
 
 use crate::FormatError;
 use serde::Serialize;
+use std::collections::BTreeSet;
 
 /// Largest database file we read into memory (256 MiB).
 pub const MAX_INPUT: usize = 256 << 20;
@@ -36,6 +37,8 @@ const MAX_SCHEMA_TEXT: usize = 1 << 20;
 /// Schema text one walk keeps whole in all. Past it, schema text is cut at [`MAX_TEXT`] like other
 /// text, so schema rows that share an overflow chain can't multiply the file's size.
 const MAX_SCHEMA_TEXT_TOTAL: usize = 32 << 20;
+/// Most notes from the schema walk shown in an overview; a damaged schema can note every row.
+const MAX_SCHEMA_NOTES: usize = 20;
 
 const MAGIC: &[u8; 16] = b"SQLite format 3\0";
 
@@ -115,7 +118,7 @@ pub struct Overview {
     /// Non-fatal observations about consistency.
     pub integrity_notes: Vec<String>,
     pub schema: Vec<SchemaObject>,
-    /// True when the schema listing hit the object cap.
+    /// True when the schema listing hit the object cap or part of its b-tree couldn't be read.
     pub schema_truncated: bool,
 }
 
@@ -183,7 +186,7 @@ pub struct RowPage {
     pub rows: Vec<Row>,
     /// Rows skipped before the page (the requested offset, clamped to what exists).
     pub offset: usize,
-    /// True when reading stopped at the row cap or a budget and more rows may exist.
+    /// True when a row cap, budget or unreadable part of the tree may have hidden more rows.
     pub truncated: bool,
     /// Non-fatal observations (corruption skipped, overflow capped, …).
     pub notes: Vec<String>,
@@ -197,16 +200,20 @@ pub struct RowCount {
     pub bounded: bool,
 }
 
-/// Accumulator for a bounded b-tree row walk: the rows gathered so far, a visited-page set to
-/// stop cycles, the remaining page-walk budget, how many rows are wanted, and any notes.
+/// Accumulator for a bounded b-tree row walk: retained rows, a visited-page set to stop cycles,
+/// the remaining page-walk budget, the requested row range, and any notes.
 struct RowWalk {
     index_tree: bool,
-    visited: Vec<u32>,
+    visited: BTreeSet<u32>,
     budget: usize,
     out: Vec<Row>,
     notes: Vec<String>,
-    /// Stop once this many rows are collected (0 = no limit, used for the schema walk).
+    incomplete: bool,
+    /// Stop once this many readable rows have been consumed, including skipped rows.
     want: usize,
+    seen: usize,
+    /// Decode but immediately discard rows before this offset.
+    skip: usize,
     /// Longest text value decoded whole, and the whole text still allowed above [`MAX_TEXT`].
     text_cap: usize,
     text_budget: usize,
@@ -216,19 +223,26 @@ impl RowWalk {
     fn new(want: usize) -> Self {
         RowWalk {
             index_tree: false,
-            visited: Vec::new(),
+            visited: BTreeSet::new(),
             budget: MAX_PAGES_WALKED,
             out: Vec::new(),
             notes: Vec::new(),
+            incomplete: false,
             want,
+            seen: 0,
+            skip: 0,
             text_cap: MAX_TEXT,
             text_budget: 0,
         }
     }
 
-    /// Keep a row. While text past [`MAX_TEXT`] is read, the row's text spends the budget; once it
-    /// is spent, later rows are cut at [`MAX_TEXT`].
+    /// Count a readable row, retaining it only after the requested offset. While text past
+    /// [`MAX_TEXT`] is retained, it spends the budget; later rows are cut once the budget is spent.
     fn keep(&mut self, row: Row) {
+        self.seen = self.seen.saturating_add(1);
+        if self.seen <= self.skip {
+            return;
+        }
         if self.text_cap > MAX_TEXT {
             let text: usize = row.values.iter().map(|value| if let CellValue::Text { text, .. } = value { text.len() } else { 0 }).sum();
             self.text_budget = self.text_budget.saturating_sub(text);
@@ -253,18 +267,12 @@ struct BtreePage<'a> {
     header: usize,
     kind: u8,
     cells: usize,
-    pointers: usize,
-    pointers_end: usize,
+    btree: craft_sqlite::BtreePageHeader,
 }
 
 impl BtreePage<'_> {
     fn cell_offset(&self, index: usize) -> Option<usize> {
-        if index >= self.cells {
-            return None;
-        }
-        let pointer = self.pointers.checked_add(index.checked_mul(2)?)?;
-        let offset = usize::from(read_u16_be(self.data, pointer)?);
-        (offset >= self.pointers_end && offset < self.data.len()).then_some(offset)
+        craft_sqlite::btree_cell_offset(self.data, &self.btree, index).ok()
     }
 }
 
@@ -285,21 +293,7 @@ fn read_u16_be(data: &[u8], off: usize) -> Option<u16> {
 
 /// A SQLite big-endian varint (up to 9 bytes): (value, bytes consumed).
 fn varint(data: &[u8], off: usize) -> Option<(u64, usize)> {
-    let mut result: u64 = 0;
-    let mut i = 0usize;
-    while i < 9 {
-        let b = *data.get(off.checked_add(i)?)?;
-        if i == 8 {
-            result = (result << 8) | u64::from(b);
-            return Some((result, 9));
-        }
-        result = (result << 7) | u64::from(b & 0x7f);
-        if b & 0x80 == 0 {
-            return Some((result, i + 1));
-        }
-        i += 1;
-    }
-    None
+    craft_sqlite::read_varint(data.get(off..)?).ok()
 }
 
 fn version_string(n: u32) -> String {
@@ -323,17 +317,17 @@ impl<'a> SqliteDb<'a> {
             return Err(FormatError::Truncated("the 100-byte header does not fit".into()));
         }
         let raw_ps = read_u16_be(data, 16).unwrap_or(0);
-        let page_size: u32 = if raw_ps == 1 { 65_536 } else { u32::from(raw_ps) };
-        if page_size < 512 || !page_size.is_power_of_two() {
-            return Err(FormatError::Malformed(format!("page size {page_size} is not a power of two in 512..=65536")));
-        }
+        let page_size = craft_sqlite::page_size_from_raw(raw_ps).map_err(|err| match err {
+            craft_sqlite::Error::InvalidPageSize(size) => FormatError::Malformed(format!("page size {size} is not a power of two in 512..=65536")),
+            _ => FormatError::Malformed("invalid SQLite page size".into()),
+        })?;
         let write_version = *data.get(18).unwrap_or(&0);
         let read_version = *data.get(19).unwrap_or(&0);
         let reserved_space = *data.get(20).unwrap_or(&0);
-        let usable = (page_size as usize).saturating_sub(reserved_space as usize);
-        if usable < 480 {
-            return Err(FormatError::Malformed(format!("usable page size {usable} is too small")));
-        }
+        let usable = craft_sqlite::usable_page_size(page_size, reserved_space).map_err(|err| match err {
+            craft_sqlite::Error::UsablePageSizeTooSmall(usable) => FormatError::Malformed(format!("usable page size {usable} is too small")),
+            _ => FormatError::Malformed("invalid usable page size".into()),
+        })? as usize;
         let text_encoding = match read_u32_be(data, 56).unwrap_or(0) {
             1 => "utf-8",
             2 => "utf-16le",
@@ -396,23 +390,13 @@ impl<'a> SqliteDb<'a> {
         let base = self.page_base(pageno)?;
         let end = base.checked_add(self.usable)?.min(self.data.len());
         let data = self.data.get(base..end)?;
-        let header: usize = if pageno == 1 { 100 } else { 0 };
-        let kind = *data.get(header)?;
-        let header_size = match kind {
-            0x05 | 0x02 => 12,
-            0x0d | 0x0a => 8,
-            _ => return None,
-        };
-        let cells = usize::from(read_u16_be(data, header.checked_add(3)?)?);
-        let pointers = header.checked_add(header_size)?;
-        let pointers_end = pointers.checked_add(cells.checked_mul(2)?)?;
-        data.get(header..pointers_end)?;
-        Some(BtreePage { data, header, kind, cells, pointers, pointers_end })
+        let btree = craft_sqlite::parse_btree_page_header(data, pageno == 1).ok()?;
+        Some(BtreePage { data, header: btree.header_offset, kind: btree.kind, cells: btree.cells, btree })
     }
 
     /// Build the whole-database overview, including the schema.
     pub fn overview(&self) -> Overview {
-        let (schema, schema_truncated) = self.schema();
+        let (schema, schema_truncated, schema_notes) = self.schema();
         let file_size = self.data.len() as u64;
         let page_count_from_size = self.page_count();
         let mut notes = Vec::new();
@@ -431,30 +415,51 @@ impl<'a> SqliteDb<'a> {
         if self.header.freelist_pages > 0 {
             notes.push(format!("{} page(s) are on the freelist (deleted content may linger there; it is not read).", self.header.freelist_pages));
         }
+        let unshown = schema_notes.len().saturating_sub(MAX_SCHEMA_NOTES);
+        notes.extend(schema_notes.into_iter().take(MAX_SCHEMA_NOTES).map(|note| format!("Reading sqlite_schema: {note}")));
+        if unshown > 0 {
+            notes.push(format!("Reading sqlite_schema: {unshown} more note(s) not shown."));
+        }
         Overview { header: self.header.clone(), file_size, page_count_from_size, integrity_notes: notes, schema, schema_truncated }
     }
 
     /// Walk the `sqlite_schema` b-tree (rooted at page 1) and return its objects. Columns are
-    /// parsed from the whole CREATE statement; the text shown is cut at [`MAX_TEXT`] bytes.
-    pub fn schema(&self) -> (Vec<SchemaObject>, bool) {
-        let (mut objects, truncated) = self.whole_schema();
+    /// parsed from the whole CREATE statement; the text shown is cut at [`MAX_TEXT`] bytes. The
+    /// flag is true when the list or an object's metadata may be incomplete (an object or text
+    /// cap was hit, or part of the b-tree or a record couldn't be read). Notes say what was cut.
+    pub fn schema(&self) -> (Vec<SchemaObject>, bool, Vec<String>) {
+        let (mut objects, truncated, notes) = self.whole_schema();
         for object in &mut objects {
             for text in [&mut object.obj_type, &mut object.name, &mut object.tbl_name, &mut object.sql] {
                 cut_at_max_text(text);
             }
         }
-        (objects, truncated)
+        (objects, truncated, notes)
     }
 
     /// The schema objects with their whole text (up to [`MAX_SCHEMA_TEXT`] while
     /// [`MAX_SCHEMA_TEXT_TOTAL`] lasts), for reading rows.
-    fn whole_schema(&self) -> (Vec<SchemaObject>, bool) {
+    fn whole_schema(&self) -> (Vec<SchemaObject>, bool, Vec<String>) {
         let mut out = Vec::new();
         let mut w = RowWalk::new(MAX_SCHEMA_OBJECTS);
         w.text_cap = MAX_SCHEMA_TEXT;
         w.text_budget = MAX_SCHEMA_TEXT_TOTAL;
         self.collect_table_rows(&mut w, 1, 0);
-        let truncated = w.out.len() >= MAX_SCHEMA_OBJECTS;
+        let partial = w
+            .out
+            .iter()
+            .filter(|row| {
+                row.values.len() < 5
+                    || row
+                        .values
+                        .iter()
+                        .any(|value| matches!(value, CellValue::NotRead | CellValue::Text { truncated: true, .. } | CellValue::PartialBlob { .. }))
+            })
+            .count();
+        let truncated = w.incomplete || w.out.len() >= MAX_SCHEMA_OBJECTS || partial > 0;
+        if partial > 0 {
+            w.notes.push(format!("{partial} schema record(s) were read only partially; object metadata or column lists may be incomplete."));
+        }
         for row in w.out {
             // sqlite_schema columns: type, name, tbl_name, rootpage, sql.
             let get_text = |i: usize| match row.values.get(i) {
@@ -472,12 +477,12 @@ impl<'a> SqliteDb<'a> {
             let columns = if obj_type == "table" { parse_create_columns(&sql) } else { Vec::new() };
             out.push(SchemaObject { obj_type, name, tbl_name, rootpage, sql, columns });
         }
-        (out, truncated)
+        (out, truncated, w.notes)
     }
 
     /// Find a schema object (table/index/view/trigger) by name (case-insensitive).
     pub fn find_object(&self, name: &str) -> Option<SchemaObject> {
-        let (schema, _) = self.schema();
+        let (schema, ..) = self.schema();
         schema.into_iter().find(|o| o.name.eq_ignore_ascii_case(name))
     }
 
@@ -488,7 +493,7 @@ impl<'a> SqliteDb<'a> {
     /// Count the rows of the table rooted at `rootpage`, including interior index records.
     pub fn count_rows(&self, rootpage: u32) -> RowCount {
         let mut count: u64 = 0;
-        let mut visited = Vec::new();
+        let mut visited = BTreeSet::new();
         let mut budget = MAX_PAGES_WALKED;
         let index_tree = self.btree_header_off(rootpage).and_then(|hdr| self.data.get(hdr)).is_some_and(|ptype| matches!(*ptype, 0x02 | 0x0a));
         let bounded = !self.count_leaf_cells(rootpage, 0, &mut visited, &mut budget, &mut count, index_tree);
@@ -498,9 +503,10 @@ impl<'a> SqliteDb<'a> {
     /// Read a page of rows from the table rooted at `rootpage`.
     pub fn read_rows(&self, rootpage: u32, offset: usize, limit: usize) -> RowPage {
         let limit = limit.min(MAX_ROWS);
-        // Collect offset+limit rows, then drop the leading `offset`.
+        // Consume offset+limit readable rows, retaining only the requested page.
         let want = offset.saturating_add(limit);
         let mut w = RowWalk::new(want);
+        w.skip = offset;
         let table = self.without_rowid_table(rootpage);
         w.index_tree = table.is_some();
         self.collect_table_rows(&mut w, rootpage, 0);
@@ -525,10 +531,10 @@ impl<'a> SqliteDb<'a> {
                 w.notes.push("Could not determine the primary-key column order; values remain in storage order.".into());
             }
         }
-        let hit_cap = w.out.len() >= want && want > 0;
-        let skipped = offset.min(w.out.len());
-        let mut page: Vec<Row> = w.out.into_iter().skip(offset).take(limit).collect();
-        let (schema, _) = self.whole_schema();
+        let hit_cap = w.seen >= want && want > 0;
+        let skipped = offset.min(w.seen);
+        let mut page = w.out;
+        let (schema, ..) = self.whole_schema();
         if let Some(table) = schema.iter().find(|o| o.obj_type == "table" && o.rootpage == rootpage) {
             let definitions = column_definitions(&table.sql);
             let generated: Vec<bool> = definitions.iter().map(|(_, rest)| is_virtual_column(rest)).collect();
@@ -584,18 +590,17 @@ impl<'a> SqliteDb<'a> {
                 }
             }
         }
-        RowPage { rows: page, offset: skipped, truncated: hit_cap, notes: w.notes }
+        RowPage { rows: page, offset: skipped, truncated: hit_cap || w.incomplete, notes: w.notes }
     }
 
     /// Recursively count rows. Returns false when a budget or an unreadable page/child stopped the walk.
-    fn count_leaf_cells(&self, pageno: u32, depth: usize, visited: &mut Vec<u32>, budget: &mut usize, count: &mut u64, index_tree: bool) -> bool {
+    fn count_leaf_cells(&self, pageno: u32, depth: usize, visited: &mut BTreeSet<u32>, budget: &mut usize, count: &mut u64, index_tree: bool) -> bool {
         if depth > MAX_DEPTH || *budget == 0 {
             return false;
         }
-        if visited.contains(&pageno) || pageno == 0 {
-            return true; // a cycle or a null pointer: stop, but not a budget failure.
+        if pageno == 0 || !visited.insert(pageno) {
+            return false; // A repeated or null child cannot establish a complete count.
         }
-        visited.push(pageno);
         *budget -= 1;
         let Some(page) = self.btree_page(pageno) else { return false };
         let ptype = page.kind;
@@ -630,21 +635,32 @@ impl<'a> SqliteDb<'a> {
                 }
                 ok
             }
-            _ => true, // not a table page; ignore.
+            _ => false, // A child must belong to the same kind of b-tree as its root.
         }
     }
 
-    /// Recursively gather rows in key order, stopping once `want` are collected.
+    /// Recursively read rows in key order, stopping once `want` readable rows are consumed.
     fn collect_table_rows(&self, w: &mut RowWalk, pageno: u32, depth: usize) {
-        if depth > MAX_DEPTH || w.budget == 0 || (w.want != 0 && w.out.len() >= w.want) {
+        if w.seen >= w.want {
             return;
         }
-        if w.visited.contains(&pageno) || pageno == 0 {
+        if depth > MAX_DEPTH || w.budget == 0 {
+            if !w.incomplete {
+                w.notes.push(format!("Stopped before b-tree page {pageno}: page or depth budget exhausted."));
+            }
+            w.incomplete = true;
             return;
         }
-        w.visited.push(pageno);
+        if pageno == 0 || !w.visited.insert(pageno) {
+            if !w.incomplete {
+                w.notes.push(format!("Skipped a null or repeated b-tree child page {pageno}."));
+            }
+            w.incomplete = true;
+            return;
+        }
         w.budget -= 1;
         let Some(page) = self.btree_page(pageno) else {
+            w.incomplete = true;
             w.notes.push(format!("Skipped an unreadable b-tree page {pageno}."));
             return;
         };
@@ -653,7 +669,7 @@ impl<'a> SqliteDb<'a> {
         match ptype {
             0x0d | 0x0a if (ptype == 0x0a) == w.index_tree => {
                 for i in 0..ncells {
-                    if w.want != 0 && w.out.len() >= w.want {
+                    if w.seen >= w.want {
                         return;
                     }
                     let row = page.cell_offset(i).and_then(|cell_off| {
@@ -665,22 +681,33 @@ impl<'a> SqliteDb<'a> {
                     });
                     match row {
                         Some(row) => w.keep(row),
-                        None => w.notes.push(format!("Skipped an unreadable row on page {pageno}.")),
+                        None => {
+                            w.incomplete = true;
+                            w.notes.push(format!("Skipped an unreadable row on page {pageno}."));
+                        }
                     }
                 }
             }
             0x05 | 0x02 if (ptype == 0x02) == w.index_tree => {
                 for i in 0..ncells {
-                    if (w.want != 0 && w.out.len() >= w.want) || w.budget == 0 {
+                    if w.seen >= w.want {
+                        return;
+                    }
+                    if w.budget == 0 {
+                        if !w.incomplete {
+                            w.notes.push(format!("Stopped within b-tree page {pageno}: page budget exhausted."));
+                        }
+                        w.incomplete = true;
                         return;
                     }
                     if let Some(child) = Self::interior_child(&page, i) {
                         self.collect_table_rows(w, child, depth + 1);
                     } else {
+                        w.incomplete = true;
                         w.notes.push(format!("Skipped an unreadable child pointer on page {pageno}."));
                     }
                     if w.index_tree {
-                        if w.want != 0 && w.out.len() >= w.want {
+                        if w.seen >= w.want {
                             return;
                         }
                         let row = page
@@ -689,7 +716,10 @@ impl<'a> SqliteDb<'a> {
                             .and_then(|off| self.read_index_cell(page.data, off, w.text_cap, &mut w.notes));
                         match row {
                             Some(row) => w.keep(row),
-                            None => w.notes.push(format!("Skipped an unreadable row on page {pageno}.")),
+                            None => {
+                                w.incomplete = true;
+                                w.notes.push(format!("Skipped an unreadable row on page {pageno}."));
+                            }
                         }
                     }
                 }
@@ -697,7 +727,12 @@ impl<'a> SqliteDb<'a> {
                     self.collect_table_rows(w, right, depth + 1);
                 }
             }
-            _ => {}
+            _ => {
+                if !w.incomplete {
+                    w.notes.push(format!("Skipped b-tree page {pageno}: its page kind does not match the root."));
+                }
+                w.incomplete = true;
+            }
         }
     }
 
@@ -729,17 +764,8 @@ impl<'a> SqliteDb<'a> {
     /// Assemble a cell payload: the local part plus any overflow-page chain, capped.
     fn assemble_payload(&self, page: &[u8], local_off: usize, payload_len: usize, is_table_leaf: bool, notes: &mut Vec<String>) -> Option<Vec<u8>> {
         let usable = self.usable;
-        // Maximum bytes stored on the page before spilling to overflow.
-        let x = if is_table_leaf { usable.saturating_sub(35) } else { ((usable.saturating_sub(12)) * 64 / 255).saturating_sub(23) };
-        let local = if payload_len <= x {
-            payload_len
-        } else {
-            let m = ((usable.saturating_sub(12)) * 32 / 255).saturating_sub(23);
-            let surplus = payload_len.saturating_sub(m);
-            let denom = usable.saturating_sub(4).max(1);
-            let k = m.saturating_add(surplus % denom);
-            if k <= x { k } else { m }
-        };
+        let kind = if is_table_leaf { craft_sqlite::PayloadKind::TableLeaf } else { craft_sqlite::PayloadKind::Index };
+        let local = craft_sqlite::local_payload_len(u32::try_from(usable).ok()?, payload_len as u64, kind)? as usize;
         let mut out = Vec::new();
         let first = page.get(local_off..local_off.checked_add(local)?)?;
         out.extend_from_slice(first);
@@ -779,44 +805,27 @@ impl<'a> SqliteDb<'a> {
 
 /// Decode a SQLite record (the "payload") into column values, cutting text at `text_cap` bytes.
 fn parse_record(payload: &[u8], text_encoding: &str, text_cap: usize) -> Vec<CellValue> {
+    let Ok((header, body)) = craft_sqlite::split_record(payload) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
-    let Some((hdr_len, n)) = varint(payload, 0) else { return out };
-    let hdr_len = hdr_len as usize;
-    if hdr_len > payload.len() || hdr_len < n {
-        return out;
-    }
-    // First read the serial types from the header region.
-    let mut types = Vec::new();
-    let mut p = n;
-    while p < hdr_len {
-        let Some((st, used)) = varint(payload, p) else { break };
-        types.push(st);
-        p = match p.checked_add(used) {
-            Some(v) => v,
-            None => break,
-        };
-        if types.len() >= MAX_COLUMNS {
-            break;
-        }
-    }
-    // Then read each value from the body region.
-    let mut body = hdr_len;
-    for st in types {
-        let (val, size) = decode_serial(st, payload, body, text_encoding, text_cap);
+    let mut header_offset = 0;
+    let mut body_offset = 0;
+    while out.len() < MAX_COLUMNS {
+        let Some((serial, used)) = varint(header, header_offset) else { break };
+        let (val, size) = decode_serial(serial, body, body_offset, text_encoding, text_cap);
         out.push(val);
-        body = body.saturating_add(size);
+        header_offset += used;
+        body_offset = body_offset.saturating_add(size);
     }
     out
 }
 
 /// Decode one serial-typed value at `off`; returns the value and its byte size.
 fn decode_serial(serial: u64, data: &[u8], off: usize, text_encoding: &str, text_cap: usize) -> (CellValue, usize) {
-    let size = match serial {
-        1..=4 => serial as usize,
-        5 => 6,
-        6 | 7 => 8,
-        n if n >= 12 => usize::try_from((n - 12) / 2).unwrap_or(usize::MAX),
-        _ => 0,
+    let size = match craft_sqlite::serial_type_len(serial) {
+        Ok(len) => usize::try_from(len).unwrap_or(usize::MAX),
+        Err(_) => 0,
     };
     if off > data.len() || (off == data.len() && size != 0) {
         return (CellValue::NotRead, size);
@@ -862,11 +871,7 @@ fn decode_serial(serial: u64, data: &[u8], off: usize, text_encoding: &str, text
 
 fn int_be(data: &[u8], off: usize, len: usize) -> CellValue {
     let Some(slice) = data.get(off..off.saturating_add(len)) else { return CellValue::Null };
-    let mut v: i64 = if slice.first().is_some_and(|b| b & 0x80 != 0) { -1 } else { 0 };
-    for &b in slice {
-        v = (v << 8) | i64::from(b);
-    }
-    CellValue::Int(v)
+    craft_sqlite::decode_signed_be_int(slice).map(CellValue::Int).unwrap_or(CellValue::Null)
 }
 
 fn text_value(slice: &[u8]) -> CellValue {
@@ -974,33 +979,34 @@ fn is_strict(sql: &str) -> bool {
 /// Output-column positions in the stored record: PK columns first, then the remaining stored
 /// columns. A VIRTUAL generated column has no field in the record, so its position is `None`.
 fn without_rowid_order(table: &SchemaObject) -> Option<Vec<Option<usize>>> {
-    let generated: Vec<bool> = column_definitions(&table.sql).iter().map(|(_, rest)| is_virtual_column(rest)).collect();
+    let definitions = column_definitions(&table.sql);
+    let generated: Vec<bool> = definitions.iter().map(|(_, rest)| is_virtual_column(rest)).collect();
     let is_virtual = |i: usize| generated.get(i).copied().unwrap_or(false);
     let open = column_list_open(&table.sql)?;
     let close = column_list_close(&table.sql)?;
     let body = table.sql.get(open.checked_add(1)?..close)?;
     let mut stored = Vec::new();
+    let mut seen_keys = BTreeSet::new();
     for segment in split_top_level(body) {
         let tokens = sql_tokens(segment);
-        let Some(pk) = tokens
-            .windows(2)
-            .position(|pair| pair.first().is_some_and(|s| s.eq_ignore_ascii_case("PRIMARY")) && pair.get(1).is_some_and(|s| s.eq_ignore_ascii_case("KEY")))
-        else {
+        let term_groups: Vec<Vec<&[&str]>> = if is_table_constraint_segment(&tokens) {
+            table_primary_key_groups(&tokens)?
+        } else if has_top_level_primary_key(&tokens) {
+            vec![vec![tokens.get(..1)?]]
+        } else {
             continue;
         };
-        let table_constraint = tokens.first().is_some_and(|s| s.eq_ignore_ascii_case("PRIMARY") || s.eq_ignore_ascii_case("CONSTRAINT"));
-        let names: Vec<&str> = if table_constraint {
-            let tail = tokens.get(pk.checked_add(3)?..)?;
-            let end = tail.iter().position(|s| *s == ")")?;
-            tail.get(..end)?.split(|s| *s == ",").filter_map(|part| part.first().copied()).collect()
-        } else {
-            vec![*tokens.first()?]
-        };
-        for token in names {
-            let (name, _) = take_identifier(token);
-            let position = table.columns.iter().position(|column| column.name.eq_ignore_ascii_case(&name))?;
-            if !stored.contains(&position) {
-                stored.push(position);
+        for terms in term_groups {
+            for term in terms.into_iter().filter(|term| !term.is_empty()) {
+                let (token, collation) = primary_key_column(term)?;
+                let (name, _) = take_identifier(token);
+                let position = table.columns.iter().position(|column| column.name.eq_ignore_ascii_case(&name))?;
+                let collation =
+                    collation.or_else(|| definitions.get(position).and_then(|(_, rest)| top_level_collation(&sql_tokens(rest)))).unwrap_or("BINARY");
+                // SQLite retains repeated terms when they use different collations.
+                if seen_keys.insert((position, take_identifier(collation).0.to_ascii_lowercase())) {
+                    stored.push(position);
+                }
             }
         }
     }
@@ -1013,6 +1019,122 @@ fn without_rowid_order(table: &SchemaObject) -> Option<Vec<Option<usize>>> {
         }
     }
     (0..table.columns.len()).map(|i| if is_virtual(i) { Some(None) } else { stored.iter().position(|&column| column == i).map(Some) }).collect()
+}
+
+/// Report whether a CREATE TABLE segment starts with a table-constraint keyword.
+fn is_table_constraint_segment(tokens: &[&str]) -> bool {
+    tokens.first().is_some_and(|token| ["CONSTRAINT", "PRIMARY", "UNIQUE", "CHECK", "FOREIGN"].iter().any(|word| token.eq_ignore_ascii_case(word)))
+}
+
+/// Report whether `PRIMARY KEY` appears outside parentheses in a column definition.
+fn has_top_level_primary_key(tokens: &[&str]) -> bool {
+    let mut depth = 0usize;
+    for (i, &token) in tokens.iter().enumerate() {
+        match token {
+            "(" => depth = depth.saturating_add(1),
+            ")" => depth = depth.saturating_sub(1),
+            _ if depth == 0
+                && token.eq_ignore_ascii_case("PRIMARY")
+                && tokens.get(i.saturating_add(1)).is_some_and(|next| next.eq_ignore_ascii_case("KEY")) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Collect each `PRIMARY KEY (...)` clause's top-level comma-separated term slices from a
+/// table-constraint segment, allowing adjacent comma-omitted constraints such as `UNIQUE(v) PRIMARY KEY(k)`.
+fn table_primary_key_groups<'a, 'b>(tokens: &'b [&'a str]) -> Option<Vec<Vec<&'b [&'a str]>>> {
+    let mut groups = Vec::new();
+    let mut depth = 0usize;
+    let mut i = 0usize;
+    while let Some(&token) = tokens.get(i) {
+        if depth == 0 && token.eq_ignore_ascii_case("PRIMARY") && tokens.get(i.saturating_add(1)).is_some_and(|next| next.eq_ignore_ascii_case("KEY")) {
+            let open = i.saturating_add(2);
+            if tokens.get(open) != Some(&"(") {
+                return None;
+            }
+            let mut inner_depth = 1usize;
+            let mut cursor = open.saturating_add(1);
+            let mut terms = Vec::new();
+            let mut term_start = cursor;
+            while let Some(&inner) = tokens.get(cursor) {
+                match inner {
+                    "(" => inner_depth = inner_depth.saturating_add(1),
+                    ")" => {
+                        inner_depth = inner_depth.saturating_sub(1);
+                        if inner_depth == 0 {
+                            terms.push(tokens.get(term_start..cursor)?);
+                            break;
+                        }
+                    }
+                    "," if inner_depth == 1 => {
+                        terms.push(tokens.get(term_start..cursor)?);
+                        term_start = cursor.saturating_add(1);
+                    }
+                    _ => {}
+                }
+                cursor = cursor.saturating_add(1);
+            }
+            if inner_depth != 0 {
+                return None;
+            }
+            groups.push(terms);
+            i = cursor.saturating_add(1);
+            continue;
+        }
+        match token {
+            "(" => depth = depth.saturating_add(1),
+            ")" => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        i = i.saturating_add(1);
+    }
+    Some(groups)
+}
+
+/// Read a primary-key column and its outermost COLLATE, if given.
+fn primary_key_column<'a>(term: &[&'a str]) -> Option<(&'a str, Option<&'a str>)> {
+    let mut tokens = term.iter().copied();
+    let mut depth = 0usize;
+    let name = loop {
+        match tokens.next()? {
+            "(" => depth += 1,
+            name => break name,
+        }
+    };
+    if !name.starts_with(['\'', '"', '`', '[']) && name.starts_with(is_sql_word_break) {
+        return None;
+    }
+    let mut collation = None;
+    while let Some(token) = tokens.next() {
+        match token {
+            ")" => depth = depth.checked_sub(1)?,
+            _ if token.eq_ignore_ascii_case("COLLATE") => collation = Some(tokens.next()?),
+            _ if depth == 0 && (token.eq_ignore_ascii_case("ASC") || token.eq_ignore_ascii_case("DESC")) && tokens.next().is_none() => break,
+            _ => return None,
+        }
+    }
+    (depth == 0).then_some((name, collation))
+}
+
+/// Find the applicable COLLATE clause without looking inside expressions such as CHECK.
+fn top_level_collation<'a>(tokens: &[&'a str]) -> Option<&'a str> {
+    let mut depth = 0usize;
+    let mut collation = None;
+    let mut tokens = tokens.iter().copied();
+    while let Some(token) = tokens.next() {
+        match token {
+            "(" => depth = depth.saturating_add(1),
+            ")" => depth = depth.saturating_sub(1),
+            _ if depth == 0 && token.eq_ignore_ascii_case("COLLATE") => collation = tokens.next(),
+            _ => {}
+        }
+    }
+    collation
 }
 
 /// A generated column (`AS (expr)`, with or without `GENERATED ALWAYS`) is VIRTUAL unless
@@ -1121,7 +1243,7 @@ fn column_definitions(sql: &str) -> Vec<(Column, &str)> {
         }
         // A comment in front of a definition (often the previous line's note) isn't part of it.
         let Some(first) = sql_tokens(seg).into_iter().next() else { continue };
-        let seg = seg.get((first.as_ptr() as usize).saturating_sub(seg.as_ptr() as usize)..).unwrap_or("").trim_end();
+        let seg = seg.get((first.as_ptr() as usize).saturating_sub(seg.as_ptr() as usize)..).unwrap_or("").trim_end_matches(is_sql_whitespace);
         // Skip table-level constraints.
         let first_word = first.to_ascii_uppercase();
         if matches!(first_word.as_str(), "CONSTRAINT" | "PRIMARY" | "UNIQUE" | "CHECK" | "FOREIGN") {
@@ -1131,7 +1253,7 @@ fn column_definitions(sql: &str) -> Vec<(Column, &str)> {
         if name.is_empty() && !seg.starts_with(['"', '`', '\'', '[']) {
             continue;
         }
-        let type_name = extract_type(strip_comments(rest).trim());
+        let type_name = extract_type(rest);
         cols.push((Column { name, type_name }, rest));
     }
     cols
@@ -1162,7 +1284,7 @@ fn rowid_alias_index(sql: &str) -> Option<usize> {
     if tail.windows(2).any(|w| w.first().is_some_and(|t| is(t, "WITHOUT")) && w.get(1).is_some_and(|t| is(t, "ROWID"))) {
         return None;
     }
-    let columns = parse_create_columns(sql);
+    let columns = column_definitions(sql);
     let mut key = None;
     let mut column = 0usize;
     let body_start = open.saturating_add(1);
@@ -1171,23 +1293,21 @@ fn rowid_alias_index(sql: &str) -> Option<usize> {
     for i in body_start..=close {
         let token = *tokens.get(i)?;
         if i == close || (token == "," && depth == 0) {
-            let mut segment = tokens.get(start..i)?;
+            let segment = tokens.get(start..i)?;
             start = i.saturating_add(1);
-            if segment.first().is_some_and(|t| is(t, "CONSTRAINT")) {
-                segment = segment.get(2..)?;
-            }
-            if segment.first().is_some_and(|t| is(t, "PRIMARY")) {
-                if key.is_some() || !segment.get(1).is_some_and(|t| is(t, "KEY")) || segment.get(2) != Some(&"(") {
-                    return None;
+            if is_table_constraint_segment(segment) {
+                let groups = table_primary_key_groups(segment)?;
+                for terms in groups {
+                    if key.is_some() || terms.len() != 1 {
+                        return None;
+                    }
+                    let term = *terms.first()?;
+                    let term = if term.last().is_some_and(|token| is(token, "AUTOINCREMENT")) { term.get(..term.len().checked_sub(1)?)? } else { term };
+                    let (name_token, _) = primary_key_column(term)?;
+                    let (name, _) = take_identifier(name_token);
+                    key = Some(columns.iter().position(|(column, _)| column.name.eq_ignore_ascii_case(&name))?);
                 }
-                let end = segment.iter().position(|t| *t == ")")?;
-                let members = segment.get(3..end)?;
-                if members.contains(&",") {
-                    return None;
-                }
-                let (name, _) = take_identifier(members.first()?);
-                key = Some(columns.iter().position(|c| c.name.eq_ignore_ascii_case(&name))?);
-            } else if !segment.first().is_some_and(|t| ["UNIQUE", "CHECK", "FOREIGN"].iter().any(|word| is(t, word))) {
+            } else {
                 let mut nesting = 0usize;
                 for (j, t) in segment.iter().enumerate().skip(1) {
                     match *t {
@@ -1213,14 +1333,35 @@ fn rowid_alias_index(sql: &str) -> Option<usize> {
         }
     }
     let index = key?;
-    columns.get(index)?.type_name.eq_ignore_ascii_case("INTEGER").then_some(index)
+    let (_, declaration) = columns.get(index)?;
+    // SQLite can display a quoted type such as `"INTEGER"(10)` as `INTEGER`. Check
+    // the entire type spelling before applying display dequoting.
+    let spelling = declared_type_spelling(declaration);
+    ["INTEGER", "\"INTEGER\"", "'INTEGER'", "`INTEGER`", "[INTEGER]"].iter().any(|integer| spelling.eq_ignore_ascii_case(integer)).then_some(index)
+}
+
+/// True when `c` is one of SQLite's five ASCII whitespace characters (`tokenize.c`); non-ASCII
+/// code points such as U+00A0 and U+3000 remain valid unquoted identifier characters.
+fn is_sql_whitespace(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{c}')
+}
+
+/// `sql` from where its next token starts. SQLite also skips U+FEFF there, though inside a word
+/// it is an identifier character like any other non-ASCII code point.
+fn at_token_start(sql: &str) -> &str {
+    sql.trim_start_matches(|c| is_sql_whitespace(c) || c == '\u{feff}')
+}
+
+/// True when `c` terminates an unquoted SQL identifier or keyword.
+fn is_sql_word_break(c: char) -> bool {
+    is_sql_whitespace(c) || matches!(c, '(' | ')' | ',' | ';' | '+' | '-' | '.' | '\'' | '"' | '`' | '[' | '/')
 }
 
 /// Keep quoted text intact so defaults and constraint names cannot become SQL keywords.
 fn sql_tokens(mut sql: &str) -> Vec<&str> {
     let mut tokens = Vec::new();
     while !sql.is_empty() {
-        sql = sql.trim_start();
+        sql = at_token_start(sql);
         if sql.is_empty() {
             break;
         }
@@ -1249,32 +1390,29 @@ fn sql_tokens(mut sql: &str) -> Vec<&str> {
                     }
                 }
             }
-        } else if !matches!(first, '(' | ')' | ',' | '/') {
-            end = sql.find(|c: char| c.is_whitespace() || matches!(c, '(' | ')' | ',' | '\'' | '"' | '`' | '[' | '/')).unwrap_or(sql.len());
-            // A line comment may follow a word with no space between: `INTEGER--note`.
-            if let Some(dash) = sql.get(..end).and_then(|word| word.find("--")).filter(|&dash| dash > 0) {
-                end = dash;
+        } else if first.is_ascii_digit() || (first == '.' && chars.peek().is_some_and(|(_, c)| c.is_ascii_digit())) {
+            let hex = sql.starts_with("0x") || sql.starts_with("0X");
+            while let Some((i, c)) = chars.next() {
+                if c.is_ascii_alphanumeric() || c == '_' || (!hex && c == '.') {
+                    end = i.saturating_add(c.len_utf8());
+                    if !hex
+                        && matches!(c, 'e' | 'E')
+                        && chars.peek().is_some_and(|&(j, sign)| matches!(sign, '+' | '-') && !sql.get(j..).is_some_and(|s| s.starts_with("--")))
+                        && let Some((j, sign)) = chars.next()
+                    {
+                        end = j.saturating_add(sign.len_utf8());
+                    }
+                } else {
+                    break;
+                }
             }
+        } else if !is_sql_word_break(first) {
+            end = sql.find(is_sql_word_break).unwrap_or(sql.len());
         }
         tokens.push(sql.get(..end).unwrap_or(""));
         sql = sql.get(end..).unwrap_or("");
     }
     tokens
-}
-
-/// `text` with each SQL comment replaced by a space. Quoted text is kept as it is.
-fn strip_comments(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut end = 0usize;
-    for token in sql_tokens(text) {
-        let start = (token.as_ptr() as usize).saturating_sub(text.as_ptr() as usize);
-        // Only whitespace and comments lie between two tokens.
-        let gap = text.get(end..start).unwrap_or("");
-        out.push_str(if gap.contains("--") || gap.contains("/*") { " " } else { gap });
-        out.push_str(token);
-        end = start.saturating_add(token.len());
-    }
-    out
 }
 
 /// Missing trailing fields use literal defaults, read with the column's affinity; expressions
@@ -1364,6 +1502,10 @@ fn literal_value(tokens: &[&str], affinity: Affinity, allow_words: bool) -> Opti
     }
     let number = if matches!(token, "+" | "-") {
         let value = *tokens.get(1)?;
+        // SQLite drops a unary plus before a literal, so `+X'41'` is still the blob.
+        if token == "+" && value.eq_ignore_ascii_case("X") && tokens.get(2).is_some_and(|quoted| quoted.starts_with('\'')) {
+            return literal_value(tokens.get(1..)?, affinity, false);
+        }
         if let Some(text) = single_quoted(value) {
             if token == "+" {
                 return text_default(&text, affinity);
@@ -1380,6 +1522,17 @@ fn literal_value(tokens: &[&str], affinity: Affinity, allow_words: bool) -> Opti
     let clean = unseparated_number(&number)?;
     let integer = number_kind(&clean)?;
     match affinity {
+        // Reading an old row supplies the DEFAULT expression, not the stored value of a
+        // later insert. SQLite formats a representable integer magnitude, but otherwise
+        // keeps a separated literal's spelling (without underscores or a leading plus).
+        Affinity::Text if clean != number => {
+            let spelling = clean.strip_prefix('+').unwrap_or(&clean);
+            let magnitude = spelling.strip_prefix('-').unwrap_or(spelling);
+            Some(match magnitude.parse::<i64>() {
+                Ok(n) if integer => integer_default(if spelling.starts_with('-') { -n } else { n }, affinity),
+                _ => text_value(spelling.as_bytes()),
+            })
+        }
         // An integer literal that fits in 64 bits is written plainly (`007` reads '7', and
         // `-9223372036854775808` keeps its sign); any other number is written in SQLite's REAL
         // text form, since the schema's text is not the REAL it reads.
@@ -1408,11 +1561,12 @@ fn single_quoted(token: &str) -> Option<String> {
 }
 
 /// A word SQLite reads as a string constant in a DEFAULT, but not a dynamic date/time keyword.
+/// SQLite's identifiers take any non-ASCII character, and `$` after the first.
 fn is_bare_word(token: &str) -> bool {
     let mut chars = token.chars();
     let Some(first) = chars.next() else { return false };
-    (first.is_ascii_alphabetic() || first == '_')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    (first.is_ascii_alphabetic() || first == '_' || !first.is_ascii())
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$' || !c.is_ascii())
         && !["CURRENT_TIME", "CURRENT_DATE", "CURRENT_TIMESTAMP"].iter().any(|keyword| token.eq_ignore_ascii_case(keyword))
 }
 
@@ -1653,7 +1807,7 @@ fn split_top_level(s: &str) -> Vec<&str> {
 /// Take the leading column identifier (handling "quoted", `back-ticked`, 'single-quoted' and
 /// [bracketed] names).
 fn take_identifier(seg: &str) -> (String, &str) {
-    let seg = seg.trim_start();
+    let seg = at_token_start(seg);
     let mut chars = seg.char_indices().peekable();
     match chars.next() {
         Some((_, q @ ('"' | '`' | '\''))) => {
@@ -1677,44 +1831,96 @@ fn take_identifier(seg: &str) -> (String, &str) {
             (seg.get(1..).unwrap_or("").to_string(), "")
         }
         Some(_) => {
-            let endp = seg.find([' ', '\t', '\n', '(', ',']).unwrap_or(seg.len());
-            // A comment may follow the name with no space between: `id/*key*/` or `id--key`.
-            let endp = ["--", "/*"].into_iter().filter_map(|mark| seg.get(..endp)?.find(mark)).fold(endp, usize::min);
+            let endp = seg.find(is_sql_word_break).unwrap_or(seg.len());
             (seg.get(..endp).unwrap_or("").to_string(), seg.get(endp..).unwrap_or(""))
         }
         None => (String::new(), ""),
     }
 }
 
-/// The type name is the run of tokens before the first column-constraint keyword. A comma inside
-/// the type's parentheses belongs to it (`DECIMAL(10, 2)`); only the column separator is dropped.
+/// Extract the column's declared type as SQLite's schema inspection reports it: unquoted spans
+/// keep their raw token slice before the first column constraint, bracketed spans dequote across
+/// the full span unless an inner quotation mark is present, and other quoted spans stop at their
+/// closing delimiter.
 fn extract_type(rest: &str) -> String {
-    let mut out = String::new();
-    let mut depth = 0i32;
-    for tok in rest.split_whitespace() {
-        let bare = tok.trim_end_matches(',');
-        let upper = bare.to_ascii_uppercase();
+    let spelling = declared_type_spelling(rest);
+    if spelling.starts_with('[') {
+        // SQLite dequotes the full span only when its interior contains no quotation marks.
+        let inner = spelling.as_bytes().get(1..spelling.len().saturating_sub(1)).unwrap_or(&[]);
+        if inner.iter().any(|&byte| matches!(byte, b'\'' | b'"' | b'`' | b'[')) {
+            return take_identifier(spelling).0;
+        }
+        return String::from_utf8_lossy(inner).into_owned();
+    }
+    if spelling.starts_with(['"', '`', '\'']) {
+        return take_identifier(spelling).0;
+    }
+    spelling.to_owned()
+}
+
+/// Slice the whole type declaration, including precision and additional type words.
+fn declared_type_spelling(declaration: &str) -> &str {
+    let tokens = sql_tokens(declaration);
+    let Some(first) = tokens.first() else { return "" };
+    let start = (first.as_ptr() as usize).saturating_sub(declaration.as_ptr() as usize);
+    let mut depth = 0usize;
+    let mut end = start;
+    for (i, &token) in tokens.iter().enumerate() {
         if depth == 0
-            && matches!(
-                upper.as_str(),
-                "PRIMARY" | "NOT" | "NULL" | "UNIQUE" | "CHECK" | "DEFAULT" | "COLLATE" | "REFERENCES" | "GENERATED" | "AS" | "CONSTRAINT" | "AUTOINCREMENT"
-            )
+            && (starts_column_constraint(token)
+                || (token.eq_ignore_ascii_case("GENERATED")
+                    && tokens.get(i + 1).is_some_and(|next| next.eq_ignore_ascii_case("ALWAYS"))
+                    && tokens.get(i + 2).is_some_and(|next| next.eq_ignore_ascii_case("AS"))))
         {
             break;
         }
-        depth += tok.matches('(').count() as i32;
-        depth -= tok.matches(')').count() as i32;
-        if !out.is_empty() {
-            out.push(' ');
+        match token {
+            "(" => depth = depth.saturating_add(1),
+            ")" => depth = depth.saturating_sub(1),
+            _ => {}
         }
-        out.push_str(if depth == 0 { bare } else { tok });
+        end = (token.as_ptr() as usize).saturating_sub(declaration.as_ptr() as usize) + token.len();
     }
-    out
+    let spelling = declaration.get(start..end).unwrap_or("");
+    // SQLite's generated-column compatibility rule trims a trailing ALWAYS in types of at
+    // least 16 bytes, plus GENERATED immediately before it when present.
+    if spelling.len() >= 16
+        && let Some((stem, suffix)) = spelling.split_at_checked(spelling.len() - "ALWAYS".len())
+        && suffix.eq_ignore_ascii_case("ALWAYS")
+    {
+        let stem = stem.trim_ascii_end();
+        if let Some((prefix, suffix)) = stem.split_at_checked(stem.len().saturating_sub("GENERATED".len()))
+            && suffix.eq_ignore_ascii_case("GENERATED")
+        {
+            return prefix.trim_ascii_end();
+        }
+        return stem;
+    }
+    spelling
+}
+
+/// Unambiguous first tokens for a SQLite column constraint.
+fn starts_column_constraint(token: &str) -> bool {
+    matches!(
+        token.to_ascii_uppercase().as_str(),
+        "PRIMARY" | "NOT" | "NULL" | "UNIQUE" | "CHECK" | "DEFAULT" | "COLLATE" | "REFERENCES" | "DEFERRABLE" | "AS" | "CONSTRAINT"
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_serial_type_cannot_continue_into_the_record_body() {
+        let complete = [3, 1, 9, 9];
+        assert_eq!(parse_record(&complete, "utf-8", MAX_TEXT), [CellValue::Int(9), CellValue::Int(1)]);
+
+        // The first body's integer would complete the unfinished second serial
+        // type as 9 if the parser read past the declared header.
+        let truncated = [3, 1, 0x80, 9];
+        assert_eq!(parse_record(&truncated, "utf-8", MAX_TEXT), [CellValue::Int(9)]);
+    }
 
     /// A TEXT value cut inside a character drops the incomplete character, not a U+FFFD that
     /// wasn't in the database.
@@ -1784,7 +1990,7 @@ mod tests {
     /// the usual cap. Text shown to the reader is cut at the cap on a character boundary.
     #[test]
     fn whole_schema_text_stops_when_its_budget_is_spent() {
-        let mut w = RowWalk::new(0);
+        let mut w = RowWalk::new(2);
         w.text_cap = MAX_SCHEMA_TEXT;
         w.text_budget = 10;
         w.keep(Row { rowid: Some(1), values: vec![text("1234"), CellValue::Int(5)] });
@@ -2017,8 +2223,11 @@ mod tests {
         assert_eq!(varint(&[0x00], 0), Some((0, 1)));
         assert_eq!(varint(&[0x7f], 0), Some((127, 1)));
         assert_eq!(varint(&[0x81, 0x00], 0), Some((128, 2)));
-        assert_eq!(varint(&[0xff; 9], 0).map(|(_, n)| n), Some(9));
+        assert_eq!(varint(&[0xff; 9], 0), Some((u64::MAX, 9)));
+        assert_eq!(varint(&[0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x01], 0), Some((1, 9)));
+        assert_eq!(varint(&[0x80; 8], 0), None);
         assert_eq!(varint(&[0x80], 0), None); // never terminates within range
+        assert_eq!(varint(&[], 1), None);
     }
 
     #[test]
@@ -2112,6 +2321,119 @@ mod tests {
         // find_object is case-insensitive.
         assert!(parsed.find_object("ITEMS").is_some());
         assert!(parsed.find_object("nope").is_none());
+    }
+
+    /// The schema's b-tree as an interior root on page 1 whose left child is `child` and whose
+    /// right child, page 3, is the fixture's schema leaf.
+    fn interior_schema_db(child: u32) -> Vec<u8> {
+        const PAGE: usize = craft_anything_testkit::sqlite::PAGE_SIZE;
+        let mut db = craft_anything_testkit::sqlite::simple_db();
+        let top = usize::from(u16::from_be_bytes([db[105], db[106]]));
+        let mut leaf = vec![0u8; PAGE];
+        leaf[..8].copy_from_slice(&db[100..108]);
+        leaf[8..10].copy_from_slice(&db[108..110]);
+        leaf[top..].copy_from_slice(&db[top..PAGE]);
+        db.extend(leaf);
+        db[28..32].copy_from_slice(&3u32.to_be_bytes());
+        let cell = PAGE - 5;
+        db[100] = 0x05;
+        db[103..105].copy_from_slice(&1u16.to_be_bytes());
+        db[105..107].copy_from_slice(&(cell as u16).to_be_bytes());
+        db[108..112].copy_from_slice(&3u32.to_be_bytes());
+        db[112..114].copy_from_slice(&(cell as u16).to_be_bytes());
+        db[cell..cell + 4].copy_from_slice(&child.to_be_bytes());
+        db[cell + 4] = 1;
+        db
+    }
+
+    #[test]
+    fn schema_walk_that_skips_part_of_the_tree_is_incomplete() {
+        let plain = craft_anything_testkit::sqlite::simple_db();
+        let ov = SqliteDb::parse(&plain).unwrap().overview();
+        assert!(!ov.schema_truncated);
+        assert!(ov.integrity_notes.is_empty());
+
+        // A left child that is the right child again (page 3), and one past the end of the file.
+        for (child, note) in [(3, "repeated b-tree child page 3"), (9, "unreadable b-tree page 9")] {
+            let db = interior_schema_db(child);
+            let ov = SqliteDb::parse(&db).unwrap().overview();
+            assert_eq!(ov.schema.iter().map(|o| o.name.as_str()).collect::<Vec<_>>(), ["items"]);
+            assert!(ov.schema_truncated, "child {child}");
+            assert!(ov.integrity_notes.iter().any(|n| n.contains(note)), "{:?}", ov.integrity_notes);
+            assert!(SqliteDb::parse(&db).unwrap().schema().1);
+        }
+
+        // Rows whose cell pointers leave the page: one, then more than the notes shown.
+        for bad in [1, MAX_SCHEMA_NOTES + 5] {
+            let mut db = plain.clone();
+            db[103..105].copy_from_slice(&(bad as u16 + 1).to_be_bytes());
+            for i in 0..bad {
+                db[110 + 2 * i..112 + 2 * i].copy_from_slice(&u16::MAX.to_be_bytes());
+            }
+            let ov = SqliteDb::parse(&db).unwrap().overview();
+            assert_eq!(ov.schema.len(), 1);
+            assert!(ov.schema_truncated);
+            let shown = ov.integrity_notes.iter().filter(|n| n.contains("unreadable row on page 1")).count();
+            assert_eq!(shown, bad.min(MAX_SCHEMA_NOTES), "{:?}", ov.integrity_notes);
+            assert_eq!(ov.integrity_notes.iter().any(|n| n.ends_with("5 more note(s) not shown.")), bad > MAX_SCHEMA_NOTES);
+        }
+    }
+
+    #[test]
+    fn partial_schema_overflow_is_disclosed_without_dropping_the_object() {
+        use craft_anything_testkit::sqlite::{PAGE_SIZE, table_db};
+        let sql = format!("CREATE TABLE t(first TEXT /*{}*/, last TEXT)", "x".repeat(12_000));
+        let intact = table_db(&sql, &[]);
+        let complete = SqliteDb::parse(&intact).unwrap().overview();
+        assert!(!complete.schema_truncated);
+        assert_eq!(complete.schema[0].columns.len(), 2);
+        assert!(complete.schema[0].sql.len() < sql.len(), "display-only shortening is not incomplete parsing");
+
+        for next in [0, 3, u32::MAX] {
+            let mut data = intact.clone();
+            // Page 3 is the first schema overflow page: end early, loop, or leave the file.
+            data[2 * PAGE_SIZE..2 * PAGE_SIZE + 4].copy_from_slice(&next.to_be_bytes());
+            let parsed = SqliteDb::parse(&data).unwrap();
+            let overview = parsed.overview();
+            assert_eq!(overview.schema.len(), 1);
+            assert_eq!(overview.schema[0].name, "t");
+            assert!(overview.schema[0].columns.len() < complete.schema[0].columns.len());
+            assert!(overview.schema_truncated, "overflow next page {next}");
+            assert!(parsed.schema().1);
+            assert!(overview.integrity_notes.iter().any(|note| note.contains("schema record")));
+        }
+    }
+
+    #[test]
+    fn schema_text_caps_are_reported_before_display_shortening() {
+        use craft_anything_testkit::sqlite::table_db;
+        let sql = format!("CREATE TABLE t(first TEXT /*{}*/, last TEXT)", "x".repeat(MAX_SCHEMA_TEXT));
+        let data = table_db(&sql, &[]);
+        let overview = SqliteDb::parse(&data).unwrap().overview();
+        assert_eq!(overview.schema.len(), 1);
+        assert!(overview.schema_truncated);
+        assert!(overview.integrity_notes.iter().any(|note| note.contains("schema record")));
+    }
+
+    #[test]
+    fn exhausted_schema_text_budget_marks_later_objects_partial() {
+        use craft_anything_testkit::sqlite::table_db;
+        let sql = format!("CREATE TABLE t(first TEXT /*{}*/, last TEXT)", "x".repeat(MAX_SCHEMA_TEXT - 100));
+        let mut data = table_db(&sql, &[]);
+        let copies = MAX_SCHEMA_TEXT_TOTAL / sql.len() + 2;
+        let pointer = [data[108], data[109]];
+        assert!(108 + 2 * copies < usize::from(u16::from_be_bytes(pointer)));
+        data[103..105].copy_from_slice(&(copies as u16).to_be_bytes());
+        // Repeated cells sharing one overflow chain exercise the real aggregate text budget.
+        for index in 0..copies {
+            data[108 + 2 * index..110 + 2 * index].copy_from_slice(&pointer);
+        }
+        let overview = SqliteDb::parse(&data).unwrap().overview();
+        assert_eq!(overview.schema.len(), copies);
+        assert_eq!(overview.schema[0].columns.len(), 2);
+        assert!(overview.schema.last().unwrap().columns.len() < 2);
+        assert!(overview.schema_truncated);
+        assert!(overview.integrity_notes.iter().any(|note| note.contains("schema record")));
     }
 
     #[test]
@@ -2226,6 +2548,45 @@ mod tests {
     }
 
     #[test]
+    fn wide_btree_visits_keep_every_row_in_key_order() {
+        use craft_anything_testkit::sqlite::{Val, without_rowid_db};
+        let rows = (0..1023).map(|i| vec![Val::Int(i), Val::Text(format!("value {i}"))]).collect::<Vec<_>>();
+        let bytes = without_rowid_db("CREATE TABLE t(k INT PRIMARY KEY, v TEXT) WITHOUT ROWID", &rows);
+        let db = SqliteDb::parse(&bytes).expect("fixture parses");
+        let count = db.count_rows(2);
+        assert_eq!(count.count, 1023);
+        assert!(!count.bounded);
+        let page = db.read_rows(2, 0, 1024);
+        assert_eq!(page.rows.len(), 1023);
+        assert!(!page.truncated);
+        assert!(page.notes.is_empty());
+        for (i, row) in page.rows.iter().enumerate() {
+            assert_eq!(row.rowid, None);
+            assert_eq!(row.values, vec![CellValue::Int(i as i64), CellValue::Text { text: format!("value {i}"), truncated: false }]);
+        }
+    }
+
+    #[test]
+    fn repeated_btree_children_and_cycles_do_not_repeat_rows() {
+        use craft_anything_testkit::sqlite::{PAGE_SIZE, Val, without_rowid_db};
+        let rows = (0..15).map(|i| vec![Val::Int(i)]).collect::<Vec<_>>();
+        let base = without_rowid_db("CREATE TABLE t(k INT PRIMARY KEY) WITHOUT ROWID", &rows);
+        let cell = usize::from(u16::from_be_bytes([base[PAGE_SIZE + 12], base[PAGE_SIZE + 13]]));
+        let first_child = u32::from_be_bytes(base[PAGE_SIZE + cell..PAGE_SIZE + cell + 4].try_into().unwrap());
+        for right in [2, first_child] {
+            let mut bytes = base.clone();
+            bytes[PAGE_SIZE + 8..PAGE_SIZE + 12].copy_from_slice(&right.to_be_bytes());
+            let db = SqliteDb::parse(&bytes).expect("fixture parses");
+            assert_eq!(db.count_rows(2).count, 12);
+            let page = db.read_rows(2, 0, 16);
+            assert_eq!(page.rows.len(), 12);
+            for (i, row) in page.rows.iter().enumerate() {
+                assert_eq!(row.values, vec![CellValue::Int(i as i64)]);
+            }
+        }
+    }
+
+    #[test]
     fn without_rowid_damaged_pages_never_panic() {
         use craft_anything_testkit::sqlite::{Val, without_rowid_db};
         let rows = (0..9).map(|i| vec![Val::Int(i), Val::Text("x".repeat(2000))]).collect::<Vec<_>>();
@@ -2260,6 +2621,14 @@ mod tests {
             CellValue::Blob { len, .. } => assert_eq!(len, 3),
             other => panic!("expected blob, got {other:?}"),
         }
+        // 6-byte signed integer, 8-byte signed integer, 8-byte float, and reserved serial types 10/11.
+        assert_eq!(decode_serial(5, &[0xff, 0xff, 0xff, 0xff, 0xff, 0xfe], 0, "utf-8", MAX_TEXT), (CellValue::Int(-2), 6));
+        assert_eq!(decode_serial(6, &(-42_i64).to_be_bytes(), 0, "utf-8", MAX_TEXT), (CellValue::Int(-42), 8));
+        assert_eq!(decode_serial(7, &3.5_f64.to_be_bytes(), 0, "utf-8", MAX_TEXT), (CellValue::Real(3.5), 8));
+        assert_eq!(decode_serial(10, &[], 0, "utf-8", MAX_TEXT), (CellValue::Null, 0));
+        assert_eq!(decode_serial(11, &[], 0, "utf-8", MAX_TEXT), (CellValue::Null, 0));
+        assert_eq!(craft_sqlite::serial_type_len(10), Err(craft_sqlite::Error::ReservedSerialType(10)));
+        assert_eq!(craft_sqlite::serial_type_len(11), Err(craft_sqlite::Error::ReservedSerialType(11)));
     }
 
     fn text(value: &str) -> CellValue {
@@ -2472,13 +2841,19 @@ mod tests {
             ("x BLOB DEFAULT -'1e3'", CellValue::Real(-1000.0)),
             ("x TEXT DEFAULT 1_000", text("1000")),
             ("x TEXT DEFAULT 1_000.5", text("1000.5")),
-            ("x TEXT DEFAULT 1_000.", text("1000.0")),
-            ("x TEXT DEFAULT .1_0", text("0.1")),
-            ("x TEXT DEFAULT 1_0e2", text("1000.0")),
-            ("x TEXT DEFAULT 1_0e-2", text("0.1")),
-            ("x TEXT DEFAULT 1_0e-5", text("0.0001")),
-            ("x TEXT DEFAULT -0_0.0", text("0.0")),
+            ("x TEXT DEFAULT 1_000.", text("1000.")),
+            ("x TEXT DEFAULT .1_0", text(".10")),
+            ("x TEXT DEFAULT 1_0e2", text("10e2")),
+            ("x TEXT DEFAULT 1_0e-2", text("10e-2")),
+            ("x TEXT DEFAULT 1_0e-5", text("10e-5")),
+            ("x TEXT DEFAULT -0_0.0", text("-00.0")),
             ("x TEXT DEFAULT -1_0", text("-10")),
+            ("x TEXT DEFAULT 12_34.5_0", text("1234.50")),
+            ("x TEXT DEFAULT +1_0e+0_2", text("10e+02")),
+            ("x TEXT DEFAULT -0_9223372036854775808", text("-09223372036854775808")),
+            ("x TEXT DEFAULT 0_07", text("7")),
+            ("x NUMERIC DEFAULT 1_0e-0_1", CellValue::Int(1)),
+            ("x NUMERIC DEFAULT '1_000'", text("1_000")),
             ("x INTEGER DEFAULT 1_000", CellValue::Int(1000)),
             ("x INTEGER DEFAULT 1_000.5", CellValue::Real(1000.5)),
             ("x INTEGER DEFAULT .1_0", CellValue::Real(0.1)),

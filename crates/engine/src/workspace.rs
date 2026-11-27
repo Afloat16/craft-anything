@@ -21,10 +21,13 @@ use crate::inbox::{next_counter, now_ms};
 use crate::project::write_atomic;
 use crate::versioned::{self, upgrade};
 use craft_anything_evidence::{ErrorCode, ToolError};
+use craft_anything_platform::fs::read_file_capped;
+use craft_anything_platform::sync::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+use std::sync::PoisonError;
 
 pub mod progress;
 
@@ -77,11 +80,16 @@ fn copy_tree(from: &Path, to: &Path, skip: &dyn Fn(&Path) -> bool, depth: usize)
     Ok(())
 }
 
+/// Ghidra was stopped for this project's builds (`tools::deep::STOPPED`), and its lock file.
+pub const GHIDRA_STOPPED: &str = "ghidra-stopped";
+pub const GHIDRA_STOP_LOCK: &str = "ghidra-stop.lock";
+
 /// The current `craft.json` format version. Bumping it means appending a step to [`MANIFEST_STEPS`].
-pub const MANIFEST_VERSION: u32 = 4;
+pub const MANIFEST_VERSION: u32 = 6;
 
 /// The steps that bring an older `craft.json` forward; step `i` goes from version `i` to `i + 1`.
-const MANIFEST_STEPS: &[versioned::Step<Value>] = &[manifest_v0_to_v1, manifest_v1_to_v2, manifest_v2_to_v3, manifest_v3_to_v4];
+const MANIFEST_STEPS: &[versioned::Step<Value>] =
+    &[manifest_v0_to_v1, manifest_v1_to_v2, manifest_v2_to_v3, manifest_v3_to_v4, manifest_v4_to_v5, manifest_v5_to_v6];
 const _: () = assert!(MANIFEST_STEPS.len() == MANIFEST_VERSION as usize, "one step per craft.json version");
 
 /// Version 0 (no `version` field) has the same shape as version 1; only the number is new.
@@ -113,6 +121,24 @@ fn manifest_v3_to_v4(doc: &mut Value) -> Result<(), String> {
         obj.insert("agent_session_deep".into(), Value::Bool(true));
     }
     Ok(())
+}
+
+/// Version 5 adds the mode the current `capture/` was studied in (`capture_deep`). A version-4
+/// manifest predates the field; a capture it left is the legacy case this build treats as Deep,
+/// so the step fills `true` for it. A mode an early build of this change already wrote is kept.
+fn manifest_v4_to_v5(doc: &mut Value) -> Result<(), String> {
+    let obj = doc.as_object_mut().ok_or("the manifest isn't a JSON object")?;
+    if !obj.contains_key("capture_deep") {
+        obj.insert("capture_deep".into(), Value::Bool(true));
+    }
+    Ok(())
+}
+
+/// Version 6 adds the toolchain a move to another language was confirmed with (`toolchain`), none
+/// by default. The number is new so an older build, which would drop it when it saves (and a
+/// Java port's checks could go back to Maven), opens such a project read-only instead.
+fn manifest_v5_to_v6(doc: &mut Value) -> Result<(), String> {
+    if doc.is_object() { Ok(()) } else { Err("the manifest isn't a JSON object".into()) }
 }
 
 /// Read a `craft.json` document of any version this build understands. A newer manifest is read
@@ -388,6 +414,10 @@ pub struct Manifest {
     /// The stack chosen for the build ("React + TypeScript (Vite)", "Rust + Bevy"…).
     #[serde(default)]
     pub stack: String,
+    /// The toolchain a move to `stack` was confirmed with ("Gradle", for a Java port that wrote
+    /// build.gradle.kts beside an old pom.xml), when the stack has more than one; none: not recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub toolchain: Option<String>,
     #[serde(default)]
     pub status: Status,
     /// One line on what's happening or what went wrong.
@@ -408,6 +438,10 @@ pub struct Manifest {
     /// kept, so it is only resumed in Deep (it may have read the original there).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_session_deep: Option<bool>,
+    /// The mode the current `capture/` was studied in (`true`: Deep); none: no study by this
+    /// build recorded it (a failed study, or a capture copied in), so a run studies again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_deep: Option<bool>,
     /// Kinds of agent action the person allowed for this workspace ("bash:npm", "web_fetch"…).
     #[serde(default)]
     pub allowed_actions: Vec<String>,
@@ -451,6 +485,12 @@ pub struct Manifest {
     /// Kept in the project so "Try again" can't restart the count.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub not_working_checks: u32,
+    /// The builder has read the original's code (a decompiled function) in this project, in any run.
+    /// Deep mode reminds a builder that hasn't; kept here because every request starts a new run, so
+    /// a run-only flag repeated the reminder after each request. An older build drops it when it
+    /// saves, which costs at most one more reminder, so the format version stays.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub decompiled: bool,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -479,7 +519,9 @@ impl Manifest {
             checks: Vec::new(),
             agent_session: None,
             agent_session_by: None,
+            toolchain: None,
             agent_session_deep: None,
+            capture_deep: None,
             allowed_actions: Vec::new(),
             last_reply: String::new(),
             asset_budget_usd: ASSET_BUDGET_USD,
@@ -491,6 +533,7 @@ impl Manifest {
             approvals: Default::default(),
             awaiting_check: false,
             not_working_checks: 0,
+            decompiled: false,
         }
     }
 
@@ -541,8 +584,8 @@ pub struct AssetRecord {
 /// The list of generated assets, in the workspace folder.
 const ASSETS: &str = "assets.json";
 
-/// What a project's builds have taken and used, every run together (`usage.json`). The rebuild
-/// run is its only writer; everything else reads it.
+/// What a project's builds and questions have taken and used, every run together (`usage.json`).
+/// A rebuild turn and a question can add to it; everything else reads it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProjectUsage {
@@ -552,6 +595,8 @@ pub struct ProjectUsage {
     pub work_ms: u64,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// At least one turn didn't report tokens. The counts only include reported usage.
+    pub tokens_incomplete: bool,
     /// Everything reported, in US dollars: what API keys were charged plus coding agents' own
     /// estimates at API prices.
     pub cost_usd: f64,
@@ -570,16 +615,56 @@ pub const ACTIVITY_LOG_OLD: &str = "build-activity.old.log";
 /// Where [`ProjectUsage`] is kept in the project folder.
 pub const USAGE_FILE: &str = "usage.json";
 pub const USAGE_VERSION: u32 = 1;
+/// A build's turn and a question can record their cost at the same time. The save is
+/// read-modify-write, so both go through one lock or one would overwrite the other.
+static USAGE_UPDATE: Mutex<()> = Mutex::new(());
+/// A real usage.json is a few hundred bytes; anything this big isn't one.
+const MAX_USAGE_BYTES: u64 = 1024 * 1024;
 
-impl ProjectUsage {
-    /// The saved usage of the project at `root`; nothing yet (or unreadable) is all zeros.
-    pub fn load(root: &Path) -> ProjectUsage {
-        std::fs::read(root.join(USAGE_FILE)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+/// What reading a project's usage.json found.
+#[derive(Debug, Clone, PartialEq)]
+pub enum UsageRead {
+    /// There is no file: nothing has been used yet.
+    None,
+    Known(ProjectUsage),
+    /// The file is there but couldn't be read or understood, so what was used isn't known.
+    /// It is never shown as zero.
+    Unreadable,
+}
+
+impl UsageRead {
+    /// The usage as far as it's known: `None` when the file couldn't be read.
+    pub fn known(self) -> Option<ProjectUsage> {
+        match self {
+            UsageRead::None => Some(ProjectUsage::default()),
+            UsageRead::Known(u) => Some(u),
+            UsageRead::Unreadable => None,
+        }
     }
 
-    /// Change the saved usage (the run's job). A file from a newer Craft Anything is left alone.
+    pub fn is_unreadable(&self) -> bool {
+        matches!(self, UsageRead::Unreadable)
+    }
+}
+
+impl ProjectUsage {
+    /// Read the saved usage of the project at `root`. Only a missing file means nothing was used;
+    /// any other failure, or a file that doesn't parse, is [`UsageRead::Unreadable`].
+    pub fn read(root: &Path) -> UsageRead {
+        match read_file_capped(&root.join(USAGE_FILE), MAX_USAGE_BYTES) {
+            Err(e) if e.code == ErrorCode::NotFound => UsageRead::None,
+            Err(_) => UsageRead::Unreadable,
+            Ok(bytes) => serde_json::from_slice(&bytes).map_or(UsageRead::Unreadable, UsageRead::Known),
+        }
+    }
+
+    /// Change the saved usage (the run's job). A file from a newer Craft Anything, or one that
+    /// can't be read, is left alone: writing over it would lose what it counted.
     pub fn update(root: &Path, f: impl FnOnce(&mut ProjectUsage)) -> Result<(), ToolError> {
-        let mut u = ProjectUsage::load(root);
+        let _updating = USAGE_UPDATE.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(mut u) = ProjectUsage::read(root).known() else {
+            return Err(ToolError::invalid(format!("{USAGE_FILE} couldn't be read, so it isn't changed.")));
+        };
         if u.version > USAGE_VERSION {
             return Err(ToolError::unsupported(format!("{USAGE_FILE} was written by a newer Craft Anything, so it isn't changed.")));
         }
@@ -613,7 +698,7 @@ impl ProjectUsage {
     }
 
     pub fn used_anything(&self) -> bool {
-        self.tokens() > 0 || self.priced
+        self.tokens() > 0 || self.tokens_incomplete || self.priced
     }
 }
 
@@ -621,6 +706,28 @@ impl ProjectUsage {
 pub struct Workspace {
     pub root: PathBuf,
     pub manifest: Manifest,
+}
+
+/// The absolute form of a project path, for a child that changes into the project folder. An
+/// already-absolute path is kept; one that can't be made absolute is returned unchanged.
+pub fn absolute(path: &Path) -> PathBuf {
+    std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// `path` with `.` and `..` resolved lexically (no symlinks), made absolute when relative.
+pub fn normalized(path: &Path) -> PathBuf {
+    let path = absolute(path);
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 /// A folder-name slug: lower-case words joined by dashes, at most 40 characters.
@@ -828,15 +935,27 @@ impl Workspace {
     }
 
     fn write_manifest(&self, m: &Manifest) -> Result<(), ToolError> {
-        if self.is_read_only() {
+        let newer = self.manifest.version.max(self.version_on_disk());
+        if newer > MANIFEST_VERSION {
             return Err(ToolError::unsupported(format!(
-                "{} was made by a newer Craft Anything (craft.json version {}), so this one doesn't change it.",
-                self.manifest.name, self.manifest.version
+                "{} was made by a newer Craft Anything (craft.json version {newer}), so this one doesn't change it.",
+                self.manifest.name
             ))
             .with_remediation("Update Craft Anything to keep working on this project. Nothing was written."));
         }
         let bytes = serde_json::to_vec_pretty(m).map_err(|e| ToolError::internal(e.to_string()))?;
         write_atomic(&self.root.join(MANIFEST), &bytes)
+    }
+
+    /// The version of the `craft.json` on disk now (0 when it can't be read). A newer build running
+    /// at the same time may have brought the file forward since this copy was read, and a save from
+    /// this copy would drop the fields it added (review of #2099).
+    fn version_on_disk(&self) -> u32 {
+        std::fs::read(self.root.join(MANIFEST))
+            .ok()
+            .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+            .and_then(|d| d.get("version")?.as_u64())
+            .map_or(0, |v| u32::try_from(v).unwrap_or(u32::MAX))
     }
 
     /// Set the status and note, and save.
@@ -892,9 +1011,9 @@ impl Workspace {
         std::fs::read(self.root.join(ASSETS)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
     }
 
-    /// What the builds have taken and used so far.
-    pub fn usage(&self) -> ProjectUsage {
-        ProjectUsage::load(&self.root)
+    /// What the builds have taken and used so far, or that it can't be known.
+    pub fn usage(&self) -> UsageRead {
+        ProjectUsage::read(&self.root)
     }
 
     /// What generated assets have cost so far.
@@ -931,10 +1050,10 @@ impl Workspace {
     pub fn inbox_dir(&self) -> PathBuf {
         self.root.join("inbox")
     }
-    /// A builder has worked on this project and its conversation was kept, so a later run carries
-    /// it on instead of starting over.
-    pub fn builder_started(&self) -> bool {
-        self.manifest.agent_session.is_some() || self.transcript_path().is_file()
+    /// A coding agent's session saved for this project in `deep` mode. A session saved before the
+    /// mode was kept counts as Deep, since it may have read inside the original.
+    pub fn builder_session_in(&self, deep: bool) -> bool {
+        self.manifest.agent_session.as_ref().is_some_and(|_| self.manifest.agent_session_deep.unwrap_or(true) == deep)
     }
 
     /// The API builder's conversation, kept so a follow-up continues it (`ai::context`).
@@ -981,6 +1100,8 @@ pub const AGENT_SESSION_FILE: &str = "agent-session.jsonl";
 /// mustn't already have any of them.
 pub const OWN_NAMES: &[&str] = &[
     MANIFEST,
+    GHIDRA_STOPPED,
+    GHIDRA_STOP_LOCK,
     crate::feed::FEED_FILE,
     crate::questions::QUESTIONS_FILE,
     USAGE_FILE,
@@ -1480,7 +1601,7 @@ mod tests {
     #[test]
     fn a_projects_usage_adds_up_across_runs_and_a_newer_file_is_left_alone() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(ProjectUsage::load(dir.path()), ProjectUsage::default(), "nothing yet");
+        assert_eq!(ProjectUsage::read(dir.path()), UsageRead::None, "nothing yet");
         for cost in [Some(1.25), None, Some(f64::NAN), Some(2.0)] {
             ProjectUsage::update(dir.path(), |u| {
                 u.work_ms += 1_000;
@@ -1488,11 +1609,82 @@ mod tests {
             })
             .unwrap();
         }
-        let u = ProjectUsage::load(dir.path());
+        let u = ProjectUsage::read(dir.path()).known().unwrap();
         assert_eq!((u.version, u.work_ms, u.tokens(), u.cost_usd, u.priced), (USAGE_VERSION, 4_000, 440, 3.25, true));
         std::fs::write(dir.path().join(USAGE_FILE), r#"{"version": 99, "work_ms": 5}"#).unwrap();
         assert!(ProjectUsage::update(dir.path(), |u| u.work_ms = 0).is_err());
-        assert_eq!(ProjectUsage::load(dir.path()).work_ms, 5, "read as far as it's known, never written over");
+        assert_eq!(ProjectUsage::read(dir.path()).known().unwrap().work_ms, 5, "read as far as it's known, never written over");
+    }
+
+    /// An unreadable usage.json is unknown, never zeros, and a run doesn't write over it.
+    #[test]
+    fn an_unreadable_usage_file_is_unknown_and_left_alone() {
+        let unreadable = |root: &Path, why: &str| {
+            assert_eq!(ProjectUsage::read(root), UsageRead::Unreadable, "{why}");
+            assert!(ProjectUsage::read(root).known().is_none(), "{why}");
+            assert!(ProjectUsage::update(root, |u| u.add_turn(1, 1, Some(1.0), false)).is_err(), "{why}");
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(USAGE_FILE);
+        for bytes in [&b"{ not json"[..], b"", b"null", b"\xff\xfe"] {
+            std::fs::write(&file, bytes).unwrap();
+            unreadable(dir.path(), &format!("{bytes:?}"));
+            assert_eq!(std::fs::read(&file).unwrap(), bytes, "the bytes are left as they were");
+        }
+
+        // A folder where the file should be.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(USAGE_FILE)).unwrap();
+        unreadable(dir.path(), "a folder");
+        assert!(dir.path().join(USAGE_FILE).is_dir());
+
+        // Too big to be a real one.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::File::create(dir.path().join(USAGE_FILE)).unwrap().set_len(MAX_USAGE_BYTES + 1).unwrap();
+        unreadable(dir.path(), "too big");
+
+        // A file it may not read.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let dir = tempfile::tempdir().unwrap();
+            let file = dir.path().join(USAGE_FILE);
+            std::fs::write(&file, br#"{"version":1,"cost_usd":2.0}"#).unwrap();
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
+            // Root reads it anyway; the case only means something where the permission holds.
+            if std::fs::read(&file).is_err() {
+                unreadable(dir.path(), "no read permission");
+            }
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+
+        // A readable one is known, with the fields it has.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(USAGE_FILE), br#"{"version":1,"cost_usd":2.0,"priced":true}"#).unwrap();
+        let UsageRead::Known(u) = ProjectUsage::read(dir.path()) else { panic!("a readable file is known") };
+        assert_eq!((u.cost_usd, u.priced), (2.0, true));
+    }
+
+    /// A build turn and a question can save their cost together: neither may overwrite the other.
+    #[test]
+    fn concurrent_usage_updates_all_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let start = std::sync::Barrier::new(8);
+        std::thread::scope(|s| {
+            for _ in 0..8 {
+                let start = &start;
+                s.spawn(move || {
+                    start.wait();
+                    for _ in 0..25 {
+                        ProjectUsage::update(root, |u| u.add_turn(0, 0, Some(0.01), true)).unwrap();
+                    }
+                });
+            }
+        });
+        let u = ProjectUsage::read(root).known().unwrap();
+        assert!((u.cost_usd - 2.0).abs() < 1e-6, "{u:?}");
+        assert!(u.priced);
     }
 
     #[test]
@@ -1638,6 +1830,7 @@ mod tests {
         let ws = Workspace::open(dir.path()).unwrap();
         assert_eq!(ws.manifest.version, MANIFEST_VERSION);
         assert_eq!(ws.manifest.agent_session_deep, Some(true), "a session from before the mode was kept counts as Deep");
+        assert_eq!(ws.manifest.capture_deep, Some(true), "a capture from before the mode was kept counts as Deep");
         assert_eq!(ws.manifest.agent_session_for_mode("claude-code", false), None);
         assert_eq!(ws.manifest.status, Status::Ready);
         assert_eq!(ws.manifest.asset_budget_usd, ASSET_BUDGET_USD);
@@ -1870,6 +2063,29 @@ mod tests {
         assert_session_migrated(&recorded, Some(false));
     }
 
+    /// R2.9: version 4 predates the capture's mode. A capture it left is recorded as Deep (the
+    /// legacy case), and a mode an early build of the change already wrote is kept.
+    #[test]
+    fn a_version_4_capture_mode_is_kept_and_an_older_one_migrates_as_deep() {
+        let v4 = MANIFEST_V0.replacen('{', r#"{ "version": 4,"#, 1);
+        assert_eq!(read_manifest(v4.as_bytes()).unwrap().capture_deep, Some(true), "a capture from before the field counts as Deep");
+        let recorded = v4.replace(r#""agent_session": "abc","#, r#""agent_session": "abc", "capture_deep": false,"#);
+        assert_eq!(read_manifest(recorded.as_bytes()).unwrap().capture_deep, Some(false), "a recorded mode is kept");
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(MANIFEST), &v4).unwrap();
+        let mut ws = Workspace::open(dir.path()).unwrap();
+        assert_eq!((ws.manifest.version, ws.manifest.capture_deep), (MANIFEST_VERSION, Some(true)));
+        ws.save().unwrap();
+        let saved: Value = serde_json::from_slice(&std::fs::read(dir.path().join(MANIFEST)).unwrap()).unwrap();
+        assert_eq!(saved["version"], MANIFEST_VERSION);
+        assert_eq!(saved["capture_deep"], true, "the legacy capture is recorded as Deep");
+        ws.manifest.capture_deep = Some(false);
+        ws.save().unwrap();
+        let saved: Value = serde_json::from_slice(&std::fs::read(dir.path().join(MANIFEST)).unwrap()).unwrap();
+        assert_eq!(saved["capture_deep"], false);
+    }
+
     /// Read a literal `craft.json` sample, check both modes and the saved document.
     fn assert_session_migrated(doc: &str, want: Option<bool>) {
         let dir = tempfile::tempdir().unwrap();
@@ -1883,6 +2099,47 @@ mod tests {
         let saved: Value = serde_json::from_slice(&std::fs::read(dir.path().join(MANIFEST)).unwrap()).unwrap();
         assert_eq!(saved["version"], MANIFEST_VERSION);
         assert_eq!(saved["agent_session_deep"], want == Some(true));
+    }
+
+    /// Review of #2099: a version-5 build can't save over a recorded toolchain, and a version-5
+    /// manifest opens here unchanged but for its number.
+    #[test]
+    fn a_recorded_toolchain_is_kept_from_older_builds() {
+        let d = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(d.path(), "Game", "a game", TargetRef::None).unwrap();
+        ws.manifest.toolchain = Some("Gradle".into());
+        ws.save().unwrap();
+        let saved: Value = serde_json::from_slice(&std::fs::read(ws.root.join("craft.json")).unwrap()).unwrap();
+        assert_eq!((saved["version"].as_u64(), saved["toolchain"].as_str()), (Some(6), Some("Gradle")));
+        // A version-5 build reads up to 5, so it opens this one read-only (newer_manifests_open_read_only_and_are_never_overwritten).
+        let mut old = saved.clone();
+        old["version"] = 5.into();
+        old.as_object_mut().unwrap().remove("toolchain");
+        let m = read_manifest(&serde_json::to_vec(&old).unwrap()).unwrap();
+        assert_eq!((m.version, m.toolchain), (MANIFEST_VERSION, None), "brought forward with no toolchain");
+    }
+
+    /// Review of #2099: a build holding a copy read before a newer build brought the file forward
+    /// (both running at once) doesn't save over it, by any of the ways it saves.
+    #[test]
+    fn a_copy_read_before_a_newer_build_saved_doesnt_overwrite_it() {
+        let d = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(d.path(), "Game", "a game", TargetRef::None).unwrap();
+        let mut newer: Value = serde_json::from_slice(&std::fs::read(ws.root.join(MANIFEST)).unwrap()).unwrap();
+        newer["version"] = (MANIFEST_VERSION + 1).into();
+        newer["a_field_from_the_future"] = "kept".into();
+        let newer = serde_json::to_string_pretty(&newer).unwrap();
+        std::fs::write(ws.root.join(MANIFEST), &newer).unwrap();
+        assert!(!ws.is_read_only(), "this copy was read before");
+        let err = ws.set_status(Status::Building, "x").unwrap_err();
+        assert_eq!(err.code, ErrorCode::NotSupported);
+        assert!(err.message.contains(&format!("version {}", MANIFEST_VERSION + 1)), "{}", err.message);
+        assert_eq!(ws.save().unwrap_err().code, ErrorCode::NotSupported);
+        assert_eq!(ws.set_person(|m| m.note = "x".into()).unwrap_err().code, ErrorCode::NotSupported);
+        assert_eq!(std::fs::read_to_string(ws.root.join(MANIFEST)).unwrap(), newer, "the file is untouched");
+        // Its own version on disk still saves.
+        std::fs::write(ws.root.join(MANIFEST), b"not json").unwrap();
+        ws.save().unwrap();
     }
 
     /// #469: a saved session is only for the agent that saved it.
@@ -1906,6 +2163,21 @@ mod tests {
         let text = serde_json::to_string(&m).unwrap();
         let back: Manifest = serde_json::from_str(&text).unwrap();
         assert_eq!((back.agent_session_by.as_deref(), back.agent_session_deep), (Some("claude-code"), None));
+    }
+
+    /// A saved session is history only in the mode it ran in; one from before the mode was kept
+    /// counts as Deep.
+    #[test]
+    fn a_saved_session_counts_as_history_only_in_its_mode() {
+        let d = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(d.path(), "x", "A thing", TargetRef::None).unwrap();
+        assert!(!ws.builder_session_in(true) && !ws.builder_session_in(false), "nothing saved yet");
+        ws.manifest.agent_session = Some("s1".into());
+        assert!(ws.builder_session_in(true), "one saved before the mode was kept counts as Deep");
+        assert!(!ws.builder_session_in(false), "Deep may have read the original");
+        ws.manifest.agent_session_deep = Some(false);
+        assert!(!ws.builder_session_in(true));
+        assert!(ws.builder_session_in(false));
     }
 
     /// A rename survives a stale save, a copy takes the build but not the conversation (nor its
@@ -1957,5 +2229,11 @@ mod tests {
         ws.delete().unwrap();
         assert_eq!(std::fs::read_to_string(mine.join("index.html")).unwrap(), "<p>hi</p>");
         assert!(!mine.join(MANIFEST).exists() && !mine.join("inbox").exists() && !mine.join(AGENT_SESSION_FILE).exists());
+    }
+
+    #[test]
+    fn normalized_resolves_dot_and_parent_components() {
+        let root = std::env::current_dir().unwrap();
+        assert_eq!(normalized(&root.join("a/../b/./c")), root.join("b/c"));
     }
 }

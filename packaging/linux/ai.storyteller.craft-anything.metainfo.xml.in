@@ -39,6 +39,9 @@
     <keyword>reverse engineering</keyword>
     <keyword>disassembler</keyword>
     <keyword>binary analysis</keyword>
+    <keyword>executable</keyword>
+    <keyword>decompiler</keyword>
+    <keyword>inspect</keyword>
   </keywords>
   <branding>
     <color type="primary" scheme_preference="light">#efc39f</color>
@@ -53,6 +56,7 @@
   </supports>
   <provides>
     <binary>craft-anything</binary>
+    <binary>craft-anything-cli</binary>
   </provides>
   <content_rating type="oars-1.1"/>
   <releases>

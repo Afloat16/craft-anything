@@ -14,6 +14,15 @@ pub enum FormatError {
     TooLarge(String),
 }
 
+impl From<craft_android_res::Error> for FormatError {
+    fn from(e: craft_android_res::Error) -> Self {
+        match e {
+            craft_android_res::Error::Truncated(what) => FormatError::Truncated(what),
+            craft_android_res::Error::Malformed(what) => FormatError::Malformed(what),
+        }
+    }
+}
+
 /// Serialise addresses as `0x…` strings (agents and people read hex).
 pub mod hex_addr {
     use serde::Serializer;
@@ -67,7 +76,8 @@ pub fn entropy(data: &[u8]) -> f32 {
             -p * p.log2()
         })
         .sum();
-    if e.is_finite() { e as f32 } else { 0.0 }
+    // Adding `0.0` turns a `-0.0` sum (single-symbol input) into `+0.0`.
+    if e.is_finite() { (e + 0.0) as f32 } else { 0.0 }
 }
 
 /// Find `needle` in `hay`, looking at no more than `limit` bytes of `hay`.
@@ -88,6 +98,12 @@ pub fn find_bytes(hay: &[u8], needle: &[u8], limit: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn entropy_of_constant_data_is_positive_zero() {
+        assert!(entropy(&[7; 100]).is_sign_positive());
+        assert!(entropy(&[0; 64]).is_sign_positive());
+    }
 
     #[test]
     fn entropy_and_search() {

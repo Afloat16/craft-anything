@@ -3,11 +3,13 @@
 //! the projects made so far.
 
 use crate::i18n::tr;
-use crate::state::MakeDraft;
+use crate::state::{MakeDraft, Screen};
 use crate::theme::{self, Tokens};
 use crate::{CraftApp, Pick, icons, widgets};
+use craft_anything_engine::Mode;
+use craft_anything_engine::tools::web_common;
 use craft_anything_engine::workspace::{ExistingFiles, Status, TargetRef};
-use egui::{Margin, RichText, Sense, Ui, Vec2};
+use egui::{RichText, Sense, Ui, Vec2};
 
 const SUGGESTIONS_WEB: &[&str] = &["Recreate this website", "Recreate it with darker colours"];
 const SUGGESTIONS_APP: &[&str] = &["Make my own version of this app", "Recreate just its main feature"];
@@ -80,9 +82,25 @@ pub fn own_stack<'a>(kinds: &craft_anything_ai::rebuild::KindRegistry, d: &'a Ma
 /// just look inside something.
 pub fn hero(app: &mut CraftApp, ui: &mut Ui, w: f32) {
     let t = Tokens::get(ui.ctx());
+    let door = if app.state.make.look { 2 } else { usize::from(app.state.make.mine) };
+    // The ways in, with Simple / Advanced at the row's end (it adds no height above Start), or
+    // on a line of its own when the window is too narrow for both.
+    let (picked, fits) = ui
+        .horizontal(|ui| {
+            let picked = widgets::segmented(ui, &["Make my own version", "Work on my project", "Just look inside"], door, theme::ControlSize::Large);
+            let fits = ui.available_width() >= mode_choice_width(ui);
+            if fits {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| mode_choice(app, ui));
+            }
+            (picked, fits)
+        })
+        .inner;
+    if !fits {
+        ui.add_space(theme::space::SM);
+        ui.horizontal(|ui| ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| mode_choice(app, ui)));
+    }
     let d = &mut app.state.make;
-    let door = if d.look { 2 } else { usize::from(d.mine) };
-    if let Some(i) = widgets::segmented_sized(ui, &["Make my own version", "Work on my project", "Just look inside"], door, 38.0, 12.5) {
+    if let Some(i) = picked {
         let left = d.mine && i != 1;
         (d.mine, d.look) = (i == 1, i == 2);
         if d.mine {
@@ -95,7 +113,7 @@ pub fn hero(app: &mut CraftApp, ui: &mut Ui, w: f32) {
             (d.folder, d.folder_files, d.existing) = (None, None, None);
         }
     }
-    ui.add_space(18.0);
+    ui.add_space(theme::space::LG);
     if app.state.make.look {
         look(app, ui, w);
         return;
@@ -105,23 +123,20 @@ pub fn hero(app: &mut CraftApp, ui: &mut Ui, w: f32) {
         return;
     }
     ui.label(theme::heading(tr("What do you want to make?"), theme::TITLE));
-    ui.add_space(6.0);
+    ui.add_space(theme::space::SM);
     ui.label(RichText::new(tr("Choose what to recreate, say what you want, then press Start.")).size(theme::LEAD).color(t.text_dim));
-    ui.add_space(16.0);
-    widgets::card(&t).inner_margin(Margin::same(20)).show(ui, |ui| {
+    ui.add_space(theme::space::LG);
+    widgets::card(&t).inner_margin(theme::pad::ROOMY).show(ui, |ui| {
         ui.set_width(w - 50.0);
         step_title(ui, 1, "What do you want to recreate?");
-        ui.add_space(12.0);
+        ui.add_space(theme::space::MD);
         choose_target(app, ui);
-        // How closely the original may be looked at, once there is one.
-        let d = &app.state.make;
-        if matches!(d.target, TargetRef::Local { .. }) || d.editing_url || !d.url.is_empty() {
-            ui.add_space(14.0);
-            look_inside(app, ui);
-        }
-        ui.add_space(20.0);
+        // How closely the original may be looked at: in view from the start, chosen once there is one.
+        ui.add_space(theme::space::LG);
+        reach_choice(app, ui);
+        ui.add_space(theme::space::LG);
         step_title(ui, 2, "Say what you want");
-        ui.add_space(12.0);
+        ui.add_space(theme::space::MD);
         // The example matches the tile picked above (a "recreate this website" hint under
         // "Nothing — start fresh" contradicts the choice).
         let d = &app.state.make;
@@ -136,24 +151,29 @@ pub fn hero(app: &mut CraftApp, ui: &mut Ui, w: f32) {
         let website = matches!(resolve_target(d), TargetRef::Website { .. }) || d.editing_url;
         let submit = request_box(app, ui, hint, (!website).then_some("Add pictures of the original (optional: screenshots help it look right)"));
         if app.state.make.request.trim().is_empty() {
-            ui.add_space(10.0);
+            ui.add_space(theme::space::SM);
             suggestions(app, ui);
         }
         engine_choices(app, ui);
-        ui.add_space(16.0);
+        ui.add_space(theme::space::LG);
         ui.horizontal(|ui| {
             crate::builders::built_by(app, ui);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let ready = !app.state.make.request.trim().is_empty() && url_problem(&app.state.make.url).is_none() && app.creating.is_none();
-                let start = widgets::primary_sized(ui, Some("sparkles"), "Start", ready, 50.0, 14.0);
-                let start = if ready { start } else { start.on_disabled_hover_text(tr("Say what you want first.")) };
+                let ready = !app.state.make.request.trim().is_empty()
+                    && url_problem(&app.state.make.url).is_none()
+                    && app.creating.is_none()
+                    && app.signing_in.is_none();
+                let start =
+                    ui.add(widgets::Button::new(widgets::ButtonKind::Primary, "Start").icon(Some("sparkles")).size(theme::ControlSize::Hero).enabled(ready));
+                let wait = if app.signing_in.is_some() { "Finish signing in to the site first." } else { "Say what you want first." };
+                let start = if ready { start } else { start.on_disabled_hover_text(tr(wait)) };
                 if (start.clicked() || submit) && ready {
                     app.start_make();
                 }
             });
         });
         // Where it's saved: secondary to Start, so under it.
-        ui.add_space(10.0);
+        ui.add_space(theme::space::SM);
         crate::folders::make_line(app, ui);
     });
 }
@@ -163,13 +183,13 @@ pub fn hero(app: &mut CraftApp, ui: &mut Ui, w: f32) {
 fn mine(app: &mut CraftApp, ui: &mut Ui, w: f32) {
     let t = Tokens::get(ui.ctx());
     ui.label(theme::heading(tr("Work on a project you already have"), theme::TITLE));
-    ui.add_space(6.0);
+    ui.add_space(theme::space::SM);
     ui.label(RichText::new(tr("Pick its folder, say what you want, then press Start.")).size(theme::LEAD).color(t.text_dim));
-    ui.add_space(16.0);
-    widgets::card(&t).inner_margin(Margin::same(20)).show(ui, |ui| {
+    ui.add_space(theme::space::LG);
+    widgets::card(&t).inner_margin(theme::pad::ROOMY).show(ui, |ui| {
         ui.set_width(w - 50.0);
         step_title(ui, 1, "Where is your project?");
-        ui.add_space(12.0);
+        ui.add_space(theme::space::MD);
         // A folder picked on Make for another use isn't this project's.
         let d = &app.state.make;
         let folder = d.folder.clone().filter(|_| d.existing == Some(ExistingFiles::Edit));
@@ -183,11 +203,11 @@ fn mine(app: &mut CraftApp, ui: &mut Ui, w: f32) {
             Some(f) => {
                 let place = f.display().to_string();
                 ui.horizontal(|ui| {
-                    icons::show(ui, "folder", 16.0, t.icon);
+                    icons::show(ui, "folder", theme::icon::MD, t.icon);
                     ui.add(egui::Label::new(RichText::new(&place).font(theme::semibold(theme::BODY))).truncate()).on_hover_text(&place);
                 });
                 ui.horizontal_wrapped(|ui| {
-                    ui.add_space(24.0);
+                    ui.add_space(theme::space::XL);
                     ui.label(RichText::new(tr("your files there are the app, edited in place")).size(theme::SMALL).color(t.text_dim));
                     ui.label(RichText::new("·").size(theme::SMALL).color(t.text_faint));
                     if widgets::link(ui, "Pick another folder…").clicked() {
@@ -196,18 +216,19 @@ fn mine(app: &mut CraftApp, ui: &mut Ui, w: f32) {
                 });
             }
         }
-        ui.add_space(20.0);
+        ui.add_space(theme::space::LG);
         step_title(ui, 2, "Say what you want");
-        ui.add_space(12.0);
+        ui.add_space(theme::space::MD);
         let submit = request_box(app, ui, "For example: add a dark mode", Some("Attach pictures (or drop or paste them here)"));
         engine_choices(app, ui);
-        ui.add_space(16.0);
+        ui.add_space(theme::space::LG);
         ui.horizontal(|ui| {
             crate::builders::built_by(app, ui);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let said = !app.state.make.request.trim().is_empty();
                 let ready = folder.is_some() && said && app.creating.is_none();
-                let start = widgets::primary_sized(ui, Some("sparkles"), "Start", ready, 50.0, 14.0);
+                let start =
+                    ui.add(widgets::Button::new(widgets::ButtonKind::Primary, "Start").icon(Some("sparkles")).size(theme::ControlSize::Hero).enabled(ready));
                 let start = if ready {
                     start
                 } else {
@@ -258,9 +279,9 @@ fn request_box(app: &mut CraftApp, ui: &mut Ui, hint: &str, attach: Option<&str>
 /// For a game: the engine it's built with, and whether the builder may generate its assets.
 fn engine_choices(app: &mut CraftApp, ui: &mut Ui) {
     if is_game(&app.kinds, &app.state.make) {
-        ui.add_space(22.0);
+        ui.add_space(theme::space::LG);
         crate::engine_ui::build_with(app, ui);
-        ui.add_space(14.0);
+        ui.add_space(theme::space::LG);
         let on = app.state.make.generate_assets;
         crate::engine_ui::assets_toggle(app, ui, on);
     }
@@ -270,10 +291,10 @@ fn engine_choices(app: &mut CraftApp, ui: &mut Ui) {
 fn look(app: &mut CraftApp, ui: &mut Ui, w: f32) {
     let t = Tokens::get(ui.ctx());
     ui.label(theme::heading(tr("What do you want to look inside?"), theme::TITLE));
-    ui.add_space(6.0);
+    ui.add_space(theme::space::SM);
     ui.label(RichText::new(tr("We only read it; nothing runs. Every answer shows how sure we are.")).size(theme::LEAD).color(t.text_dim));
-    ui.add_space(22.0);
-    widgets::card(&t).inner_margin(Margin::same(24)).show(ui, |ui| {
+    ui.add_space(theme::space::LG);
+    widgets::card(&t).inner_margin(theme::pad::ROOMY).show(ui, |ui| {
         ui.set_width(w - 50.0);
         // Each of these reads the original, which Clean room never does.
         if !app.settings.deep_mode {
@@ -281,7 +302,7 @@ fn look(app: &mut CraftApp, ui: &mut Ui, w: f32) {
             return;
         }
         let size = Vec2::new(ui.available_width(), 72.0);
-        ui.spacing_mut().item_spacing.y = 10.0;
+        ui.spacing_mut().item_spacing.y = theme::space::SM;
         if widgets::choice_tile(ui, size, "app-window", "An app or a file", "See how a program works: what it does, what it talks to, what's inside.", false)
             .clicked()
         {
@@ -304,9 +325,9 @@ fn step_title(ui: &mut Ui, n: u32, text: &str) {
     ui.horizontal(|ui| {
         let (r, _) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
         ui.painter().rect(r, r.width() / 2.0, t.raised, egui::Stroke::new(1.0, t.card_border), egui::StrokeKind::Inside);
-        let g = widgets::label_galley(ui, &n.to_string(), 13.0, t.text);
+        let g = widgets::label_galley(ui, &n.to_string(), theme::SMALL, t.text);
         ui.painter().galley_with_override_text_color(r.center() - g.size() / 2.0, g, t.text);
-        ui.add_space(4.0);
+        ui.add_space(theme::space::XS);
         ui.label(theme::heading(tr(text), theme::SECTION));
     });
 }
@@ -317,7 +338,7 @@ fn choose_target(app: &mut CraftApp, ui: &mut Ui) {
     let local = matches!(d.target, TargetRef::Local { .. }).then_some(d.game);
     let website = local.is_none() && (d.editing_url || !d.url.is_empty());
     let scratch = local.is_none() && !website;
-    let gap = 10.0;
+    let gap = theme::space::MD;
     let cols = if ui.available_width() > 760.0 { 4 } else { 2 };
     let tile_w = ((ui.available_width() - gap * (cols as f32 - 1.0)) / cols as f32).floor();
     let size = Vec2::new(tile_w, 60.0);
@@ -362,7 +383,7 @@ fn choose_target(app: &mut CraftApp, ui: &mut Ui) {
     // Recomputed so the address field shows on the very frame "A website" is clicked.
     let website = !matches!(m.target, TargetRef::Local { .. }) && (m.editing_url || !m.url.is_empty());
     if let TargetRef::Local { path } = m.target.clone() {
-        ui.add_space(14.0);
+        ui.add_space(theme::space::LG);
         ui.horizontal(|ui| {
             ui.label(RichText::new(tr("You chose:")).size(theme::BODY).color(t.text_dim));
             // A long name (an APK from a mirror) is cut short, whole on hover, so the row never widens the page.
@@ -371,28 +392,109 @@ fn choose_target(app: &mut CraftApp, ui: &mut Ui) {
             ui.add(egui::Label::new(RichText::new(crate::short_path(&path)).color(t.text_faint).size(theme::SMALL)).truncate());
         });
     } else if website {
-        ui.add_space(16.0);
+        ui.add_space(theme::space::LG);
         ui.label(RichText::new(tr("Type the website's address:")).size(theme::BODY).color(t.text_dim));
-        ui.add_space(6.0);
+        ui.add_space(theme::space::SM);
         let r = ui.add(
             egui::TextEdit::singleline(&mut m.url)
                 .hint_text("example.com")
                 .desired_width(520.0)
                 .font(egui::FontId::proportional(theme::LEAD))
-                .frame(widgets::text_field_frame(&t).inner_margin(Margin::symmetric(14, 12))),
+                .frame(widgets::text_field_frame(&t).inner_margin(theme::pad::ROW)),
         );
         if pick == Some(0) {
             r.request_focus();
         }
         // Say what's wrong right under the field, once something has been typed.
         if let Some(problem) = url_problem(&m.url) {
-            ui.add_space(4.0);
+            ui.add_space(theme::space::XS);
             ui.horizontal(|ui| {
-                icons::show(ui, "triangle-alert", 16.0, t.danger);
+                icons::show(ui, "triangle-alert", theme::icon::MD, t.danger);
                 ui.label(RichText::new(tr(problem)).color(t.danger).size(theme::BODY));
             });
         }
     }
+    let m = &app.state.make;
+    // Nothing typed or picked: Start studies the address in the request (`resolve_target`), so
+    // that one can be signed in to as well.
+    let from_request = m.url.trim().is_empty() && m.target == TargetRef::None;
+    let url = if from_request { find_url(&m.request) } else { website.then(|| normalize_url(&m.url)) };
+    let url = url.filter(|u| url_problem(u).is_none());
+    // A window already open stays in view (with its way out) whatever is picked meanwhile.
+    if url.is_some() || app.signing_in.is_some() {
+        sign_in(app, ui, url.as_deref(), from_request);
+    }
+}
+
+/// A site that shows more to someone signed in: the person signs in to it in a browser window
+/// of its own, and studies of the site then see what they see (`web_site_sign_in`). One saved
+/// already is said, with a way to forget it (`web_site_sign_out`).
+fn sign_in(app: &mut CraftApp, ui: &mut Ui, url: Option<&str>, from_request: bool) {
+    let t = Tokens::get(ui.ctx());
+    ui.add_space(theme::space::SM);
+    ui.horizontal_wrapped(|ui| {
+        icons::show(ui, "key-round", theme::icon::MD, t.icon);
+        if let Some(job) = app.signing_in {
+            ui.label(RichText::new(tr("Sign in in the browser window that opened, then close it.")).size(theme::SMALL).color(t.text_dim));
+            if widgets::link(ui, "Stop waiting").clicked() {
+                app.jobs.cancel(job);
+            }
+        } else if let Some(url) = url {
+            // The address isn't in view up here: name the site it's for.
+            if from_request {
+                let (from, site) = (tr("From your request:"), site_name(&serde_json::json!({ "url": url })));
+                ui.label(RichText::new(format!("{from} {site}")).size(theme::SMALL).color(t.text));
+            }
+            let saved = app.sign_in_saved(url);
+            let question = tr(if saved { "A sign-in is saved for this site, and studies of it use it." } else { "Does the site show more once you're signed in?" });
+            ui.label(RichText::new(question).size(theme::SMALL).color(t.text_dim));
+            let hint = tr(if saved {
+                "The window opens with the saved sign-in; what you leave when you close it replaces it. To use another account, sign out on the site there first."
+            } else {
+                "A browser window opens: sign in there yourself, then close it. Craft Anything never sees your password. The sign-in is kept on this computer and used when this site is studied."
+            });
+            let free = app.creating.is_none();
+            let busy = tr("Wait until the new project is made.");
+            let button = ui.add(widgets::Button::new(widgets::ButtonKind::Secondary, "Sign in to this site").enabled(free));
+            let button = if free { button.on_hover_text(hint) } else { button.on_disabled_hover_text(busy.as_str()) };
+            if button.clicked() && free {
+                app.sign_in_to_site(url);
+            }
+            if saved {
+                let forget = ui.add(widgets::Button::new(widgets::ButtonKind::Secondary, "Forget the saved sign-in").enabled(free));
+                let forget = if free { forget.on_hover_text(tr("Studies of this site start signed out again.")) } else { forget.on_disabled_hover_text(busy.as_str()) };
+                if forget.clicked() && free {
+                    app.forget_site_sign_in(url);
+                }
+            }
+        }
+    });
+}
+
+/// What to tell the person once a sign-in window has closed, from `web_site_sign_in`'s result,
+/// and whether it's a warning.
+pub fn sign_in_words(result: &serde_json::Value) -> (String, bool) {
+    let check = &result["check"];
+    match result["ended"].as_str() {
+        Some("timed_out") => (tr("The sign-in window was open too long, so it was closed. What it had saved is kept."), true),
+        Some("cancelled") => (tr("Stopped waiting for the sign-in window. What it had saved is kept."), false),
+        _ if check["sign_in_page"].as_bool() == Some(true) => {
+            (tr("Your sign-in was saved, but the site still asks you to sign in. Sign in again and choose \"remember me\" if the site offers it."), true)
+        }
+        _ if check["done"].as_bool() != Some(true) => (tr("Your sign-in was saved, but opening the site again to check it didn't work."), true),
+        // No password field after the window closed doesn't prove a sign-in (a public page, a
+        // passwordless flow): say what happened, not what it may mean.
+        _ => (tr("The sign-in window was closed. Studies of this site will use what it saved."), false),
+    }
+}
+
+/// The site a `web_site_sign_in` call was for, as the person typed it (without `https://`), less
+/// any credentials, query or fragment: it's shown in a toast.
+pub fn site_name(params: &serde_json::Value) -> String {
+    let url = web_common::sanitize_url(params["url"].as_str().unwrap_or_default());
+    let url = url.split(['?', '#']).next().unwrap_or_default();
+    let host = url.split_once("://").map_or(url, |(_, rest)| rest);
+    host.strip_suffix('/').unwrap_or(host).to_string()
 }
 
 /// Clean room or Deep for what is recreated: the title bar's switch, as a plain choice.
@@ -403,9 +505,9 @@ fn look_inside(app: &mut CraftApp, ui: &mut Ui) {
         ui.label(RichText::new(tr("How closely may Craft Anything look at it?")).size(theme::BODY).color(t.text_dim));
         ui.label(RichText::new(tr("For everything you make, like the switch in the title bar.")).size(theme::SMALL).color(t.text_faint));
     });
-    ui.add_space(6.0);
+    ui.add_space(theme::space::SM);
     let deep = app.settings.deep_mode;
-    let gap = 10.0;
+    let gap = theme::space::MD;
     let size = Vec2::new(((ui.available_width() - gap) / 2.0).floor(), 72.0);
     let mut pick = None;
     ui.horizontal(|ui| {
@@ -427,9 +529,9 @@ fn look_inside(app: &mut CraftApp, ui: &mut Ui) {
         return;
     }
     if app.settings.deep_mode && !app.ghidra_missing() {
-        ui.add_space(8.0);
+        ui.add_space(theme::space::SM);
         ui.horizontal_wrapped(|ui| {
-            icons::show(ui, "cpu", 16.0, t.icon);
+            icons::show(ui, "cpu", theme::icon::MD, t.icon);
             let line = format!("{} {}", crate::engine_ui::ghidra_memory_words(app), tr("More makes a big program's first look faster."));
             ui.label(RichText::new(line).size(theme::SMALL).color(t.text_dim)).on_hover_text(crate::engine_ui::ghidra_memory_guide());
             if widgets::link(ui, "Change").clicked() {
@@ -439,9 +541,9 @@ fn look_inside(app: &mut CraftApp, ui: &mut Ui) {
         });
     }
     if app.settings.deep_mode && app.ghidra_missing() {
-        ui.add_space(8.0);
+        ui.add_space(theme::space::SM);
         ui.horizontal(|ui| {
-            icons::show(ui, "triangle-alert", 16.0, t.warning);
+            icons::show(ui, "triangle-alert", theme::icon::MD, t.warning);
             ui.label(RichText::new(tr("Ghidra isn't on this computer yet, so the built-in decompiler stands in.")).size(theme::SMALL).color(t.text_dim));
             if app.ghidra.job.is_none() && widgets::secondary(ui, Some("download"), "Get Ghidra").clicked() {
                 app.state.modal = Some(crate::state::Modal::Ghidra);
@@ -459,7 +561,7 @@ fn suggestions(app: &mut CraftApp, ui: &mut Ui) {
         TargetRef::None => SUGGESTIONS_NONE,
     };
     ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
+        ui.spacing_mut().item_spacing = Vec2::splat(theme::space::SM);
         ui.label(RichText::new(tr("Ideas:")).size(theme::BODY).color(t.text_dim));
         for s in list.iter().take(2) {
             if widgets::suggestion(ui, s).clicked() {
@@ -467,6 +569,47 @@ fn suggestions(app: &mut CraftApp, ui: &mut Ui) {
             }
         }
     });
+}
+
+/// The room [`mode_choice`] takes: the Simple / Advanced switch and its name, measured in the
+/// language shown (a longer translation needs more), with the gaps beside each.
+fn mode_choice_width(ui: &Ui) -> f32 {
+    let t = Tokens::get(ui.ctx());
+    let switch = widgets::segmented_width(ui, &["Simple", "Advanced"], theme::ControlSize::Medium);
+    let name = widgets::label_galley(ui, &tr("Mode"), theme::SMALL, t.text_dim).size().x;
+    switch + name + 2.0 * ui.spacing().item_spacing.x + theme::space::SM
+}
+
+/// Simple or Advanced, beside the ways in. Simple mode's title bar leaves the switch out, so
+/// someone starting here would never see that Advanced exists. It's the app's one setting
+/// (`set_mode`, as in Settings and the title bar). Advanced normally opens on the workbench; from
+/// here it stays on this screen (Advanced shows it too), so the draft stays in view.
+/// Drawn right to left: the switch, then its name.
+fn mode_choice(app: &mut CraftApp, ui: &mut Ui) {
+    let t = Tokens::get(ui.ctx());
+    let sel = usize::from(app.settings.mode == Mode::Experienced);
+    if let Some(i) = widgets::segmented(ui, &["Simple", "Advanced"], sel, theme::ControlSize::Medium) {
+        let screen = app.state.screen;
+        app.set_mode(if i == 0 { Mode::Beginner } else { Mode::Experienced });
+        if screen == Screen::Home {
+            app.state.screen = Screen::Home;
+        }
+    }
+    ui.label(RichText::new(tr("Mode")).size(theme::SMALL).color(t.text_dim))
+        .on_hover_text(tr("Simple: say what you want and it's handled for you. Advanced: every tool, the evidence and the logs."));
+}
+
+/// Clean room or Deep, shown from the start so the choice is in view before anything is picked.
+/// With no original yet there's nothing to look inside: the tiles are dimmed and say so.
+fn reach_choice(app: &mut CraftApp, ui: &mut Ui) {
+    let d = &app.state.make;
+    let original = matches!(d.target, TargetRef::Local { .. }) || d.editing_url || !d.url.is_empty();
+    ui.add_enabled_ui(original, |ui| look_inside(app, ui));
+    if !original {
+        let t = Tokens::get(ui.ctx());
+        ui.add_space(theme::space::XS);
+        ui.label(RichText::new(tr("This applies once you choose something to recreate above.")).size(theme::SMALL).color(t.text_faint));
+    }
 }
 
 /// Time since `ms` in plain words.
@@ -524,6 +667,17 @@ pub fn project_icon(m: &craft_anything_engine::workspace::Manifest) -> &'static 
 mod tests {
     use super::*;
 
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn no_update_installs_while_a_sign_in_window_is_open() {
+        let mut app = crate::demo::app(crate::demo::engine(craft_anything_engine::Mode::Beginner, true));
+        assert!(app.safe_to_install());
+        app.signing_in = Some(1);
+        assert!(!app.safe_to_install(), "installing closes the app before the sign-in is saved");
+        app.signing_in = None;
+        assert!(app.safe_to_install(), "and is fine again once it ends");
+    }
+
     #[test]
     fn web_addresses_are_checked_inline() {
         for ok in ["", "example.com", "https://a.b/c?d", "http://localhost:5173", "sub.example.co.uk/page"] {
@@ -553,6 +707,37 @@ mod tests {
         assert!(is_game(&kinds, &own(None, "Fix my game")), "nothing read from the folder: the words decide");
         let start_from = MakeDraft { existing: Some(ExistingFiles::StartFrom), ..own(Some("Python"), "Fix my game") };
         assert!(is_game(&kinds, &start_from), "material to start from doesn't decide");
+    }
+
+    #[test]
+    fn a_closed_sign_in_window_says_what_was_kept() {
+        use serde_json::json;
+        let checked = |sign_in_page: bool| json!({"done": true, "sign_in_page": sign_in_page, "error": null});
+        let words = |ended: &str, check: serde_json::Value| sign_in_words(&json!({"saved": true, "ended": ended, "check": check}));
+        assert_eq!(words("closed", checked(false)), ("The sign-in window was closed. Studies of this site will use what it saved.".to_string(), false));
+        let (still_asks, warn) = words("closed", checked(true));
+        assert!(warn && still_asks.contains("still asks you to sign in"), "{still_asks}");
+        let (unchecked, warn) = words("closed", json!({"done": false, "sign_in_page": null, "error": "the browser closed"}));
+        assert!(warn && unchecked.contains("didn't work"), "{unchecked}");
+        let (late, warn) = words("timed_out", checked(false));
+        assert!(warn && late.contains("open too long"), "{late}");
+        let (stopped, warn) = words("cancelled", checked(false));
+        assert!(!warn && stopped.starts_with("Stopped waiting"), "{stopped}");
+        // A result without a check (an older or a changed tool) isn't taken for a good sign-in.
+        assert!(sign_in_words(&json!({"saved": true})).1);
+    }
+
+    #[test]
+    fn a_sign_in_names_the_site_as_typed() {
+        use serde_json::json;
+        assert_eq!(site_name(&json!({"url": "https://example.com"})), "example.com");
+        assert_eq!(site_name(&json!({"url": "https://example.com/"})), "example.com");
+        assert_eq!(site_name(&json!({"url": "http://example.com:8080/app"})), "example.com:8080/app");
+        assert_eq!(site_name(&json!({})), "");
+        // A toast never shows credentials, a query or a fragment.
+        assert_eq!(site_name(&json!({"url": "https://alice:pw@example.com/app?token=abc#k"})), "example.com/app");
+        assert_eq!(site_name(&json!({"url": "https://example.com/?token=abc"})), "example.com");
+        assert_eq!(site_name(&json!({"url": "https://example.com/@profile"})), "example.com/@profile");
     }
 
     #[test]

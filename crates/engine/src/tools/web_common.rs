@@ -4,7 +4,8 @@
 //! summary, PNG pixel diffing and base64.
 
 use crate::tool::Ctx;
-use craft_anything_engines::cdp::{self, CdpClient, Deadline, Endpoint, WsConn};
+use craft_anything_analysis::web_har::{contains_ascii_ci, encode_query, replace_needles_with};
+use craft_anything_engines::cdp::{self, CdpClient, CdpEvent, Deadline, Endpoint, WsConn};
 use craft_anything_evidence::{Environment, ErrorCode, ToolError, host_triple, sha256_hex};
 use craft_anything_platform::process::{Process, RunningProcess, StdinMode};
 use serde_json::{Value, json};
@@ -32,12 +33,39 @@ pub struct LaunchOptions {
     pub no_sandbox: bool,
     /// Seconds to wait for a launched browser to start listening.
     pub startup_secs: u64,
+    /// Which profile a launched browser uses.
+    pub profile: ProfileChoice,
+    /// The page a launched browser starts on (default `about:blank`).
+    pub start_url: Option<String>,
+    /// Its profile is copied out afterwards as a saved sign-in (cookies kept with a key every
+    /// later launch can read).
+    pub keeps_sign_in: bool,
 }
 
 impl Default for LaunchOptions {
     fn default() -> Self {
-        LaunchOptions { allow_launch: true, headless: true, no_sandbox: false, startup_secs: 30 }
+        LaunchOptions {
+            allow_launch: true,
+            headless: true,
+            no_sandbox: false,
+            startup_secs: 30,
+            profile: ProfileChoice::Fresh,
+            start_url: None,
+            keeps_sign_in: false,
+        }
     }
+}
+
+/// The profile a launched browser gets.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum ProfileChoice {
+    /// A new empty private profile, deleted when the browser is dropped.
+    #[default]
+    Fresh,
+    /// A new private profile filled with a copy of a saved sign-in first (see
+    /// [`super::site_sign_in::copy_profile`]); deleted when the browser is dropped, so the saved
+    /// sign-in is never changed.
+    SeededFrom(std::path::PathBuf),
 }
 
 /// A connected browser: its loopback endpoint and product info. If we launched it, the owned
@@ -49,11 +77,32 @@ pub struct Browser {
     /// The `User-Agent` from `/json/version` (empty when unknown); names the runtime.
     pub user_agent: String,
     pub launched: bool,
+    /// The tab browser tools look at when none is named: the study tab `web_site_open` opened in
+    /// the person's own browser, so their other tabs aren't read. `None`: the first page.
+    pub tab: Option<String>,
     // The process is dropped before the profile so its supervisor is asked to stop it first.
     #[allow(dead_code)]
     _proc: Option<RunningProcess>,
     #[allow(dead_code)]
     _profile: Option<BrowserProfile>,
+    /// Stops the browser and deletes its profile if the app ends without dropping it (#810).
+    #[allow(dead_code)]
+    _watch: Option<RunningProcess>,
+}
+
+/// Launch flags for a browser that holds a sign-in (a sign-in window, or a copy of a saved one).
+fn sign_in_args(opts: &LaunchOptions) -> Vec<String> {
+    if opts.profile == ProfileChoice::Fresh && !opts.keeps_sign_in {
+        return Vec::new();
+    }
+    let mut args = Vec::new();
+    // Only this profile has password saving turned off (`prepare_sign_in_profile`): never let a
+    // copied `Local State` pick another one.
+    args.push(format!("--profile-directory={}", super::site_sign_in::SIGN_IN_PROFILE));
+    // Chromium needs an explicit session restore on macOS to reload session-only cookies. The
+    // copied profile excludes session and tab files, so old pages are not reopened.
+    args.push("--restore-last-session".into());
+    args
 }
 
 struct BrowserProfile(std::path::PathBuf);
@@ -136,6 +185,17 @@ fn snap_in_script(script: &[u8]) -> Option<std::path::PathBuf> {
 }
 
 impl Browser {
+    /// The profile folder of a browser we launched (deleted when this is dropped).
+    pub(crate) fn profile_dir(&self) -> Option<&std::path::Path> {
+        self._profile.as_ref().map(|p| p.0.as_path())
+    }
+
+    /// Stop a browser we launched and wait (at most `d`) until it's gone. Returns whether it
+    /// confirmed in time.
+    pub(crate) fn stop_and_wait(&mut self, d: Duration) -> bool {
+        self._proc.as_mut().is_none_or(|p| p.kill_and_wait(d))
+    }
+
     /// A handle to a browser someone else owns (it is not killed when this drops).
     pub fn attached(endpoint: &Endpoint, product: &str, version: &str) -> Browser {
         Browser {
@@ -144,8 +204,10 @@ impl Browser {
             version: version.into(),
             user_agent: String::new(),
             launched: false,
+            tab: None,
             _proc: None,
             _profile: None,
+            _watch: None,
         }
     }
 
@@ -160,15 +222,17 @@ impl Browser {
                 user_agent: version.get("User-Agent").and_then(Value::as_str).unwrap_or_default().to_string(),
                 endpoint,
                 launched: false,
+                tab: None,
                 _proc: None,
                 _profile: None,
+                _watch: None,
             });
         }
         // A website opened with web_site_open is the page every browser tool looks at by default.
         if let Some(site) = ctx.session.ext.get::<super::website_tools::SiteBrowser>()
             && cdp::json_version(&site.endpoint, dl).is_ok()
         {
-            return Ok(Browser::attached(&site.endpoint, &site.product, &site.version));
+            return Ok(Browser { tab: site.own_tab.clone(), ..Browser::attached(&site.endpoint, &site.product, &site.version) });
         }
         if !opts.allow_launch {
             return Err(engine_missing("no endpoint was given"));
@@ -185,9 +249,22 @@ impl Browser {
                     .with_remediation(format!("{fix} Or give a loopback CDP endpoint (start a browser with --remote-debugging-port)."))
             })?;
         let exe = snap_behind(&exe).unwrap_or(exe);
-        let profile = BrowserProfile(super::artifact_tools::fresh_dir_in(&profile_base(&exe, dirs::home_dir()), "craft-browser")?);
+        // Always a profile of our own where this browser can reach it (a Snap's or Flatpak's
+        // folder, #747), so a saved sign-in is only ever copied in and out, never used in place.
+        let owned = BrowserProfile(super::artifact_tools::fresh_dir_in(&profile_base(&exe, dirs::home_dir()), "craft-browser")?);
+        if let ProfileChoice::SeededFrom(saved) = &opts.profile {
+            // The caller holds the site's reservation: a profile saved before password stores
+            // were left out loses them here (the copy below skips them either way).
+            super::site_sign_in::remove_credential_stores(saved);
+            // On error the half-filled copy is removed as `owned` drops.
+            super::site_sign_in::copy_profile(saved, &owned.0, &super::site_sign_in::CopyCaps::default())?;
+        }
+        if opts.keeps_sign_in || opts.profile != ProfileChoice::Fresh {
+            super::site_sign_in::prepare_sign_in_profile(&owned.0)?;
+        }
+        let (profile_dir, profile) = (owned.0.clone(), Some(owned));
         let mut args: Vec<String> = vec![
-            format!("--user-data-dir={}", profile.0.display()),
+            format!("--user-data-dir={}", profile_dir.display()),
             "--remote-debugging-port=0".into(),
             "--remote-allow-origins=*".into(),
             "--no-first-run".into(),
@@ -204,7 +281,14 @@ impl Browser {
         if opts.no_sandbox {
             args.push("--no-sandbox".into());
         }
-        args.push("about:blank".into());
+        // On Linux the desktop's keyring is never asked: outside a desktop session it waits on a
+        // password prompt nobody sees (#2264), and a saved sign-in, made in a window and read
+        // later without one, needs both launches to keep cookies with the same key.
+        if cfg!(target_os = "linux") {
+            args.push("--password-store=basic".into());
+        }
+        args.extend(sign_in_args(opts));
+        args.push(opts.start_url.clone().unwrap_or_else(|| "about:blank".into()));
         let cancel = ctx.cancel.clone();
         let tail = StderrTail::default();
         let sink = tail.clone();
@@ -219,7 +303,7 @@ impl Browser {
             .hands_off()
             .spawn()?;
         let name = exe.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "the browser".into());
-        let endpoint = Self::await_devtools(&profile.0, dl, &mut proc, &tail, &name)?;
+        let endpoint = Self::await_devtools(&profile_dir, dl, &mut proc, &tail, &name)?;
         let version = cdp::json_version(&endpoint, dl)?;
         Ok(Browser {
             product: version.get("Browser").and_then(Value::as_str).unwrap_or("unknown").to_string(),
@@ -227,8 +311,10 @@ impl Browser {
             user_agent: version.get("User-Agent").and_then(Value::as_str).unwrap_or_default().to_string(),
             endpoint,
             launched: true,
+            tab: None,
+            _watch: craft_anything_platform::end_with_this_process(&proc, profile.as_ref().map(|p| p.0.as_path())),
             _proc: Some(proc),
-            _profile: Some(profile),
+            _profile: profile,
         })
     }
 
@@ -269,6 +355,8 @@ impl Browser {
             user_agent: version.get("User-Agent").and_then(Value::as_str).unwrap_or_default().to_string(),
             endpoint,
             launched: true,
+            tab: None,
+            _watch: craft_anything_platform::end_with_this_process(&proc, Some(&profile.0)),
             _proc: Some(proc),
             _profile: Some(profile),
         })
@@ -329,6 +417,20 @@ pub fn pick_target<'a>(targets: &'a [Value], target_id: Option<&str>, want_kind:
     })
 }
 
+impl Browser {
+    /// The page a browser tool works on: `target_id`, else the study tab, else the first page. In
+    /// the person's own browser only the study tab: another of their tabs is refused, never read.
+    pub fn page_target<'a>(&self, targets: &'a [Value], target_id: Option<&str>) -> Result<&'a Value, ToolError> {
+        if let (Some(tab), Some(id)) = (self.tab.as_deref(), target_id)
+            && id != tab
+        {
+            return Err(ToolError::invalid(format!("{id:?} is another tab of your own browser; only the study tab is looked at"))
+                .with_remediation("Leave out target_id to use the study tab, or close the study with web_site_close first."));
+        }
+        pick_target(targets, target_id.or(self.tab.as_deref()), Some("page"))
+    }
+}
+
 /// Connect a page/renderer target's WebSocket and build a JSON-RPC client.
 pub fn connect_target(browser: &Browser, target: &Value, max_message: usize, dl: &Deadline) -> Result<CdpClient, ToolError> {
     let ws_url = target.get("webSocketDebuggerUrl").and_then(Value::as_str).ok_or_else(|| {
@@ -338,6 +440,58 @@ pub fn connect_target(browser: &Browser, target: &Value, max_message: usize, dl:
     let wt = cdp::ws_target(ws_url, &browser.endpoint)?;
     let conn = WsConn::connect(&wt, max_message, dl)?;
     Ok(CdpClient::new(conn))
+}
+
+/// Connect to a page, enable the Page domain that delivers `Page.javascriptDialogOpening`, and
+/// answer any dialog it opens by itself, so a call never waits on one. The dialog events stay in
+/// the client's queue for the caller to report.
+pub fn connect_target_answering_dialogs(browser: &Browser, target: &Value, max_message: usize, dl: &Deadline) -> Result<CdpClient, ToolError> {
+    let mut client = connect_target(browser, target, max_message, dl).map(CdpClient::answering_dialogs)?;
+    let _ = client.call("Page.enable", json!({}), None, dl);
+    Ok(client)
+}
+
+/// The dialogs a page opened during a run, from its events: kind, first line and how it was answered.
+pub fn dialogs_from(events: &[CdpEvent]) -> Vec<Value> {
+    let line = |s: &str| s.lines().next().unwrap_or_default().chars().take(300).collect::<String>();
+    let mut dialogs = Vec::new();
+    for e in events.iter().filter(|e| e.method == cdp::DIALOG_OPENING).take(30) {
+        let p = &e.params;
+        let answered = if cdp::dialog_answer(p)["accept"] == true { "accepted" } else { "dismissed" };
+        let message = p.get("message").and_then(Value::as_str).unwrap_or_default();
+        dialogs.push(json!({"type": p["type"], "message": line(message), "answered": answered}));
+    }
+    dialogs
+}
+
+/// The summary's sentence on dialogs a page opened by itself (empty when none).
+pub fn dialogs_said(dialogs: &[Value]) -> String {
+    let Some(first) = dialogs.first() else { return String::new() };
+    let kind = match first["type"].as_str() {
+        Some("alert") => "an alert",
+        Some("confirm") => "a confirm question",
+        Some("prompt") => "a prompt",
+        Some("beforeunload") => "a leave-page question",
+        _ => "a dialog",
+    };
+    let message = first["message"].as_str().unwrap_or_default();
+    let more = if dialogs.len() > 1 { format!(" and {} more", dialogs.len() - 1) } else { String::new() };
+    format!(" The page opened {kind} by itself (\"{message}\"){more}; it was {} so the page could go on.", first["answered"].as_str().unwrap_or("answered"))
+}
+
+/// [`dialogs_said`] for a result's `dialogs` value.
+pub fn dialogs_said_in(dialogs: &Value) -> String {
+    dialogs_said(dialogs.as_array().map(Vec::as_slice).unwrap_or_default())
+}
+
+/// Redact declared secrets in each dialog's message (a page may echo one).
+pub fn redact_dialogs(dialogs: &mut [Value], secrets: &mut Secrets) {
+    for dialog in dialogs {
+        if let Some(message) = dialog["message"].as_str() {
+            let redacted = secrets.text(message);
+            dialog["message"] = json!(redacted);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -357,7 +511,28 @@ impl Secrets {
     pub fn new(values: &[String]) -> Self {
         let mut spellings: Vec<String> = Vec::new();
         for v in values.iter().filter(|v| !v.is_empty()) {
-            for s in [v.clone(), percent_encode(v), json_escape(v)] {
+            let pct_component = percent_encode(v);
+            let pct_up = encode_query(v, false, true);
+            let pct_lo = encode_query(v, false, false);
+            let form_up = encode_query(v, true, true);
+            let form_lo = encode_query(v, true, false);
+            let quote_plus_up = pct_up.replace("%20", "+");
+            let quote_plus_lo = pct_lo.replace("%20", "+");
+            for s in [
+                v.clone(),
+                v.to_ascii_lowercase(),
+                v.to_ascii_uppercase(),
+                pct_component.clone(),
+                pct_component.to_ascii_lowercase(),
+                pct_up,
+                pct_lo,
+                form_up,
+                form_lo,
+                quote_plus_up,
+                quote_plus_lo,
+                json_escape(v),
+                v.replace(' ', "+"),
+            ] {
                 if !s.is_empty() && !spellings.contains(&s) {
                     spellings.push(s);
                 }
@@ -372,19 +547,10 @@ impl Secrets {
         self.raw.len()
     }
 
-    /// Redact every declared spelling in a string.
+    /// Redact every declared spelling (ASCII case-insensitively, merging overlapping matches) in a string.
     pub fn text(&mut self, s: &str) -> String {
-        if self.spellings.is_empty() {
-            return s.to_string();
-        }
-        let mut out = s.to_string();
-        for spelling in &self.spellings {
-            if out.contains(spelling.as_str()) {
-                let n = out.matches(spelling.as_str()).count() as u64;
-                out = out.replace(spelling.as_str(), REDACTED);
-                self.redactions += n;
-            }
-        }
+        let (out, count) = replace_needles_with(s, &self.spellings, REDACTED);
+        self.redactions = self.redactions.saturating_add(count);
         out
     }
 
@@ -404,10 +570,9 @@ impl Secrets {
         }
     }
 
-    /// True when a string (or its bytes) still contains any raw declared value — used by tests to
-    /// prove nothing leaked.
+    /// True when `haystack` still contains any declared spelling (raw or encoded, ASCII case-insensitively).
     pub fn leaks_in(&self, haystack: &str) -> bool {
-        self.raw.iter().any(|v| haystack.contains(v.as_str()))
+        self.spellings.iter().any(|sp| contains_ascii_ci(haystack, sp))
     }
 }
 
@@ -1100,6 +1265,51 @@ pub fn png_artifact(bytes: &[u8]) -> Result<Value, ToolError> {
 
 #[cfg(test)]
 mod tests {
+    /// The dialogs a page opened are reported with the first line of their message and the answer
+    /// `answering_dialogs` gives: alerts accepted, confirm/prompt dismissed.
+    #[test]
+    fn page_dialogs_are_reported_with_their_answer() {
+        use super::{dialogs_from, dialogs_said, dialogs_said_in};
+        use craft_anything_engines::cdp::{CdpEvent, DIALOG_OPENING};
+        use serde_json::json;
+        let event = |params| CdpEvent { method: DIALOG_OPENING.into(), params, session_id: None };
+        let dialogs = dialogs_from(&[
+            event(json!({"type": "alert", "message": "Saved\nsecond line"})),
+            event(json!({"type": "confirm", "message": "Delete everything?"})),
+        ]);
+        assert_eq!(
+            dialogs,
+            vec![
+                json!({"type": "alert", "message": "Saved", "answered": "accepted"}),
+                json!({"type": "confirm", "message": "Delete everything?", "answered": "dismissed"}),
+            ],
+            "one line each, and a confirm is never agreed to"
+        );
+        assert_eq!(dialogs_said(&dialogs), " The page opened an alert by itself (\"Saved\") and 1 more; it was accepted so the page could go on.");
+        assert_eq!(dialogs_said(&[]), "");
+        assert_eq!(dialogs_said_in(&json!([])), "");
+        assert_eq!(dialogs_said_in(&serde_json::Value::Null), "");
+        let mut secrets = super::Secrets::new(&["tok-SECRET".to_string()]);
+        let mut echoed = dialogs_from(&[event(json!({"type": "alert", "message": "token tok-SECRET"}))]);
+        super::redact_dialogs(&mut echoed, &mut secrets);
+        assert_eq!(echoed[0]["message"], "token «redacted»", "a declared secret in a dialog is redacted");
+    }
+
+    /// Review of #1459: a copied `Local State` must not open a profile where saving passwords is on.
+    #[test]
+    fn sign_in_browsers_open_the_prepared_profile_and_fresh_ones_stay_plain() {
+        use super::{LaunchOptions, ProfileChoice, sign_in_args};
+        let pinned = format!("--profile-directory={}", super::super::site_sign_in::SIGN_IN_PROFILE);
+        let seeded = LaunchOptions { profile: ProfileChoice::SeededFrom("saved".into()), ..LaunchOptions::default() };
+        let window = LaunchOptions { keeps_sign_in: true, ..LaunchOptions::default() };
+        for opts in [&seeded, &window] {
+            let args = sign_in_args(opts);
+            assert!(args.contains(&pinned), "{args:?}");
+            assert!(args.iter().any(|a| a == "--restore-last-session"), "{args:?}");
+        }
+        assert!(sign_in_args(&LaunchOptions::default()).is_empty());
+    }
+
     #[test]
     fn a_launched_browser_deletes_its_profile_on_drop() {
         let root = tempfile::tempdir().unwrap();
@@ -1112,8 +1322,10 @@ mod tests {
             version: String::new(),
             user_agent: String::new(),
             launched: true,
+            tab: None,
             _proc: None,
             _profile: Some(super::BrowserProfile(profile.clone())),
+            _watch: None,
         };
         drop(browser);
         assert!(!profile.exists(), "the private browser profile survived its owner");
@@ -1223,6 +1435,48 @@ mod tests {
         assert!(!text.contains("tok-123"));
         assert!(!text.contains("p%40ss%20word"));
         assert!(s.redactions >= 4);
+    }
+
+    /// Form-encoded (`+`, `*` literal, `~` as `%7E`), mixed-case `%xx`, and ASCII case variants redact in `Secrets`.
+    #[test]
+    fn secrets_redact_form_urlencoded_asterisk_tilde_and_mixed_case_spellings() {
+        let mut s = Secrets::new(&["Bearer tok==".into(), "MySecret/1".into(), "a*b~ c".into()]);
+        let v = json!({
+            "url": "https://api.example.test/v1/MYSECRET%2f1?auth=Bearer+tok%3D%3D&q=a*b%7E+c&py=a%2Ab~+c&gen=a%2ab~%20c",
+            "header": "hint=Bearer+Tok%3d%3d; v=A*B%7e+C; py=a%2Ab~+c",
+            "body": "MYSECRET/1 and MySecret%2f1 and a*b%7e+c and a%2ab~+c",
+        });
+        let out = s.scrub(&v);
+        let text = out.to_string().to_ascii_lowercase();
+        assert!(!s.leaks_in(&text), "{text}");
+        for forbidden in ["tok==", "tok%3d%3d", "mysecret/1", "mysecret%2f1", "a*b~ c", "a*b%7e+c", "a%2ab~+c", "a%2ab~%20c"] {
+            assert!(!text.contains(forbidden), "Secrets leaked `{forbidden}` in `{text}`");
+        }
+        assert!(s.redactions >= 7, "expected at least 7 redactions, got {}", s.redactions);
+    }
+
+    /// Overlapping, adjacent, and same-origin secret matches merge into complete redactions without leaking suffixes.
+    #[test]
+    fn secrets_redact_overlapping_adjacent_and_same_origin_matches() {
+        let mut overlap = Secrets::new(&["Bearer abc".into(), "abc123456789".into()]);
+        let out = overlap.text("Bearer abc123456789");
+        assert_eq!(out, "«redacted»");
+        assert!(!overlap.leaks_in(&out), "{out}");
+        assert!(!out.contains("123456789"), "{out}");
+        assert_eq!(overlap.redactions, 1);
+        assert_eq!(overlap.text("前Bearer abc123456789后"), "前«redacted»后");
+
+        let mut partial = Secrets::new(&["alpha-beta".into(), "beta-gamma".into(), "Key One".into(), "One/Two".into()]);
+        assert_eq!(partial.text("id=alpha-beta-gamma&q=key+one%2ftwo&keep=safe"), "id=«redacted»&q=«redacted»&keep=safe");
+        assert_eq!(partial.redactions, 2);
+
+        let mut adjacent = Secrets::new(&["pfx-".into(), "tok999".into()]);
+        assert_eq!(adjacent.text("hdr=pfx-tok999!"), "hdr=«redacted»«redacted»!");
+        assert_eq!(adjacent.redactions, 2);
+
+        let mut same_origin = Secrets::new(&["tok".into(), "tok-extended".into()]);
+        assert_eq!(same_origin.text("a=tok-extended&b=tok"), "a=«redacted»&b=«redacted»");
+        assert_eq!(same_origin.redactions, 2);
     }
 
     #[test]

@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 enum Mode {
     /// Answer requests normally (token must equal `expected`).
     Serve,
+    /// Hold the first decompile reply until the test releases it.
+    PauseDecompile,
     /// Accept the connection and then stay silent forever.
     Silent,
     /// Answer the first request with a reply line far longer than a test client accepts.
@@ -26,6 +28,13 @@ struct Fake {
     addr: SocketAddr,
     saw_eof: Arc<AtomicBool>,
     handle: Option<std::thread::JoinHandle<()>>,
+    request_started: std::sync::mpsc::Receiver<()>,
+    release_reply: std::sync::mpsc::Sender<()>,
+}
+
+struct RequestPause {
+    started: std::sync::mpsc::Sender<()>,
+    release: std::sync::mpsc::Receiver<()>,
 }
 
 impl Fake {
@@ -34,6 +43,8 @@ impl Fake {
         let addr = listener.local_addr().expect("addr");
         let saw_eof = Arc::new(AtomicBool::new(false));
         let eof2 = saw_eof.clone();
+        let (started, request_started) = std::sync::mpsc::channel();
+        let (release_reply, release) = std::sync::mpsc::channel();
         let handle = std::thread::spawn(move || {
             if let Ok((stream, _)) = listener.accept() {
                 match mode {
@@ -53,7 +64,8 @@ impl Fake {
                             }
                         }
                     }
-                    Mode::Serve => serve(stream, expected_token, &eof2),
+                    Mode::Serve => serve(stream, expected_token, &eof2, None),
+                    Mode::PauseDecompile => serve(stream, expected_token, &eof2, Some(RequestPause { started, release })),
                     Mode::Huge | Mode::Split => {
                         let mut writer = stream.try_clone().expect("clone");
                         let mut reader = BufReader::new(stream);
@@ -84,7 +96,7 @@ impl Fake {
                 }
             }
         });
-        Fake { addr, saw_eof, handle: Some(handle) }
+        Fake { addr, saw_eof, handle: Some(handle), request_started, release_reply }
     }
 
     fn join(mut self) {
@@ -94,7 +106,7 @@ impl Fake {
     }
 }
 
-fn serve(stream: TcpStream, expected: &str, saw_eof: &Arc<AtomicBool>) {
+fn serve(stream: TcpStream, expected: &str, saw_eof: &Arc<AtomicBool>, mut pause: Option<RequestPause>) {
     let mut writer = stream.try_clone().expect("clone");
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
@@ -124,6 +136,14 @@ fn serve(stream: TcpStream, expected: &str, saw_eof: &Arc<AtomicBool>) {
             let resp = format!("{{\"id\":{},\"ok\":false,\"error\":{{\"code\":\"bad_input\",\"message\":\"bad token\"}}}}\n", req.id);
             let _ = writer.write_all(resp.as_bytes());
             break; // close on a bad token
+        }
+        if req.method == "native_function_pseudocode"
+            && let Some(pause) = pause.take()
+        {
+            let _ = pause.started.send(());
+            // A failed assertion must not strand the fake bridge or wait for the real
+            // fifteen-minute request deadline. The test normally releases this first.
+            let _ = pause.release.recv_timeout(Duration::from_secs(10));
         }
         let result = match req.method.as_str() {
             "ping" => "{\"name\":\"fake\",\"provider\":{\"id\":\"ghidra\",\"version\":\"12.1.4\"},\"analysed\":true,\"analysis_cut_short\":false,\"target\":{\"name\":\"t\",\"image_base\":\"0x100000\"}}"
@@ -156,6 +176,22 @@ fn serve(stream: TcpStream, expected: &str, saw_eof: &Arc<AtomicBool>) {
 
 fn no_cancel() -> impl Fn() -> bool {
     || false
+}
+
+fn fake_session(fake: &Fake, runtime_root: &std::path::Path) -> Session {
+    std::fs::create_dir(runtime_root).unwrap();
+    // Keep Session's real ownership/drop path without installing or launching Ghidra.
+    // Listing this test binary's tests creates an owned process that has already exited.
+    let mut process = Process::new(std::env::current_exe().unwrap()).arg("--list").timeout(Duration::from_secs(5)).spawn().unwrap();
+    assert!(process.wait_timeout(Duration::from_secs(5)).expect("test process exits").is_ok());
+    Session {
+        client: Mutex::new(Client::connect(fake.addr, "tok", Instant::now() + Duration::from_secs(5)).unwrap()),
+        _process: Mutex::new(process),
+        runtime_root: runtime_root.to_path_buf(),
+        version: None,
+        language_id: None,
+        image_base: None,
+    }
 }
 
 #[test]
@@ -243,6 +279,81 @@ fn cancel_stops_a_request_quickly() {
     assert!(t.elapsed() < Duration::from_secs(3));
     drop(client);
     fake.join();
+}
+
+#[test]
+fn session_cancellation_interrupts_a_pending_decompile() {
+    let fake = Fake::start(Mode::PauseDecompile, "tok");
+    let tmp = tempfile::tempdir().unwrap();
+    let session = fake_session(&fake, &tmp.path().join("runtime"));
+    let cancel = AtomicBool::new(false);
+    let (finished, done) = std::sync::mpsc::channel();
+    let (entered, cancelled_before_reply, result) = std::thread::scope(|scope| {
+        let worker = scope.spawn(|| {
+            let result = session.decompile(0x401000, &|| cancel.load(Ordering::SeqCst), &|_| {});
+            let _ = finished.send(());
+            result
+        });
+        let entered = fake.request_started.recv_timeout(Duration::from_secs(5));
+        cancel.store(true, Ordering::SeqCst);
+        let cancelled_before_reply = done.recv_timeout(Duration::from_secs(5));
+        // Both the fixed and negative variants must release the fake server and join the
+        // caller before making assertions. No failed control waits for REQUEST_TIME.
+        let _ = fake.release_reply.send(());
+        let result = worker.join().expect("decompile worker");
+        (entered, cancelled_before_reply, result)
+    });
+    // A late response to the cancelled request must not become the next request's result.
+    let next = session.decompile(0x401200, &no_cancel(), &|_| {});
+    drop(session);
+    fake.join();
+
+    assert!(entered.is_ok(), "the bridge did not receive the decompile");
+    assert!(cancelled_before_reply.is_ok(), "cancellation waited for the bridge's reply");
+    assert!(matches!(result, Err(GhidraError::Cancelled)), "{result:?}");
+    let next = next.unwrap().unwrap();
+    assert_eq!(next.entry, 0x401200);
+    assert!(next.created && next.pseudocode.as_deref().unwrap_or_default().contains("FUN_00401200"), "{next:?}");
+}
+
+#[test]
+fn session_cancellation_interrupts_waiting_for_the_client() {
+    let fake = Fake::start(Mode::Serve, "tok");
+    let tmp = tempfile::tempdir().unwrap();
+    let session = fake_session(&fake, &tmp.path().join("runtime"));
+    let cancel = AtomicBool::new(false);
+    let first_check = AtomicBool::new(true);
+    let (started, checking) = std::sync::mpsc::channel();
+    let (finished, done) = std::sync::mpsc::channel();
+    let held = session.lock();
+    let (entered, cancelled_before_unlock, result) = std::thread::scope(|scope| {
+        let worker = scope.spawn(|| {
+            let check = || {
+                if first_check.swap(false, Ordering::SeqCst) {
+                    let _ = started.send(());
+                    return false;
+                }
+                cancel.load(Ordering::SeqCst)
+            };
+            let result = session.decompile(0x401000, &check, &|_| {});
+            let _ = finished.send(());
+            result
+        });
+        let entered = checking.recv_timeout(Duration::from_secs(5));
+        cancel.store(true, Ordering::SeqCst);
+        let cancelled_before_unlock = done.recv_timeout(Duration::from_secs(5));
+        drop(held);
+        let result = worker.join().expect("decompile worker");
+        (entered, cancelled_before_unlock, result)
+    });
+    let next = session.decompile(0x401000, &no_cancel(), &|_| {});
+    drop(session);
+    fake.join();
+
+    assert!(entered.is_ok(), "the queued decompile did not check cancellation");
+    assert!(cancelled_before_unlock.is_ok(), "cancellation waited for the client lock");
+    assert!(matches!(result, Err(GhidraError::Cancelled)), "{result:?}");
+    assert!(next.unwrap().is_some(), "the other caller's client is still usable");
 }
 
 #[test]
@@ -345,8 +456,13 @@ fn ghidra_memory_follows_the_setting_within_its_bounds() {
         memory_gb,
     };
     assert_eq!(ghidra_heap(&cfg(Some(12))), "12G");
-    assert_eq!(ghidra_heap(&cfg(Some(2))), "4G");
+    // What the person set is used below the automatic floor too (#2425).
+    assert_eq!(ghidra_heap(&cfg(Some(1))), "1G");
+    assert_eq!(ghidra_heap(&cfg(Some(2))), "2G");
+    assert_eq!(ghidra_heap(&cfg(Some(3))), "3G");
+    assert_eq!(ghidra_heap(&cfg(Some(0))), "1G", "Java can't start Ghidra with no heap");
     assert_eq!(ghidra_heap(&cfg(Some(200))), "31G");
+    assert_eq!(ghidra_heap(&cfg(None)), format!("{}G", auto_heap_gb(machine_memory_gb())));
     assert_eq!(suggested_heap_gb(10 << 20), 4);
     assert_eq!(suggested_heap_gb(192 << 20), 8);
     assert_eq!(suggested_heap_gb(900 << 20), 16);
@@ -577,8 +693,24 @@ fn pointer_table_elf() -> (Vec<u8>, u64, u64, u64) {
 /// independent).
 fn pointer_table_elf_at(base: u64, e_type: u8) -> (Vec<u8>, u64, u64, u64) {
     let (start, triple, negate, table) = (base + 0x100, base + 0x110, base + 0x120, base + 0x1000);
-    let mut b = vec![0u8; 0x1010];
-    let put = |b: &mut Vec<u8>, off: usize, bytes: &[u8]| b[off..off + bytes.len()].copy_from_slice(bytes);
+    let mut data = triple.to_le_bytes().to_vec();
+    data.extend(negate.to_le_bytes());
+    let mut b = tiny_elf(base, e_type, start, &data);
+    b[0x100..0x130].fill(0xcc);
+    put(&mut b, 0x100, &[0x48, 0x8b, 0x47, 0x08, 0xff, 0xe0]); // start: mov rax,[rdi+8]; jmp rax
+    put(&mut b, 0x110, &[0x8d, 0x04, 0x7f, 0xc3]); // triple: lea eax,[rdi+rdi*2]; ret
+    put(&mut b, 0x120, &[0x89, 0xf8, 0xf7, 0xd8, 0xc3]); // negate: mov eax,edi; neg eax; ret
+    (b, triple, negate, table)
+}
+
+fn put(b: &mut [u8], off: usize, bytes: &[u8]) {
+    b[off..off + bytes.len()].copy_from_slice(bytes);
+}
+
+/// An x86-64 ELF loaded at `base` that starts at `start`: code goes in the first 0x1000 bytes,
+/// `data` is read-only at `base + 0x1000`.
+fn tiny_elf(base: u64, e_type: u8, start: u64, data: &[u8]) -> Vec<u8> {
+    let mut b = vec![0u8; 0x1000 + data.len()];
     // ELF header: ET_EXEC, x86-64, two program headers, no sections.
     put(&mut b, 0, b"\x7fELF\x02\x01\x01");
     put(&mut b, 16, &[e_type, 0, 62, 0, 1, 0, 0, 0]);
@@ -586,7 +718,7 @@ fn pointer_table_elf_at(base: u64, e_type: u8) -> (Vec<u8>, u64, u64, u64) {
     put(&mut b, 32, &0x40u64.to_le_bytes());
     put(&mut b, 52, &[64, 0, 56, 0, 2, 0, 64, 0]);
     // PT_LOAD r-x (headers and code), PT_LOAD r-- (the table).
-    for (i, (flags, off, va, size)) in [(5u32, 0u64, base, 0x1000u64), (4, 0x1000, table, 0x10)].into_iter().enumerate() {
+    for (i, (flags, off, va, size)) in [(5u32, 0u64, base, 0x1000u64), (4, 0x1000, base + 0x1000, data.len() as u64)].into_iter().enumerate() {
         let o = 0x40 + i * 56;
         put(&mut b, o, &1u32.to_le_bytes());
         put(&mut b, o + 4, &flags.to_le_bytes());
@@ -594,13 +726,54 @@ fn pointer_table_elf_at(base: u64, e_type: u8) -> (Vec<u8>, u64, u64, u64) {
             put(&mut b, o + 8 + k * 8, &v.to_le_bytes());
         }
     }
-    b[0x100..0x130].fill(0xcc);
-    put(&mut b, 0x100, &[0x48, 0x8b, 0x47, 0x08, 0xff, 0xe0]); // start: mov rax,[rdi+8]; jmp rax
-    put(&mut b, 0x110, &[0x8d, 0x04, 0x7f, 0xc3]); // triple: lea eax,[rdi+rdi*2]; ret
-    put(&mut b, 0x120, &[0x89, 0xf8, 0xf7, 0xd8, 0xc3]); // negate: mov eax,edi; neg eax; ret
-    put(&mut b, 0x1000, &triple.to_le_bytes());
-    put(&mut b, 0x1008, &negate.to_le_bytes());
-    (b, triple, negate, table)
+    put(&mut b, 0x1000, data);
+    b
+}
+
+/// Two functions that each jump on a byte through a table of offsets with no bounds check, the
+/// tables back to back (as Rust's async state machines lay them out, #1715): read past its three
+/// entries, `first`'s table runs into the second's. `first` also has a conditional jump that
+/// bounds nothing before its dispatch, and loads another address between the table's `lea` and
+/// the entry's read. `third` checks its byte first (`cmp`, `ja`), so its table is left to Ghidra.
+/// Returns the program, `first` and `third`.
+fn unguarded_jump_tables_elf() -> (Vec<u8>, u64, u64) {
+    let base = 0x40_0000u64;
+    let (first, second, third, table1, table2, table3) = (0x110usize, 0x140usize, 0x160usize, 0x1000usize, 0x100cusize, 0x1014usize);
+    let lea = |code: &mut Vec<u8>, f: usize, reg: u8, to: usize| {
+        code.extend([0x48, 0x8d, reg]);
+        code.extend((to as i32 - (f + code.len() + 4) as i32).to_le_bytes());
+    };
+    let mut codes = Vec::new();
+    let mut data = Vec::new();
+    for (f, table, cases, noise) in [(first, table1, &[11u8, 22, 33][..], true), (second, table2, &[44, 55], false), (third, table3, &[66, 77], false)] {
+        let mut code = Vec::new();
+        if noise {
+            code.extend([0x85, 0xf6, 0x75, 0x00]); // test esi,esi; jne (next): bounds nothing
+        }
+        code.extend([0x0f, 0xb6, 0x07]); // movzx eax,byte [rdi]
+        if f == third {
+            code.extend([0x83, 0xf8, 0x01, 0x77, 0x1c]); // cmp eax,1; ja (the ret after the cases)
+        }
+        lea(&mut code, f, 0x0d, table); // lea rcx,[rip+table]
+        if noise {
+            lea(&mut code, f, 0x15, table2); // lea rdx,[rip+table2]: another address on the way
+        }
+        code.extend([0x48, 0x63, 0x04, 0x81, 0x48, 0x01, 0xc8, 0xff, 0xe0]); // movsxd rax,[rcx+rax*4]; add rax,rcx; jmp rax
+        for v in cases {
+            data.extend(((f + code.len()) as i32 - table as i32).to_le_bytes());
+            code.extend([0xb8, *v, 0, 0, 0, 0xc3]); // mov eax,v; ret
+        }
+        code.push(0xc3);
+        codes.push((f, code));
+    }
+    data.extend([0u8; 8]);
+    let mut b = tiny_elf(base, 2, base + 0x100, &data);
+    b[0x100..0x1a0].fill(0xcc);
+    put(&mut b, 0x100, &[0xe8, 0x0b, 0, 0, 0, 0xe8, 0x36, 0, 0, 0, 0xe8, 0x51, 0, 0, 0, 0xc3]); // start: call first, second, third; ret
+    for (f, code) in codes {
+        put(&mut b, f, &code);
+    }
+    (b, base + first as u64, base + third as u64)
 }
 
 /// Real Ghidra, only where `CRAFT_ANYTHING_TEST_GHIDRA` names the engine store holding `ghidra/`
@@ -624,16 +797,16 @@ fn live_ghidra_makes_and_decompiles_code_reached_only_through_a_pointer_table() 
 
     let known: Vec<u64> = session.list_functions().unwrap().iter().map(|f| f.entry).collect();
     assert!(!known.contains(&triple) && !known.contains(&negate), "the analysis already made these, so this tests nothing: {known:x?}");
-    let made = session.decompile(triple).unwrap().expect("an answer");
+    let made = session.decompile(triple, &no_cancel(), &|_| {}).unwrap().expect("an answer");
     assert!(made.created && made.pseudocode.as_deref().unwrap_or_default().contains("* 3"), "{made:?}");
-    let again = session.decompile(negate).unwrap().expect("an answer");
+    let again = session.decompile(negate, &no_cancel(), &|_| {}).unwrap().expect("an answer");
     assert!(again.created && again.pseudocode.as_deref().unwrap_or_default().contains("-param_1"), "{again:?}");
-    match session.decompile(table).unwrap_err() {
+    match session.decompile(table, &no_cancel(), &|_| {}).unwrap_err() {
         GhidraError::Bridge { code, message } => assert!(code == "not_found" && message.contains("executable memory"), "{code}: {message}"),
         other => panic!("expected not_found, got {other:?}"),
     }
     // Made once, then found again, still marked as made on demand.
-    assert!(session.decompile(triple).unwrap().expect("an answer").created);
+    assert!(session.decompile(triple, &no_cancel(), &|_| {}).unwrap().expect("an answer").created);
 }
 
 #[test]
@@ -673,9 +846,32 @@ fn live_ghidra_reports_where_it_loaded_a_position_independent_elf() {
     let base = session.image_base().expect("the handshake says where the program is");
     assert_ne!(base, 0, "Ghidra moves a program whose lowest segment is at 0");
     let rebase = Rebase::new(0, Some(base));
-    let made = session.decompile(rebase.to_engine(triple)).unwrap().expect("an answer");
+    let made = session.decompile(rebase.to_engine(triple), &no_cancel(), &|_| {}).unwrap().expect("an answer");
     assert_eq!(rebase.from_engine(made.entry), triple);
     assert!(made.pseudocode.as_deref().unwrap_or_default().contains("* 3"), "{made:?}");
+}
+
+/// Real Ghidra (as above): a table with no bounds check is cut to its real entries before the
+/// decompile, so the switch has its three cases, not entries read from the next table (#1715).
+#[test]
+fn live_ghidra_bounds_a_jump_table_with_no_bounds_check() {
+    let Some(store) = std::env::var_os("CRAFT_ANYTHING_TEST_GHIDRA").map(PathBuf::from) else { return };
+    let temp = tempfile::Builder::new().prefix("ghidra-live").tempdir().unwrap();
+    let cfg = Config {
+        analyze_headless: get::headless(None, &store).expect("Ghidra in the engine store"),
+        java_home: get::java_home(None, &store),
+        startup_timeout: Duration::from_secs(600),
+        store_dir: temp.path().to_path_buf(),
+        language_id: None,
+        compiler_spec: None,
+        memory_gb: Some(4),
+    };
+    let (elf, first, third) = unguarded_jump_tables_elf();
+    let session = Session::start(&cfg, &elf, &craft_anything_evidence::sha256_hex(&elf), &"ab".repeat(32), &|| false, &|_, _| {}).expect("Ghidra starts");
+    let c = session.decompile(first, &no_cancel(), &|_| {}).unwrap().expect("an answer").pseudocode.unwrap_or_default();
+    assert!(c.contains("manually overridden") && c.contains("0x21") && !c.contains("0x2c") && !c.contains("case 3"), "{c}");
+    let guarded = session.decompile(third, &no_cancel(), &|_| {}).unwrap().expect("an answer").pseudocode.unwrap_or_default();
+    assert!(!guarded.contains("manually overridden") && guarded.contains("0x4d"), "a guarded table is Ghidra's own: {guarded}");
 }
 
 #[test]
@@ -724,4 +920,82 @@ fn an_empty_platform_folder_is_not_a_decompiler_and_an_unknown_layout_is_left_to
 
     let unknown = tempfile::tempdir().unwrap();
     assert!(has_decompiler_for(unknown.path(), "mac_"), "never refused on a guess");
+}
+
+/// A stand-in `support/analyzeHeadless` in its own install folder that appends the heap it was
+/// given and its arguments to `record`, one line each per start, then fails as Ghidra would.
+#[cfg(unix)]
+fn recording_launcher(dir: &Path) -> (PathBuf, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let support = dir.join("install").join("support");
+    std::fs::create_dir_all(&support).unwrap();
+    let record = dir.join("record.txt");
+    let launcher = support.join("analyzeHeadless");
+    let script = format!(
+        "#!/bin/sh\nprintf 'heap=%s\\n' \"${{GHIDRA_HEADLESS_MAXMEM-unset}}\" >> '{r}'\nprintf 'args=%s\\n' \"$*\" >> '{r}'\nexit 1\n",
+        r = record.display()
+    );
+    std::fs::write(&launcher, script).unwrap();
+    std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (launcher, record)
+}
+
+/// The heap each start of the stand-in was given, with the arguments it was started with.
+#[cfg(unix)]
+fn recorded_starts(record: &Path) -> Vec<(String, String)> {
+    let text = std::fs::read_to_string(record).unwrap_or_default();
+    let lines: Vec<&str> = text.lines().collect();
+    lines
+        .chunks(2)
+        .map(|pair| {
+            let heap = pair.first().and_then(|l| l.strip_prefix("heap=")).unwrap_or_default().to_string();
+            let args = pair.get(1).and_then(|l| l.strip_prefix("args=")).unwrap_or_default().to_string();
+            (heap, args)
+        })
+        .collect()
+}
+
+/// #2425: the memory set for Ghidra reaches both of its starts, the one-time analysis and the
+/// bridge that opens the saved analysis, also below the automatic amount's floor of 4 GB, and the
+/// automatic amount is used when nothing is set.
+#[cfg(unix)]
+#[test]
+fn every_ghidra_start_is_given_the_memory_that_was_set() {
+    let auto = format!("{}G", auto_heap_gb(machine_memory_gb()));
+    for (memory_gb, want) in [(Some(1), "1G".to_string()), (Some(3), "3G".to_string()), (Some(12), "12G".to_string()), (None, auto)] {
+        // A plain prefix: Ghidra's store must not sit under a dot folder, which tempdir()'s names are.
+        let d = tempfile::Builder::new().prefix("ghidra-heap").tempdir().unwrap();
+        let (launcher, record) = recording_launcher(d.path());
+        let cfg = Config {
+            analyze_headless: launcher,
+            java_home: None,
+            startup_timeout: Duration::from_secs(30),
+            store_dir: d.path().join("store"),
+            language_id: None,
+            compiler_spec: None,
+            memory_gb,
+        };
+        let _link = LinkGuard(cfg.store_dir.clone());
+        let (bytes, digest) = (b"not really a program", "cd".repeat(32));
+        let sha = craft_anything_evidence::sha256_hex(bytes);
+
+        // The analysis: nothing is saved yet, so the target is imported and analysed.
+        let err = analyse(&cfg, bytes, &sha, &digest, &|| false, &|_, _| {}).unwrap_err();
+        assert!(matches!(err, GhidraError::Launch(_)), "{memory_gb:?}: {err:?}");
+        let starts = recorded_starts(&record);
+        assert_eq!(starts.len(), 1, "{memory_gb:?}: {starts:?}");
+        assert!(starts[0].1.contains("-import"), "the analysis start: {starts:?}");
+        assert_eq!(starts[0].0, want, "{memory_gb:?}: the analysis");
+
+        // The bridge: the analysis is saved, so the program is opened and our script runs on it.
+        let project = project_cache_dir(&ghidra_root(&cfg.store_dir).unwrap(), &sha, &digest);
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join(ANALYSED_MARKER), "target").unwrap();
+        let Err(err) = Session::start(&cfg, bytes, &sha, &digest, &|| false, &|_, _| {}) else { panic!("the stand-in opens no bridge") };
+        assert!(!matches!(err, GhidraError::Cancelled), "{memory_gb:?}: {err:?}");
+        let starts = recorded_starts(&record);
+        assert_eq!(starts.len(), 2, "{memory_gb:?}: {starts:?}");
+        assert!(starts[1].1.contains("-process") && starts[1].1.contains(BRIDGE_SCRIPT_NAME), "the bridge start: {starts:?}");
+        assert_eq!(starts[1].0, want, "{memory_gb:?}: the bridge");
+    }
 }

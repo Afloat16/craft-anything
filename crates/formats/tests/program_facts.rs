@@ -4,7 +4,7 @@
 
 use craft_anything_formats::authenticode::{self, HashStatus};
 use craft_anything_formats::pe::{self, ImportKind};
-use craft_anything_formats::verify::Verified;
+use craft_anything_formats::verify::{Digest, Verified};
 use craft_anything_formats::{ai_model, elf, parse_binary};
 use craft_anything_testkit::program_facts as pf;
 
@@ -144,6 +144,7 @@ fn a_descriptor_loop_hits_the_row_cap() {
     d[sh + 16..sh + 20].copy_from_slice(&(extra.len() as u32).to_le_bytes());
     d[sh + 20..sh + 24].copy_from_slice(&extra_raw.to_le_bytes());
     // Fill .facts with descriptors that all use it (0x800 / 20 = 102 of them, 408,000 rows wanted).
+    set_dir(&mut d, 1, 0x6000, 102 * 20); // All descriptors belong to the declared import directory.
     let name = 0x6300u32;
     for i in 0..102 {
         let o = start + i * 20;
@@ -221,6 +222,35 @@ fn the_excluded_fields_do_not_change_the_hash() {
     assert_eq!(t.entries[0].signature.as_ref().unwrap().file_hash, HashStatus::Matches);
 }
 
+/// Windows hashes the headers, then each section in the order its data sits in the file, then the
+/// data after them. A gap between sections is left out, which a single run from the start of the
+/// file to the certificate table would hash.
+#[test]
+fn a_file_hash_leaves_out_a_gap_between_sections() {
+    let plain = pf::pe_facts();
+    let h = pe::headers(&plain).unwrap();
+    let last = h.sections.last().unwrap();
+    let at = usize::try_from(last.raw_offset).unwrap();
+    let gap = 0x200usize;
+    // Move the last section's data (and the certificate table after it) past a gap.
+    let mut moved = plain[..at].to_vec();
+    moved.resize(at + gap, 0);
+    moved.extend_from_slice(&plain[at..]);
+    let section_header = OPT + 240 + (h.sections.len() - 1) * 40;
+    moved[section_header + 20..section_header + 24].copy_from_slice(&((at + gap) as u32).to_le_bytes());
+    let signed = pf::pe_with_certificate(&moved, 2, b"gap");
+    let hash = |bytes: &[u8]| authenticode::file_hash(bytes, &pe::headers(bytes).unwrap(), Digest::Sha256).unwrap();
+    let expected = hash(&signed);
+    assert!(!expected.is_empty());
+    // A change in the gap leaves the hash as it was; a change in a section doesn't.
+    let mut gap_changed = signed.clone();
+    gap_changed[at] ^= 0xff;
+    assert_eq!(hash(&gap_changed), expected, "the gap between sections isn't hashed");
+    let mut section_changed = signed.clone();
+    section_changed[at + gap] ^= 0xff;
+    assert_ne!(hash(&section_changed), expected, "a section's data is hashed");
+}
+
 #[test]
 fn a_forged_block_fails_its_own_signature() {
     let plain = pf::pe_facts();
@@ -291,6 +321,139 @@ fn a_table_overlapping_the_headers_is_not_hashed() {
     set_dir(&mut d, 4, 8, size);
     let h = pe::headers(&d).unwrap();
     assert!(authenticode::file_hash(&d, &h, craft_anything_formats::verify::Digest::Sha256).is_err());
+}
+
+fn file_hash_status(d: &[u8]) -> HashStatus {
+    let t = authenticode::certificate_table(d, &pe::headers(d).unwrap()).unwrap();
+    t.entries[0].signature.as_ref().unwrap().file_hash
+}
+
+/// The test kit signs with its own implementation of the hash, so these compare the reader with
+/// a second one rather than with itself.
+#[test]
+fn bytes_between_sections_are_not_hashed() {
+    let d = pf::sign_pe(pf::pe_facts_with_gap(0x200, 0xcc));
+    let facts = pe::headers(&d).unwrap().sections.iter().find(|s| s.name == ".facts").unwrap().raw_offset as usize;
+    assert_eq!(file_hash_status(&d), HashStatus::Matches);
+    let mut changed = d.clone();
+    changed[facts - 1] ^= 0xff;
+    assert_eq!(file_hash_status(&changed), HashStatus::Matches, "nothing in the gap is hashed");
+    let mut changed = d.clone();
+    changed[facts] ^= 0xff;
+    assert_eq!(file_hash_status(&changed), HashStatus::Differs);
+}
+
+#[test]
+fn data_after_the_last_section_is_hashed() {
+    let mut plain = pf::pe_facts();
+    let end = plain.len();
+    plain.extend_from_slice(&[0xd0; 0x40]);
+    let d = pf::sign_pe(plain);
+    assert_eq!(file_hash_status(&d), HashStatus::Matches);
+    let mut changed = d.clone();
+    changed[end] ^= 0xff;
+    assert_eq!(file_hash_status(&changed), HashStatus::Differs, "data after the last section is signed too");
+}
+
+#[test]
+fn sections_are_hashed_in_file_order() {
+    // The section table lists `.rdata` before `.text`; the hash still starts with `.text`.
+    let mut plain = pf::pe_facts();
+    let sh = OPT + 240;
+    let text = plain[sh..sh + 40].to_vec();
+    plain.copy_within(sh + 40..sh + 80, sh);
+    plain[sh + 40..sh + 80].copy_from_slice(&text);
+    assert_eq!(file_hash_status(&pf::sign_pe(plain)), HashStatus::Matches);
+}
+
+#[test]
+fn sections_the_file_cannot_hold_are_not_hashed() {
+    let facts_size = OPT + 240 + 4 * 40 + 16;
+    let mut d = pf::signed_pe();
+    d[facts_size..facts_size + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(authenticode::file_hash(&d, &pe::headers(&d).unwrap(), Digest::Sha256).is_err());
+    // An empty section adds nothing, wherever it points.
+    let mut d = pf::signed_pe();
+    let data = OPT + 240 + 2 * 40;
+    d[data + 16..data + 24].copy_from_slice(&[0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff]);
+    assert!(authenticode::file_hash(&d, &pe::headers(&d).unwrap(), Digest::Sha256).is_ok());
+}
+
+/// [`pf::pe_facts`] with 4 KiB more header room and 97 section entries, the reader's limit plus
+/// one: `.facts` moves from the fifth entry to the 97th, and the entries between are empty.
+fn pe_facts_with_a_97th_section() -> Vec<u8> {
+    let pe = pf::pe_facts();
+    let (headers, shift) = (0x400usize, 0x1000usize);
+    let mut d = pe[..headers].to_vec();
+    d.resize(headers + shift, 0);
+    d.extend_from_slice(&pe[headers..]);
+    d[OPT + 60..OPT + 64].copy_from_slice(&((headers + shift) as u32).to_le_bytes());
+    let sh = OPT + 240;
+    for i in 0..5 {
+        let raw = sh + i * 40 + 20;
+        let offset = u32::from_le_bytes(d[raw..raw + 4].try_into().unwrap());
+        if offset != 0 {
+            d[raw..raw + 4].copy_from_slice(&(offset + shift as u32).to_le_bytes());
+        }
+    }
+    d.copy_within(sh + 4 * 40..sh + 5 * 40, sh + 96 * 40);
+    d[sh + 4 * 40..sh + 5 * 40].fill(0);
+    d[0x86..0x88].copy_from_slice(&97u16.to_le_bytes());
+    d
+}
+
+#[test]
+fn a_file_declaring_more_sections_than_were_read_is_not_hashed() {
+    // Signed over all 97 sections; the reader stops at 96 and would leave `.facts` out, so a
+    // genuine signature would read as changed.
+    let d = pf::sign_pe(pe_facts_with_a_97th_section());
+    let h = pe::headers(&d).unwrap();
+    assert_eq!(h.sections.len(), 96);
+    assert!(h.sections.iter().all(|s| s.name != ".facts"));
+    let why = authenticode::file_hash(&d, &h, Digest::Sha256).unwrap_err();
+    assert!(why.contains("declares 97 sections, but only 96 were read"), "{why}");
+}
+
+#[test]
+fn headers_smaller_than_their_own_fields_are_not_hashed() {
+    // `SizeOfHeaders` ends before the security directory entry it has to hold.
+    let mut d = pf::signed_pe();
+    d[OPT + 60..OPT + 64].copy_from_slice(&((DIRS + 4 * 8) as u32).to_le_bytes());
+    assert!(authenticode::file_hash(&d, &pe::headers(&d).unwrap(), Digest::Sha256).is_err());
+}
+
+/// A 4096-byte file with 512 bytes of headers, a certificate table of 64 bytes at 4032, and two
+/// sections that both start at 512: the first 2048 bytes long, the second `second` bytes long.
+/// Each section lies inside the file; only their sizes added up can be too large.
+fn sections_sharing_bytes(second: u32) -> Vec<u8> {
+    let mut d = pf::pe_facts();
+    d.resize(4096, 0);
+    d[OPT + 60..OPT + 64].copy_from_slice(&512u32.to_le_bytes());
+    d[0x86..0x88].copy_from_slice(&2u16.to_le_bytes());
+    for (i, size) in [2048, second].into_iter().enumerate() {
+        let s = OPT + 240 + i * 40;
+        d[s + 16..s + 20].copy_from_slice(&size.to_le_bytes());
+        d[s + 20..s + 24].copy_from_slice(&512u32.to_le_bytes());
+    }
+    set_dir(&mut d, 4, 4032, 64);
+    d
+}
+
+#[test]
+fn sections_that_reach_the_end_of_the_file_leave_no_room_for_the_table() {
+    // 512 + 2048 + 1536 = 4096, the file's length, with 64 bytes of table still to fit.
+    let d = sections_sharing_bytes(1536);
+    assert!(authenticode::file_hash(&d, &pe::headers(&d).unwrap(), Digest::Sha256).is_err());
+}
+
+#[test]
+fn sections_that_add_up_to_more_than_the_file_are_not_hashed() {
+    // 512 + 2048 + 2048 = 4608 bytes counted in a 4096-byte file.
+    let d = sections_sharing_bytes(2048);
+    assert!(authenticode::file_hash(&d, &pe::headers(&d).unwrap(), Digest::Sha256).is_err());
+    // With room for the table, the same shared bytes hash (twice, as the format's steps do).
+    let d = sections_sharing_bytes(1472);
+    assert!(authenticode::file_hash(&d, &pe::headers(&d).unwrap(), Digest::Sha256).is_ok());
 }
 
 #[test]

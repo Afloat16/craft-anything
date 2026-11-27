@@ -72,12 +72,14 @@ fn convert(ty: &str, key: &str, raw: &str) -> Result<Value, String> {
         "integer" => {
             let t = raw.trim();
             if let Some(h) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-                u64::from_str_radix(h, 16).map(|n| json!(n)).map_err(|_| format!("--{key} expects a number, got {raw:?}"))
+                // `from_str_radix` accepts a leading sign, so check the digits first.
+                let digits = !h.is_empty() && h.bytes().all(|b| b.is_ascii_hexdigit());
+                u64::from_str_radix(h, 16).ok().filter(|_| digits).map(|n| json!(n)).ok_or_else(|| format!("--{key} expects a number, got {raw:?}"))
             } else {
                 t.parse::<i64>().map(|n| json!(n)).map_err(|_| format!("--{key} expects a whole number, got {raw:?}"))
             }
         }
-        "number" => raw.trim().parse::<f64>().map(|n| json!(n)).map_err(|_| format!("--{key} expects a number, got {raw:?}")),
+        "number" => raw.trim().parse::<f64>().ok().filter(|n| n.is_finite()).map(|n| json!(n)).ok_or_else(|| format!("--{key} expects a number, got {raw:?}")),
         "boolean" => match raw.trim() {
             "true" | "yes" | "1" => Ok(json!(true)),
             "false" | "no" | "0" => Ok(json!(false)),
@@ -100,7 +102,8 @@ pub fn read_json_arg(raw: &str) -> Result<Value, String> {
             None => raw.to_string(),
         }
     };
-    serde_json::from_str(&text).map_err(|e| format!("params must be a JSON object: {e}"))
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    serde_json::from_str(text).map_err(|e| format!("params must be a JSON object: {e}"))
 }
 
 /// Most bytes of parameters taken from standard input.
@@ -300,7 +303,7 @@ pub fn help(spec: &ToolSpec, schema: &Value) -> String {
     }
     let own_format = props.contains_key("format");
     s.push_str(&format!(
-        "\nOutput:\n  --output-format                json, jsonl, md or text{}\n",
+        "\nOutput:\n  --output-format                json, jsonl, md, text, csv or tsv{}\n",
         if own_format { " (--format after the tool name is this tool's own option)" } else { " (--format works too)" }
     ));
     s
@@ -317,6 +320,31 @@ mod tests {
     }
     fn help(spec: &ToolSpec) -> String {
         super::help(spec, &(spec.input_schema)())
+    }
+
+    #[test]
+    fn integer_hex_rejects_sign() {
+        for bad in ["0x+10", "0x-10", "0x", "0x 10"] {
+            let e = super::convert("integer", "addr", bad).unwrap_err();
+            assert!(e.contains("expects a number"), "{bad}: {e}");
+        }
+        assert_eq!(super::convert("integer", "addr", "0x10").unwrap(), json!(16));
+    }
+
+    #[test]
+    fn number_rejects_non_finite() {
+        for raw in ["NaN", "inf", "-inf", "infinity"] {
+            let e = convert("number", "x", raw).expect_err(raw);
+            assert!(e.contains("expects a number"), "{e}");
+        }
+        assert_eq!(convert("number", "x", "1.5"), Ok(json!(1.5)));
+    }
+
+    #[test]
+    fn help_lists_csv_and_tsv_output_formats() {
+        let r = Registry::with_all_tools();
+        let h = help(r.get("core_journal_read").unwrap());
+        assert!(h.lines().any(|line| line.contains("--output-format") && line.contains("csv") && line.contains("tsv")), "{h}");
     }
 
     #[test]
@@ -411,10 +439,12 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("cany-cli-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let f = dir.join("p.json");
-        std::fs::write(&f, r#"{"question":"q?"}"#).unwrap();
         let r = Registry::with_all_tools();
-        let inv = parse(r.get("core_brief_write").unwrap(), &[format!("@{}", f.display())]).unwrap();
-        assert_eq!(inv.params["question"], "q?");
+        for contents in [r#"{"question":"q?"}"#, "\u{feff}{\"question\":\"q?\"}"] {
+            std::fs::write(&f, contents).unwrap();
+            let inv = parse(r.get("core_brief_write").unwrap(), &[format!("@{}", f.display())]).unwrap();
+            assert_eq!(inv.params["question"], "q?");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -1,9 +1,6 @@
 # Releasing Craft Anything
 
-The recipe is shared by every Crafting App: `release/playbook.md` in
-[craftrules](https://github.com/storytold/craftrules) (`../craftrules`), and the runbook for cutting
-one is `release/cut-a-release.md` there. That repo is private; you don't need it to follow this
-page. In short: a release is whatever is on the `release` branch. Pushing to it makes
+A release is whatever is on the `release` branch. Pushing to it makes
 `.github/workflows/release.yml` build, sign and package every platform and attach the files to a
 draft GitHub Release, which a maintainer publishes once every job is green. Signing needs the
 maintainers' certificates (secrets of the `release` environment, which only the `release` branch can read), so a fork's run produces unsigned packages.
@@ -111,6 +108,7 @@ Plus `SHA256SUMS.txt`.
 - **Fonts** are committed in `assets/fonts` (OFL-1.1). Release and CI builds also embed craft-fonts
   at the commit pinned in `release.yml` and `ci.yml` (`CRAFT_FONTS_DIR`, `CRAFT_FONTS_REQUIRED=1`),
   the fallbacks for Korean, Chinese, Japanese, Thai, Arabic, Hebrew, Devanagari and symbols; a
-  build without them shows those as boxes (#19). Every package ships all their licences
+  build without them shows those as boxes (#19). With `CRAFT_FONTS_REQUIRED=1` the build fails
+  when `CRAFT_FONTS_DIR` is missing or bad, so set both. Every package ships all their licences
   (`OFL-*.txt`, craft-fonts' as `OFL-<font>.txt`).
 - **The WiX UpgradeCode** `8F69A8B5-4384-479B-B3FF-93C5374BCA51` belongs to Craft Anything for good.

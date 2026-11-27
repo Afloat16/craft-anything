@@ -26,7 +26,7 @@ const MAX_STRING: usize = 4096;
 pub enum CodeLayout {
     /// 3.8 to 3.10: `co_nlocals` is stored, `co_qualname` isn't.
     Py38,
-    /// 3.11 to 3.14: `localsplus` tables, `co_qualname` and the exception table.
+    /// 3.11 to 3.15: `localsplus` tables, `co_qualname` and the exception table.
     Py311,
 }
 
@@ -68,6 +68,7 @@ pub const RELEASES: &[Release] = &[
     Release { version: "3.12", first: 3500, released: 3531, last: 3531, header: 16, layout: Some(CodeLayout::Py311) },
     Release { version: "3.13", first: 3550, released: 3571, last: 3571, header: 16, layout: Some(CodeLayout::Py311) },
     Release { version: "3.14", first: 3600, released: 3627, last: 3627, header: 16, layout: Some(CodeLayout::Py311) },
+    Release { version: "3.15", first: 3650, released: 3666, last: 3666, header: 16, layout: Some(CodeLayout::Py311) },
 ];
 
 impl Release {
@@ -80,6 +81,11 @@ impl Release {
 /// The release line a magic number belongs to.
 pub fn release_for_magic(magic: u16) -> Option<&'static Release> {
     RELEASES.iter().find(|r| (r.first..=r.last).contains(&magic))
+}
+
+/// Header length for a known magic number; unknown releases keep the modern 16-byte form.
+pub(crate) fn header_size(magic: u16) -> usize {
+    release_for_magic(magic).map_or(16, |release| release.header)
 }
 
 /// The release line called this ("3.12").
@@ -116,6 +122,8 @@ pub struct PycHeader {
     pub source_size: Option<u32>,
     /// The source hash in hex (hash-based files).
     pub source_hash: Option<String>,
+    /// Header features we do not understand; known fields and readable code are retained.
+    pub warnings: Vec<String>,
 }
 
 /// Read a `.pyc` header. Fails when the file isn't one.
@@ -132,7 +140,7 @@ pub fn parse_header(data: &[u8]) -> Result<PycHeader, FormatError> {
     let magic = u16::from_le_bytes([b0, b1]);
     let release = release_for_magic(magic);
     // An unknown number is newer than our table, and every recent release uses the 16-byte form.
-    let size = release.map_or(16, |r| r.header);
+    let size = header_size(magic);
     if data.len() < size {
         return Err(short());
     }
@@ -147,6 +155,7 @@ pub fn parse_header(data: &[u8]) -> Result<PycHeader, FormatError> {
         source_mtime: None,
         source_size: None,
         source_hash: None,
+        warnings: Vec::new(),
     };
     match size {
         8 => h.source_mtime = Some(word(4)?),
@@ -156,6 +165,10 @@ pub fn parse_header(data: &[u8]) -> Result<PycHeader, FormatError> {
         }
         _ => {
             let flags = word(4)?;
+            let unknown_flags = flags & !3;
+            if unknown_flags != 0 {
+                h.warnings.push(format!("undefined Python bytecode header flags: {unknown_flags:#x}"));
+            }
             h.flags = Some(flags);
             if flags & 1 == 0 {
                 h.source_mtime = Some(word(8)?);
@@ -370,7 +383,7 @@ impl<'a> Marshal<'a> {
                 let slot = self.reserve(flagged);
                 self.sequence(3, slot, depth)
             }
-            b'{' => self.dict(flagged, depth),
+            b'{' | b'}' => self.dict(flagged, depth),
             b'c' => self.code(flagged, depth),
             other => Err(bad(&format!("an unknown type code {other:#04x}"))),
         }
@@ -505,7 +518,7 @@ pub struct CodeObject {
     pub bytecode_size: usize,
     /// Names it refers to: globals, attributes, imports.
     pub names: Vec<String>,
-    /// Text among its constants, including inside constant tuples.
+    /// Text among its constants, including inside constant tuples and dictionaries.
     pub strings: Vec<String>,
     /// Functions and classes defined in it.
     pub children: Vec<CodeObject>,
@@ -531,12 +544,15 @@ impl Walk {
     fn string(&mut self, s: &str) -> Option<String> {
         let keep = (0..=MAX_STRING.min(s.len())).rev().find(|i| s.is_char_boundary(*i)).unwrap_or(0);
         let piece = s.get(..keep).unwrap_or("");
-        if self.text.saturating_add(piece.len()) > MAX_TEXT {
+        let shortened = keep < s.len();
+        self.cut |= shortened;
+        let bytes = piece.len() + if shortened { '…'.len_utf8() } else { 0 };
+        if self.text.saturating_add(bytes) > MAX_TEXT {
             self.cut = true;
             return None;
         }
-        self.text += piece.len();
-        Some(if keep < s.len() { format!("{piece}…") } else { piece.to_string() })
+        self.text += bytes;
+        Some(if shortened { format!("{piece}…") } else { piece.to_string() })
     }
 
     fn strings_in(&mut self, o: &Object, out: &mut Vec<String>, children: &mut Vec<CodeObject>) {
@@ -548,6 +564,12 @@ impl Walk {
             Value::Seq(items) => {
                 for item in items {
                     self.strings_in(item, out, children);
+                }
+            }
+            Value::Dict(items) => {
+                for (key, value) in items {
+                    self.strings_in(key, out, children);
+                    self.strings_in(value, out, children);
                 }
             }
             Value::Code(c) => match self.code(c) {
@@ -644,10 +666,11 @@ pub fn read_pyc(data: &[u8]) -> Result<PycFile, FormatError> {
 
 /// A `.pyc` around bare marshalled code: the magic number and a timestamp-style header of zeros.
 pub fn wrap_marshal(magic: u16, marshal: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(marshal.len().saturating_add(16));
+    let header = header_size(magic);
+    let mut out = Vec::with_capacity(marshal.len().saturating_add(header));
     out.extend(magic.to_le_bytes());
     out.extend([0x0d, 0x0a]);
-    out.extend([0u8; 12]);
+    out.resize(header, 0);
     out.extend(marshal);
     out
 }
@@ -706,6 +729,70 @@ mod tests {
     use super::*;
     use craft_anything_testkit::packed::{code_38, code_311, marshal as m, pyc};
 
+    fn python315_fixtures() -> serde_json::Value {
+        serde_json::from_str(include_str!("../tests/fixtures/python315/fixtures.json")).unwrap()
+    }
+
+    fn fixture_bytes(hex: &serde_json::Value) -> Vec<u8> {
+        let (pairs, remainder) = hex.as_str().unwrap().as_bytes().as_chunks::<2>();
+        assert!(remainder.is_empty());
+        pairs.iter().map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap()).collect()
+    }
+
+    #[test]
+    fn python315_compiler_metadata_and_frozen_constants_read() {
+        // CPython's compiler, marshal reader and CodeType fields provide the oracle. The
+        // generator never executes this code, and the frozen constants are explicitly added
+        // with CodeType.replace rather than claimed to be compiler-folded literals.
+        let fixtures = python315_fixtures();
+        for fixture in fixtures["files"].as_array().unwrap() {
+            let data = fixture_bytes(&fixture["hex"]);
+            let file = read_pyc(&data).unwrap();
+            let case = fixture["case"].as_str().unwrap();
+            assert_eq!(file.header.magic, fixture["magic"].as_u64().unwrap() as u16, "{case}");
+            assert_eq!((file.header.version, file.header.is_release), (Some("3.15"), true), "{case}");
+            assert_eq!(serde_json::to_value(file.header.invalidation).unwrap(), fixture["invalidation"], "{case}");
+            assert_eq!(file.code_missing, None, "{case}");
+            let code = file.code.unwrap();
+            assert!(!code.cut_short, "{case}");
+            assert_eq!(serde_json::to_value(code.root).unwrap(), fixtures["expected_code"][fixture["oracle"].as_str().unwrap()], "{case}");
+        }
+    }
+
+    #[test]
+    fn python315_frozen_dictionary_aliases_keep_reference_and_read_bounds() {
+        let fixtures = python315_fixtures();
+        let data = fixture_bytes(&fixtures["frozen_aliases_hex"]);
+        let value = read_value(&data, None).unwrap();
+        let Value::Seq(items) = &value.value else { panic!("not a tuple") };
+        assert_eq!(items.len(), 2);
+        assert!(Rc::ptr_eq(&items[0], &items[1]), "marshal references must keep the shared dictionary");
+        assert!(matches!(&items[0].value, Value::Dict(entries) if entries.len() == 2));
+        for end in 0..data.len() {
+            assert!(read_value(&data[..end], None).is_err(), "truncated at {end}");
+        }
+        let mut strings = Vec::new();
+        let mut children = Vec::new();
+        let mut walk = Walk { steps: MAX_WALK, text: MAX_TEXT, cut: false };
+        walk.strings_in(&value, &mut strings, &mut children);
+        assert!(walk.cut);
+        assert!(strings.is_empty(), "dictionary keys and values must respect the shared text budget");
+    }
+
+    #[test]
+    fn python315_prereleases_and_unknown_successor_remain_header_only() {
+        let fixtures = python315_fixtures();
+        let mut data = fixture_bytes(&fixtures["files"][0]["hex"]);
+        for magic in [3650u16, 3665, 3667] {
+            data[..2].copy_from_slice(&magic.to_le_bytes());
+            let file = read_pyc(&data).unwrap();
+            assert_eq!(file.header.version, (magic <= 3665).then_some("3.15"));
+            assert!(!file.header.is_release);
+            assert!(file.code.is_none());
+            assert!(file.code_missing.is_some());
+        }
+    }
+
     fn sample_38() -> Vec<u8> {
         let inner = code_38("helper", "app.py", 7, &["os", "path"], &["inner text"], &[]);
         code_38("<module>", "app.py", 1, &["helper"], &["module doc"], &[inner])
@@ -735,6 +822,70 @@ mod tests {
         assert!(release_for_magic(9999).is_none());
     }
 
+    #[test]
+    fn undefined_modern_header_flags_warn_without_losing_code() {
+        for (magic, body) in [(3413, sample_38()), (3531, sample_311())] {
+            for unknown in (2..32).map(|bit| 1u32 << bit).chain([!3u32]) {
+                for defined in 0..4 {
+                    let flags = unknown | defined;
+                    let data = pyc(magic, flags, [0; 8], &body);
+                    let header = parse_header(&data).unwrap();
+                    let file = read_pyc(&data).unwrap();
+                    let known = read_pyc(&pyc(magic, defined, [0; 8], &body)).unwrap();
+                    assert_eq!(header.flags, Some(flags));
+                    assert_eq!(header.invalidation, known.header.invalidation);
+                    assert_eq!(header.source_mtime, known.header.source_mtime);
+                    assert_eq!(header.source_size, known.header.source_size);
+                    assert_eq!(header.source_hash, known.header.source_hash);
+                    assert_eq!(file.code, known.code);
+                    assert_eq!(file.code_missing, None);
+                    let json = serde_json::to_value(&header).unwrap();
+                    assert_eq!(json["warnings"], serde_json::json!([format!("undefined Python bytecode header flags: {unknown:#x}")]));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_header_flags_preserve_header_only_reports() {
+        for magic in [3394, 4000] {
+            let file = read_pyc(&pyc(magic, 0x8000_0003, [0xab; 8], b"")).unwrap();
+            assert_eq!(file.header.flags, Some(0x8000_0003));
+            assert_eq!(file.header.invalidation, Invalidation::CheckedHash);
+            assert_eq!(file.header.source_hash.as_deref(), Some("abababababababab"));
+            assert!(file.code.is_none());
+            assert!(file.code_missing.is_some());
+            let json = serde_json::to_value(file.header).unwrap();
+            assert_eq!(json["warnings"], serde_json::json!(["undefined Python bytecode header flags: 0x80000000"]));
+        }
+    }
+
+    #[test]
+    fn defined_header_flags_keep_their_invalidation_mode() {
+        for (flags, invalidation) in
+            [(0, Invalidation::Timestamp), (1, Invalidation::UncheckedHash), (2, Invalidation::Timestamp), (3, Invalidation::CheckedHash)]
+        {
+            let data = pyc(3531, flags, [0; 8], &sample_311());
+            let file = read_pyc(&data).unwrap();
+            assert_eq!(file.header.invalidation, invalidation);
+            assert!(file.header.warnings.is_empty());
+            assert!(file.code.is_some());
+        }
+    }
+
+    #[test]
+    fn legacy_header_timestamps_are_not_flag_words() {
+        for magic in [62211u16, 3379] {
+            let mut data = magic.to_le_bytes().to_vec();
+            data.extend([0x0d, 0x0a]);
+            data.extend(u32::MAX.to_le_bytes());
+            data.extend([0; 4]);
+            let header = parse_header(&data).unwrap();
+            assert_eq!(header.flags, None);
+            assert_eq!(header.source_mtime, Some(u32::MAX));
+            assert!(header.warnings.is_empty());
+        }
+    }
     #[test]
     fn every_header_form_reads() {
         let new = pyc(3531, 0, [1, 0, 0, 0, 2, 0, 0, 0], b"");
@@ -944,6 +1095,44 @@ mod tests {
         assert!(read_value(&[0x7e], None).is_err());
     }
 
+    #[test]
+    fn shortened_constants_report_a_partial_code_inventory() {
+        for text in ["x".repeat(MAX_STRING + 1), "界".repeat(MAX_STRING / 3 + 1)] {
+            let body = code_311("module", "module", "app.py", 1, &[], &[&text], &[]);
+            let read = read_code(&body, CodeLayout::Py311).unwrap();
+            assert!(read.cut_short);
+            let kept = &read.root.strings[0];
+            assert!(kept.ends_with('…'));
+            assert!(!kept.contains('\u{fffd}'));
+        }
+    }
+
+    #[test]
+    fn shortened_name_fields_report_a_partial_code_inventory() {
+        let long = "n".repeat(MAX_STRING + 1);
+        for (name, file, qualname) in [(&long[..], "app.py", "module"), ("module", &long[..], "module"), ("module", "app.py", &long[..])] {
+            let body = code_311(name, qualname, file, 1, &[], &[], &[]);
+            assert!(read_code(&body, CodeLayout::Py311).unwrap().cut_short);
+        }
+        let short = read_code(&sample_311(), CodeLayout::Py311).unwrap();
+        assert!(!short.cut_short);
+    }
+
+    #[test]
+    fn retained_text_budget_includes_the_truncation_marker() {
+        let long = "x".repeat(MAX_STRING + 1);
+        let mut too_small = Walk { steps: MAX_WALK, text: MAX_TEXT - MAX_STRING, cut: false };
+        assert!(too_small.string(&long).is_none());
+        assert!(too_small.cut);
+        let mut exact = Walk { steps: MAX_WALK, text: MAX_TEXT - MAX_STRING - '…'.len_utf8(), cut: false };
+        assert!(exact.string(&long).unwrap().ends_with('…'));
+        assert_eq!(exact.text, MAX_TEXT);
+        assert!(exact.cut);
+        let mut whole = Walk { steps: MAX_WALK, text: MAX_TEXT - 2, cut: false };
+        assert_eq!(whole.string("ok").as_deref(), Some("ok"));
+        assert_eq!(whole.text, MAX_TEXT);
+        assert!(!whole.cut);
+    }
     #[test]
     fn long_constants_are_cut_on_a_character_boundary() {
         let long = "é".repeat(MAX_STRING);

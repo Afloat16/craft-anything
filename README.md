@@ -14,7 +14,7 @@
 <h1 align="center">Craft Anything</h1>
 
 <p align="center">
-  <b>English</b> · <a href="README.ja.md">日本語</a> · <a href="README.zh.md">简体中文</a> · <a href="README.zh-hant.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.vi.md">Tiếng Việt</a> · <a href="README.pt.md">Português</a>
+  <b>English</b> · <a href="README.ja.md">日本語</a> · <a href="README.zh.md">简体中文</a> · <a href="README.zh-hant.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.vi.md">Tiếng Việt</a> · <a href="README.pt.md">Português</a> · <a href="README.th.md">ไทย</a> · <a href="README.tr.md">Türkçe</a>
 </p>
 
 <p align="center">
@@ -28,6 +28,9 @@
   <img alt="macOS · Windows · Linux · FreeBSD · Web" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux%20%C2%B7%20FreeBSD%20%C2%B7%20Web-native-2d81ff?style=flat-square">
   <img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-3a3a3a?style=flat-square">
   <img alt="Status: early alpha" src="https://img.shields.io/badge/status-early%20alpha-d69e2e?style=flat-square">
+  <br>
+  <a href="https://sonarcloud.io/project/overview?id=storytold_craft-anything"><img alt="Scanned by SonarCloud" src="https://img.shields.io/badge/Scanned_by-SonarCloud-4b9fd5?style=flat-square&logo=sonarqubecloud&logoColor=white"></a>
+  <a href="https://coderabbit.ai"><img alt="Reviewed by CodeRabbit" src="https://img.shields.io/coderabbit/prs/github/storytold/craft-anything?style=flat-square&label=Reviewed%20by%20CodeRabbit&logo=coderabbit"></a>
 </p>
 
 <p align="center">
@@ -161,14 +164,12 @@ Anthropic. See [docs/claude-code.md](docs/claude-code.md) for how and why. A Cod
 exists but hasn't been verified on a real install yet. **GitHub Copilot** can use your installed
 Copilot CLI through ACP: sign in separately with `copilot login`. **Grok Build** can use your
 installed `grok` program through ACP (`grok agent stdio`): sign in separately with `grok login`.
-See [docs/grok.md](docs/grok.md). Other agents that speak ACP (Gemini CLI,
-Qwen Code, opencode, goose, Hermes, Maki) can be switched to it per backend; of those, only Maki has
-been run live. Anthropic, OpenAI, OpenRouter, xAI (Grok, when `XAI_API_KEY` is set) and local
-Copilot CLI through ACP: sign in separately with `copilot login`. Other agents that speak ACP (Gemini CLI,
+See [docs/grok.md](docs/grok.md). **Kimi Code CLI** can use your installed `kimi` program through
+ACP (`kimi acp`): sign in separately with `kimi login`; it hasn't been run live yet. Other agents that speak ACP (Gemini CLI,
 Qwen Code, opencode, goose, Hermes, Maki, Devin) can be switched to it per backend; of those, Maki
 and Devin have been run live (Devin authenticates with the backend's stored key — its own CLI
-sign-in doesn't count over ACP). Anthropic, OpenAI, OpenRouter and local
-OpenAI-compatible servers are available for questions and analysis (Settings → AI).
+sign-in doesn't count over ACP). Anthropic, OpenAI, OpenRouter, xAI (Grok, when `XAI_API_KEY` is
+set) and local OpenAI-compatible servers are available for questions and analysis (Settings → AI).
 
 ## Built for agents
 
@@ -200,7 +201,7 @@ Requires Rust **1.97 or newer** (a dependency needs it; `rustup update`). On Deb
 the desktop app also needs:
 
 ```sh
-sudo apt-get install libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev
+sudo apt-get install build-essential libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev
 ```
 
 Then:
@@ -239,7 +240,7 @@ only takes it off the list.
 > **Status:** Craft Anything is in early alpha. What works today, what is partial and what's next:
 >
 > - **Works today:** the desktop app (Simple and Advanced), the CLI and the MCP server; the
->   Study → Build → Check → Refine workflow for websites, apps and games with Claude Code as the
+>   Study → Build → Check → Ready workflow for websites, apps and games with Claude Code as the
 >   builder; website checks at three screen widths; game rebuilds in Unity, Unreal or Godot; Deep
 >   mode with Ghidra; generated pictures and 3D models (opt-in, your own fal.ai key); plugins (MCP
 >   servers, and WASM components in builds with the `wasm-plugins` option).
@@ -278,7 +279,6 @@ On GitHub, the [latest release](https://github.com/storytold/craft-anything/rele
 |---|---|---|
 | x64 (64-bit Intel/AMD) | `craft-anything-<ver>-windows-x64.msi` | `craft-anything-<ver>-windows-x64-portable.zip` |
 | arm64 (Snapdragon and other ARM PCs) | `craft-anything-<ver>-windows-arm64.msi` | `craft-anything-<ver>-windows-arm64-portable.zip` |
-| x86 (32-bit) | `craft-anything-<ver>-windows-x86.msi` | `craft-anything-<ver>-windows-x86-portable.zip` |
 
 Installers and executables are code-signed. The portable zip keeps its settings next to the app.
 
@@ -344,7 +344,7 @@ run the file; report it with the output and the release tag.
 | Fedora/RHEL/openSUSE | `craft-anything-<ver>-linux-x86_64.rpm` | `craft-anything-<ver>-linux-aarch64.rpm` | |
 | Tarball | `craft-anything-<ver>-linux-x86_64.tar.gz` | `craft-anything-<ver>-linux-aarch64.tar.gz` | Unpack anywhere |
 
-RISC-V (riscv64): `craft-anything-<ver>-linux-riscv64.tar.gz`, a tarball only.
+RISC-V (riscv64) builds are available as `craft-anything-<ver>-linux-riscv64.tar.gz`, `craft-anything-<ver>-linux-riscv64.deb`, and `craft-anything-<ver>-linux-riscv64.rpm`.
 
 The AppImage carries the CLI too: run `<AppImage> --cli <command>` (for example
 `<AppImage> --cli mcp` for an MCP client), or make a link to the AppImage named
@@ -355,6 +355,7 @@ The AppImage carries the CLI too: run `<AppImage> --cli <command>` (for example
 | Build | File |
 |---|---|
 | x86_64 | `craft-anything-<ver>-freebsd-x86_64.tar.gz` |
+| aarch64 (ARM64) | `craft-anything-<ver>-freebsd-aarch64.tar.gz` |
 
 ### Web (WebAssembly)
 

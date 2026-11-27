@@ -17,7 +17,7 @@ use craft_anything_engines::game::{self, Builder, Inventory};
 use craft_anything_engines::ghidra::{self, get};
 use egui::{RichText, Ui, Vec2};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -118,8 +118,10 @@ impl CraftApp {
 /// Getting Ghidra for Deep mode: asked first, then downloaded, checked and set up in the background.
 #[derive(Debug, Default)]
 pub struct GhidraFlow {
-    /// Whether Ghidra was found; `None` until looked for again (after a settings change or install).
-    pub ready: Option<bool>,
+    /// Where Ghidra's launcher was found, or that it wasn't; `None` until looked for again (after
+    /// a settings change or install). Looking searches folders and may read a start script, so
+    /// it isn't done while drawing.
+    pub found: Option<Option<PathBuf>>,
     /// The download running, as a job.
     pub job: Option<u64>,
     /// The project to start once Ghidra is ready (or the person goes on without it): the draft
@@ -130,8 +132,13 @@ pub struct GhidraFlow {
 impl CraftApp {
     /// Ghidra is here for Deep mode to use (looked up once, then remembered).
     pub fn ghidra_ready(&mut self) -> bool {
+        self.ghidra_found().is_some()
+    }
+
+    /// Ghidra's launcher, where Deep mode would run it (looked up once, then remembered).
+    pub fn ghidra_found(&mut self) -> Option<&Path> {
         let settings = &self.settings;
-        *self.ghidra.ready.get_or_insert_with(|| settings.ghidra_launcher().is_some())
+        self.ghidra.found.get_or_insert_with(|| settings.ghidra_launcher()).as_deref()
     }
 
     /// Deep mode is on, but it can't use Ghidra yet.
@@ -192,7 +199,7 @@ pub fn deep_needed(app: &mut CraftApp, ui: &mut Ui) {
 /// [`deep_needed`] as a dialog, for a look inside asked for anywhere else.
 pub fn deep_modal(app: &mut CraftApp, ui: &mut Ui, close: &mut bool) {
     deep_needed(app, ui);
-    ui.add_space(4.0);
+    ui.add_space(theme::space::XS);
     ui.vertical_centered(|ui| {
         if widgets::secondary(ui, None, "Not now").clicked() {
             *close = true;
@@ -209,7 +216,7 @@ pub fn ghidra_modal(app: &mut CraftApp, ui: &mut Ui, close: &mut bool) {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::splat(48.0), egui::Sense::hover());
         ui.painter().rect_filled(rect, t.radius, t.accent_soft);
-        icons::paint(ui, rect, if ready { "check" } else { "microscope" }, 24.0, t.accent_ink);
+        icons::paint(ui, rect, if ready { "check" } else { "microscope" }, theme::icon::XL, t.accent_ink);
         ui.vertical(|ui| {
             let title = if ready {
                 "Ghidra is ready"
@@ -224,14 +231,15 @@ pub fn ghidra_modal(app: &mut CraftApp, ui: &mut Ui, close: &mut bool) {
             );
         });
     });
-    ui.add_space(12.0);
-    let body = |ui: &mut Ui, text: String| ui.add(egui::Label::new(RichText::new(text).size(theme::BODY)).wrap());
+    ui.add_space(theme::space::MD);
+    let body =
+        |ui: &mut Ui, text: String| ui.add(egui::Label::new(RichText::new(text).size(theme::BODY).line_height(Some(theme::leading(theme::BODY)))).wrap());
     let then = if app.ghidra.start_after.is_some() { tr("Your project starts as soon as it's done.") } else { String::new() };
     if ready {
         body(ui, tr("Deep mode now decompiles with Ghidra. The first look at a large program can take several minutes."));
     } else if let Some((fraction, message)) = &downloading {
         progress_bar(ui, *fraction, message);
-        ui.add_space(6.0);
+        ui.add_space(theme::space::SM);
         body(
             ui,
             format!("{} {then}", tr("This keeps going in the background, and each download is checked against its publisher's checksum before it's used.")),
@@ -253,7 +261,7 @@ pub fn ghidra_modal(app: &mut CraftApp, ui: &mut Ui, close: &mut bool) {
     if !ready && downloading.is_none() {
         body(ui, tr("Without it, Deep mode uses Craft Anything's own decompiler, which is rougher."));
     }
-    ui.add_space(14.0);
+    ui.add_space(theme::space::LG);
     ui.horizontal(|ui| {
         if ready {
             let start = app.ghidra.start_after.is_some();
@@ -288,7 +296,7 @@ pub fn ghidra_modal(app: &mut CraftApp, ui: &mut Ui, close: &mut bool) {
 
 /// The memory the person set for Ghidra (GB), or `None` for the automatic amount.
 pub fn ghidra_memory(app: &CraftApp) -> Option<u64> {
-    app.settings.engines.ghidra.memory_gb.map(|g| g.clamp(*ghidra::HEAP_GB.start(), *ghidra::HEAP_GB.end()))
+    app.settings.engines.ghidra.memory_gb.map(|g| g.clamp(*ghidra::SET_HEAP_GB.start(), *ghidra::SET_HEAP_GB.end()))
 }
 
 /// "Ghidra will use …": the automatic amount in words, or the set one.
@@ -323,12 +331,12 @@ pub fn ghidra_memory_setting(app: &mut CraftApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let set = ghidra_memory(app);
     ui.vertical(|ui| {
-        if let Some(i) = widgets::segmented(ui, &["Automatic", "Custom"], usize::from(set.is_some()), 30.0) {
+        if let Some(i) = widgets::segmented(ui, &["Automatic", "Custom"], usize::from(set.is_some()), theme::ControlSize::Medium) {
             // Custom starts from what a program of a few hundred MB wants.
             app.settings.engines.ghidra.memory_gb = (i == 1).then(|| ghidra::suggested_heap_gb(500 << 20));
             app.settings_changed();
         }
-        ui.add_space(6.0);
+        ui.add_space(theme::space::SM);
         match set {
             None => {
                 let line = trf("Half of this computer's memory, up to {gb} GB.", &[("gb", &ghidra::HEAP_GB.end().to_string())]);
@@ -341,7 +349,7 @@ pub fn ghidra_memory_setting(app: &mut CraftApp, ui: &mut Ui) {
                         ui.spacing_mut().slider_width = 180.0;
                         ui.visuals_mut().widgets.inactive.bg_fill = t.field_border;
                         ui.visuals_mut().selection.bg_fill = t.accent;
-                        ui.add(egui::Slider::new(&mut gb, ghidra::HEAP_GB).suffix(" GB").trailing_fill(true))
+                        ui.add(egui::Slider::new(&mut gb, ghidra::SET_HEAP_GB).suffix(" GB").trailing_fill(true))
                     })
                     .inner;
                 let r = widgets::named(r, "Memory for Ghidra");
@@ -363,8 +371,7 @@ pub fn ghidra_status(app: &mut CraftApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     if let Some((fraction, message)) = app.ghidra_download() {
         progress_bar(ui, fraction, &message);
-    } else if app.ghidra_ready() {
-        let at = app.settings.ghidra_launcher().map(|p| p.display().to_string()).unwrap_or_default();
+    } else if let Some(at) = app.ghidra_found().map(|p| p.display().to_string()) {
         widgets::pill(ui, "Installed", t.success, t.raised).on_hover_text(at);
     } else {
         ui.horizontal(|ui| {
@@ -438,14 +445,22 @@ impl CraftApp {
 fn key_field(app: &mut CraftApp, ui: &mut Ui, provider: &dyn AssetProvider, save: &str) -> Option<String> {
     let t = Tokens::get(ui.ctx());
     let mut out = None;
-    ui.horizontal(|ui| {
+    let frame = widgets::text_field_frame_compact(&t);
+    let margin = frame.total_margin().sum().x;
+    let available = ui.available_width();
+    let width = (available - margin).clamp(0.0, 320.0);
+    let size = theme::ControlSize::Medium;
+    let button_width = widgets::label_galley(ui, &tr(save), size.text(), t.text).size().x + 2.0 * size.pad_x();
+    // TextEdit's desired width includes its frame; don't count those margins twice.
+    let narrow = width + ui.spacing().item_spacing.x + button_width > available;
+    let add = |ui: &mut Ui| {
         let key = app.key_inputs.entry(provider.id().into()).or_default();
         let r = ui.add(
             egui::TextEdit::singleline(key)
                 .password(true)
                 .hint_text(trf("Paste your {name} key", &[("name", provider.name())]))
-                .desired_width(320.0)
-                .frame(widgets::text_field_frame_compact(&t)),
+                .desired_width(width)
+                .frame(frame),
         );
         widgets::named(r, &trf("{name} key", &[("name", provider.name())]));
         let k = key.trim().to_string();
@@ -453,7 +468,12 @@ fn key_field(app: &mut CraftApp, ui: &mut Ui, provider: &dyn AssetProvider, save
             key.clear();
             out = Some(k);
         }
-    });
+    };
+    if narrow {
+        ui.vertical(add);
+    } else {
+        ui.horizontal(add);
+    }
     out
 }
 
@@ -474,12 +494,11 @@ pub fn assets_toggle(app: &mut CraftApp, ui: &mut Ui, mut on: bool) {
             &[("model", &p.model), ("picture", &p.picture)],
         )
     };
-    ui.horizontal_wrapped(|ui| {
-        ui.label(RichText::new(note).color(if no_key { t.warning } else { t.text_dim }).size(theme::SMALL));
-        if no_key && widgets::link(ui, "Add a fal.ai key").clicked() {
-            app.state.modal = Some(Modal::Assets);
-        }
-    });
+    let ink = if no_key { t.warning } else { t.text_faint };
+    ui.add(egui::Label::new(RichText::new(note).color(ink).size(theme::CAPTION).line_height(Some(theme::leading(theme::CAPTION)))).wrap());
+    if no_key && widgets::link(ui, "Add a fal.ai key").clicked() {
+        app.state.modal = Some(Modal::Assets);
+    }
 }
 
 /// Asks for a fal.ai key when generated assets are turned on without one.
@@ -489,13 +508,13 @@ pub fn assets_modal(app: &mut CraftApp, ui: &mut Ui, close: &mut bool) {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::splat(48.0), egui::Sense::hover());
         ui.painter().rect_filled(rect, t.radius, t.accent_soft);
-        icons::paint(ui, rect, "boxes", 24.0, t.accent_ink);
+        icons::paint(ui, rect, "boxes", theme::icon::XL, t.accent_ink);
         ui.vertical(|ui| {
             ui.label(theme::heading(tr("Your fal.ai key"), theme::SECTION));
             ui.label(RichText::new(tr("Generated pictures and 3D models are made with fal.ai.")).color(t.text_dim));
         });
     });
-    ui.add_space(12.0);
+    ui.add_space(theme::space::MD);
     ui.add(
         egui::Label::new(
             RichText::new({
@@ -509,15 +528,15 @@ pub fn assets_modal(app: &mut CraftApp, ui: &mut Ui, close: &mut bool) {
         )
         .wrap(),
     );
-    ui.add_space(10.0);
+    ui.add_space(theme::space::MD);
     let fal = fal::Fal::default();
     keys_link(ui, &fal);
-    ui.add_space(8.0);
+    ui.add_space(theme::space::SM);
     if let Some(key) = key_field(app, ui, &fal, "Save") {
         *close = true;
         app.save_asset_key(fal.id().into(), key);
     }
-    ui.add_space(14.0);
+    ui.add_space(theme::space::LG);
     if widgets::secondary(ui, None, "Not now").clicked() {
         *close = true;
         app.set_generate_assets(false);
@@ -575,7 +594,7 @@ pub fn assets_settings(app: &mut CraftApp, ui: &mut Ui) {
     );
     let all = AssetProviders::built_in();
     for provider in all.ids().into_iter().filter_map(|id| all.get(id)) {
-        ui.add_space(6.0);
+        ui.add_space(theme::space::SM);
         ui.label(RichText::new(provider.name()).size(theme::SMALL));
         let stored = app.asset_keys.as_ref().and_then(|k| k.get(provider.id()).copied());
         ui.push_id(provider.id(), |ui| {
@@ -618,7 +637,7 @@ pub fn build_with(app: &mut CraftApp, ui: &mut Ui) {
     let b = chosen(&app.kinds, &app.state.make);
     if let Some(f) = app.state.make.found.clone() {
         ui.horizontal_wrapped(|ui| {
-            icons::show(ui, "puzzle", 16.0, t.accent_ink);
+            icons::show(ui, "puzzle", theme::icon::MD, t.accent_ink);
             ui.label(RichText::new(trf("Made with {engine}", &[("engine", &f.label())])).font(theme::semibold(theme::BODY)));
         });
         if !matches!(f.engine, game::Made::Unity | game::Made::Unreal | game::Made::Godot) {
@@ -628,24 +647,24 @@ pub fn build_with(app: &mut CraftApp, ui: &mut Ui) {
                     .size(theme::SMALL),
             );
         }
-        ui.add_space(8.0);
+        ui.add_space(theme::space::SM);
     }
     ui.horizontal(|ui| {
         ui.label(RichText::new(tr("Build with")).size(theme::BODY).color(t.text_dim));
         let names: Vec<&str> = Builder::ALL.iter().map(|b| b.name()).collect();
         // Nothing is selected while the request names another way to build.
         let sel = b.and_then(|b| Builder::ALL.iter().position(|x| *x == b)).unwrap_or(usize::MAX);
-        if let Some(i) = widgets::segmented(ui, &names, sel, 32.0) {
+        if let Some(i) = widgets::segmented(ui, &names, sel, theme::ControlSize::Medium) {
             app.state.make.builder = Builder::ALL.get(i).copied();
         }
     });
-    ui.add_space(6.0);
+    ui.add_space(theme::space::SM);
     match b {
         Some(b) => status_line(app, ui, b, true),
         None => {
             let named = app.kinds.named(&app.state.make.request, &crate::make::resolve_target(&app.state.make)).unwrap_or_default();
             ui.horizontal_wrapped(|ui| {
-                icons::show(ui, "check", 16.0, t.success);
+                icons::show(ui, "check", theme::icon::MD, t.success);
                 ui.label(
                     RichText::new(trf("Built with {stack}, as you asked, so no game engine is needed.", &[("stack", named)]))
                         .color(t.text_dim)
@@ -688,17 +707,17 @@ fn status_line(app: &mut CraftApp, ui: &mut Ui, b: Builder, offer: bool) {
     let inv = app.game_engines.clone();
     ui.horizontal_wrapped(|ui| match &inv {
         None => {
-            ui.add(crate::widgets::Spinner::new().size(14.0).color(t.accent));
+            ui.add(crate::widgets::Spinner::new().size(theme::icon::SM).color(t.accent));
             ui.label(RichText::new(tr("Looking for game engines on this computer…")).color(t.text_dim).size(theme::SMALL));
         }
         Some(inv) if inv.ready(b) => {
-            icons::show(ui, "check", 16.0, t.success);
+            icons::show(ui, "check", theme::icon::MD, t.success);
             let v = inv.best(b).map(|i| i.version.clone()).unwrap_or_default();
             let what = if v.is_empty() { b.name().to_string() } else { format!("{} {v}", b.name()) };
             ui.label(RichText::new(trf("Ready: {what} is on this computer.", &[("what", &what)])).color(t.text_dim).size(theme::SMALL));
         }
         Some(inv) => {
-            icons::show(ui, "download", 16.0, t.warning);
+            icons::show(ui, "download", theme::icon::MD, t.warning);
             let text = if b == Builder::Unreal && inv.best(b).is_some() {
                 tr(unreal_tools_missing(std::env::consts::OS))
             } else {
@@ -802,7 +821,7 @@ pub fn modal(app: &mut CraftApp, ui: &mut Ui, b: Builder, close: &mut bool) {
     ui.set_width(520.0);
     let Some(inv) = app.game_engines.clone() else {
         ui.horizontal(|ui| {
-            ui.add(crate::widgets::Spinner::new().size(16.0).color(t.accent));
+            ui.add(crate::widgets::Spinner::new().size(theme::icon::MD).color(t.accent));
             ui.label(tr("Looking for game engines on this computer…"));
         });
         app.refresh_game_engines();
@@ -818,14 +837,14 @@ pub fn modal(app: &mut CraftApp, ui: &mut Ui, b: Builder, close: &mut bool) {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::splat(48.0), egui::Sense::hover());
         ui.painter().rect_filled(rect, t.radius, t.accent_soft);
-        icons::paint(ui, rect, if ready { "check" } else { "download" }, 24.0, t.accent_ink);
+        icons::paint(ui, rect, if ready { "check" } else { "download" }, theme::icon::XL, t.accent_ink);
         ui.vertical(|ui| {
             let title = if ready { trf("{name} is ready", &[("name", b.name())]) } else { trf("Get {name}", &[("name", b.name())]) };
             ui.label(theme::heading(title, theme::SECTION));
             ui.label(RichText::new(tr(b.needs())).color(t.text_dim));
         });
     });
-    ui.add_space(16.0);
+    ui.add_space(theme::space::LG);
 
     let list = steps(app, b, &inv);
     let current = list.iter().position(|s| !s.done);
@@ -836,20 +855,22 @@ pub fn modal(app: &mut CraftApp, ui: &mut Ui, b: Builder, close: &mut bool) {
             let (r, _) = ui.allocate_exact_size(Vec2::splat(28.0), egui::Sense::hover());
             if s.done {
                 ui.painter().rect_filled(r, r.width() / 2.0, t.success);
-                icons::paint(ui, r, "check", 16.0, t.canvas);
+                icons::paint(ui, r, "check", theme::icon::MD, t.canvas);
             } else {
                 ui.painter().rect_stroke(r, r.width() / 2.0, egui::Stroke::new(1.0, if now { t.accent } else { t.field_border }), egui::StrokeKind::Inside);
-                let g = widgets::label_galley(ui, &(i + 1).to_string(), 12.0, t.text);
+                let g = widgets::label_galley(ui, &(i + 1).to_string(), theme::LABEL, t.text);
                 ui.painter().galley_with_override_text_color(r.center() - g.size() / 2.0, g, if now { t.text } else { t.text_faint });
             }
-            ui.add_space(4.0);
+            ui.add_space(theme::space::XS);
             ui.vertical(|ui| {
                 ui.label(RichText::new(&s.title).font(theme::semibold(theme::BODY)).color(if s.done || now { t.text } else { t.text_dim }));
                 if now || !s.done {
-                    ui.add(egui::Label::new(RichText::new(&s.detail).color(t.text_dim).size(theme::SMALL)).wrap());
+                    ui.add(
+                        egui::Label::new(RichText::new(&s.detail).color(t.text_dim).size(theme::SMALL).line_height(Some(theme::leading(theme::SMALL)))).wrap(),
+                    );
                 }
                 if now {
-                    ui.add_space(8.0);
+                    ui.add_space(theme::space::SM);
                     if let Some(a) = &s.action {
                         let downloading = app.engine_download(b);
                         match (a, downloading) {
@@ -871,7 +892,7 @@ pub fn modal(app: &mut CraftApp, ui: &mut Ui, b: Builder, close: &mut bool) {
                                 }
                             }
                         }
-                        ui.add_space(4.0);
+                        ui.add_space(theme::space::XS);
                     }
                     if !s.done && current.is_some() && i > 0 {
                         ui.label(RichText::new(tr("This updates by itself when it's done.")).color(t.text_faint).size(theme::SMALL));
@@ -879,7 +900,7 @@ pub fn modal(app: &mut CraftApp, ui: &mut Ui, b: Builder, close: &mut bool) {
                 }
             });
         });
-        ui.add_space(12.0);
+        ui.add_space(theme::space::MD);
     }
 
     match act {
@@ -889,7 +910,7 @@ pub fn modal(app: &mut CraftApp, ui: &mut Ui, b: Builder, close: &mut bool) {
         None => {}
     }
 
-    ui.add_space(4.0);
+    ui.add_space(theme::space::XS);
     ui.horizontal(|ui| {
         if ready {
             let label = if app.engine_flow.start_after { "Start building" } else { "Done" };
@@ -933,9 +954,9 @@ pub fn progress_bar(ui: &mut Ui, fraction: Option<f32>, message: &str) {
         }
     };
     ui.painter().rect_filled(egui::Rect::from_x_y_ranges(bar.left() + bar.width() * from..=bar.left() + bar.width() * to, bar.y_range()), 3.0, t.accent);
-    ui.add_space(4.0);
+    ui.add_space(theme::space::XS);
     let pct = fraction.map(|f| format!("{:.0}%  ·  ", f * 100.0)).unwrap_or_default();
-    ui.label(RichText::new(format!("{pct}{message}")).font(theme::mono(12.5)).color(t.text_dim));
+    ui.label(RichText::new(format!("{pct}{message}")).font(theme::mono(theme::CODE)).color(t.text_dim));
     widgets::animate(ui, Duration::from_millis(100));
 }
 
@@ -956,11 +977,11 @@ pub fn settings_section(app: &mut CraftApp, ui: &mut Ui) {
         )
         .wrap(),
     );
-    ui.add_space(8.0);
+    ui.add_space(theme::space::SM);
     for b in Builder::ALL {
         ui.label(RichText::new(b.name()).font(theme::semibold(theme::SMALL)));
         status_line(app, ui, b, true);
-        ui.add_space(8.0);
+        ui.add_space(theme::space::SM);
     }
 }
 

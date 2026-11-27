@@ -27,10 +27,11 @@ use crate::tool::{Ctx, Effects, Requires, ToolOutput};
 use craft_anything_engines::mcp_client::{McpClient, RemoteTool, Server, ServerCommand, ServerUrl, content_text, url_allowed};
 use craft_anything_evidence::{Authority, Confidence, Environment, ErrorCode, EvidenceBuilder, Subject, ToolError};
 use craft_anything_platform::sync::Mutex;
+use craft_anything_platform::which;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
@@ -103,6 +104,44 @@ impl McpPlugin {
             (true, Some(u)) if !url_allowed(u) => Some(format!("The {} plugin's url must start with https:// (or http:// to this computer).", self.id)),
             _ => None,
         }
+    }
+
+    /// Where a local server's program is (`None` for a remote server), or why it can't be found
+    /// (#2153), looked for as it is started: a bare name on the plugin's own `PATH` when it sets
+    /// one (its relative folders from its `cwd`), and on the usual search path; a relative path
+    /// from its `cwd` on Unix, which the child starts in.
+    pub fn program(&self) -> Result<Option<PathBuf>, ToolError> {
+        if self.remote_url().is_some() {
+            return Ok(None);
+        }
+        let command = self.command.trim();
+        let as_path = Path::new(command);
+        let first = |name: &Path, path: Option<std::ffi::OsString>| which::which_in(&name.to_string_lossy(), path).into_iter().next();
+        let cwd = self.cwd.as_deref();
+        let found = if as_path.components().count() > 1 || as_path.is_absolute() {
+            // Unix starts a relative path from the child's folder; Windows from ours.
+            let from = match cwd {
+                Some(cwd) if cfg!(unix) && as_path.is_relative() => cwd.join(as_path),
+                _ => as_path.to_path_buf(),
+            };
+            first(&from, None)
+        } else {
+            let own = self.env.get("PATH").and_then(|own| {
+                let folders = std::env::split_paths(own).map(|f| match cwd {
+                    Some(cwd) if f.is_relative() => cwd.join(f),
+                    _ => f,
+                });
+                std::env::join_paths(folders).ok()
+            });
+            // Unix looks a bare name up on the child's PATH, so the plugin's own replaces the
+            // usual one; Windows starts what the usual search path finds first.
+            let paths = if cfg!(unix) && own.is_some() { vec![own] } else { vec![which::search_path(), own] };
+            paths.into_iter().flatten().find_map(|path| first(as_path, Some(path)))
+        };
+        found.map(Some).ok_or_else(|| {
+            ToolError::new(ErrorCode::NotFound, format!("The {} plugin's program, {command}, isn't on this computer.", self.display_name()))
+                .with_remediation("Check its name, give its full path, or install it first. A name without a folder is looked for on PATH.")
+        })
     }
 
     /// Where it runs, for people: the url, or the command line.
@@ -230,8 +269,8 @@ pub fn refresh(p: &McpPlugin, config: &std::path::Path) -> Result<Vec<RemoteTool
     if let Some(problem) = p.problem() {
         return Err(ToolError::invalid(problem).with_remediation("Fix it in config.toml ([[plugins.mcp]])."));
     }
-    let mut client = McpClient::connect(p.display_name(), &p.server(), START_TIMEOUT)?;
-    let tools = client.list_tools(START_TIMEOUT)?;
+    let mut client = start(p, config)?;
+    let tools = client.list_tools(START_TIMEOUT).map_err(|e| logged(p, config, client.with_output(e)))?;
     let path = p.cache_path(config);
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| ToolError::io(dir.display(), e))?;
@@ -239,6 +278,56 @@ pub fn refresh(p: &McpPlugin, config: &std::path::Path) -> Result<Vec<RemoteTool
     let json = serde_json::to_vec_pretty(&tools).map_err(|e| ToolError::internal(e.to_string()))?;
     crate::project::write_atomic(&path, &json)?;
     Ok(tools)
+}
+
+/// Start a server and list its tools, saving and caching nothing: whether it answers, before
+/// it's added (#2153). Its program is looked for first, so a missing one says so plainly.
+pub fn test(p: &McpPlugin, config: &std::path::Path) -> Result<Vec<RemoteTool>, ToolError> {
+    if let Some(problem) = p.problem() {
+        return Err(ToolError::invalid(problem));
+    }
+    p.program()?;
+    let mut client = start(p, config)?;
+    client.list_tools(START_TIMEOUT).map_err(|e| logged(p, config, client.with_output(e)))
+}
+
+/// Start a plugin's server and complete the handshake, keeping a failure log when it fails.
+fn start(p: &McpPlugin, config: &std::path::Path) -> Result<McpClient, ToolError> {
+    McpClient::connect(p.display_name(), &p.server(), START_TIMEOUT).map_err(|e| logged(p, config, e))
+}
+
+/// A local server that didn't start or answer: write what ran and what it printed to a failure
+/// log in the config folder's `logs/` ([`crate::failure_log`]) and name it in the error. Its
+/// environment is left out and what looks like a key in its arguments is hidden. A remote server's error already says what it
+/// answered, and its address can carry a key, so it gets no log; nor does a stop.
+fn logged(p: &McpPlugin, config: &std::path::Path, e: ToolError) -> ToolError {
+    let Server::Command(cmd) = p.server() else { return e };
+    if e.code == ErrorCode::Cancelled {
+        return e;
+    }
+    // An argument can carry a key where no flag names it (`https://…/mcp?token=…`).
+    let command = crate::journal::scrubbed_line(&craft_anything_platform::process::printable_command(std::ffi::OsStr::new(&cmd.command), &cmd.args));
+    let detail = |k: &str| e.details.as_ref().and_then(|d| d.get(k)).cloned();
+    let report = crate::failure_log::Report {
+        what: format!("The {} plugin (an MCP server) didn't start", p.display_name()),
+        check: command.clone(),
+        command,
+        error: Some(e.message.clone()),
+        cwd: cmd.cwd.clone(),
+        exit_code: detail("exit_code").and_then(|c| c.as_i64()).and_then(|c| i32::try_from(c).ok()),
+        stderr: detail("output_tail").and_then(|t| t.as_str().map(|s| s.as_bytes().to_vec())).unwrap_or_default(),
+        ..Default::default()
+    };
+    match crate::failure_log::write(&crate::failure_log::dir_in(config), &report) {
+        Ok(path) => {
+            let said = e.remediation.clone().map(|r| format!("{r}\n\n")).unwrap_or_default();
+            e.with_remediation(format!("{said}The details are in {}", path.display()))
+        }
+        Err(w) => {
+            log::warn!("couldn't write a failure log for the {} plugin: {w}", p.display_name());
+            e
+        }
+    }
 }
 
 /// The function behind every proxied tool: route by [`Ctx::tool`], start the server if needed,
@@ -250,7 +339,7 @@ fn call_plugin(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolError
     let mut slot = client.lock().unwrap_or_else(PoisonError::into_inner);
     if slot.is_none() {
         ctx.report(None, format!("Starting the {} plugin…", plugin.display_name()));
-        *slot = Some(McpClient::connect(plugin.display_name(), &plugin.server(), START_TIMEOUT)?);
+        *slot = Some(start(plugin, &ctx.session.config_dir())?);
     }
     let Some(c) = slot.as_mut() else { return Err(ToolError::internal("plugin client missing")) };
     let cancel = ctx.cancel.clone();
@@ -326,6 +415,95 @@ mod tests {
             enabled: true,
             consent: true,
         }
+    }
+
+    #[test]
+    fn a_plugin_that_exits_at_once_says_what_it_printed_and_leaves_a_log() {
+        #[cfg(windows)]
+        let (command, args) = ("cmd", vec!["/C".to_string(), "echo bad token in notes.cfg 1>&2 & exit 3".to_string()]);
+        #[cfg(not(windows))]
+        let (command, args) = ("sh", vec!["-c".to_string(), "echo bad token in notes.cfg >&2; exit 3".to_string()]);
+        let config = tempfile::tempdir().unwrap();
+        let p = McpPlugin { args, env: BTreeMap::from([("NOTES_KEY".to_string(), "sk-test-secret".to_string())]), ..plugin(command) };
+        let e = refresh(&p, config.path()).unwrap_err();
+        assert!(e.message.contains("exited with exit code 3"), "{e:?}");
+        let said = e.remediation.unwrap_or_default();
+        assert!(said.contains("bad token in notes.cfg") && said.contains("plugins.mcp"), "{said}");
+        let logs: Vec<_> = std::fs::read_dir(crate::failure_log::dir_in(config.path())).unwrap().flatten().map(|f| f.path()).collect();
+        assert_eq!(logs.len(), 1);
+        assert!(said.contains(&format!("The details are in {}", logs[0].display())), "{said}");
+        let log = std::fs::read_to_string(&logs[0]).unwrap();
+        for part in ["notes plugin (an MCP server) didn't start", "Exit code: 3", "bad token in notes.cfg", command] {
+            assert!(log.contains(part), "{part}: {log}");
+        }
+        assert!(!log.contains("sk-test-secret"), "its environment stays out of the log");
+    }
+
+    #[test]
+    fn a_plugin_that_cant_start_names_its_log_and_a_remote_one_writes_none() {
+        let config = tempfile::tempdir().unwrap();
+        let args = vec!["--url".to_string(), "https://mcp.example.test/mcp?token=plainsecretvalue42".to_string()];
+        let e = refresh(&McpPlugin { args, ..plugin("craft-anything-no-such-plugin-server") }, config.path()).unwrap_err();
+        assert!(e.remediation.unwrap_or_default().contains("The details are in"), "a missing program is logged too");
+        let logs: Vec<_> = std::fs::read_dir(crate::failure_log::dir_in(config.path())).unwrap().flatten().map(|f| f.path()).collect();
+        let log = std::fs::read_to_string(&logs[0]).unwrap();
+        assert!(log.contains("mcp.example.test/mcp?token=") && !log.contains("plainsecretvalue42"), "a key in an argument is hidden: {log}");
+        let remote = McpPlugin { url: Some("http://127.0.0.1:0/mcp".into()), ..plugin("") };
+        let other = tempfile::tempdir().unwrap();
+        assert!(refresh(&remote, other.path()).is_err());
+        assert!(!crate::failure_log::dir_in(other.path()).exists(), "no log for a remote server");
+    }
+
+    /// #2153: a program that isn't there is found out before the plugin is saved, not at its
+    /// first refresh. A remote server has no program to look for.
+    #[test]
+    fn a_plugins_program_is_looked_for_where_it_would_start() {
+        let me = std::env::current_exe().unwrap();
+        assert_eq!(plugin(&me.to_string_lossy()).program().unwrap(), Some(me.clone()));
+        let missing = plugin("craft-anything-no-such-plugin-server").program().unwrap_err();
+        assert_eq!(missing.code, ErrorCode::NotFound);
+        assert!(missing.message.contains("craft-anything-no-such-plugin-server") && missing.message.contains("isn't on this computer"), "{missing:?}");
+        let remote = McpPlugin { url: Some("https://mcp.example.com/mcp".into()), ..plugin("") };
+        assert_eq!(remote.program().unwrap(), None);
+
+        // A name on the plugin's own PATH, and a relative path from its cwd.
+        let dir = me.parent().unwrap().to_path_buf();
+        let name = me.file_name().unwrap().to_string_lossy().into_owned();
+        let on_its_path = McpPlugin { env: BTreeMap::from([("PATH".to_string(), dir.to_string_lossy().into_owned())]), ..plugin(&name) };
+        assert_eq!(on_its_path.program().unwrap(), Some(dir.join(&name)));
+        let up = dir.parent().unwrap();
+        let relative = format!("{}/{name}", dir.file_name().unwrap().to_string_lossy());
+        assert!(plugin(&relative).program().is_err(), "not beside the app");
+        if cfg!(unix) {
+            assert!(McpPlugin { cwd: Some(up.to_path_buf()), ..plugin(&relative) }.program().is_ok(), "from its cwd");
+            // A relative folder on its PATH is the child's, from its cwd.
+            let folder = dir.file_name().unwrap().to_string_lossy().into_owned();
+            let relative_path = McpPlugin { env: BTreeMap::from([("PATH".to_string(), folder)]), cwd: Some(up.to_path_buf()), ..plugin(&name) };
+            assert_eq!(relative_path.program().unwrap(), Some(dir.join(&name)));
+            // Its own PATH replaces the usual one, so a program only there isn't found.
+            let empty = tempfile::tempdir().unwrap();
+            let own_only = McpPlugin { env: BTreeMap::from([("PATH".to_string(), empty.path().to_string_lossy().into_owned())]), ..plugin("sh") };
+            assert!(plugin("sh").program().is_ok() && own_only.program().is_err(), "sh isn't on the plugin's PATH");
+        }
+    }
+
+    /// A test starts the server and lists its tools, and saves nothing.
+    #[cfg(unix)]
+    #[test]
+    fn a_plugin_is_tested_without_saving_its_tools() {
+        let answers = r#"while read -r line; do case "$line" in
+            *'"initialize"'*) echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{}}}';;
+            *'"tools/list"'*) echo '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"echo","inputSchema":{"type":"object"}}]}}';;
+            esac; done"#;
+        let config = tempfile::tempdir().unwrap();
+        let p = McpPlugin { args: vec!["-c".into(), answers.into()], ..plugin("sh") };
+        let tools = test(&p, config.path()).unwrap();
+        assert_eq!(tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["echo"]);
+        assert!(!p.cache_path(config.path()).exists(), "nothing is cached");
+
+        let missing = test(&plugin("craft-anything-no-such-plugin-server"), config.path()).unwrap_err();
+        assert_eq!(missing.code, ErrorCode::NotFound, "{missing:?}");
+        assert!(test(&McpPlugin { id: "Bad Id".into(), ..p }, config.path()).is_err());
     }
 
     #[test]

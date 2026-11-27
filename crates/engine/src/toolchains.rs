@@ -39,6 +39,10 @@ pub struct Toolchain {
     /// Use a single installed PEP 621 console script after checking the fixed entrypoints.
     #[serde(default)]
     pub python_console_script: bool,
+    /// The language's own code files (`src/*.rs`, `*.go`), same patterns as `found_by`: a port that
+    /// keeps an existing manifest shows in these.
+    #[serde(default)]
+    pub sources: Vec<String>,
 }
 
 /// A declared entrypoint and argv template. A wildcard file must identify exactly one file.
@@ -67,48 +71,92 @@ pub fn catalogue() -> &'static [Toolchain] {
 
 /// The first toolchain whose marker files exist in this folder.
 pub fn found_in(dir: &Path) -> Option<&'static Toolchain> {
-    catalogue()
-        .iter()
-        .find(|t| t.found_by.iter().any(|pattern| !matching_files(dir, pattern).is_empty()))
-        .or_else(|| catalogue().iter().find(|t| t.standalone_entrypoints && t.launch.iter().any(|r| !r.file.contains('*') && dir.join(&r.file).is_file())))
+    catalogue().iter().find(|t| t.is_in(dir)).or_else(|| catalogue().iter().find(|t| t.has_entrypoint(dir)))
+}
+
+/// How much of a folder a match reads.
+#[derive(Clone, Copy, PartialEq)]
+enum Scan {
+    /// A marker: the first match, of up to 10,000 entries, so a project file in a folder of many
+    /// assets is still found.
+    First,
+    /// A launch: all of the first 256, to know its file is the only one.
+    Launch,
+    /// Change tracking: every match, of up to 10,000 entries.
+    All,
 }
 
 /// Match exact files, suffixes in a fixed directory (`*.csproj`, `target/*.jar`), or one named
-/// file below each child of a fixed directory (`cmd/*/main.go`, `*/__main__.py`).
-fn matching_files(dir: &Path, pattern: &str) -> Vec<PathBuf> {
+/// file below each child of a fixed directory (`cmd/*/main.go`, `*/__main__.py`). None when the
+/// folder had more entries than the scan reads, or one couldn't be read: an incomplete result.
+fn matching_files(dir: &Path, pattern: &str, scan: Scan) -> Option<Vec<PathBuf>> {
     if let Some((folder, filename)) = pattern.split_once("*/") {
-        return scan_entries(&dir.join(folder), |entry| {
+        return scan_entries(&dir.join(folder), scan, |entry| {
             let file = entry.path().join(filename);
             Ok((entry.file_type()?.is_dir() && file.is_file()).then_some(file))
         });
     }
     let (folder, name) = pattern.rsplit_once('/').unwrap_or(("", pattern));
     if let Some(suffix) = name.strip_prefix('*') {
-        return scan_entries(&dir.join(folder), |entry| {
+        return scan_entries(&dir.join(folder), scan, |entry| {
             let file = entry.path();
             Ok((entry.file_name().to_string_lossy().ends_with(suffix) && file.is_file()).then_some(file))
         });
     }
     let file = dir.join(pattern);
-    file.is_file().then_some(file).into_iter().collect()
+    Some(file.is_file().then_some(file).into_iter().collect())
 }
 
-fn scan_entries(dir: &Path, candidate: impl Fn(std::fs::DirEntry) -> std::io::Result<Option<PathBuf>>) -> Vec<PathBuf> {
+/// The matching entries in `dir` (none when it isn't there), or None for a partial scan.
+fn scan_entries(dir: &Path, scan: Scan, candidate: impl Fn(std::fs::DirEntry) -> std::io::Result<Option<PathBuf>>) -> Option<Vec<PathBuf>> {
     let mut files = Vec::new();
-    let Ok(entries) = std::fs::read_dir(dir) else { return files };
+    let Ok(entries) = std::fs::read_dir(dir) else { return Some(files) };
+    let cap = if scan == Scan::Launch { 256 } else { 10_000 };
     for (i, entry) in entries.enumerate() {
-        // A partial scan cannot establish that the entrypoint is unique.
-        if i >= 256 {
-            return Vec::new();
+        // A partial scan cannot establish that the entrypoint is unique, or that nothing changed.
+        if i >= cap {
+            return None;
         }
-        let Ok(file) = entry.and_then(&candidate) else { return Vec::new() };
-        files.extend(file);
+        files.extend(entry.and_then(&candidate).ok()?);
+        if scan == Scan::First && !files.is_empty() {
+            return Some(files);
+        }
     }
     files.sort();
-    files
+    Some(files)
 }
 
 impl Toolchain {
+    /// Whether one of the files that name it is in `dir`.
+    pub fn is_in(&self, dir: &Path) -> bool {
+        self.found_by.iter().any(|pattern| matching_files(dir, pattern, Scan::First).is_some_and(|f| !f.is_empty()))
+    }
+
+    /// Whether `dir` is a script-only project of it: a fixed launch file such as `main.py`.
+    pub fn has_entrypoint(&self, dir: &Path) -> bool {
+        self.standalone_entrypoints && self.launch.iter().any(|r| !r.file.contains('*') && dir.join(&r.file).is_file())
+    }
+
+    /// The files in `dir` that say a project is written with it: every match of its markers
+    /// (`go.mod`, each `.csproj`) and its code (`sources`), and its fixed launch files (`main.py`).
+    /// None when a folder was too big to read whole, so a change can't be ruled out.
+    pub fn marker_files(&self, dir: &Path) -> Option<Vec<PathBuf>> {
+        let mut files = Vec::new();
+        for pattern in self.found_by.iter().chain(&self.sources) {
+            files.extend(matching_files(dir, pattern, Scan::All)?);
+        }
+        files.extend(self.launch.iter().filter(|r| !r.file.contains('*')).map(|r| dir.join(&r.file)).filter(|p| p.is_file()));
+        files.sort();
+        files.dedup();
+        Some(files)
+    }
+
+    /// When its newest project file (`found_by`) in `dir` was written.
+    pub fn newest_marker(&self, dir: &Path) -> Option<std::time::SystemTime> {
+        let files = self.found_by.iter().filter_map(|p| matching_files(dir, p, Scan::All)).flatten();
+        files.filter_map(|f| std::fs::metadata(f).and_then(|m| m.modified()).ok()).max()
+    }
+
     /// Resolve a command, preferring the project's own interpreter/build wrapper on this OS.
     pub fn command(&self, app: &Path, command: &[String]) -> Option<(PathBuf, Vec<String>)> {
         self.command_for(app, command, cfg!(windows))
@@ -132,7 +180,7 @@ impl Toolchain {
     /// Infer a launch only from a recipe's unambiguous entrypoint. Never guess among projects.
     pub fn launch(&self, app: &Path) -> Option<(PathBuf, Vec<String>)> {
         for recipe in &self.launch {
-            let mut files = matching_files(app, &recipe.file);
+            let mut files = matching_files(app, &recipe.file, Scan::Launch).unwrap_or_default();
             if recipe.runnable_jar {
                 files.retain(|f| runnable_jar(f));
             }
@@ -146,11 +194,18 @@ impl Toolchain {
             let relative = files.first()?.strip_prefix(app).ok()?;
             let file = relative.to_str()?;
             let parent = relative.parent()?;
+            let folders: Vec<String> = parent.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+            // Go reads `\` as a separator too, so a folder named with one (possible on Unix)
+            // would name another package: no launch is inferred for it.
+            if recipe.command.iter().any(|a| a == "{package}") && folders.iter().any(|f| f.contains('\\')) {
+                continue;
+            }
             let command: Vec<String> = recipe
                 .command
                 .iter()
                 .map(|arg| match arg.as_str() {
-                    "{package}" => format!("./{}", parent.display()),
+                    // Go names packages with `/` on every system.
+                    "{package}" => format!("./{}", folders.join("/")),
                     "{module}" => parent.to_string_lossy().replace(['/', '\\'], "."),
                     _ => arg.replace("{file}", file),
                 })
@@ -264,12 +319,24 @@ mod tests {
         }
         std::fs::write(app.join("cmd/viewer/main.go"), "package main").unwrap();
         let launch = || crate::outputs::launch(app, None);
-        let package = format!("./{}", Path::new("cmd").join("viewer").display());
-        assert_eq!(launch(), Some(("go".into(), vec!["run".into(), package])));
+        assert_eq!(launch(), Some(("go".into(), vec!["run".into(), "./cmd/viewer".into()])));
         std::fs::write(app.join("cmd/library/main.go"), "package main").unwrap();
         assert!(launch().is_none());
         std::fs::write(app.join("main.go"), "package main").unwrap();
         assert_eq!(launch(), Some(("go".into(), vec!["run".into(), ".".into()])));
+    }
+
+    /// On Unix a folder may be named with `\`, which Go reads as a separator: `go run` would start
+    /// another package, so nothing is inferred for it.
+    #[cfg(unix)]
+    #[test]
+    fn go_launch_skips_a_command_folder_named_with_a_backslash() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = dir.path();
+        std::fs::write(app.join("go.mod"), "module fixture").unwrap();
+        std::fs::create_dir_all(app.join("cmd").join("foo\\bar")).unwrap();
+        std::fs::write(app.join("cmd").join("foo\\bar").join("main.go"), "package main").unwrap();
+        assert_eq!(crate::outputs::launch(app, None), None);
     }
 
     /// A Java project runs the one runnable jar its build left, with `java` even beside a build

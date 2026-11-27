@@ -525,6 +525,12 @@ fn non_native_triage(t: &Target) -> (String, Vec<&'static str>, Vec<(&'static st
         TargetKind::Sqlite => {
             (format!("{n} is a SQLite database (how an app stores its data)."), vec!["core", "database"], vec![("db_sqlite_show", "tables, schema and rows")])
         }
+        // A script, notes or settings: read as text, not as bytes (#539).
+        TargetKind::Text => (
+            format!("{n} is a text file (a script, notes or settings)."),
+            vec!["core"],
+            vec![(super::text_tools::TEXT_READ_TOOL, "read it as text, a page at a time"), ("native_bytes_find", "search it for a word or bytes")],
+        ),
         _ => (
             format!("{n} isn't a format we recognise yet."),
             vec!["core"],
@@ -553,7 +559,18 @@ fn core_target_triage(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, To
     let builder = EvidenceBuilder::new("core_target_triage", t.subject(), Environment::builtin(ctx.session.clean_room())).params(json!({"path": p.path}));
     let ev = match parsed {
         Ok(Some(img)) => {
-            let mut r = an::triage(&img.bin, &img.data, &t.name);
+            let beside = flutter_files_beside(&t.path, img.bin.format);
+            let mut r = an::triage_beside(&img.bin, &img.data, &t.name, &beside);
+            if let Some(step) = r.result["next_steps"].as_array_mut().and_then(|steps| steps.iter_mut().find(|step| step["tool"] == "app_folder_explain"))
+                && let Some(folder) = t.path.parent().filter(|p| p.is_absolute())
+            {
+                let install = if img.bin.format == Format::MachO {
+                    folder.ancestors().find(|p| p.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("app"))).unwrap_or(folder)
+                } else {
+                    folder
+                };
+                step["args"] = json!({"path": install.display().to_string()});
+            }
             if t.kind == TargetKind::Managed {
                 r.result["plain_english"] = json!(format!("{} This is a .NET assembly: use the .NET tools for readable C#-level results.", r.summary));
                 r.summary = r.result["plain_english"].as_str().unwrap_or_default().to_string();
@@ -606,18 +623,36 @@ fn core_target_triage(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, To
     Ok(ToolOutput::evidence(ev))
 }
 
+/// The files a desktop Flutter build keeps beside the program at `path` that are there. Only
+/// asks the file system whether a few fixed paths exist; reads nothing.
+fn flutter_files_beside(path: &std::path::Path, format: Format) -> Vec<(an::FlutterFile, String)> {
+    let Some(folder) = path.parent() else {
+        return Vec::new();
+    };
+    an::flutter_files_beside(format)
+        .iter()
+        .filter_map(|f| {
+            let p = f.path.split('/').fold(folder.to_path_buf(), |acc, part| acc.join(part));
+            let meta = std::fs::metadata(&p).ok()?;
+            (meta.is_dir() == f.dir).then(|| (*f, p.display().to_string()))
+        })
+        .collect()
+}
+
 // ---------------------------------------------------------------------------------------------
 // Analysis view
 
 /// Find a value by key anywhere in the first levels of `v`.
-fn find_key<'a>(v: &'a Value, key: &str, depth: usize) -> Option<&'a Value> {
-    if depth > 4 {
-        return None;
-    }
-    match v {
-        Value::Object(m) => m.get(key).or_else(|| m.values().find_map(|x| find_key(x, key, depth + 1))),
-        _ => None,
-    }
+fn find_key<'a>(v: &'a Value, key: &str) -> Option<&'a Value> {
+    craft_anything_evidence::find_result_key(v, key)
+}
+
+/// Where to go when a name isn't a list: the lists the record has, with their lengths.
+fn lists_hint(r: &Value) -> (String, Value) {
+    let lists = craft_anything_evidence::result_lists(r);
+    let names: Vec<String> = lists.iter().map(|(k, n)| format!("{k} ({n})")).collect();
+    let hint = if names.is_empty() { "This record has no lists to page.".to_string() } else { format!("Its lists: {}.", names.join(", ")) };
+    (hint, json!(lists))
 }
 
 /// Page text by UTF-16 code units without splitting a surrogate pair.
@@ -662,13 +697,14 @@ fn core_evidence_browse(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, 
         Show::Summary => (parent.summary_view(), Coverage::complete(1)),
         Show::Part { name } => {
             let v =
-                find_key(r, name, 0).ok_or_else(|| ToolError::invalid(format!("no part {name} in this record")).with_details(json!({"available": keys(r)})))?;
+                find_key(r, name).ok_or_else(|| ToolError::invalid(format!("no part {name} in this record")).with_details(json!({"available": keys(r)})))?;
             (json!({"part": name, "value": v}), Coverage::complete(1))
         }
         Show::Row { list, pick } => {
-            let arr = find_key(r, list, 0)
-                .and_then(Value::as_array)
-                .ok_or_else(|| ToolError::invalid(format!("no list {list} in this record")).with_details(json!({"available": keys(r)})))?;
+            let arr = find_key(r, list).and_then(Value::as_array).ok_or_else(|| {
+                let (hint, lists) = lists_hint(r);
+                ToolError::invalid(format!("no list {list} in this record")).with_remediation(hint).with_details(json!({"available": keys(r), "lists": lists}))
+            })?;
             let row = pick.parse::<usize>().ok().and_then(|i| arr.get(i)).or_else(|| {
                 arr.iter().find(|x| ["name", "address", "id", "text", "type"].iter().any(|k| x.get(*k).and_then(Value::as_str) == Some(pick.as_str())))
             });
@@ -730,7 +766,10 @@ fn page_of(
     field_names: bool,
 ) -> Result<(Value, Coverage), ToolError> {
     let limit = limit.clamp(1, 5000);
-    let v = find_key(r, list, 0).ok_or_else(|| ToolError::invalid(format!("no {list} in this record")).with_details(json!({"available": keys(r)})))?;
+    let v = find_key(r, list).ok_or_else(|| {
+        let (hint, lists) = lists_hint(r);
+        ToolError::invalid(format!("no {list} in this record")).with_remediation(hint).with_details(json!({"available": keys(r), "lists": lists}))
+    })?;
     let narrowed = !matching.is_empty() || !fields.is_empty() || field_names;
     Ok(match v {
         Value::Array(a) => {
@@ -758,8 +797,15 @@ fn page_of(
             (out, cov)
         }
         _ if narrowed => {
+            let (hint, lists) = lists_hint(r);
+            let as_is = format!("leave matching, fields and field_names out to see {list} as it is");
+            let remediation = match lists.as_object() {
+                Some(m) if !m.is_empty() => format!("{hint} Page one of those, or {as_is}."),
+                _ => format!("{hint} Or {as_is}."),
+            };
             return Err(ToolError::invalid(format!("{list} isn't a list of records, so matching, fields and field_names don't apply"))
-                .with_remediation("Leave them out to page it as it is."));
+                .with_remediation(remediation)
+                .with_details(json!({"lists": lists})));
         }
         Value::String(s) => {
             let (text, total, next) = page_text(s, offset, limit.saturating_mul(64));
@@ -784,6 +830,71 @@ mod tests {
     use super::super::native_common::test_support::*;
     use craft_anything_testkit as tk;
     use serde_json::json;
+
+    #[test]
+    fn flutter_folder_step_opens_the_linux_install_or_enclosing_mac_app() {
+        let e = engine_with("craft.exe", &tk::pe64());
+        for (folder, runner, mut program) in
+            [("installed", "runner", tk::elf64(tk::ElfArch::X86_64, false).0), ("Sample.app", "Contents/MacOS/Runner", tk::macho64())]
+        {
+            let root = tempfile::tempdir().unwrap();
+            let install = root.path().join(folder);
+            let exe = install.join(runner);
+            std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+            program.extend_from_slice(b"flutter_assets");
+            std::fs::write(&exe, program).unwrap();
+            let r = call(&e, "core_target_triage", json!({"path": exe}));
+            let step = &r["result"]["next_steps"][0];
+            assert_eq!(step["tool"], "app_folder_explain");
+            assert_eq!(step["args"]["path"], install.display().to_string());
+            assert!(call(&e, "app_folder_explain", step["args"].clone())["result"].is_object());
+        }
+    }
+
+    #[test]
+    fn triage_finds_a_flutter_build_beside_a_windows_program() {
+        // #2227: data/flutter_assets and data/app.so beside the program are observed and point the
+        // reader at app.so; the same program on its own is only inferred from its text.
+        let e = engine_with("craft.exe", &tk::pe64());
+        let program = tk::flutter::pe_mentioning_flutter();
+        let alone = tempfile::tempdir().unwrap();
+        let exe = alone.path().join("localsend_app.exe");
+        std::fs::write(&exe, &program).unwrap();
+        let r = call(&e, "core_target_triage", json!({"path": exe.to_string_lossy()}));
+        assert_eq!(r["result"]["flutter"]["confidence"], "inferred", "{}", r["result"]);
+        assert_eq!(r["result"]["flutter"]["dart_code"], serde_json::Value::Null);
+        assert_eq!(r["confidence"], "inferred");
+        let step = &r["result"]["next_steps"][0];
+        assert_eq!(step["tool"], "app_folder_explain");
+        assert_eq!(step["args"]["path"], alone.path().display().to_string());
+        assert!(call(&e, "app_folder_explain", step["args"].clone())["result"].is_object());
+
+        let built = tempfile::tempdir().unwrap();
+        let exe = built.path().join("localsend_app.exe");
+        std::fs::write(&exe, &program).unwrap();
+        std::fs::create_dir_all(built.path().join("data").join("flutter_assets")).unwrap();
+        let app = built.path().join("data").join("app.so");
+        std::fs::write(&app, tk::flutter::libapp_so(tk::flutter::SymbolTable::Sections)).unwrap();
+        let r = call(&e, "core_target_triage", json!({"path": exe.to_string_lossy()}));
+        assert_eq!(r["result"]["flutter"]["confidence"], "observed", "{}", r["result"]);
+        let dart = app.display().to_string();
+        assert_eq!(r["result"]["flutter"]["dart_code"], dart.as_str());
+        assert_eq!(r["result"]["next_steps"][0]["tool"], "android_dart_snapshot_show");
+        assert!(r["result"]["plain_english"].as_str().unwrap().contains(&dart), "{}", r["result"]["plain_english"]);
+        assert!(r["locations"].as_array().unwrap().iter().any(|l| l["kind"] == "path" && l["value"] == dart.as_str()));
+        // The tool it points at reads app.so.
+        let s = call(&e, "android_dart_snapshot_show", json!({"path": dart}));
+        assert!(s["result"].is_object());
+
+        // A file where the assets folder should be, or a folder named like app.so, isn't the layout.
+        let wrong = tempfile::tempdir().unwrap();
+        let exe = wrong.path().join("craft.exe");
+        std::fs::write(&exe, tk::pe64()).unwrap();
+        std::fs::create_dir_all(wrong.path().join("data").join("app.so")).unwrap();
+        std::fs::write(wrong.path().join("data").join("flutter_assets"), b"").unwrap();
+        let r = call(&e, "core_target_triage", json!({"path": exe.to_string_lossy()}));
+        assert!(r["result"].get("flutter").is_none(), "{}", r["result"]);
+    }
 
     #[test]
     fn triage_explains_an_unreadable_elf_header() {
@@ -814,11 +925,19 @@ mod tests {
         assert!(r["summary"].as_str().unwrap().contains("Linux"));
         assert!(r["summary"].as_str().unwrap().contains("x86_64"));
         call(&complete, "native_layout_show", json!({}));
+        // #539: text is sent to the text reader, not to the byte tools that refuse it.
         let text = engine_with("notes.txt", b"plain text");
         let r = call(&text, "core_target_triage", json!({}));
-        assert_eq!(r["result"]["kind"], "unknown");
-        assert!(r["summary"].as_str().unwrap().contains("isn't a format we recognise yet"));
+        assert_eq!(r["result"]["kind"], "text");
+        assert_eq!(r["result"]["description"], "A text file (notes, source code or settings)");
+        assert!(r["summary"].as_str().unwrap().contains("is a text file"));
+        assert_eq!(r["result"]["next_steps"][0]["tool"], "core_text_read");
         assert!(!r["limitations"].as_array().unwrap().iter().any(|l| l["code"] == "native_parse_failed"));
+        call(&text, "core_text_read", json!({}));
+        let blob = engine_with("blob.bin", b"\x01\x02\x00\x03unrecognised");
+        let r = call(&blob, "core_target_triage", json!({}));
+        assert!(r["summary"].as_str().unwrap().contains("isn't a format we recognise yet"));
+        assert_eq!(r["result"]["next_steps"][0]["tool"], "native_bytes_show");
     }
 
     #[test]
@@ -967,7 +1086,7 @@ mod tests {
         assert!(r["result"]["pseudo_code"].as_str().is_some());
         let e = engine_with("notes.txt", b"plain text");
         let r = call(&e, "core_target_triage", json!({}));
-        assert!(r["result"]["plain_english"].as_str().unwrap().contains("recognise"));
+        assert!(r["result"]["plain_english"].as_str().unwrap().contains("is a text file"));
         assert_eq!(call_err(&e, "native_dos_image_show", json!({})).code, craft_anything_evidence::ErrorCode::NotSupported);
         let e = engine_with("app.asar", b"\x04\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0{\"files\":{}}");
         let r = call(&e, "core_target_triage", json!({}));

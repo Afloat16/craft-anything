@@ -18,7 +18,9 @@ doesn't have it. 2.x comes from npm's `@opencode/cli` package (`npm install -g @
 with the OpenCode desktop app, whose CLI is `opencode-cli` in the app's resources folder
 (`/opt/OpenCode/resources/opencode-cli` from the Linux package), and from OpenCode's GitHub
 releases. When the `opencode` on your PATH is 1.x, install `@opencode/cli`, or point the backend
-at a 2.x CLI: step 2 below, or `craft-anything-cli ai program OpenCode <path>`.
+at a 2.x CLI: step 2 below, or `craft-anything-cli ai program OpenCode <path>`. If npm's
+`opencode-ai` gave you 1.x, remove it first (`npm uninstall -g opencode-ai`): both packages
+install the `opencode` command, so installing `@opencode/cli` beside it fails with `EEXIST`.
 
 **Don't start OpenCode during a build.** OpenCode's shared service resumes every session it finds
 running, including the one a build's private server is driving: started mid-build (opening the
@@ -117,6 +119,16 @@ and starts a private server with `--standalone` (locally in this computer's temp
 folder, over SSH on the host itself). V2 names a tool call `id` (V1: `callID`); both
 are read, so tool calls reach the feed while the turn runs.
 
+A builder runs with `--auto`, so it never asks us before it edits. For a build, the same config
+file carries OpenCode `permissions` rules that deny its edit tool Craft Anything's records: each
+name in the project folder that Craft Anything keeps (`craft.json`, `feed.json`, `inbox/`,
+`investigation.cany/`, `reference/`…, from `workspace::OWN_NAMES`) and everything under it.
+`checks/` is left out, since the builder keeps its notes there. OpenCode enforces a configured
+deny under `--auto`, and the rules hold whether the app is in `app/` or in the project folder
+itself. Every other edit goes on as before. The shell isn't covered: a command can still write
+anywhere, and a builder isn't kept out of folders outside the project (both wait on R2.2's
+approval decision). Chats and questions get the server alone.
+
 A `--standalone` turn still keeps its session in OpenCode's shared storage. If the turn is
 stopped part-way, the session stays `running`, and the background service picks it up the next
 time it starts and carries on with the builder's commands (#1115, seen with 2.2.5 on Windows).
@@ -124,8 +136,8 @@ So a local turn that doesn't finish (stopped, failed or timed out) deletes its s
 `opencode session delete --standalone <id>`, which removes it without resuming it (over SSH, on
 the host). A turn that finishes keeps its session. While a turn runs, its session is recorded in
 `logs/unfinished-sessions/` in the config folder, under a lock the system drops when Craft
-Anything ends; if Craft Anything is killed mid-turn, the next agent turn, or
-`craft-anything-cli uninstall`, deletes the session of any record nobody holds. A delete that
+Anything ends; if Craft Anything is killed mid-turn, the desktop app sweeps the records when it
+starts, and the next agent turn or `craft-anything-cli uninstall` does too. A delete that
 keeps failing is given up after three tries, with the command to run by hand.
 
 Model discovery uses `opencode api model.list --param location[directory]=...` (the V2

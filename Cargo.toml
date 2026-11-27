@@ -3,13 +3,18 @@ resolver = "3"
 members = ["crates/*", "apps/*", "xtask"]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.6.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.97"
 repository = "https://github.com/storytold/craft-anything"
 
 [workspace.dependencies]
+craft-evm = { git = "https://github.com/storytold/craft-libs", rev = "cdee9b8ab61832314609563d8a5b6fc19b555b72" }
+craft-java-class = { git = "https://github.com/storytold/craft-libs", rev = "cdee9b8ab61832314609563d8a5b6fc19b555b72" }
+craft-android-res = { git = "https://github.com/storytold/craft-libs", rev = "cdee9b8ab61832314609563d8a5b6fc19b555b72" }
+craft-har = { git = "https://github.com/storytold/craft-libs", rev = "cdee9b8ab61832314609563d8a5b6fc19b555b72" }
+craft-pcap = { git = "https://github.com/storytold/craft-libs", rev = "cdee9b8ab61832314609563d8a5b6fc19b555b72" }
 # internal
 craft-anything-evidence = { path = "crates/evidence" }
 craft-anything-formats = { path = "crates/formats" }
@@ -26,6 +31,28 @@ craft-anything-ui-egui = { path = "crates/ui-egui" }
 craft-anything-testkit = { path = "crates/testkit" }
 
 # external
+# Shared unwrapped standard Base64 encoding; decoding keeps format-specific validation.
+craft-mime = { git = "https://github.com/storytold/craft-libs", rev = "cdee9b8ab61832314609563d8a5b6fc19b555b72" }
+# Lenient ZIP inspection with all existing compression methods and serialized listings.
+craft-zip = { git = "https://github.com/storytold/craft-libs", rev = "cdee9b8ab61832314609563d8a5b6fc19b555b72", features = ["lenient", "lenient-bzip2", "lenient-lzma", "lenient-zstd", "serde"] }
+# Shared bounded TAR/CPIO listing, including current compatibility fixes.
+craft-tar = { git = "https://github.com/storytold/craft-libs", rev = "cdee9b8ab61832314609563d8a5b6fc19b555b72", features = ["serde"] }
+# XML plist reader; prerequisite craft-libs #1633 (repin after merge).
+craft-elf = { git = "https://github.com/storytold/craft-libs", rev = "cdee9b8ab61832314609563d8a5b6fc19b555b72", features = ["serde"] }
+craft-pe = { git = "https://github.com/storytold/craft-libs", rev = "cdee9b8ab61832314609563d8a5b6fc19b555b72", features = ["serde"] }
+craft-macho = { git = "https://github.com/storytold/craft-libs", rev = "cdee9b8ab61832314609563d8a5b6fc19b555b72", features = ["serde"] }
+craft-jsonc = { git = "https://github.com/storytold/craft-libs", rev = "cdee9b8ab61832314609563d8a5b6fc19b555b72" }
+craft-sourcemap = { git = "https://github.com/storytold/craft-libs", rev = "cdee9b8ab61832314609563d8a5b6fc19b555b72" }
+craft-wasm = { git = "https://github.com/storytold/craft-libs", rev = "cdee9b8ab61832314609563d8a5b6fc19b555b72" }
+craft-plist = { git = "https://github.com/storytold/craft-libs", rev = "cdee9b8ab61832314609563d8a5b6fc19b555b72" }
+craft-sniff = { git = "https://github.com/storytold/craft-libs", rev = "cdee9b8ab61832314609563d8a5b6fc19b555b72" }
+craft-dex = { git = "https://github.com/storytold/craft-libs", rev = "cdee9b8ab61832314609563d8a5b6fc19b555b72" }
+craft-pkcs7 = { git = "https://github.com/storytold/craft-libs", rev = "cdee9b8ab61832314609563d8a5b6fc19b555b72" }
+craft-sqlite = { git = "https://github.com/storytold/craft-libs", rev = "cdee9b8ab61832314609563d8a5b6fc19b555b72" }
+craft-jsonrpc = { git = "https://github.com/storytold/craft-libs", rev = "cdee9b8ab61832314609563d8a5b6fc19b555b72" }
+craft-mcp-server = { git = "https://github.com/storytold/craft-libs", rev = "cdee9b8ab61832314609563d8a5b6fc19b555b72" }
+craft-dds = { git = "https://github.com/storytold/craft-libs", rev = "cdee9b8ab61832314609563d8a5b6fc19b555b72" }
+craft-update = { git = "https://github.com/storytold/craft-libs", rev = "cdee9b8ab61832314609563d8a5b6fc19b555b72" }
 thiserror = "2"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
@@ -41,8 +68,8 @@ egui = "0.36"
 egui_extras = { version = "0.36", default-features = false }
 egui_kittest = "0.36"
 rfd = "0.17"
-# Pictures pasted from the clipboard (egui only receives pasted text); egui-winit already uses it.
-arboard = { version = "3.6", default-features = false, features = ["image-data"] }
+# Pictures pasted from the clipboard, including native Wayland sessions.
+arboard = { version = "3.6", default-features = false, features = ["image-data", "wayland-data-control"] }
 rayon = "1"
 proptest = "1"
 # JavaScript (pure Rust, wasm-safe)
@@ -73,11 +100,17 @@ unsafe_code = "forbid"
 dbg_macro = "warn"
 todo = "warn"
 
+# Full debug information made about 90% of every development executable and filled disks (#1584).
+# Our own code keeps file and line for backtraces; dependencies carry none. To step through
+# variables in a debugger, build with CARGO_PROFILE_DEV_DEBUG=2 (our crates only); for
+# dependencies too, add --config 'profile.dev.package."*".debug=2'.
 [profile.dev.package."*"]
 opt-level = 2
+debug = false
 
 [profile.dev]
 opt-level = 1
+debug = "line-tables-only"
 
 [profile.release]
 lto = "thin"
@@ -97,3 +130,6 @@ panic = "abort"
 # Remove this once the upstream wgpu release picks a Metal version the compiler accepts. See vendor/wgpu-hal/CRAFT_ANYTHING.md.
 [patch.crates-io]
 wgpu-hal = { path = "vendor/wgpu-hal" }
+# winit with upstream's Windows 11 DPI-change fix (Craft Anything #1814; upstream winit #4041, #4341).
+# Remove once eframe uses a winit with it. See vendor/winit/CRAFT_ANYTHING.md.
+winit = { path = "vendor/winit" }

@@ -47,6 +47,8 @@ pub mod sbpf_tools;
 // Firmware images (built-in signature scan, entropy, carving).
 pub mod firmware_tools;
 pub mod game_archive_tools;
+// Unreal sounds out of cooked packages.
+pub mod game_unreal_sound;
 // Unity IL2CPP global-metadata.dat: images, types, methods and string literals.
 pub mod il2cpp_tools;
 // What an installed app of unknown make is built on, from its folder alone.
@@ -66,6 +68,8 @@ pub mod web_common;
 pub mod browser_tools;
 // Websites as targets: a browser this session starts, page capture for rebuilding.
 pub mod website_tools;
+// Saved sign-ins for websites, made by the person in a visible window.
+pub mod site_sign_in;
 // A stand-in backend answering a rebuilt front end from a network recording.
 pub mod standin_tools;
 pub mod window_tools;
@@ -103,6 +107,8 @@ pub mod wasm_compare_tools;
 pub mod packed_tools;
 pub mod packet_tools;
 pub mod python_tools;
+// Text sources (scripts, Markdown, settings) read as text, a page of lines at a time.
+pub mod text_tools;
 // Thin read-only wrappers over optional objdump and rizin.
 pub mod external_disasm_tools;
 // GDB sessions over the machine interface (optional GDB).
@@ -121,6 +127,7 @@ pub fn all() -> Vec<crate::ToolSpec> {
     v.extend(web_tools::specs());
     v.extend(browser_tools::specs());
     v.extend(website_tools::specs());
+    v.extend(site_sign_in::specs());
     v.extend(standin_tools::specs());
     v.extend(interaction_tools::specs());
     v.extend(project_tools::specs());
@@ -150,7 +157,9 @@ pub fn all() -> Vec<crate::ToolSpec> {
     v.extend(firmware_tools::specs());
     v.extend(packed_tools::specs());
     v.extend(python_tools::specs());
+    v.extend(text_tools::specs());
     v.extend(game_archive_tools::specs());
+    v.extend(game_unreal_sound::specs());
     v.extend(il2cpp_tools::specs());
     v.extend(install_tools::specs());
     v.extend(managed_tools::specs());
@@ -221,10 +230,14 @@ pub fn evidence_for_active(session: &Session, operation: &str) -> Result<Evidenc
 /// Parse an address given as `0x…` hex, plain hex with a leading letter, or decimal.
 pub fn parse_address(s: &str) -> Result<u64, ToolError> {
     let t = s.trim();
+    // `from_str_radix` accepts a leading sign, so require pure hex digits first.
+    let hex = |d: &str| {
+        if !d.is_empty() && d.chars().all(|c| c.is_ascii_hexdigit()) { u64::from_str_radix(d, 16).ok() } else { None }
+    };
     let parsed = if let Some(h) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-        u64::from_str_radix(h, 16).ok()
+        hex(h)
     } else if t.chars().any(|c| c.is_ascii_alphabetic()) {
-        u64::from_str_radix(t.trim_end_matches(['h', 'H']), 16).ok()
+        hex(t.trim_end_matches(['h', 'H']))
     } else {
         t.parse::<u64>().ok()
     };
@@ -242,5 +255,8 @@ mod tests {
         assert_eq!(parse_address("4096").unwrap(), 4096);
         assert!(parse_address("0xZZ").is_err());
         assert!(parse_address("").is_err());
+        assert!(parse_address("0x+10").is_err());
+        assert!(parse_address("+10h").is_err());
+        assert!(parse_address("0x-10").is_err());
     }
 }

@@ -6,9 +6,13 @@ use crate::i18n::{tr, trf};
 use crate::state::Modal;
 use crate::theme::{self, Tokens};
 use crate::{CraftApp, icons, widgets};
-use craft_anything_ai::rebuild::replaced_builder_notice;
 use craft_anything_ai::{BackendConfig, BackendKind};
 use egui::{RichText, Ui, Vec2};
+
+/// Localise only the UI notice; headless callers keep the AI layer's English response.
+pub(crate) fn replaced_builder_notice(saved: &str, used: &str) -> String {
+    trf("The AI chosen for this project ({saved}) is turned off or no longer set up. {used} builds instead.", &[("saved", saved), ("used", used)])
+}
 
 /// A live agent catalogue and a draft selection, tied to the settings that were queried.
 pub struct AgentModelPicker {
@@ -40,22 +44,19 @@ pub fn agent_model_picker(ui: &mut Ui, picker: &mut AgentModelPicker) -> bool {
     }
     let default = if picker.context.backend.config.model == "opencode" { tr("OpenCode default") } else { tr("Model default") };
     let selected = picker.model.as_deref().unwrap_or(&default);
-    let response = egui::ComboBox::from_id_salt(("agent-model", &picker.context.backend.config.name))
-        .icon(widgets::combo_icon)
-        .selected_text(selected)
-        .show_ui(ui, |ui| {
-            if ui.selectable_label(picker.model.is_none(), &default).clicked() {
-                picker.model = None;
+    let response = widgets::dropdown(("agent-model", &picker.context.backend.config.name)).selected_text(selected).show_ui(ui, |ui| {
+        if widgets::menu_item(ui, picker.model.is_none(), &default).clicked() {
+            picker.model = None;
+            picker.thinking = None;
+        }
+        for model in models {
+            let label = if model.name == model.id { model.name.clone() } else { format!("{} · {}", model.name, model.id) };
+            if widgets::menu_item(ui, picker.model.as_ref() == Some(&model.id), label).clicked() && picker.model.as_ref() != Some(&model.id) {
+                picker.model = Some(model.id.clone());
                 picker.thinking = None;
             }
-            for model in models {
-                let label = if model.name == model.id { model.name.clone() } else { format!("{} · {}", model.name, model.id) };
-                if ui.selectable_label(picker.model.as_ref() == Some(&model.id), label).clicked() && picker.model.as_ref() != Some(&model.id) {
-                    picker.model = Some(model.id.clone());
-                    picker.thinking = None;
-                }
-            }
-        });
+        }
+    });
     widgets::named(response.response, if picker.context.backend.config.model == "opencode" { "OpenCode model" } else { "Model" });
     let model = models.iter().find(|m| picker.model.as_ref() == Some(&m.id));
     let missing = picker.model.is_some() && model.is_none();
@@ -67,15 +68,14 @@ pub fn agent_model_picker(ui: &mut Ui, picker: &mut AgentModelPicker) -> bool {
     let depths = model.map(|m| m.thinking.as_slice()).unwrap_or_default();
     ui.label(tr("Thinking depth"));
     let default_depth = tr("Model default");
-    let response = egui::ComboBox::from_id_salt(("agent-thinking", &picker.context.backend.config.name))
-        .icon(widgets::combo_icon)
+    let response = widgets::dropdown(("agent-thinking", &picker.context.backend.config.name))
         .selected_text(picker.thinking.map(|d| d.title()).unwrap_or(&default_depth))
         .show_ui(ui, |ui| {
-            if ui.selectable_label(picker.thinking.is_none(), &default_depth).clicked() {
+            if widgets::menu_item(ui, picker.thinking.is_none(), &default_depth).clicked() {
                 picker.thinking = None;
             }
             for depth in depths {
-                if ui.selectable_label(picker.thinking == Some(*depth), depth.title()).clicked() {
+                if widgets::menu_item(ui, picker.thinking == Some(*depth), depth.title()).clicked() {
                     picker.thinking = Some(*depth);
                 }
             }
@@ -107,12 +107,15 @@ fn detail(b: &BackendConfig) -> String {
 }
 
 impl CraftApp {
-    /// Agent apps found on this computer that aren't set up yet (they need no key).
+    /// Agent apps found on this computer that aren't set up yet (they need no key). A host from
+    /// `~/.ssh/config` is added in Settings → AI first, where it's checked; it isn't set up from
+    /// this picker.
     fn found_agents(&self) -> impl Iterator<Item = &BackendConfig> {
         self.detected
             .iter()
             .flatten()
             .filter(|d| d.suggestion.kind == BackendKind::AgentCli && !d.needs_key)
+            .filter(|d| d.suggestion.ssh_host.as_deref().is_none_or(|h| h.trim().is_empty()))
             .map(|d| &d.suggestion)
             .filter(|s| !craft_anything_ai::is_on(&self.backends, &s.name))
     }
@@ -135,15 +138,18 @@ impl CraftApp {
         self.default_builder().is_some()
     }
 
+    /// Resolve the saved choice or the default before a build commits it.
+    pub(crate) fn resolve_builder(&self, wanted: Option<&str>) -> Option<String> {
+        wanted.filter(|name| self.builder_choices().iter().any(|choice| choice.name == *name)).map(str::to_string).or_else(|| self.default_builder())
+    }
+
     /// The AI to build with: `wanted` while it can build, else the default. An agent app that was
     /// only found is set up now (it needs no key, and the person pressed Start).
     pub fn builder_backend(&mut self, wanted: Option<&str>) -> Option<String> {
-        let choices = self.builder_choices();
-        let kept = wanted.filter(|w| choices.iter().any(|c| c.name == *w));
-        let name = kept.map(str::to_string).or_else(|| self.default_builder())?;
+        let name = self.resolve_builder(wanted)?;
         // A saved choice that was turned off or removed is replaced. The notice waits until a
         // builder is committed, so a failed setup doesn't claim one will build.
-        let replaced = wanted.filter(|w| !w.is_empty() && kept.is_none() && *w != name.as_str());
+        let replaced = wanted.filter(|w| !w.is_empty() && *w != name.as_str());
         let Some(found) = self.found_agents().find(|b| b.name == name).cloned() else {
             if let Some(saved) = replaced {
                 self.toast(replaced_builder_notice(saved, &name), false);
@@ -172,13 +178,13 @@ impl CraftApp {
         }
     }
 
-    /// Turn an AI on or off in Settings → AI (it keeps its key).
-    pub fn set_backend_enabled(&mut self, name: &str, on: bool) {
+    /// Turn an AI on or off (it keeps its key), returning the background job id.
+    pub fn set_backend_enabled(&mut self, name: &str, on: bool) -> u64 {
         let (hub, name) = (self.hub.clone(), name.to_string());
         self.jobs.spawn(if on { tr("Turn on an AI") } else { tr("Turn off an AI") }, false, move |_| {
             hub.set_enabled(&name, on).map_err(|e| e.message)?;
             Ok(crate::backends(&hub))
-        });
+        })
     }
 
     /// Ask an AI which models it can use, for Settings → AI's model picker.
@@ -248,12 +254,12 @@ impl CraftApp {
             state.saving = true;
         }
         let (hub, name, model) = (self.hub.clone(), name.to_string(), model.to_string());
-        self.jobs.spawn(tr("Change an AI's model"), false, move |_| {
-            let result = hub.set_model(&name, &model).and_then(|_| {
-                hub.options().get(&name).cloned().ok_or_else(|| craft_anything_engine::evidence::ToolError::invalid("The AI backend was removed."))
-            });
-            Ok(crate::Done::ModelChanged { name, model, result })
+        let backend = name.clone();
+        let job = self.jobs.spawn(tr("Change an AI's model"), false, move |_| {
+            let result = hub.set_model(&name, &model).map(|_| crate::read_backends(&hub));
+            Ok(crate::Done::ModelChanged { name, result })
         });
+        self.model_save_jobs.insert(backend, job);
     }
 
     /// Populate the persistent model controls on a worker, once for each backend/model pair.
@@ -282,19 +288,39 @@ impl CraftApp {
             state.saving = true;
         }
         let hub = self.hub.clone();
-        self.jobs.spawn(tr("Set model options"), false, move |_| {
-            let result = hub.set_model_options(&params);
-            Ok(crate::Done::ModelOptionsSaved { params, result })
+        let backend = params.backend.clone();
+        let job = self.jobs.spawn(tr("Set model options"), false, move |_| {
+            let result = hub.set_model_options(&params).map(|_| crate::read_backends(&hub));
+            Ok(crate::Done::ModelOptionsSaved { result })
+        });
+        self.model_save_jobs.insert(backend, job);
+    }
+
+    /// How hard an AI thinks from now on (`None`: its usual level).
+    pub fn set_effort(&mut self, name: &str, effort: Option<craft_anything_ai::Effort>) {
+        let (hub, name) = (self.hub.clone(), name.to_string());
+        self.jobs.spawn(tr("Change how hard an AI thinks"), false, move |_| {
+            hub.set_effort(&name, effort).map_err(|e| e.message)?;
+            Ok(crate::backends(&hub))
         });
     }
 
-    /// How hard a Claude AI thinks from now on.
-    pub fn set_effort(&mut self, name: &str, effort: craft_anything_ai::Effort) {
+    /// Space an API backend's requests out at the configured rate.
+    pub fn set_requests_per_minute(&mut self, name: &str, rate: u32) -> u64 {
         let (hub, name) = (self.hub.clone(), name.to_string());
-        self.jobs.spawn(tr("Change how hard an AI thinks"), false, move |_| {
-            hub.set_effort(&name, Some(effort)).map_err(|e| e.message)?;
+        self.jobs.spawn(tr("Set request rate"), false, move |_| {
+            hub.set_requests_per_minute(&name, rate).map_err(|e| e.message)?;
             Ok(crate::backends(&hub))
-        });
+        })
+    }
+
+    /// The tools future builders on an API backend are offered. Returns the job, so Settings can wait for it.
+    pub fn set_tool_list(&mut self, name: &str, list: craft_anything_ai::ToolList) -> u64 {
+        let (hub, name) = (self.hub.clone(), name.to_string());
+        self.jobs.spawn(tr("Change a builder's tools"), false, move |_| {
+            hub.set_tool_list(&name, list).map_err(|e| e.message)?;
+            Ok(crate::backends(&hub))
+        })
     }
 
     /// Connect the server in Settings → AI's address form. Its key goes to the keychain; the form
@@ -304,15 +330,21 @@ impl CraftApp {
         let f = &self.server_form;
         let (name, address, model, key) = (f.name.trim().to_string(), f.address.clone(), f.model.trim().to_string(), Some(f.key.clone()));
         let choices = self.backend_choices;
-        self.jobs.spawn(trf("Connect {name}", &[("name", &name)]), true, move |_| {
-            let result = hub.add_server(&name, &address, Some(model.as_str()).filter(|m| !m.is_empty()), key).map(|_| ());
-            Ok(crate::Done::BackendAdded { name, result, choices })
+        let shown = name.clone();
+        let job = self.jobs.spawn(trf("Connect {name}", &[("name", &name)]), true, move |j| {
+            let result = hub.add_server_until(&name, &address, Some(model.as_str()).filter(|m| !m.is_empty()), key, &j.cancel).map(|_| ());
+            let address = address.trim().to_string();
+            Ok(crate::Done::BackendAdded { name, result, choices, address, submitted_command: None })
         });
+        self.server_form.connecting = Some((job, shown, std::time::Instant::now()));
     }
 
     /// Run an agent app from this program (`None`: find it by its usual name again).
     pub fn set_agent_program(&mut self, name: &str, program: Option<String>) {
         self.agent_model_picker = None;
+        // The suggestion field caches what was typed by backend name. A new program means that
+        // cached command is stale: drop it so the field reloads the saved command.
+        self.state.remote_commands.remove(name);
         let (hub, name) = (self.hub.clone(), name.to_string());
         self.jobs.spawn(tr("Set an AI's program"), false, move |_| {
             hub.set_command(&name, program.as_deref()).map_err(|e| e.message)?;
@@ -353,7 +385,7 @@ impl CraftApp {
 pub fn built_by(app: &mut CraftApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let Some(default) = app.default_builder() else {
-        icons::show(ui, "triangle-alert", 16.0, t.warning);
+        icons::show(ui, "triangle-alert", theme::icon::MD, t.warning);
         ui.label(RichText::new(tr("Building needs a coding agent such as Claude Code, or an AI with an API key.")).size(theme::BODY).color(t.text_dim));
         if widgets::link(ui, "Set one up").clicked() {
             app.need_builder(false);
@@ -372,13 +404,13 @@ pub fn built_by(app: &mut CraftApp, ui: &mut Ui) {
     let shown = app.state.make.ai.clone().unwrap_or_else(|| automatic.clone());
     ui.label(RichText::new(tr("Built by")).size(theme::BODY).color(t.text_dim));
     let mut pick = None;
-    let r = egui::ComboBox::from_id_salt("built-by").icon(widgets::combo_icon).selected_text(shown).width(220.0).show_ui(ui, |ui| {
-        if ui.selectable_label(app.state.make.ai.is_none(), automatic).on_hover_text(tr("Whatever Settings → AI builds with.")).clicked() {
+    let r = widgets::dropdown("built-by").selected_text(shown).width(220.0).show_ui(ui, |ui| {
+        if widgets::menu_item(ui, app.state.make.ai.is_none(), automatic).on_hover_text(tr("Whatever Settings → AI builds with.")).clicked() {
             pick = Some(None);
         }
         for c in &choices {
             let note = if c.found { format!("{} · {}", c.detail, tr("found on this computer; set up when you start")) } else { c.detail.clone() };
-            if ui.selectable_label(app.state.make.ai.as_ref() == Some(&c.name), &c.name).on_hover_text(note).clicked() {
+            if widgets::menu_item(ui, app.state.make.ai.as_ref() == Some(&c.name), &c.name).on_hover_text(note).clicked() {
                 pick = Some(Some(c.name.clone()));
             }
         }
@@ -397,7 +429,7 @@ pub fn need_builder_modal(app: &mut CraftApp, ui: &mut Ui, start: bool, close: &
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::splat(48.0), egui::Sense::hover());
         ui.painter().rect_filled(rect, t.radius, t.accent_soft);
-        icons::paint(ui, rect, "bot", 24.0, t.accent_ink);
+        icons::paint(ui, rect, "bot", theme::icon::XL, t.accent_ink);
         ui.vertical(|ui| {
             ui.label(theme::heading(tr("Set up a builder"), theme::CARD));
             ui.add(
@@ -411,7 +443,7 @@ pub fn need_builder_modal(app: &mut CraftApp, ui: &mut Ui, start: bool, close: &
             );
         });
     });
-    ui.add_space(14.0);
+    ui.add_space(theme::space::LG);
     let found: Vec<BackendConfig> = app.found_agents().cloned().collect();
     if app.detecting {
         ui.horizontal(|ui| {
@@ -440,7 +472,7 @@ pub fn need_builder_modal(app: &mut CraftApp, ui: &mut Ui, start: bool, close: &
         widgets::panel(&t).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                icons::show(ui, "bot", 18.0, t.accent);
+                icons::show(ui, "bot", theme::icon::LG, t.accent);
                 ui.vertical(|ui| {
                     ui.label(RichText::new(&b.name).font(theme::semibold(theme::SMALL)));
                     ui.label(RichText::new(tr("Found on this computer")).color(t.text_faint).size(theme::CAPTION));
@@ -459,9 +491,9 @@ pub fn need_builder_modal(app: &mut CraftApp, ui: &mut Ui, start: bool, close: &
                 });
             });
         });
-        ui.add_space(6.0);
+        ui.add_space(theme::space::SM);
     }
-    ui.add_space(10.0);
+    ui.add_space(theme::space::MD);
     ui.horizontal(|ui| {
         if !app.detecting && widgets::secondary(ui, Some("radar"), "Look again").on_hover_text(tr("After installing one, look for it again.")).clicked() {
             app.detect_backends();
@@ -477,4 +509,34 @@ pub fn need_builder_modal(app: &mut CraftApp, ui: &mut Ui, start: bool, close: &
             }
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::demo;
+    use craft_anything_ai::Detected;
+    use craft_anything_engine::Mode;
+
+    #[test]
+    fn an_ssh_host_is_added_in_settings_not_from_the_builder_picker() {
+        let mut app = demo::app(demo::engine(Mode::Beginner, true));
+        let agent = |name: &str, host: Option<&str>| Detected {
+            suggestion: BackendConfig {
+                name: name.into(),
+                kind: BackendKind::AgentCli,
+                model: "claude-code".into(),
+                base_url: None,
+                ssh_host: host.map(str::to_string),
+                enabled: true,
+            },
+            reason: String::new(),
+            needs_key: false,
+        };
+        app.detected = Some(vec![agent("Claude Code on pi5", Some("pi5")), agent("Claude Code", None)]);
+        let choices: Vec<String> = app.builder_choices().into_iter().map(|c| c.name).collect();
+        assert!(choices.contains(&"Claude Code".to_string()), "an agent on this computer builds: {choices:?}");
+        assert!(!choices.contains(&"Claude Code on pi5".to_string()), "an SSH host is added in Settings first: {choices:?}");
+        assert_ne!(app.default_builder().as_deref(), Some("Claude Code on pi5"), "the remote host isn't the default builder");
+    }
 }

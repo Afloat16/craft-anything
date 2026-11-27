@@ -18,6 +18,18 @@ pub fn tab_of(d: &Detected) -> DetectTab {
     if d.suggestion.kind.is_harness() { DetectTab::Harnesses } else { DetectTab::Providers }
 }
 
+/// Whether a detected backend accepts a pasted API key before it is added (#1358).
+///
+/// Allows pasting a custom key even when a key was already found in the environment (such as
+/// `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or a known hosted provider's variable), so a person can
+/// override a stale environment key without adding the provider manually by address. Local servers
+/// and coding agent harnesses do not take a pasted key here.
+pub(crate) fn can_paste_key(d: &Detected) -> bool {
+    d.needs_key
+        || d.suggestion.kind.needs_key()
+        || d.suggestion.base_url.as_deref().is_some_and(|b| craft_anything_ai::openai::is_opencode_go(b) || craft_anything_ai::providers::of_base(b).is_some())
+}
+
 /// How many of each were found, for the tab labels.
 pub fn counts(detected: &[Detected]) -> (usize, usize) {
     detected.iter().fold((0, 0), |(p, h), d| match tab_of(d) {
@@ -40,19 +52,22 @@ pub fn resolve(chosen: Option<DetectTab>, providers: usize, harnesses: usize) ->
 /// Draw the two tabs and return the one that is showing. An empty tab is dimmed, not disabled: it
 /// still opens, and says what is missing.
 pub fn bar(ui: &mut egui::Ui, chosen: &mut Option<DetectTab>, detected: &[Detected]) -> DetectTab {
+    ui.horizontal_wrapped(|ui| buttons(ui, chosen, detected)).inner
+}
+
+/// Draw the tab buttons in the caller's layout, so adjacent actions share its spacing and wrapping.
+pub fn buttons(ui: &mut egui::Ui, chosen: &mut Option<DetectTab>, detected: &[Detected]) -> DetectTab {
     let (providers, harnesses) = counts(detected);
     let showing = resolve(*chosen, providers, harnesses);
-    ui.horizontal_wrapped(|ui| {
-        for (tab, label, count) in [(DetectTab::Providers, "Providers", providers), (DetectTab::Harnesses, "Harnesses", harnesses)] {
-            let mut text = egui::RichText::new(format!("{} ({count})", crate::i18n::tr(label)));
-            if count == 0 {
-                text = text.weak();
-            }
-            if ui.selectable_label(showing == tab, text).clicked() {
-                *chosen = Some(tab);
-            }
+    for (tab, label, count) in [(DetectTab::Providers, "Providers", providers), (DetectTab::Harnesses, "Harnesses", harnesses)] {
+        let mut text = egui::RichText::new(format!("{} ({count})", crate::i18n::tr(label)));
+        if count == 0 {
+            text = text.weak();
         }
-    });
+        if ui.selectable_label(showing == tab, text).clicked() {
+            *chosen = Some(tab);
+        }
+    }
     showing
 }
 
@@ -86,5 +101,29 @@ mod tests {
         assert_eq!(resolve(Some(DetectTab::Harnesses), 2, 0), DetectTab::Harnesses, "a clicked empty tab stays");
         assert_eq!(resolve(Some(DetectTab::Providers), 0, 3), DetectTab::Providers, "a clicked empty tab stays");
         assert_eq!(resolve(Some(DetectTab::Harnesses), 2, 3), DetectTab::Harnesses);
+    }
+
+    /// #1358: hosted API providers accept a pasted key even when found in the environment, while
+    /// local servers and agent harnesses do not.
+    #[test]
+    fn can_paste_key_covers_env_detected_providers_only() {
+        let with_url = |kind, url: Option<&str>, needs_key| Detected {
+            suggestion: BackendConfig { name: "X".into(), kind, model: "m".into(), base_url: url.map(str::to_string), ssh_host: None, enabled: true },
+            reason: String::new(),
+            needs_key,
+        };
+        for kind in [BackendKind::Openai, BackendKind::Anthropic, BackendKind::Openrouter, BackendKind::Gemini] {
+            assert!(can_paste_key(&with_url(kind, None, false)), "{kind:?} with env key must be pastable");
+            assert!(can_paste_key(&with_url(kind, None, true)), "{kind:?} without env key must be pastable");
+        }
+        assert!(can_paste_key(&with_url(BackendKind::OpenaiCompatible, None, true)), "explicit needs_key stays pastable");
+        assert!(can_paste_key(&with_url(BackendKind::OpenaiCompatible, Some(craft_anything_ai::openai::OPENCODE_GO_BASE), false)));
+        for provider in craft_anything_ai::providers::PROVIDERS {
+            assert!(can_paste_key(&with_url(provider.kind, Some(provider.base_url), false)), "hosted provider {} must be pastable", provider.name);
+        }
+        assert!(!can_paste_key(&with_url(BackendKind::OpenaiCompatible, Some("http://127.0.0.1:11434/v1"), false)));
+        assert!(!can_paste_key(&with_url(BackendKind::OpenaiCompatible, Some("http://192.168.1.20:11434/v1"), false)));
+        assert!(!can_paste_key(&with_url(BackendKind::OpenaiCompatible, None, false)));
+        assert!(!can_paste_key(&with_url(BackendKind::AgentCli, None, false)));
     }
 }

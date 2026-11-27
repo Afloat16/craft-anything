@@ -3,13 +3,14 @@
 //! esbuild (`__commonJS` / `__esm` wrappers, minified or not) and browserify. Scope-hoisted
 //! bundles (Rollup, Vite production chunks) have no module boundaries left to recover.
 
-use crate::facts::Key;
+use crate::facts::{Key, static_str};
 use crate::fingerprint::Fingerprint;
 use crate::model::{BundleInfo, BundleModule};
 use crate::util::{LineIndex, sha256_hex, slice};
 use oxc_ast::ast::*;
 use oxc_ast_visit::{Visit, walk};
 use oxc_semantic::Scoping;
+use oxc_syntax::number::ToJsString;
 use oxc_syntax::scope::ScopeFlags;
 use std::collections::{HashMap, HashSet};
 
@@ -55,6 +56,18 @@ impl Func<'_, '_> {
         }
     }
 
+    fn param_binding(&self, index: usize, scoping: Option<&Scoping>) -> Option<Key> {
+        let params = match self {
+            Func::Function(f) => &f.params,
+            Func::Arrow(a) => &a.params,
+        };
+        let BindingPattern::BindingIdentifier(id) = &params.items.get(index)?.pattern else { return None };
+        match scoping {
+            Some(_) => id.symbol_id.get().map(Key::Sym),
+            None => Some(Key::Name(id.name.to_string())),
+        }
+    }
+
     fn span(&self) -> oxc_span::Span {
         match self {
             Func::Function(f) => f.span,
@@ -76,7 +89,7 @@ impl Func<'_, '_> {
 
 /// Collects calls to the module's `require` parameter and esbuild wrapper calls.
 struct DepVisitor<'n> {
-    require_name: Option<&'n str>,
+    require_binding: Option<Key>,
     scoping: Option<&'n Scoping>,
     esbuild_vars: Option<&'n HashMap<Key, String>>,
     deps: Vec<String>,
@@ -88,12 +101,16 @@ impl<'a> Visit<'a> for DepVisitor<'_> {
     fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
         if let Expression::Identifier(id) = &it.callee {
             let n = id.name.as_str();
-            if Some(n) == self.require_name && it.arguments.len() == 1 {
-                let dep = match it.arguments.first().and_then(|a| a.as_expression()) {
-                    Some(Expression::NumericLiteral(x)) => Some(x.raw.as_ref().map_or_else(|| x.value.to_string(), |r| r.to_string())),
-                    Some(Expression::StringLiteral(s)) => Some(s.value.to_string()),
-                    _ => None,
-                };
+            let is_loader = self.require_binding.as_ref().is_some_and(|binding| match (binding, self.scoping) {
+                (Key::Sym(symbol), Some(sc)) => id.reference_id.get().and_then(|rid| sc.get_reference(rid).symbol_id()) == Some(*symbol),
+                (Key::Name(name), None) => name == n,
+                _ => false,
+            });
+            if is_loader && it.arguments.len() == 1 {
+                let dep = it.arguments.first().and_then(|a| a.as_expression()).and_then(|e| match e.get_inner_expression() {
+                    Expression::NumericLiteral(x) => Some(x.value.to_js_string()),
+                    other => static_str(other).map(str::to_string),
+                });
                 if let Some(d) = dep
                     && !self.deps.contains(&d)
                     && self.deps.len() < 4096
@@ -136,7 +153,7 @@ impl EsbuildDeps<'_> {
         let span = f.span();
         let Some(&idx) = self.module_indices.get(&(span.start, span.end)) else { return false };
         let mut dv = DepVisitor {
-            require_name: None,
+            require_binding: None,
             scoping: self.scoping,
             esbuild_vars: Some(self.wrappers),
             deps: Vec::new(),
@@ -195,29 +212,23 @@ impl<'s> BundleVisitor<'s> {
         }
         let span = f.span();
         let params = f.params();
-        let require_name = match format {
-            "webpack" | "webpack-chunk" => params.get(2).cloned(),
-            "browserify" => params.first().cloned(),
+        let require_binding = match format {
+            "webpack" | "webpack-chunk" => f.param_binding(2, self.scoping),
+            "browserify" => f.param_binding(0, self.scoping),
             _ => None,
         };
-        let mut dv = DepVisitor {
-            require_name: require_name.as_deref(),
-            scoping: self.scoping,
-            esbuild_vars: None,
-            deps: Vec::new(),
-            esbuild: Vec::new(),
-            esbuild_seen: HashSet::new(),
-        };
+        let mut dv =
+            DepVisitor { require_binding, scoping: self.scoping, esbuild_vars: None, deps: Vec::new(), esbuild: Vec::new(), esbuild_seen: HashSet::new() };
         let mut fp = Fingerprint::new();
         match f {
             Func::Function(func) => {
-                if require_name.is_some() {
+                if dv.require_binding.is_some() {
                     dv.visit_function(func, ScopeFlags::Function);
                 }
                 fp.visit_function(func, ScopeFlags::Function);
             }
             Func::Arrow(a) => {
-                if require_name.is_some() {
+                if dv.require_binding.is_some() {
                     dv.visit_arrow_function_expression(a);
                 }
                 fp.visit_arrow_function_expression(a);
@@ -242,7 +253,7 @@ impl<'s> BundleVisitor<'s> {
 
     fn key_id(&self, key: &PropertyKey<'_>) -> Option<String> {
         match key {
-            PropertyKey::NumericLiteral(n) => Some(n.raw.as_ref().map_or_else(|| n.value.to_string(), |r| r.to_string())),
+            PropertyKey::NumericLiteral(n) => Some(n.value.to_js_string()),
             PropertyKey::StringLiteral(s) => Some(s.value.to_string()),
             PropertyKey::StaticIdentifier(i) => Some(i.name.to_string()),
             _ => None,
@@ -261,6 +272,27 @@ impl<'s> BundleVisitor<'s> {
             .filter(|p| matches!(p, ObjectPropertyKind::ObjectProperty(p) if !p.computed && as_func(&p.value).is_some_and(|f| f.param_count() <= 3)))
             .count();
         good * 10 >= total * 9
+    }
+
+    /// Every property is a module factory: a small-arity function under a plain key.
+    fn object_has_factories(o: &ObjectExpression<'_>) -> bool {
+        o.properties
+            .iter()
+            .all(|p| matches!(p, ObjectPropertyKind::ObjectProperty(p) if !p.computed && as_func(&p.value).is_some_and(|f| f.param_count() <= 3)))
+    }
+
+    /// `(g = g || [])` or `(g ||= [])`: how webpack's chunk loading reaches its global array,
+    /// whatever the global is called.
+    fn chunk_global(e: &Expression<'_>) -> bool {
+        let Expression::AssignmentExpression(a) = e.get_inner_expression() else { return false };
+        let empty = |e: &Expression<'_>| matches!(e.get_inner_expression(), Expression::ArrayExpression(x) if x.elements.is_empty());
+        match a.operator {
+            AssignmentOperator::Assign => {
+                matches!(a.right.get_inner_expression(), Expression::LogicalExpression(l) if l.operator == LogicalOperator::Or && empty(&l.right))
+            }
+            AssignmentOperator::LogicalOr => empty(&a.right),
+            _ => false,
+        }
     }
 
     fn array_is_table(a: &ArrayExpression<'_>) -> bool {
@@ -319,9 +351,8 @@ impl<'s> BundleVisitor<'s> {
                 .iter()
                 .filter_map(|p| match p {
                     ObjectPropertyKind::ObjectProperty(p) => match p.value.get_inner_expression() {
-                        Expression::NumericLiteral(n) => Some(n.value.to_string()),
-                        Expression::StringLiteral(s) => Some(s.value.to_string()),
-                        _ => None,
+                        Expression::NumericLiteral(n) => Some(n.value.to_js_string()),
+                        other => static_str(other).map(str::to_string),
                     },
                     _ => None,
                 })
@@ -398,13 +429,18 @@ impl<'a> Visit<'a> for BundleVisitor<'_> {
                 .elements
                 .iter()
                 .filter_map(|e| match e.as_expression()?.get_inner_expression() {
-                    Expression::NumericLiteral(n) => Some(n.value.to_string()),
-                    Expression::StringLiteral(s) => Some(s.value.to_string()),
-                    _ => None,
+                    Expression::NumericLiteral(n) => Some(n.value.to_js_string()),
+                    other => static_str(other).map(str::to_string),
                 })
                 .collect();
+            // A table of two or more factories is shape enough; a single one also needs webpack
+            // named in the file or webpack's `(g = g || []).push`, since `queue.push([[1], { a }])`
+            // is ordinary code too.
+            let single_module = |o: &ObjectExpression<'_>| {
+                Self::object_is_table(o) || (o.properties.len() == 1 && (self.webpack_hint || Self::chunk_global(&m.object)) && Self::object_has_factories(o))
+            };
             match payload.elements.get(1).and_then(|e| e.as_expression()).map(|e| e.get_inner_expression()) {
-                Some(Expression::ObjectExpression(o)) if Self::object_is_table(o) || o.properties.len() == 1 => {
+                Some(Expression::ObjectExpression(o)) if single_module(o) => {
                     self.info.chunk_ids.extend(chunk_ids.iter().cloned());
                     self.take_object(o, "webpack-chunk", &chunk_ids);
                     return;

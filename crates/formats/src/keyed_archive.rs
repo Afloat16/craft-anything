@@ -54,9 +54,26 @@ pub fn from_plist(v: &Value) -> Result<KeyedArchive, FormatError> {
     })
 }
 
+/// Read an owned plist, moving its object table instead of copying every stored payload.
+pub fn from_owned_plist(mut v: Value) -> Result<KeyedArchive, FormatError> {
+    let objects = match &mut v {
+        Value::Dict(entries) => entries.iter_mut().find(|(key, _)| key == "$objects").map(|(_, value)| value),
+        _ => None,
+    };
+    let Some(Value::Array(objects)) = objects else {
+        return Err(FormatError::Malformed("no $objects array (not a keyed archive)".into()));
+    };
+    let objects = std::mem::take(objects);
+    // Keep the selected array's position, including before duplicate keys, while reusing the
+    // borrowed constructor's metadata validation. Its now-empty array has nothing to copy.
+    let mut archive = from_plist(&v)?;
+    archive.objects = objects;
+    Ok(archive)
+}
+
 /// Parse bytes (binary or XML plist) as a keyed archive.
 pub fn parse(data: &[u8]) -> Result<KeyedArchive, FormatError> {
-    from_plist(&plist::parse(data)?)
+    from_owned_plist(plist::parse(data)?)
 }
 
 /// A UID, also in its XML form `{"CF$UID": n}`.
@@ -68,11 +85,11 @@ pub fn uid_of(v: &Value) -> Option<u64> {
     }
 }
 
-fn kind_of(v: &Value) -> &'static str {
+fn kind_of(v: &Value, index: usize) -> &'static str {
     match v {
         Value::Dict(_) => "object",
         Value::Array(_) => "array",
-        Value::String(s) if s == "$null" => "null",
+        Value::String(s) if index == 0 && s == "$null" => "null",
         Value::String(_) => "string",
         Value::Integer(_) => "integer",
         Value::Real(_) => "real",
@@ -94,7 +111,8 @@ impl KeyedArchive {
         self.class_name(idx).map(str::to_owned)
     }
 
-    fn class_name(&self, idx: u64) -> Option<&str> {
+    /// The class name borrowed from its shared class object, without copying the text.
+    pub fn class_name(&self, idx: u64) -> Option<&str> {
         let o = self.object(idx)?;
         let c = o.get("$class").and_then(uid_of)?;
         self.object(c)?.get("$classname").and_then(Value::as_str)
@@ -102,9 +120,16 @@ impl KeyedArchive {
 
     /// The table of objects.
     pub fn rows(&self) -> Vec<ObjectRow> {
+        self.rows_page(0, usize::MAX)
+    }
+
+    /// Object rows in the requested range. Unrequested rows do not copy names or collect edges.
+    pub fn rows_page(&self, offset: usize, limit: usize) -> Vec<ObjectRow> {
         self.objects
             .iter()
             .enumerate()
+            .skip(offset)
+            .take(limit)
             .map(|(i, o)| {
                 let mut references = Vec::new();
                 collect_uids(o, &mut references, 0);
@@ -112,7 +137,7 @@ impl KeyedArchive {
                     Value::Dict(d) if uid_of(o).is_none() => d.iter().map(|(k, _)| k.clone()).collect(),
                     _ => Vec::new(),
                 };
-                let kind = if uid_of(o).is_some() { "uid" } else { kind_of(o) };
+                let kind = if uid_of(o).is_some() { "uid" } else { kind_of(o, i) };
                 ObjectRow { index: i, class: self.class_of(i as u64), kind, keys, references }
             })
             .collect()
@@ -155,13 +180,26 @@ struct Projector<'a> {
     bytes_left: usize,
 }
 
-impl Projector<'_> {
+impl<'a> Projector<'a> {
     fn spend(&mut self, n: usize) -> bool {
         if let Some(left) = self.bytes_left.checked_sub(n) {
             self.bytes_left = left;
             return true;
         }
         false
+    }
+
+    /// Follow up to 16 UID aliases to a target value in `$objects`.
+    fn resolve_scalar(&mut self, mut v: &'a Value) -> Option<&'a Value> {
+        for _ in 0..16 {
+            let Some(u) = uid_of(v) else { return Some(v) };
+            self.nodes += 1;
+            if self.nodes > MAX_PROJECT_NODES {
+                return None;
+            }
+            v = self.a.object(u)?;
+        }
+        uid_of(v).is_none().then_some(v)
     }
 
     fn reference(&mut self, idx: u64, why: &str) -> Json {
@@ -200,7 +238,7 @@ impl Projector<'_> {
             return json!({"$ref": idx, "$note": "missing object"});
         };
         match obj {
-            Value::String(s) if s == "$null" => return Json::Null,
+            Value::String(s) if idx == 0 && s == "$null" => return Json::Null,
             Value::Dict(_) | Value::Array(_) | Value::Uid(_) => {}
             other => {
                 let copied = match other {
@@ -253,8 +291,17 @@ impl Projector<'_> {
                 if let Some(s) = obj.get("NS.string") {
                     return self.value(s, depth);
                 }
-                if let Some(Value::Data(b)) = obj.get("NS.bytes") {
-                    return json!(String::from_utf8_lossy(b));
+                if let Some(raw) = obj.get("NS.bytes")
+                    && let Some(Value::Data(b)) = self.resolve_scalar(raw)
+                {
+                    if !self.spend(b.len()) {
+                        return self.reference(idx, "projection byte limit");
+                    }
+                    let decoded = String::from_utf8_lossy(b);
+                    if !self.spend(decoded.len().saturating_sub(b.len())) {
+                        return self.reference(idx, "projection byte limit");
+                    }
+                    return Json::String(decoded.into_owned());
                 }
             }
             "NSData" | "NSMutableData" => {
@@ -263,8 +310,12 @@ impl Projector<'_> {
                 }
             }
             "NSDate" => {
-                if let Some(Value::Real(t)) = obj.get("NS.time") {
-                    return json!({"$date": plist::apple_date_iso(*t)});
+                if let Some(raw) = obj.get("NS.time") {
+                    match self.resolve_scalar(raw) {
+                        Some(Value::Real(t)) => return json!({"$date": plist::apple_date_iso(*t)}),
+                        Some(Value::Integer(i)) => return json!({"$date": plist::apple_date_int_iso(*i)}),
+                        _ => {}
+                    }
                 }
             }
             _ => {}

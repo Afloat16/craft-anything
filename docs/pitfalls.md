@@ -87,6 +87,32 @@ names (`git merge-base --is-ancestor <fix> <release tag>`), and check the messag
 
 ## Tests
 
+**Invalid-byte filename fixtures gated only on Unix.** `cfg(unix)` includes Apple targets,
+where APFS rejects the fixture names before their assertions run. Keep filesystem tests that
+require invalid UTF-8 names off Apple targets, while retaining iterator-only coverage on Unix.
+
+**A zoom-and-resize test kept the old viewport.** Applying egui zoom and a harness resize in
+the same frame let the zoom adjustment replace the supplied screen rectangle. Apply zoom first,
+then resize in logical points, and assert `ctx.content_rect()` matches the requested viewport
+before checking layout. A screenshot of the supposed wide, short window exposed this.
+
+**A TLS fixture closed before the handshake.** Accepted sockets inherited the listener's
+nonblocking mode on Windows, so the fixture read `WouldBlock` and closed a valid connection.
+Set the accepted socket to blocking mode before applying bounded I/O timeouts; consume the
+complete request header before replying.
+
+**A test module hid later production code from a policy gate.** The source scan stopped at the
+first `cfg(test)`, and unreadable files looked empty. Inspect syntax for the actual test item,
+keep checking its production siblings and source directories (even one named `tests`), and report source failures. `cfg(not(test))` and
+`cfg(any(test, feature = "app"))` may contain production code; a cfg string containing "test"
+isn't enough to exempt it. The source-policy checks follow explicit imports and module files,
+not macro expansion, globs, re-exports or all Rust name resolution; compiler checks still matter.
+Hidden module directories are source too. Symlinked source directories fail visibly rather than
+being omitted or followed into cycles; ordinary Rust file links are read and checked. Git metadata
+stays out of the directory walk. Module-level declarations explicitly referencing a file
+include it even under an otherwise-exempt directory; discovery is cycle-safe and bounded to the
+workspace. Missing cfg-dependent files still require compiler validation.
+
 **A heartbeat sampled before shutdown raced a successful stop.** A child could write between
 the baseline read and `stop()`, failing the descendant cleanup test even when cleanup worked.
 Probe for exit instead of timing writes: the child holds a file lock the system releases only
@@ -121,6 +147,12 @@ with `AiHub::new`, which saves to the real `config.toml` and the system keychain
 added or removed an AI yet, so nothing noticed. Everything a test app can save goes to a temp
 folder (`AiHub::with_stores`), not only the engine's session.
 
+**A test that finds a program by Cargo's folder layout.** The CLI was looked for one folder up
+from the test binary (`target/debug/deps`). CI follows stable Rust, and Rust 1.100's Cargo moved
+test binaries to `target/debug/build/<package>/<hash>/out`, so `main` failed overnight with no
+code change. When CI breaks on a commit that passed, compare the runs' toolchain lines first, and
+don't rely on where Cargo keeps its intermediate files.
+
 **A test that passes only where a program is installed.** A tool's `Requires::Engine` is checked
 before it runs, so a test of its input checks passed on a machine with ilspycmd and failed on one
 without. Point the test session's `engines.tools` path at a stand-in file when the tool refuses
@@ -146,10 +178,28 @@ must release that resource and empty its registry. Do not reserve and release a 
 CI the banner moved the layout under another test running beside it, and its click missed. It passed
 25 runs on a Mac. Anything a test sets for the whole process goes in a test program of its own.
 
+**A released file lock that still looked held.** Saved sign-in reservations use `flock`; a
+program another thread was starting held a copy of the lock file until its exec closed it, so a
+sign-out right after the reservation was dropped was refused as busy in about one full engine
+run in four, never alone. A non-blocking lock tries again for a moment (`lock_site`'s
+`LOCK_GRACE`) before calling something busy, and a lock test is run inside the full suite.
+
+**A test that passed only without the developer's `CARGO_TARGET_DIR`.** Since the program
+lookup reads `CARGO_TARGET_DIR`, four pin tests failed on a machine that exported it: a live check
+had left a real `snake` program in that shared folder, and the tests' project is also called snake.
+The product had the same fault: any same-named program there was taken for the project's. Run the
+engine tests with `CARGO_TARGET_DIR` set to a folder holding other builds, and a lookup in a
+shared folder needs proof that a file is this project's, not just its name.
+
 **A free port handed to another test.** For a negative TCP probe, a bound port stopped being
 ours as soon as its listener was dropped. Another fixture could acquire it before the probe.
 Use the unassigned loopback port zero to exercise a real connection refusal without borrowing
 and releasing a shared ephemeral port.
+
+**A click aimed where a control was.** A UI test cleared a message by changing the app's state and
+clicked Test at once; the message's going had moved the form, so the click landed where the button
+had been and nothing ran, which looked like a worker too slow for `wait`. After changing state
+that moves the layout, run a frame or two before clicking.
 
 **Fixtures that leak into each other.** A "nothing here" path sat beside a fake game folder in the
 same temp directory, and game detection walked up and found the game. Give each case its own
@@ -199,6 +249,18 @@ off the UI thread; a UI test that added pictures, ran three frames and then look
 fast machines and failed in CI on unrelated PRs. When work moves to a worker, grep the tests that
 call it and make them `wait` for the result, not `run_steps(n)`.
 
+**An interrupted call read as "nothing answered".** A Cutter test failed once on Linux CI with "No
+Cutter session answered … Interrupted system call": a signal reached the thread (likely another
+test's child ending) during a loopback call, and every error that wasn't a timeout meant "no
+session". An interrupted system call is not an answer: decide on the error's typed kind
+(`ErrorKind::Interrupted`), call again within the same time limit when the request is safe to
+repeat (`platform::retry::when_interrupted`), and otherwise say it was interrupted.
+
+**A stand-in server that answers every request in order.** The AI tests' `mock` answered each
+request with the next scripted reply, so when the agent began asking the server for its context
+window before the first chat, that question took the chat's reply. A stand-in says which requests
+it was scripted for and answers anything else as a real server that doesn't know would.
+
 ## Building and running
 
 **A documentation edit rebuilt dependencies in a separate cache.** A sequential review follow-up
@@ -214,6 +276,9 @@ project placement, the selected virtualenv interpreter and artifact paths stayed
 PATH lookup can return a relative path too. Resolve workspace paths against the process's
 current directory, look up only bare program names, and make the result absolute without
 dereferencing the virtualenv symlink. Test the generated capture request without opening a GUI.
+The same rule covers every child started in app/: engine build arguments, option files, console
+run checks, Play and pins must get absolute program, working-directory and path arguments; a
+relative one is resolved against app/ again.
 
 **A screenshot helper aborted inside CoreGraphics.** The first macOS screenshot probe used
 ScreenCaptureKit from a command-line Swift helper without initializing AppKit's WindowServer
@@ -242,6 +307,26 @@ the program it opened stayed open (and held the shell's pipe, so the command nev
 the caller may exit next, use `kill_and_wait`, and check after a live run that nothing was left
 running.
 
+**Killing the group isn't closing the program.** The pictured program was killed outright, so a
+helper it had launchd start (not in its group) kept running with the program's files open. Ask the
+program to close first and kill only after a short wait (`RunningProcess::close_and_wait`).
+
+**A turn's own process outlived its answer.** `run_cli` only sent `AgentEvent::TurnDone` once the
+whole coding-agent subprocess exited, never once its JSON stream said the turn was done (the
+`result` line). Claude Code can print that line and then linger (its own shutdown hook, logging)
+for as long as the idle timeout allows — hours, for a builder turn — so a finished build stayed on
+"Building"/"Pausing" long after the real work and even a final report were done, with no crash and
+no error to find. Once the stream's own terminal event is parsed, stop waiting on the process
+itself: fold a `result_seen` flag into `cancel_when` with a short grace period (`RESULT_GRACE`),
+and don't report that as "Stopped." A terminal stream event, not the OS exit, is what ends a turn.
+
+**A deadline that ended in a wait with none.** Every `Process` run has a time limit and a cancel,
+but when either fired the supervisor called the library's `kill()`, which stops the program and
+then waits for it with no limit (on Windows also for a job message the system doesn't promise).
+A program that outlives its stop held the run, and Pause, for good (#1438, #981). A deadline covers
+its own cleanup too: after a stop, poll for a moment and move on (`process::end`), and when a
+library call says "kill", read whether it also waits. Not reproduced on the reporters' machines.
+
 **A console held open by a program started next door.** On Windows Server 2022 opening a
 pseudoconsole briefly makes inheritable handles (a Unix terminal too, until it's made close-on-exec),
 so a program another thread started at that moment kept the console open until it ended, and closing
@@ -260,6 +345,15 @@ the whole group, so websites never opened ("closed after 0.3 s"). Where it didn'
 browser outlived the CLI (the job isn't killed when closed) and held the shell's output pipe, so
 the command hung and old browsers piled up. Start programs that hand off with `.hands_off()`, and
 after a live run check that the command returned and nothing it started is still running.
+
+**A live browser test that died on a line about crashpad.** On Ubuntu with
+`kernel.apparmor_restrict_unprivileged_userns=1`, a Chromium that has no AppArmor profile (Playwright's
+copy, Chrome for Testing) can't build its sandbox and exits at once; the only stderr line we kept was a
+harmless crashpad warning (`cpufreq/scaling_max_freq`), so all five live sign-in tests failed in 1.5 s with
+"closed before it was ready". Don't turn the sandbox off in the product for it: point
+`CRAFT_ANYTHING_TEST_CHROMIUM` at a throwaway wrapper in `/tmp` that adds `--no-sandbox`, only for a browser
+that visits a server on 127.0.0.1. A helper that connects the moment the debugging port file appears must
+also wait for the first page target (`first_page`): it raced the browser's own start.
 
 **A separate config folder hides the agent's own settings.** To keep a live run from touching the
 real `config.toml`, `XDG_CONFIG_HOME` was pointed at a scratch folder; the agent CLI we start reads
@@ -303,6 +397,12 @@ backend that's started at all: start only the backends the app may use.
 It happened again with Vulkan on Windows (#394): starting Vulkan loaded an Intel Vulkan driver
 (`igvk64.dll`) that crashed with `0xc0000005` on startup. Windows now starts DX12 only by default
 (which includes WARP); `WGPU_BACKEND` still allows choosing other backends.
+
+**A build script that missed a removed file.** `build.rs` joins each catalog folder, and
+`cargo::rerun-if-changed` on the folder saw a new or changed file, but not one taken away: Cargo
+compares the newest time in the folder, which a deletion doesn't change, so the joined catalog
+kept the removed file's lines. Also list every file the script read; Cargo runs it again when a
+listed file is gone. Test a generated file by adding an input and then removing it.
 
 **A shader compiler picked by a default that looks around the computer.** wgpu's DX12 `Auto`
 compiler takes a `dxcompiler.dll` it finds on the PATH; one without `dxil.dll` makes unsigned
@@ -370,6 +470,10 @@ window was redrawn at the display's rate the whole time (a core busy, or every c
 software), and a person reported "my CPU is fully used" (#579). Animations ask for their next frame
 at their own pace (`widgets::animate`, `widgets::Spinner`); check a library widget for
 `request_repaint` before using it for something long. Not measured on Windows here.
+It happened again with egui's `ProgressBar::animate(true)` in the jobs list, which the spinner fix
+didn't look at: replacing one widget isn't checking the others. Search the library's widgets for
+`request_repaint` (`grep -rn request_repaint ~/.cargo/registry/src/*/egui-*/src/widgets`), and the
+test that refuses egui's spinner on screens refuses its progress bar too.
 
 **Every tool offered to a model that can only use a few.** The builder on an API backend was sent
 all 33-41 Core and Build tools, about 23,000-30,000 characters of descriptions. A local 14B model
@@ -422,10 +526,23 @@ it either. Send its task on stdin, with no task argument. A literal `-` is a std
 Harness versions but is the task itself in older ones; omitting the task makes those older versions
 fail before a model runs. They need an update to a headless profile that supports stdin.
 
+**A stop that only one process heard.** The first Stop button for Ghidra took the project out of
+the app's in-memory list of analyses; the build then decompiled through its tool server (another
+process), which found no saved analysis and started the same hours-long one again, with no Stop
+for it. A decision several processes must honour is kept where they all look (a file in the
+project folder), checked by every path that can start the work, and cleared at one stated point.
+
 **A first analysis that waited for a lock it could never take.** Ghidra's analysis lock is created
 with `create_new` in `ghidra-cache/`, which only existed on machines that had used it before; on a
 fresh store the create failed and the loop read that as "someone else holds it" until the
 deadline. Create a lock's folder first, and treat any error but "already exists" as a failure.
+
+**A bound read from an analysis that never saw the code.** Ghidra's unguarded jump tables were
+first ended at the next address something refers to; a hand-made ELF passed, but in a real Rust
+program the code holding the next table's `lea` is reached only through the table being bounded,
+so it was never disassembled, nothing referred to the next table and the bound took all 256
+entries. When a fix leans on what an analysis found, ask whether the thing being fixed is why it
+found nothing, and run it on a real program, not only on one built for the test.
 
 **A bridge that didn't compile.** A helper in the Ghidra bridge was named like a public
 `GhidraScript` method, so Ghidra refused the script and the run only said the bridge stopped.
@@ -469,11 +586,101 @@ merge state. Without CI, run its steps locally with `--locked`; a Mac can compil
 systems with `cargo check --target`, with zig as the C compiler for `ring` (a wrapper that drops the
 `--target=` flag `cc` adds), but that only proves it compiles.
 
+**A "required" switch read only on the failure path.** The build script looked at
+`CRAFT_FONTS_REQUIRED` only when `CRAFT_FONTS_DIR` was set and bad; with the folder variable
+missing, a build told the fonts were required finished with none embedded, and Korean showed as
+boxes. A requirement is checked on every path that ends without the thing, the missing input first;
+keep the decision in a function a test can call (`plan` in `crates/ui-egui/build.rs`).
+
 **Unformatted code reached `main`.** A test was edited by script after `cargo fmt --all` had run,
 so #53 merged with a long line rustfmt rewraps. Run `cargo fmt --all --check` last, after every
 edit, right before committing.
+Then `cargo fmt --all` itself stopped working on Windows: it hands rustfmt every target's root file
+in one command, and with the tests added since then that was about 31,000 characters of `\\?\`
+paths, past the 32,767 limit ("The filename or extension is too long", os error 206), so `cargo
+xtask ci` failed before checking anything. A command that takes one argument per file grows with
+the repository: format through `cargo xtask fmt [--check]`, which sends the same files in batches.
+
+**Clippy passed on an older Rust.** #1480 ran clippy on Rust 1.97 (the workspace's
+`rust-version`), clean; CI's 1.99 has `clippy::chunks_exact_to_as_chunks` and stopped the PR on
+it. A clippy that predates a lint can't report it. Run fmt and clippy with CI's toolchain
+(`RUSTUP_TOOLCHAIN=1.99.0`), and if a tool says it isn't installed for a toolchain, install that
+toolchain's component rather than running another copy.
+
+**A process list read nothing on FreeBSD.** `ps -A -o pid=,ppid=` lists both columns on Linux,
+but POSIX makes everything after `=` the header, so FreeBSD's `ps` printed one `pid` column headed
+",ppid=" and every parent lookup came back empty. Give each column its own `-o` (`-o pid= -o ppid=`)
+when a header is renamed or blanked.
+
+**`cfg(unix)` tests assumed every Unix could capture a console program.** Two console-run tests
+from #1679 and #1702 failed every night on FreeBSD, whose capture was a stub that refused to run
+anything. A test gated on `unix` must only need what every Unix build has; FreeBSD now captures
+through pipes, as Windows does.
 
 ## Design
+
+**A readiness flag outlived the provider it described.** A Deep export cached success after a
+bridge failure removed its provider. The next function restarted the bridge after the startup
+budget check and decompiled past the deadline. Cache unavailable results for the call, but
+reconfirm successful readiness through the provider slot before checking the remaining budget.
+
+**A bounded modal still grew with its children.** Settings' minimum width and page height ran
+outside a 380×260 logical viewport. Removing those minima alone still let AI fields and nested
+dropdowns widen it; a wrapping row does not always constrain a control that measures a child UI.
+Budget the frame and actual remaining height, scroll navigation independently, and stack control
+groups when narrow. Test the real modal bounds on every tab, then inspect rendered screenshots;
+also check normal desktop proportions. Render the whole app to catch duplicate error overlays;
+a new save-error occurrence must return into view without resetting ordinary scrolling.
+
+**A source inventory limit came after expansion.** Taking five thousand names after collecting
+every source path copied a large `sourceRoot` into every entry first. Count retained entries and
+expanded UTF-8 bytes before allocating each path, share the budget across indexed sections and
+application maps, and report when only a prefix could be kept. A source identity stays complete;
+shortening one to fit the budget would describe a different source.
+The source-to-bundle comparison then treated omitted paths as confirmed missing because it read
+only the retained names. Carry inventory truncation through the diff and its evidence: preserve
+positive matches, report the other sources as uncertain, and keep confirmed unmatched sources
+for complete inventories. Test the consumer with a real exhausted budget, not only the flag.
+
+**A recovery manifest repeated expanded source roots.** The source-map inventory budget did not
+cover the recovery tool, which copied every expanded path into its manifest: a 75 KiB map with a
+64 KiB root and 1,200 sources retained about 78 MiB. Apply the inventory budget to recovery paths
+too, stop retaining originals when it is exhausted, and report partial recovery with a typed flag.
+
+**An unread part of a source map looked like absent sources.** An index-map section can point at
+another map (`url`), which the parser never fetches: it kept the section boundary but no count, so
+a source comparison reported a source only that map lists as confirmed missing. Count unread
+external sections on the map and in its inventory, carry the count into the application graph with
+a limitation, and give an otherwise unmatched source an `uncertain` reason. Test an inline section
+beside an external one, a nested index map, and the sources-only read used for bad mappings.
+
+**A fix landed in one of two copies of a reader.** The `sourceMappingURL` rules were fixed in
+`formats::sourcemap`, but `js::find_map_url` kept requiring a literal space, so a bundle with the
+standard no-space annotation was analysed without its map. Have one implementation and call it
+from both places; a regression at the consumer's public entry point catches a copy that drifts.
+The same happened with the PE optional header: `pe::headers` was bounded by `SizeOfOptionalHeader`,
+but `dotnet::pe::parse_pe` still read data directory 14 at a fixed offset, so a short declared
+header could borrow the CLI directory from section-table bytes. When a structure's declared size
+is enforced, search every reader of its fixed offsets and test each one with a short declared size.
+
+**A carver read optional-header fields the header didn't declare.** The firmware scanner read the
+PE certificate table and `SizeOfHeaders` at fixed offsets even when `SizeOfOptionalHeader` ended
+first, so a short header could over-carve into the next embedded object. Bound every fixed-offset
+field by the declared header, and test a short declared size beside the full-header control.
+
+**A floating-point conversion changed a fingerprint.** Widening a single-precision NaN to a double
+can change its sign, payload or signaling bit. Keep the original encoded bits for identities, and
+test signaling/quiet pairs as well as different payloads; retain numeric conversion for display.
+
+**A canonical-length check hid readable signature facts.** Rejecting a redundant ASN.1 length
+made its certificate or signature disappear from the report. Keep a bounded, readable element,
+mark its non-minimal encoding, and carry that limitation into every signature view. Test retained
+metadata and the warning together; encoding conformance and cryptographic verification are separate facts.
+
+**An unknown header bit hid readable code.** Rejecting undefined `.pyc` flag bits made the whole
+file unreadable, dropping its code, names and constants from reports. A reader collecting evidence
+must preserve fields and payload it can still understand: report the unknown bits as a warning,
+derive known modes from their defined bits, and test that the warning and recovered data coexist.
 
 **A round of checks that nothing could stop.** The builder's own checks ran one after another on
 the build's thread with no time limit, Pause was looked at only between tool calls, and the feed
@@ -503,6 +710,62 @@ resolved zero-argument calls, then filtered for known wrappers; ordinary local c
 the buffer before a real dependency appeared. Discover wrapper bindings first and count only
 recognised dependencies against their limit. Keep the buffer bounded, and test unrelated calls,
 forward declarations and more actual dependencies than the limit permits.
+
+**A capped window's counts read as totals.** A source-to-bundle comparison stopped examining after
+`max_rows` scripts but put its matched/unmatched counts beside the total script count, and reported
+the truncated unclaimed rows as the number of unclaimed units. Report how many were examined, count
+totals separately from listed rows, and mark the cap in the result and the tool's limitation.
+
+**A row cap kept the counts but lost the rows silently.** An archive comparison counted every
+added, removed, changed and moved file, then listed only `max_rows` of each with no flag, so a
+reader took the lists for complete. Set `rows_capped` beside the counts and report partial
+coverage with a limitation, as the managed comparison already does.
+
+**A report showed a prefix of its limitations as the whole list.** `core_report_write` rendered
+only the first 30 distinct limitations in Markdown and HTML with no marker for the rest, so a
+reader could mistake a capped list for everything the evidence said. Keep the display cap for
+readability but name how many were omitted in both formats; test one more limitation than the cap.
+
+**A comparison forgot what each side couldn't see.** `app_graphs_compare` and `js_exports_compare`
+loaded application graphs but built their evidence with only their own limitations, so a malformed
+source map or a truncated inventory disappeared and the comparison read as complete. Carry each
+loaded side's limitations into the comparison evidence, labelled left/right, and test both path and
+saved-evidence inputs.
+**A reference list was cut and looked complete.** `native_strings_find` kept 32 references per
+string and gave no count or flag, while the tool promised a complete search and the browse tool
+already reported a full count. Keep the row cap for size but return `reference_count` (complete
+within the analysis unless its xref limit was reached), a per-row `references_capped` flag, a
+display-cap limitation and the analysis `xref_limit` limitation; test an engine-boundary program
+whose string exceeds the display cap while the analysis limit is reached, including paging.
+
+**A comparison list was taken for the whole set.** The application comparison cut added, removed,
+bundle-module and vendor rows at 2,000, and its summary counted those cut lists as totals; the
+export comparison cut each module's added/removed diff the same way. Keep a complete total beside
+every capped list, aggregate `rows_capped` for the result, including nested function/export diffs of
+changed modules, use the totals in summaries, and report partial coverage. Test more rows than the
+cap on every capped path, not only the first one.
+
+**A list cap stopped at one parsing path.** The syntax-tree pass bounded `endpoints` and `exposed`,
+but the lexer fallback, used for huge, deeply nested or unparsable sources, pushed to both without
+a limit, so the path chosen for hostile input was the one that could grow. Apply the same cap to
+every push on every path, record the list in `truncated` where the parsed path does, and test the
+fallback with more calls than the cap permits.
+
+**A nesting guard missed the shapes it exists for.** The JavaScript nesting estimate counted
+brackets and some keywords, but an `else if` chain lost its depth at every `;`, `extends` and a run
+of prefix `++` counted nothing, and the tokenizer read `/` after `++`, after a member name or after
+`yield` as a regex, hiding the brackets in the text after it. The `;` that ended each link lost the
+chain depth when a comma expression came before it, a `;` inside a block consequent reset the chain
+the block belonged to, and a regex after `yield` needs its brackets and prefix-operator runs counted
+too, since the same text is division in sloppy code. Sources that estimated one or two levels then
+overflowed the parser thread's stack and aborted the process. Count the `else` links at their own
+scope, read a `yield /…/` as both a regex (for the fallback's facts) and possible code (for the
+guard) with lookahead bounded across the source, ended by every line terminator (an escaped one
+included), failing closed when its budget runs out, when a quote or backtick inside it starts a
+string in sloppy code, when its closing slash would open a comment or a later token would differ
+between the regex and division readings, and keeping the division reading's operator depth in the
+expression so later nesting adds to it; test that a deep source reaches the lexer fallback with a
+nesting reason instead of being parsed.
 
 **An occurrence label was also a binding name.** The second `obj.x` window and the first
 `obj["x[2]"]` window both appeared as `obj.x[2]`. Reserve literal labels and use a separate
@@ -577,6 +840,18 @@ session the person had left unfinished days before and went on editing another p
 an hour. When a program has a mode that must be avoided, give every call to it the same flag, not
 only the main one: list each command we run (`run`, `api`, `session delete`) and test each.
 
+**"Can it start here?" used for "is it a program?"** The study's search of a picked folder took
+the biggest file `outputs::is_program` accepted, which on Linux and macOS means no extension and an
+executable bit. A 1990s Windows game copied there has neither, so no program was found and
+Deep mode skipped Ghidra; the tests named their programs the local way on each system, so none had
+a Windows game on Linux. When a check answers one question, don't reuse it for a neighbouring one:
+studying a program and starting it are separate (`studies_as_program`), and test the other
+system's files on this one.
+The fix itself first missed one gate that starts it: runtime study's console runs checked the PE
+header but not the system, so a Windows console `.exe` would have been run on Linux (found in
+review). When a value starts reaching code it couldn't before, check every place that acts on it;
+every runtime start now asks `study::may_start`.
+
 **Keywords that only some code paths honour.** "…in Rust" picked Rust for apps but not for games, so
 a headless game rebuild stopped at once for want of Unity. It was found only by a live run. Run the
 real flow end to end after changing how requests are read, and add the case as a test.
@@ -620,6 +895,14 @@ keystroke, so a dark gradient blinked over the line being typed. Unit tests look
 what's painted over it. When something flickers, render the frames (`Harness::render` at a
 fractional scale) and diff them, then list the shapes painted over the spot.
 
+**A copy kept in sync from one side only.** Each API-key build got an engine of its own that
+copied the app's asset keys before every tool call; a key removed through a build's own engine
+changed only that engine's copy, so the next call copied the app's older keys back and a build
+beside it never heard. And making that engine copied the app's session with a blocking lock, which
+`rebuild_start` already held, so starting a build from the tool deadlocked. State that several
+sessions must agree on lives outside them all, under a lock held for nothing else; anything that
+copies a session it may be called inside tries the lock and has a fallback.
+
 **A tool that locked the session it was called with.** `rebuild_question_ask` read the settings
 with `hub.engine.session()`, but a tool runs while its call holds the session, so the CLI waited
 forever before starting anything (found by the first live run, not by tests, which stopped
@@ -653,6 +936,15 @@ preset narrows the bar to 2 px at rest, so the thumb showed only on hover. When 
 library's colours, check every widget that borrows them, in both themes, and test contrast with
 numbers (3:1 for parts you interact with), not by eye.
 
+**A scroll area inside another got what was left of the other's first screen.** egui gives a
+scroll area the room left in the one it's in, counted from the top of that one's content; at the
+bottom of a long feed that's nothing, so the build's details box got egui's 64-point floor (about
+three lines) whatever its `max_height`. Give a nested scroll area its own space (`allocate_ui`
+with its height). Fixing it turned up two more: buttons drawn over the box with `scope_builder`
+moved the layout's cursor back up to them, so the rows after the box were drawn over it (draw an
+overlay in `new_child`, which takes no room), and a button over the scroll bar also scrolled the
+lines when pressed. Render the frame and look (`Harness::render`) before trusting rect checks.
+
 **Files read while drawing.** The Project screen parsed `package.json` 2–4 times a frame, listed
 the reference pictures and checked screenshot files on every repaint, and read the side panel's
 files on every frame a build event arrived; on a slow or network drive the window would freeze.
@@ -666,6 +958,17 @@ must never stand in for data that gets saved back: wait (it's startup), or keep 
 The model picker later captured a busy session as "no project", queried in the wrong directory,
 and rejected the save as a settings change. Capture settings and project under one guard; report
 contention, preserve the draft and matching background results, and check again when available.
+It happened again in the loader itself: `Settings::load_from` took every read error for "no file",
+so a config.toml that wasn't UTF-8, or that another program held for a moment, loaded as defaults
+and the next save replaced it; a file that couldn't be parsed was renamed aside with the rename's
+result ignored. Only "not found" means there's nothing to lose. Defaults that stand in for a file
+that is there carry that fact (`Settings::not_loaded`) and refuse to be saved, also through a
+serde round trip that would drop it (`with_setting`); a backup keeps every byte under a name
+nothing else has, and one that fails stops the save.
+And "not found" wasn't that either: reading a link whose target is missing answers "not found"
+too, so such a config.toml was a first start and the next save put a file where the link was. A
+read's error describes the end of the path it followed, not the path: before treating "not
+found" as "nothing to lose", look at the path itself without following it (`symlink_metadata`).
 
 **A save that changed memory first.** Adding an AI in the app put it in the session's settings,
 then the file write failed (on Windows, likely a virus scan holding config.toml), so the app showed
@@ -673,10 +976,68 @@ the AI and its role while nothing was saved, and the error sat in the message ba
 window. Save to disk first and change memory only after it worked; replace files with a short retry
 on Windows (`write_atomic`); show errors where the person is looking.
 
+**A limit on what is kept, taken for a limit on the work.** `walk_dir` stopped keeping files at
+`max_files` but went on through the whole tree, read each folder's entries into one list before
+looking at any limit, and kept every folder and link it met: a tree of empty folders or links, or
+one folder with millions of names, had no limit at all. Count what is examined, not only what is
+kept; stop at the first thing over a limit; bound what is held while collecting; and test the
+shapes that never reach the limit on the thing counted (no files, only links, one huge folder).
+The order matters as much as the count: the walk listed a folder's files before opening any of its
+subfolders, so a file limit cut the tree in that order, and a later sort by path couldn't bring back
+the file inside an earlier folder that was dropped for later ones. When a result is shown in an
+order and cut by a limit, produce it in that order; don't sort what a different order kept.
+The fix repeated it one level down: to keep a folder's first names in order it held only as many
+names as the limit, but read the folder to its end to find them, 100,000 entries for a limit of 2,
+and its test checked what was held, not what was read. A limit on the work is a count of reads:
+take what the limit allows and one more (which says there is more), and assert how many times the
+source was read with a counting iterator. That costs the stable order: a cut listing holds what
+the system returned first, and the docs must say so rather than promise the same cut every time.
+The same loop skipped entries that failed to read and returned what was left as the whole folder;
+64 failures in a row came back as an empty folder listed in full, and a test expected exactly
+that. Anything skipped while reading is reported with the result (a count, a reason, a typed
+"incomplete" flag), and a test of an error path asserts what the caller is told, not only that
+the loop ended.
+
+**A result with two "what was missed" fields, read as one.** A folder walk says a listing is
+incomplete in `truncated` and names the folders it couldn't list in `unlisted`; five tools read
+only the flag, so an unreadable folder was "a limit" with no name and no reason, and a folder that
+couldn't be listed at all set `unlisted` without the flag. When a result carries what was missed
+in more than one field, check every caller reads all of them, and test each caller with the real
+failure (a folder held without sharing, or without permission), not only the walk.
+
+**An ignore file was read whole.** `walk_dir` read each `.gitignore` with `read_to_string` and
+swallowed every error: a sparse oversized file could size the allocation until the process aborted,
+a FIFO at that path could block the walk, and an unreadable or non-UTF-8 file lost its rules with no
+limitation. Read it through the capped, regular-file-checked helper, keep the cap well above real
+ignore files, and name every skipped file in the evidence; an absent file is the only silent case.
+
+**An inventory's size used as a read limit.** The managed reconstruction check compared a file's
+inventoried size with its 64 MiB budget, then read the file whole; growth in between bypassed the
+budget. Use the capped regular-file reader with the remaining budget, which checks bytes read
+as well as metadata. Test growth after a real inventory, the aggregate limit and exact-limit
+inputs. When nothing can be read, keep the read failures and the walk cut in the error too.
+
+**A graph cap was silent for edges and complete in coverage.** The application graph dropped
+edges past `4 × max_nodes` with no counter, and `js_app_map` reported Complete even when nodes or
+edges had been cut. Count every unique dropped edge, name the cap in a limitation, and make
+coverage partial for either cap. Test a dense graph and a node-capped one.
+
+**A fact list was cut and the graph looked complete.** `js_app` resolved only the first 2,000
+imports per module and discarded `ModuleFacts.truncated`, so later dependencies lost their edge and
+role with no limitation. Resolve every retained import, aggregate per-file truncation into one
+named limitation, and make the map partial; test both the old 2,000 boundary and the facts limit.
+
 **Showing settings shows their secrets.** `settings_show` returned the whole settings, plugins'
 `env` values included, which can hold API keys; a tool's output reaches the journal and MCP
 clients. The journal only redacts by field name. When a setting can hold a secret, hide its value
 in every tool that prints settings, and test that it doesn't appear.
+
+**Network access that became account access.** Restricted MCP hid the sign-in tools, but
+`web_site_open`, allowed by `--allow-web`, picked a saved sign-in by default, so a client that
+couldn't sign in could still browse the person's account. When a tool gains a default that reaches
+stored credentials, check every mode that admits it, and give the narrower mode its own rule.
+The same profile copy also carried the browser's saved-password store: "we never store a
+password" has to cover what the browser itself offers to keep.
 
 **A secret check that matched a word inside a name.** `cargo xtask secrets` took any variable
 with `AUTH` in its name as a secret; git sets `GIT_AUTHOR_NAME` while the hook runs, so a contributor
@@ -696,6 +1057,19 @@ run, while the round numbers carried over, so "Try again" bought six more checks
 worked reached check 40 and 49 (#736). A limit that must hold across runs is a count saved with the project, and
 it's reset only by a new request. Test it with several runs in a row, not one.
 
+**A cap meant for a default, applied to what the person set.** The 150k limit that keeps a paid
+service's Auto budget cheap was applied to the window read from the server before the person's
+own budget was compared with it, so a 390k budget on a service with a 1M window became 150k
+(found in review of #1155). Apply a default's limit only on the path where no value was set, and
+test a set value above that limit.
+
+**A question that started what it asked about.** The window probe skipped llama-swap's upstream
+route for an unloaded model, but went on to llama.cpp's `/props?model=…` on the same server, and
+llama-swap starts a model for that too: asking about a model with no window in the list unloaded
+the one in use and loaded the other (seen live; the test had only checked that the upstream route
+wasn't asked). Once a server is known to start models on request, ask it nothing but its list
+about one that isn't loaded, and test the whole list of URLs asked, not one of them.
+
 **One field, two meanings.** `TurnDone`'s `input_tokens` included cached tokens from every coding agent but not
 from the built-in loop, which keeps them apart as Anthropic reports them. Once Ollama 0.40 reported its cache, a
 local build's `usage.json` said 5,323 input tokens for 75,014. When several producers fill one field, say on the
@@ -710,6 +1084,11 @@ for it locally, and CI's `cargo xtask i18n-coverage` failed: the app shows tool 
 needs a translation in every catalog. Run `cargo xtask i18n-coverage` for any PR that adds a tool
 or changes a title, not only for UI changes.
 
+**An inserted name became another placeholder.** Filling `{saved}` and then `{used}` with repeated
+replacements rewrites a saved builder named `{used}`. Fill every placeholder in one pass over the
+template (`platform::text::fill`, which `i18n::trf` uses), never by chained `replace` calls, so
+inserted names stay literal; test placeholder-looking names as well as ordinary ones.
+
 **A second lock in one statement.** `CliSpec { deep: !engine.session().clean_room(), logs: engine.session().config_dir(), … }`
 looked like two quick reads, but an unbound guard lives to the end of the statement, so the second
 waited on the first forever. Every build froze after studying its target while the card calmly
@@ -723,6 +1102,18 @@ that failed was really ssh, talking to a git alias from `~/.ssh/config` that had
 computer. Say what ran and what it printed, write the rest to a log the person can open (a failed
 agent run does: `crate::failure_log`), and never name a next step you don't spell out. Exit 255
 from ssh is ssh's own failure: don't blame the remote program. Test a message by causing the failure.
+
+**A rule in the brief taken for a guard.** Every brief says everything outside `app/` is read-only,
+and an OpenCode builder still wrote its own progress notes over `inbox/build-progress.json`. The
+run read the record strictly, as it should, and every Try again stopped at "unknown field `step`"
+with no way forward. A coding agent's own tools don't pass through our checks: a file the run
+depends on is read as if anything may have changed it, and the error for one that changed says
+what the file is and how to go on.
+The fence in OpenCode's own rules was first drafted as "deny every edit, allow `app/*`", from the
+brief's words; a project edited in place (`app_in_root`) has its app in the project folder itself,
+and every edit its builder made would have been refused. A rule drawn from one layout's words
+misses the other: build it from the typed list the code already keeps (`OWN_NAMES`), and test
+both layouts.
 
 **A retry that took "no message" for "brand new".** A run with no message and no `continuing`
 flag was read as a first build, and Try again starts exactly that run. A browser that died during
@@ -815,6 +1206,11 @@ normalize at the provider boundary; test serialized requests for known and unkno
 **A sender could exceed its MCP receiver's target limit.** Bound the handoff to the receiver's
 accepted count and retain the active target; test the boundary, truncation order and remote mode.
 
+**A present protocol field was not a valid one.** The MCP server echoed `_meta.progressToken`
+whenever it was present, including `null` and objects, so it sent progress for values the protocol
+doesn't allow. Check a protocol field's type, not only its presence, before acting on it; test
+missing, null, wrong-type and valid values.
+
 **A finding correction reset omitted confidence to inferred.** Edit defaults must preserve existing
 values unless explicitly changed; test omitted fields and every supplied confidence level.
 
@@ -870,6 +1266,11 @@ And again as the first step of a `sed` edit (`python -I - 2>/dev/null; sed …`)
 for two minutes and the edit after it never ran. Make an edit with the editor tool, not a shell
 line. The same session typed it once more, with `</dev/null` added, and that hung too: the habit
 is the problem, not the input. Every Python step names a script file.
+
+**A shell script tried in bash, run by dash.** A watcher script written for `/bin/sh` used
+`kill -0 -- -<group>` and passed in Git Bash; on Ubuntu `/bin/sh` is dash, whose `kill` takes `--`
+as a process id, so the script quit at once and both of its tests failed in CI. Try a `/bin/sh`
+script with `dash` (or `checkbashisms`) as well as bash, and keep to what both accept.
 
 **A search that ran no search.** `timeout 40 find … 2>/dev/null` on a Mac: there's no `timeout` there,
 the error went to `/dev/null`, and the empty result read as "no such files on this computer". Don't
@@ -929,6 +1330,12 @@ failed its check. Text recovery that only knows the formats seen so far ends a t
 the next one: read a model's own call format, and when it names a tool it doesn't have, tell it
 so and name the ones it has, rather than ending.
 
+**A focus check made after the library had let go of focus.** Esc on a project went home
+"unless Esc was meant for a text field", tested with `memory.focused().is_none()`. egui clears
+focus on Esc as the frame begins, before any app code runs, so the check always passed and Esc
+in the prompt box left the project (#2434). Ask about focus as the previous frame ended
+(`text_was_focused`), and test a key with a field focused, not only the key alone.
+
 **A view that asked to be scrolled on every frame.** The command palette called `scroll_to_me` on
 the selected row each frame, so the wheel's scroll was pulled back to it at once and the list
 kept jumping to the top (#584). Scroll something into view on the frame it changed (a key, a new
@@ -965,3 +1372,35 @@ different branches reused the same package output path and one saw the other bra
 Give every worktree its own `CARGO_TARGET_DIR`, even when one agent manages both. Cleaning
 the shared engine cache then removed 11.6 GiB of compiled artifacts: avoid shared-cache
 cleanup as a recovery shortcut; use an isolated target directory for further verification.
+
+**A partial archive listing counted as a complete install.** A GNU-name limit correctly stopped
+an archive parser, but the installer wrote earlier listed files and returned success. Preserve the
+partial inventory for inspection, expose the stop as typed data, and make extraction check it before
+writing any member. Missing end markers need their own compatibility control; `complete: false`
+alone does not identify a refused metadata record.
+
+**A roadmap read from the checked-out branch, not from `main`.** `docs/ROADMAP.md` was read while
+an old feature branch was checked out, so a dozen pending lines that `main` had already ticked
+looked open: the SSH builder's environment, the 304 stand-in, prompt pictures, pins' size, the
+OpenCode sweep. Time went into checking each against the code, and a branch was even started for
+work `main` already had. Read the roadmap (and any file you plan to change) from `origin/main`,
+with `git show origin/main:docs/ROADMAP.md` or after checking out the base branch; a pending line
+can also carry "— in PR #245", so check that PR's state, since a closed PR leaves the work open.
+
+**Safe recovery paths erased distinct source identities.** Source-map names such as `src//main.js`
+and `src/main.js` became the same safe path, so exclusive creation kept the first file and dropped
+the second. A file can also occupy a later source's parent directory, or arrive after its own
+child. Preserve ordinary output paths and put collisions in an independent input/source-index
+directory; keep complete source identities in the manifest. Check both prefix orders and
+same-named input scripts through the real recovery tool, and retain the writer's symlink and
+exclusive-creation checks after selecting a name.
+
+**A settings smoke test clicked before scrolling settled.** An asynchronous refusal added a row,
+then a fixed number of frames left the next action outside the settled layout. Wait for the
+background operation to finish and run immediate repaints after scrolling before clicking;
+otherwise a missed click looks like a backend mutation that never completed.
+
+**Responsive Settings lost transient state when its parents changed.** Backend drafts, pending
+jobs, focus and cursors need layout-independent identities. Test continued typing without
+refocusing and tab activation across both rail orientations. On resize, egui keeps only the last
+scroll request: combine selection and focus when both fit, otherwise keep focus visible.

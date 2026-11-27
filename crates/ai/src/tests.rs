@@ -101,12 +101,24 @@ fn mock(responses: Vec<(u16, &'static str, String)>) -> (String, Arc<Mutex<Vec<S
     let seen = Arc::new(Mutex::new(Vec::new()));
     let s2 = seen.clone();
     std::thread::spawn(move || {
-        for (status, ctype, reply) in responses {
+        let mut responses = responses.into_iter().peekable();
+        while let Some((next_status, next_type, _)) = responses.peek() {
+            let lists_next = *next_status == 200 && *next_type == "application/json";
             let Ok((stream, _)) = l.accept() else { return };
             let mut r = BufReader::new(stream.try_clone().unwrap());
             let mut line = String::new();
             r.read_line(&mut line).unwrap();
             let path = line.split_whitespace().nth(1).unwrap_or_default().to_string();
+            // Scripted questions are model lists answered with a list. Any other question is a
+            // window probe (crate::window) the test didn't script: say nothing, as a server that
+            // doesn't report its window does, and keep the scripted answer for the request after.
+            if line.starts_with("GET ") && !(lists_next && path.ends_with("/models")) {
+                let mut w = stream;
+                write!(w, "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n").unwrap();
+                w.flush().unwrap();
+                continue;
+            }
+            let Some((status, ctype, reply)) = responses.next() else { return };
             let mut headers = Vec::new();
             let mut len = 0usize;
             loop {
@@ -158,6 +170,219 @@ pub(crate) fn serve(status: &'static str, body: &'static str) -> String {
     base
 }
 
+/// #62: an agent for an SSH host is added only when the host has its program; a refused add
+/// saves nothing, and an agent on this computer is not checked remotely.
+#[test]
+fn an_ssh_agent_is_checked_before_it_is_added() {
+    let (h, _d) = hub();
+    let config = |name: &str| BackendConfig {
+        name: name.into(),
+        kind: BackendKind::AgentCli,
+        model: "claude-code".into(),
+        base_url: None,
+        ssh_host: Some("pi5".into()),
+        enabled: true,
+    };
+    let mut asked = Vec::new();
+    let refused = h.add_backend_with_check(
+        BackendEntry { config: config("Claude on pi5"), options: BackendOptions::default() },
+        None,
+        &CancelToken::default(),
+        |host, program, _| {
+            asked.push((host.to_string(), program.to_string()));
+            Err(ToolError::new(ErrorCode::EngineMissing, "not installed"))
+        },
+    );
+    assert!(refused.is_err());
+    assert_eq!(asked, [("pi5".to_string(), "claude".to_string())], "the host and its program are checked");
+    assert!(h.config().backends.is_empty(), "a refused agent saves nothing");
+    // A command given for that host is the one checked, so the default name need not be there;
+    // surrounding spaces on the host are not saved as another name for it.
+    let mut custom = None;
+    let mut seen_host = None;
+    let mut custom_config = config("Claude on pi5");
+    custom_config.ssh_host = Some(" pi5 ".into());
+    let with_command = BackendOptions { command: Some("/opt/claude/bin/claude".into()), ..Default::default() };
+    let added = h.add_backend_with_check(BackendEntry { config: custom_config, options: with_command }, None, &CancelToken::default(), |host, program, _| {
+        seen_host = Some(host.to_string());
+        custom = Some(program.to_string());
+        Ok(())
+    });
+    assert!(added.is_ok());
+    assert_eq!(seen_host.as_deref(), Some("pi5"), "the host is checked as saved");
+    assert_eq!(custom.as_deref(), Some("/opt/claude/bin/claude"));
+    let saved = h.config().backends.into_iter().find(|b| b.config.name == "Claude on pi5").expect("the added agent");
+    assert_eq!(saved.config.ssh_host.as_deref(), Some("pi5"), "the trimmed host is saved");
+    // An agent on this computer is not checked on a host.
+    let local = BackendConfig { name: "Local".into(), kind: BackendKind::AgentCli, model: "claude-code".into(), base_url: None, ssh_host: None, enabled: true };
+    let mut checked = false;
+    h.add_backend_with_check(BackendEntry { config: local, options: BackendOptions::default() }, None, &CancelToken::default(), |_, _, _| {
+        checked = true;
+        Ok(())
+    })
+    .unwrap();
+    assert!(!checked, "a local agent needs no remote check");
+}
+
+/// A host that ssh would read as an option, or an alias that leads to a git server, is refused
+/// before any ssh run: the person typed it, and neither can run an agent.
+#[test]
+fn an_ssh_host_that_looks_like_an_option_or_names_a_git_server_is_refused() {
+    let (h, _d) = hub();
+    let config = |name: &str, host: &str| BackendConfig {
+        name: name.into(),
+        kind: BackendKind::AgentCli,
+        model: "claude-code".into(),
+        base_url: None,
+        ssh_host: Some(host.into()),
+        enabled: true,
+    };
+    let mut checked = false;
+    let dash = h
+        .add_backend_with_check(
+            BackendEntry { config: config("Dash", "-oProxyCommand=touch /tmp/craft-anything-ssh-test"), options: BackendOptions::default() },
+            None,
+            &CancelToken::default(),
+            |_, _, _| {
+                checked = true;
+                Ok(())
+            },
+        )
+        .unwrap_err();
+    assert!(dash.message.contains("can't begin with a '-'"), "{}", dash.message);
+    assert!(!checked, "the host never reaches ssh");
+    assert!(crate::ssh::is_git_server("github.com"), "the fixture names a git server");
+    let git = h
+        .add_backend_with_check(
+            BackendEntry { config: config("Git server", "github.com"), options: BackendOptions::default() },
+            None,
+            &CancelToken::default(),
+            |_, _, _| {
+                checked = true;
+                Ok(())
+            },
+        )
+        .unwrap_err();
+    assert!(git.message.contains("git server"), "{}", git.message);
+    assert!(!checked, "a git alias never reaches ssh");
+}
+
+/// A Connect job cancelled during the remote check saves nothing.
+#[test]
+fn a_cancelled_connect_does_not_save_an_ssh_agent() {
+    let (h, _d) = hub();
+    let config = BackendConfig {
+        name: "Claude on pi5".into(),
+        kind: BackendKind::AgentCli,
+        model: "claude-code".into(),
+        base_url: None,
+        ssh_host: Some("pi5".into()),
+        enabled: true,
+    };
+    let stop = CancelToken::default();
+    let inside = stop.clone();
+    let result = h.add_backend_with_check(BackendEntry { config, options: BackendOptions::default() }, Some("sk-test".into()), &stop, move |_, _, _| {
+        inside.cancel();
+        Ok(())
+    });
+    assert_eq!(result.unwrap_err().code, ErrorCode::Cancelled);
+    assert!(h.config().backends.is_empty(), "a cancelled check saves nothing");
+    assert!(h.keys.get("Claude on pi5").is_none(), "a cancelled check stores no key");
+}
+
+/// The remote check's exit status becomes a message a person can act on, with the exact command.
+#[test]
+fn an_ssh_agent_check_names_the_command_to_run() {
+    let out = |code| craft_anything_platform::Output {
+        code,
+        success: code == Some(0),
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+        stdout_tail: Vec::new(),
+        stderr_tail: Vec::new(),
+        stdout_truncated: false,
+        stderr_truncated: false,
+        duration: Duration::ZERO,
+    };
+    assert!(remote_check_outcome("pi5", "claude", Ok(out(Some(0)))).is_ok());
+    let missing = remote_check_outcome("pi5", "claude", Ok(out(Some(127)))).unwrap_err();
+    assert_eq!(missing.code, ErrorCode::EngineMissing);
+    assert!(missing.message.contains("claude wasn't found on pi5"), "{}", missing.message);
+    assert!(missing.remediation.unwrap().contains("Install it there"));
+    // A program that ran and exited non-zero is installed: a `--version` may exit 1 or 126.
+    for code in [1, 126] {
+        assert!(remote_check_outcome("pi5", "claude", Ok(out(Some(code)))).is_ok(), "exit {code} without a launch failure isn't a missing agent");
+    }
+    // A shell's 126 for a file it found but couldn't execute is a launch failure, not the
+    // program's own exit status.
+    let not_executable = craft_anything_platform::Output {
+        stderr: b"/opt/claude: Permission denied\n".to_vec(),
+        stderr_tail: b"/opt/claude: Permission denied\n".to_vec(),
+        ..out(Some(126))
+    };
+    let not_executable = remote_check_outcome("pi5", "/opt/claude", Ok(not_executable)).unwrap_err();
+    assert!(not_executable.message.contains("couldn't be run"), "{}", not_executable.message);
+    assert!(not_executable.remediation.unwrap().contains("executable"));
+    let wrong_format = craft_anything_platform::Output {
+        stderr: b"/bin/sh: 1: /opt/claude: Exec format error\n".to_vec(),
+        stderr_tail: b"/bin/sh: 1: /opt/claude: Exec format error\n".to_vec(),
+        ..out(Some(126))
+    };
+    let wrong_format = remote_check_outcome("pi5", "/opt/claude", Ok(wrong_format)).unwrap_err();
+    assert!(wrong_format.message.contains("couldn't be run"), "{}", wrong_format.message);
+    let own_126 = craft_anything_platform::Output { stderr: b"claude: bad option\n".to_vec(), stderr_tail: b"claude: bad option\n".to_vec(), ..out(Some(126)) };
+    assert!(remote_check_outcome("pi5", "claude", Ok(own_126)).is_ok(), "the program itself exited 126");
+    // ssh's own failures say what to fix, and show ssh's message rather than guessing.
+    let refused = craft_anything_platform::Output {
+        stderr: b"me@pi5: Permission denied (publickey).\n".to_vec(),
+        stderr_tail: b"me@pi5: Permission denied (publickey).\n".to_vec(),
+        ..out(Some(255))
+    };
+    let refused = remote_check_outcome("pi5", "claude", Ok(refused)).unwrap_err();
+    assert!(refused.message.contains("login was refused"), "{}", refused.message);
+    assert!(refused.remediation.unwrap().contains("ssh key"));
+    let unreachable = remote_check_outcome("pi5", "claude", Ok(out(Some(255)))).unwrap_err();
+    assert!(unreachable.message.contains("Couldn't reach pi5"), "a connection failure isn't read as a missing agent: {}", unreachable.message);
+    let timed_out = remote_check_outcome("pi5", "claude", Err(ToolError::new(ErrorCode::TimedOut, "timed out"))).unwrap_err();
+    assert!(timed_out.remediation.unwrap().contains("didn't answer within 15 seconds"));
+    // A missing local ssh keeps the platform's own remediation; the remote host isn't the fault.
+    let missing_ssh = remote_check_outcome(
+        "pi5",
+        "claude",
+        Err(ToolError::new(ErrorCode::EngineMissing, "ssh isn't installed or isn't on your PATH.").with_remediation("Install OpenSSH.")),
+    )
+    .unwrap_err();
+    assert_eq!(missing_ssh.remediation.as_deref(), Some("Install OpenSSH."));
+}
+
+/// The check itself runs the ssh program it is given, so its wiring is covered with a stand-in
+/// for ssh: its exit status and message are what the person's error is built from.
+#[cfg(unix)]
+#[test]
+fn the_remote_check_runs_the_ssh_program_and_reads_its_exit() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let ssh = |name: &str, code: i32, message: &str| {
+        let path = dir.path().join(name);
+        std::fs::write(&path, format!("#!/bin/sh\nprintf '%s\\n' {} >&2\nexit {code}\n", crate::ssh::shell_quote(message))).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        path
+    };
+    assert!(crate::verify_remote_agent_with(&ssh("ok", 0, ""), "pi5", "claude", &CancelToken::default()).is_ok());
+    let missing = crate::verify_remote_agent_with(&ssh("missing", 127, "sh: claude: command not found"), "pi5", "claude", &CancelToken::default()).unwrap_err();
+    assert!(missing.message.contains("claude wasn't found on pi5"), "{}", missing.message);
+    let refused =
+        crate::verify_remote_agent_with(&ssh("refused", 255, "me@pi5: Permission denied (publickey)."), "pi5", "claude", &CancelToken::default()).unwrap_err();
+    assert!(refused.message.contains("login was refused"), "{}", refused.message);
+    let installed = crate::verify_remote_agent_with(&ssh("version-failed", 1, "claude: unknown option"), "pi5", "claude", &CancelToken::default());
+    assert!(installed.is_ok(), "a program that ran and exited 1 is installed");
+    // A missing program on this computer isn't blamed on the remote host.
+    let no_ssh = crate::verify_remote_agent_with(std::path::Path::new("definitely-not-ssh-xyz"), "pi5", "claude", &CancelToken::default()).unwrap_err();
+    assert_eq!(no_ssh.code, ErrorCode::EngineMissing);
+    assert!(no_ssh.message.contains("definitely-not-ssh-xyz"), "{}", no_ssh.message);
+    assert!(!no_ssh.remediation.unwrap_or_default().contains("remote host"), "the local install remediation is kept");
+}
+
 /// #48: a coding agent's test only runs `--version`, and its report says so.
 #[test]
 fn a_coding_agent_test_says_it_only_checked_the_version() {
@@ -170,6 +395,73 @@ fn a_coding_agent_test_says_it_only_checked_the_version() {
     assert!(r.version_only && r.reply.starts_with("cargo "), "{r:?}");
     assert_eq!(serde_json::to_value(&r).unwrap()["version_only"], true, "the CLI's ai test prints it");
     assert_eq!((r.program.as_deref(), r.saved_program_replaced), (Some("cargo"), None), "the saved program ran");
+}
+
+#[cfg(unix)]
+#[test]
+/// The selected Codex CLI checks sign-in without a prompt or exposing raw status output.
+fn codex_connection_test_checks_login_without_sending_a_prompt() {
+    use std::os::unix::fs::PermissionsExt;
+    let (h, _d) = hub();
+    let dir = tempfile::tempdir().unwrap();
+    let program = dir.path().join("codex");
+    let signed_in = dir.path().join("connected");
+    let script = format!(
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo codex-test; exit 0; fi\nif [ \"$1\" = login ] && [ \"$2\" = status ]; then\n if [ -f '{}' ]; then echo 'Logged in using ChatGPT LOGIN_STATUS_TEST_ONLY' >&2; exit 0; fi\n echo 'Not logged in' >&2; exit 1\nfi\nexit 99\n",
+        signed_in.display()
+    );
+    std::fs::write(&program, script).unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let config = BackendConfig { name: "Codex test".into(), kind: BackendKind::AgentCli, model: "codex".into(), base_url: None, ssh_host: None, enabled: true };
+    let options = BackendOptions { command: Some(program.display().to_string()), ..Default::default() };
+    h.add_backend_with(BackendEntry { config, options }, None).unwrap();
+    let error = h.test_backend("Codex test").unwrap_err();
+    assert!(error.message.contains("not signed in"));
+    assert!(error.remediation.unwrap().contains("Sign in with ChatGPT"));
+    std::fs::write(signed_in, b"test marker, not a credential").unwrap();
+    let result = h.test_backend("Codex test").unwrap();
+    assert!(result.version_only, "login is not a model/quota test");
+    assert!(result.reply.contains("signed in"));
+    assert!(!serde_json::to_string(&result).unwrap().contains("LOGIN_STATUS_TEST_ONLY"), "raw login-status output never enters the report");
+}
+
+/// A second adapter supplies sign-in results through the same API, respecting its config folder.
+#[cfg(unix)]
+#[test]
+fn local_agent_connection_checks_use_the_adapter_and_its_selected_folder() {
+    use std::os::unix::fs::PermissionsExt;
+    let (h, _d) = hub();
+    let dir = tempfile::tempdir().unwrap();
+    let program = dir.path().join("agent");
+    std::fs::write(
+        &program,
+        r#"#!/bin/sh
+if [ "$1" = --version ]; then echo agent-test; exit 0; fi
+if [ "$1" = auth ] && [ "$2" = status ] && [ "$3" = --json ]; then
+ cat "$CLAUDE_CONFIG_DIR/status.json"; exit 0
+fi
+exit 99
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let config =
+        BackendConfig { name: "Other agent".into(), kind: BackendKind::AgentCli, model: "claude-code".into(), base_url: None, ssh_host: None, enabled: true };
+    let options = BackendOptions { command: Some(program.display().to_string()), config_dir: Some(dir.path().display().to_string()), ..Default::default() };
+    h.add_backend_with(BackendEntry { config, options }, None).unwrap();
+    let status = dir.path().join("status.json");
+    std::fs::write(&status, r#"{"loggedIn":false}"#).unwrap();
+    let error = h.test_backend("Other agent").unwrap_err();
+    assert_eq!(error.message, "Other agent is installed but is not signed in.");
+    assert!(error.remediation.is_some());
+    std::fs::write(&status, r#"{"loggedIn":true,"private":"LOGIN_STATUS_TEST_ONLY"}"#).unwrap();
+    let result = h.test_backend("Other agent").unwrap();
+    assert!(result.version_only && result.reply.contains("signed in"));
+    assert!(!serde_json::to_string(&result).unwrap().contains("LOGIN_STATUS_TEST_ONLY"));
+    for unknown in ["not json", "{}"] {
+        std::fs::write(&status, unknown).unwrap();
+        assert_eq!(h.test_backend("Other agent").unwrap().reply, "agent-test", "unknown sign-in leaves the version reply unchanged");
+    }
 }
 
 /// #721: a saved path an update removed. A test that passes through the usual program says so, and
@@ -193,6 +485,21 @@ fn a_saved_program_that_is_gone_is_named_by_test_and_doctor() {
     let reach = h.check_reachability();
     let nowhere = reach.iter().find(|(name, _)| name == "Nowhere").map(|(_, r)| r.clone()).unwrap();
     assert_eq!(nowhere, Err(format!("there's no program at {gone}")));
+
+    // What Settings says: each AI whose saved program is gone, and what runs instead. One whose
+    // saved program is there, that has none saved, or that has nothing to run instead (doctor
+    // says that one), isn't listed.
+    let there = dir.path().join("agent-here");
+    std::fs::write(&there, "").unwrap();
+    let mut kept = backend("Kept", "cargo");
+    kept.options.command = Some(there.display().to_string());
+    h.add_backend_with(kept, None).unwrap();
+    let mut usual = backend("Unsaved", "cargo");
+    usual.options.command = None;
+    h.add_backend_with(usual, None).unwrap();
+    let replaced = h.replaced_programs();
+    assert_eq!(replaced.get("Usual").map(String::as_str), Some("cargo"));
+    assert!(!replaced.contains_key("Nowhere") && !replaced.contains_key("Kept") && !replaced.contains_key("Unsaved"), "{replaced:?}");
 }
 
 /// Every known agent with an adapter of its own is offered when adding a coding agent.
@@ -232,6 +539,15 @@ fn hub() -> (AiHub, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let engine = Arc::new(Engine::new(craft_anything_engine::testing::session()));
     let h = AiHub::with_stores(engine, dir.path().join("config.toml"), KeyStore::file_only(dir.path().join("ai-keys.toml")));
+    (h, dir)
+}
+
+/// A hub whose key store never reads the environment, so a test that expects no key is
+/// deterministic even when the machine has the provider's variable set.
+fn hub_without_env() -> (AiHub, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Arc::new(Engine::new(craft_anything_engine::testing::session()));
+    let h = AiHub::with_stores(engine, dir.path().join("config.toml"), KeyStore::file_only_without_env(dir.path().join("ai-keys.toml")));
     (h, dir)
 }
 
@@ -275,10 +591,10 @@ fn an_api_transcript_is_resumed_only_in_its_mode() {
     let path = dir.path().join("transcript.json");
     let history = vec![crate::model::Msg::user_text("a Deep conversation")];
     crate::context::save(&path, &history, true).unwrap();
-    assert!(h.start_builder(&entry, false, Some(path.clone()), true).unwrap().resumed(), "Deep continues a Deep transcript");
-    assert!(!h.start_builder(&entry, false, Some(path.clone()), false).unwrap().resumed(), "Clean room starts fresh");
+    assert!(h.start_builder(&entry, false, Some(path.clone()), true, None).unwrap().resumed(), "Deep continues a Deep transcript");
+    assert!(!h.start_builder(&entry, false, Some(path.clone()), false, None).unwrap().resumed(), "Clean room starts fresh");
     crate::context::save(&path, &history, false).unwrap();
-    assert!(!h.start_builder(&entry, false, Some(path), true).unwrap().resumed(), "Deep doesn't continue a Clean room transcript");
+    assert!(!h.start_builder(&entry, false, Some(path), true, None).unwrap().resumed(), "Deep doesn't continue a Clean room transcript");
 }
 
 /// Compare checks either position; enabled named and automatic chat choices still work.
@@ -322,7 +638,7 @@ fn opencode_selection_is_validated_saved_and_run_natively_with_our_mcp_server() 
     let seen = dir.path().join("arguments.txt");
     let quote = |p: &std::path::Path| ssh::shell_quote(&p.display().to_string());
     let script = format!(
-        "#!/bin/sh\ncase \"$1\" in\napi) cat {};;\nrun) printf '%s\\n' \"$@\" > {}; cat \"$OPENCODE_CONFIG\" >> {}; printf 'done';;\n*) exit 8;;\nesac\n",
+        "#!/bin/sh\ncase \"$1\" in\napi) cat {};;\nrun) if [ \"$2\" = '--help' ]; then printf '%s\\n' '--format --standalone'; exit 0; fi; printf '%s\\n' \"$@\" > {}; cat \"$OPENCODE_CONFIG\" >> {}; printf 'done';;\n*) exit 8;;\nesac\n",
         quote(&catalogue),
         quote(&seen),
         quote(&seen)
@@ -493,6 +809,98 @@ fn an_app_bundle_is_refused_as_an_agents_program() {
     assert_eq!(program(&h).as_deref(), Some("agy"));
 }
 
+/// Two stand-in agents (one on, one off) that write a marker if run, plus an enabled API backend
+/// with no key: constructing that one would fail with "no API key" without doing any I/O.
+#[cfg(unix)]
+fn off_on_and_no_key_backends() -> (AiHub, tempfile::TempDir, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let (h, dir) = hub_without_env();
+    let marker = dir.path().join("ran.txt");
+    let program = |name: &str| {
+        let p = dir.path().join(name);
+        std::fs::write(&p, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\nexit 0\n", marker.display())).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o700)).unwrap();
+        p
+    };
+    let agent = |name: &str, enabled: bool| BackendEntry {
+        config: BackendConfig { name: name.into(), kind: BackendKind::AgentCli, model: "claude".into(), base_url: None, ssh_host: None, enabled },
+        options: BackendOptions { command: Some(program(name).display().to_string()), ..Default::default() },
+    };
+    h.add_backend_with(agent("Off", false), None).unwrap();
+    h.add_backend_with(agent("On", true), None).unwrap();
+    let no_key = BackendConfig {
+        name: "NoKey".into(),
+        kind: BackendKind::Openrouter,
+        model: "test-model".into(),
+        base_url: Some("http://127.0.0.1:9".into()),
+        ssh_host: None,
+        enabled: true,
+    };
+    h.add_backend(no_key, None).unwrap();
+    (h, dir, marker)
+}
+
+/// R2.9: `ai off` says nothing uses an AI, so a named chat must not start one that is turned off.
+#[cfg(unix)]
+#[test]
+fn a_turned_off_ai_is_not_used_by_a_named_chat() {
+    let (h, _d, marker) = off_on_and_no_key_backends();
+    let err = h.start(Some("Off"), true).err().expect("the turned-off agent must not start");
+    assert_eq!(err.code, ErrorCode::BadSettings, "{err:?}");
+    assert!(err.message.contains("turned off"), "{}", err.message);
+    assert!(err.remediation.as_deref().is_some_and(|r| r.contains("Settings") && r.contains("ai on")), "{err:?}");
+    assert!(!marker.exists(), "the turned-off agent ran");
+}
+
+/// The off check covers both names before either comparison conversation runs.
+#[cfg(unix)]
+#[test]
+fn a_comparison_checks_both_names_before_it_starts_either() {
+    let (h, _d, marker) = off_on_and_no_key_backends();
+    for (a, b) in [("Off", "On"), ("On", "Off")] {
+        let err = h.compare(a, b, true).err().expect("a comparison with a turned-off name must not start");
+        assert_eq!(err.code, ErrorCode::BadSettings, "{err:?}");
+        assert!(err.message.contains("turned off"), "{}", err.message);
+        assert!(!marker.exists(), "compare started {a} before checking the other name");
+    }
+}
+
+/// `NoKey` is on but has no key, so constructing it would fail with a key error. The off name
+/// must be reported first, in either order, without building the other conversation.
+#[cfg(unix)]
+#[test]
+fn a_comparison_does_not_build_the_other_backend_before_rejecting_the_off_one() {
+    let (h, _d, _marker) = off_on_and_no_key_backends();
+    // The fixture's store ignores OPENROUTER_API_KEY, so this canary is deterministic.
+    let err = h.start(Some("NoKey"), true).err().expect("NoKey is meant to have no key");
+    assert!(err.message.contains("no API key"), "the test store must ignore the environment: {err:?}");
+    for (a, b) in [("NoKey", "Off"), ("Off", "NoKey")] {
+        let err = h.compare(a, b, true).err().expect("a comparison with a turned-off name must not start");
+        assert_eq!(err.code, ErrorCode::BadSettings, "{err:?}");
+        assert!(err.message.contains("turned off"), "compare built {a} before checking the off name: {err:?}");
+        assert!(!err.message.contains("no API key"), "construction was attempted: {err:?}");
+    }
+}
+
+/// A named backend that is turned off is refused before its key is looked up: the message is
+/// about the choice, not about a key the person may not have.
+#[test]
+fn a_turned_off_api_backend_is_refused_before_its_key() {
+    let (h, _d) = hub_without_env();
+    let off = BackendConfig {
+        name: "Off".into(),
+        kind: BackendKind::Openrouter,
+        model: "test-model".into(),
+        base_url: Some("http://127.0.0.1:9".into()),
+        ssh_host: None,
+        enabled: false,
+    };
+    h.add_backend(off, None).unwrap();
+    let err = h.start(Some("Off"), true).err().expect("the turned-off API backend must not start");
+    assert_eq!(err.code, ErrorCode::BadSettings, "{err:?}");
+    assert!(err.message.contains("turned off"), "the key was looked up first: {err:?}");
+}
+
 /// #423: a saved AI that is switched off isn't set up, so a copy found on the computer is offered
 /// again (to be turned on); one that is on is left out.
 #[test]
@@ -524,7 +932,14 @@ fn claude_codes_folder_is_set_per_ai() {
     };
     h.add_backend(claude("Claude Code", None), None).unwrap();
     h.add_backend(claude("Claude Code 2", None), None).unwrap();
-    h.add_backend(claude("Claude on box", Some("box")), None).unwrap();
+    // An SSH host is checked on adding; this test is about config folders, so the check stands in.
+    h.add_backend_with_check(
+        BackendEntry { config: claude("Claude on box", Some("box")), options: BackendOptions::default() },
+        None,
+        &CancelToken::default(),
+        |_, _, _| Ok(()),
+    )
+    .unwrap();
     h.add_backend(BackendConfig { model: "codex".into(), ..claude("Codex", None) }, None).unwrap();
     let folder = |h: &AiHub, name: &str| h.options().get(name).and_then(|o| o.config_dir.clone());
     assert!(h.set_config_dir("Claude Code 2", Some(" ~/.claude-work ")).unwrap());
@@ -555,13 +970,38 @@ fn an_ais_model_is_changed() {
     let claude =
         BackendConfig { name: "Claude Code".into(), kind: BackendKind::AgentCli, model: "claude-code".into(), base_url: None, ssh_host: None, enabled: true };
     h.add_backend(claude, None).unwrap();
-    assert_eq!(h.model_choices("Claude Code").unwrap(), crate::anthropic::MODELS);
+    assert_eq!(
+        h.model_choices("Claude Code").unwrap(),
+        [crate::anthropic::CLAUDE_CODE_DEFAULT, "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"]
+    );
     assert!(h.set_model("Claude Code", "claude-sonnet-5-5").unwrap());
     let claude = h.options().get("Claude Code").and_then(|o| o.cli_model.clone());
     assert_eq!(claude.as_deref(), Some("claude-sonnet-5-5"), "the CLI is asked for it; the agent stays Claude Code");
     assert_eq!(h.backends().into_iter().find(|b| b.name == "Claude Code").unwrap().model, "claude-code");
+    // A custom model id the catalogue doesn't list, as a person's Claude Code settings may name.
+    assert!(h.set_model("Claude Code", "my-custom-model").unwrap());
+    assert_eq!(h.options().get("Claude Code").and_then(|o| o.cli_model.clone()).as_deref(), Some("my-custom-model"));
+    // "default" clears the choice: no --model is passed, so Claude Code uses its own settings.
+    assert!(h.set_model("Claude Code", crate::anthropic::CLAUDE_CODE_DEFAULT).unwrap());
+    assert_eq!(h.options().get("Claude Code").and_then(|o| o.cli_model.clone()), None);
     assert!(!h.set_model("Nobody", "m").unwrap());
     assert!(h.set_model("Box", " ").is_err());
+    // #2109: Codex takes a model the same way, and its default clears it, so no -m is passed.
+    let codex = BackendConfig { name: "Codex".into(), kind: BackendKind::AgentCli, model: "codex".into(), base_url: None, ssh_host: None, enabled: true };
+    h.add_backend(codex, None).unwrap();
+    assert!(h.set_model("Codex", "first").unwrap());
+    assert_eq!(h.options().get("Codex").and_then(|o| o.cli_model.clone()).as_deref(), Some("first"));
+    assert!(h.set_model("Codex", crate::anthropic::CLAUDE_CODE_DEFAULT).unwrap());
+    assert_eq!(h.options().get("Codex").and_then(|o| o.cli_model.clone()), None);
+
+    // The Claude Code adapter is also registered as `claude`; the default must clear for that id
+    // too, or a run would pass `--model default` (#470 review).
+    let alias = BackendConfig { name: "Claude".into(), kind: BackendKind::AgentCli, model: "claude".into(), base_url: None, ssh_host: None, enabled: true };
+    h.add_backend(alias, None).unwrap();
+    assert!(h.set_model("Claude", "my-custom-model").unwrap());
+    assert_eq!(h.options().get("Claude").and_then(|o| o.cli_model.as_deref()), Some("my-custom-model"));
+    assert!(h.set_model("Claude", crate::anthropic::CLAUDE_CODE_DEFAULT).unwrap());
+    assert_eq!(h.options().get("Claude").and_then(|o| o.cli_model.clone()), None);
 }
 
 /// Every Claude effort level can be chosen for the Claude API and Claude Code, and only for them.
@@ -585,6 +1025,42 @@ fn a_claude_ais_effort_is_changed() {
     assert_eq!(effort(&h, "Codex"), None, "an agent that doesn't take Claude's levels");
     assert!(h.set_effort("Codex", Some(Effort::Max)).is_err());
     assert!(!h.set_effort("Nobody", Some(Effort::Low)).unwrap());
+}
+
+/// #1813: an OpenAI-style API is sent a reasoning level only once the person chooses one, and
+/// only one of OpenAI's levels; OpenRouter gets it in its own field.
+#[test]
+fn an_openai_style_ais_effort_is_sent_only_once_chosen() {
+    use crate::model::{Msg, Stop, TurnRequest};
+    let reply = || (200, "text/event-stream", chat_sse(&[json!({"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]})]));
+    for (kind, field) in [(BackendKind::OpenaiCompatible, "/reasoning_effort"), (BackendKind::Openrouter, "/reasoning/effort")] {
+        let (h, _d) = hub();
+        let (url, seen) = mock(vec![reply(), reply()]);
+        let config = BackendConfig { name: "Box".into(), kind, model: "m".into(), base_url: Some(url), ssh_host: None, enabled: true };
+        h.add_backend(config, Some("k".into())).unwrap();
+        let ask = |h: &AiHub| {
+            let mut slot = h.build_model(&h.entry("Box").unwrap()).unwrap();
+            let messages = [Msg::user_text("hi")];
+            let request = TurnRequest { system: "S", messages: &messages, tools: &[], effort: prompt::choose_effort(slot.effort), max_tokens: 100 };
+            slot.model.turn(&request, &mut |_| {}, &Stop::default()).unwrap();
+        };
+        let effort = |h: &AiHub| crate::effort_in_use(&h.entry("Box").unwrap().config, h.options().get("Box"));
+        assert_eq!(effort(&h), None, "nothing is sent until it's chosen");
+        ask(&h);
+        assert!(h.set_effort("Box", Some(Effort::Max)).is_err(), "max isn't one of OpenAI's levels");
+        assert!(h.set_effort("Box", Some(Effort::Minimal)).unwrap());
+        assert_eq!(effort(&h), Some(Effort::Minimal));
+        ask(&h);
+        let seen = seen.lock().unwrap();
+        assert!(seen[0].body.get("reasoning_effort").is_none() && seen[0].body.get("reasoning").is_none(), "{}", seen[0].body);
+        assert_eq!(seen[1].body.pointer(field), Some(&json!("minimal")), "{}", seen[1].body);
+        drop(seen);
+        assert!(h.set_effort("Box", None).unwrap());
+        assert_eq!(effort(&h), None);
+    }
+    // Gemini is offered only the levels every Gemini model takes.
+    let gemini = BackendConfig { name: "G".into(), kind: BackendKind::Gemini, model: "gemini-2.5-pro".into(), base_url: None, ssh_host: None, enabled: true };
+    assert_eq!(crate::effort_levels(&gemini), [Effort::Minimal, Effort::Low, Effort::Medium, Effort::High]);
 }
 
 #[test]
@@ -754,6 +1230,60 @@ input.on('line', line => {
     }
 }
 
+/// A stand-in server that answers `GET <path>` from `routes` and 404 otherwise; its `/v1` address.
+pub(crate) fn serve_routes(routes: &'static [(&'static str, &'static str)]) -> String {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}/v1", l.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for mut s in l.incoming().flatten() {
+            let (mut got, mut buf) = (Vec::new(), [0u8; 4096]);
+            while !got.windows(4).any(|w| w == b"\r\n\r\n") {
+                match s.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => got.extend_from_slice(&buf[..n]),
+                }
+            }
+            let head = String::from_utf8_lossy(&got);
+            let path = head.split_whitespace().nth(1).unwrap_or_default().to_string();
+            let (status, body) = routes.iter().find(|(p, _)| *p == path).map_or(("404 Not Found", "not here"), |(_, b)| ("200 OK", *b));
+            let _ = write!(s, "HTTP/1.1 {status}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
+        }
+    });
+    base
+}
+
+/// #1434: FastFlowLM's `/models` lists every model it can download; taking the first started a
+/// 5.5 GB download and unloaded the model in use. A chat model the server says is loaded comes
+/// first; without `/api/ps`, or with nothing loaded, the person chooses between several chat
+/// models, and the only one is used.
+#[test]
+fn a_server_added_without_a_model_gets_the_one_it_has_loaded() {
+    let (h, _d) = hub();
+    const CATALOGUE: &str = r#"{"object":"list","data":[{"id":"deepseek-r1:8b"},{"id":"gemma3:1b"},{"id":"qwen3.8-mtp-uncensored:27b"}]}"#;
+    let flm = serve_routes(&[
+        ("/v1/models", CATALOGUE),
+        ("/api/ps", r#"{"models":[{"name":"embed","model":"nomic-embed-text"},{"name":"qwen3.8-mtp-uncensored:27b","model":"qwen3.8-mtp-uncensored:27b"}]}"#),
+    ]);
+    assert_eq!(h.add_server("Npu", &flm, None, None).unwrap(), "qwen3.8-mtp-uncensored:27b", "the loaded chat model, not an embedding one");
+    assert_eq!(h.add_server("Named", &flm, Some("gemma3:1b"), None).unwrap(), "gemma3:1b", "a named model still wins");
+    let idle = serve_routes(&[("/v1/models", CATALOGUE), ("/api/ps", r#"{"models":[]}"#)]);
+    let no_ps = serve_routes(&[("/v1/models", CATALOGUE)]);
+    for (name, url) in [("Idle", &idle), ("Studio", &no_ps)] {
+        let e = h.add_server(name, url, None, None).unwrap_err();
+        assert_eq!(e.code, ErrorCode::BadInput, "{name}: {e:?}");
+        assert_eq!(models_to_choose(&e), ["deepseek-r1:8b", "gemma3:1b", "qwen3.8-mtp-uncensored:27b"], "{name}");
+        assert!(e.message.contains("lists 3 chat models"), "{e:?}");
+        assert!(e.remediation.as_deref().is_some_and(|r| r.contains("deepseek-r1:8b, gemma3:1b")), "{e:?}");
+    }
+    assert_eq!(h.add_server("Studio", &no_ps, Some("gemma3:1b"), None).unwrap(), "gemma3:1b", "the chosen one is added");
+    // One chat model beside an embedding one: nothing to choose.
+    let one = serve_routes(&[("/v1/models", r#"{"object":"list","data":[{"id":"nomic-embed-text"},{"id":"qwen3:8b"}]}"#)]);
+    assert_eq!(h.add_server("One", &one, None, None).unwrap(), "qwen3:8b");
+    assert!(models_to_choose(&ToolError::invalid("other")).is_empty(), "other errors offer nothing");
+    let names: Vec<_> = h.backends().into_iter().map(|b| b.name).collect();
+    assert!(!names.iter().any(|n| n == "Idle"), "nothing added while a choice is owed: {names:?}");
+}
+
 /// #54, #98: a server on another computer is added by its address, with a model that can chat
 /// when none is named; one that doesn't answer with its models isn't added.
 #[test]
@@ -773,6 +1303,58 @@ fn a_server_is_added_by_its_address() {
     assert!(h.add_server("No scheme", "192.168.1.20:11434/v1", None, None).is_err());
     assert!(h.add_server(" ", &url, None, None).is_err());
     assert_eq!(h.backends().len(), 2, "only the ones that answered");
+}
+
+/// #1429: a server that takes the request and doesn't list its models in time (still starting, or
+/// loading a model) is told to wait, not to check its address, and the message isn't repeated.
+#[test]
+fn a_server_that_was_reached_but_slow_is_told_to_wait() {
+    let (h, _d) = hub();
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/v1", l.local_addr().unwrap());
+    // Accepts and holds the connection without answering, for longer than the test waits.
+    std::thread::spawn(move || {
+        let held: Vec<_> = l.incoming().take(1).flatten().collect();
+        std::thread::sleep(Duration::from_secs(10));
+        drop(held);
+    });
+    let e = h.add_server_within("Slow box", &url, None, None, Duration::from_secs(2), &Default::default()).unwrap_err();
+    assert_eq!(e.code, ErrorCode::TimedOut, "{e:?}");
+    let advice = e.remediation.clone().unwrap_or_default();
+    assert!(advice.contains("was reached") && advice.contains("2 seconds") && advice.contains("loading a model"), "{advice}");
+    assert!(!advice.contains("Check the address") && !advice.contains(&e.message), "{advice}");
+    assert!(h.backends().is_empty(), "nothing added");
+    // Nothing listening (port zero refuses): still told to check the address, without the message
+    // again in brackets.
+    let e = h.add_server("Nobody", "http://127.0.0.1:0/v1", None, None).unwrap_err();
+    let advice = e.remediation.clone().unwrap_or_default();
+    assert!(advice.contains("Check the address") && !advice.contains(&e.message), "{advice}");
+}
+
+/// #1429: adding a server that was reached but doesn't answer can be stopped while it's asked,
+/// instead of waiting out the minute, and nothing is added.
+#[test]
+fn adding_a_slow_server_can_be_stopped() {
+    let (h, _d) = hub();
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/v1", l.local_addr().unwrap());
+    std::thread::spawn(move || {
+        let held: Vec<_> = l.incoming().take(1).flatten().collect();
+        std::thread::sleep(Duration::from_secs(10));
+        drop(held);
+    });
+    let cancel = craft_anything_engine::CancelToken::default();
+    let later = cancel.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(300));
+        later.cancel();
+    });
+    let started = std::time::Instant::now();
+    let e = h.add_server_until("Slow box", &url, None, None, &cancel).unwrap_err();
+    assert_eq!(e.code, ErrorCode::Cancelled, "{e:?}");
+    assert!(started.elapsed() < Duration::from_secs(5), "stopped at once, not after the wait: {:?}", started.elapsed());
+    assert!(e.remediation.is_none(), "a stop isn't a bad address: {e:?}");
+    assert!(h.backends().is_empty(), "nothing added");
 }
 
 #[test]
@@ -890,7 +1472,7 @@ fn anthropic_streaming_tool_loop_through_the_engine() {
     assert_eq!(r1.path, "/v1/messages");
     assert_eq!(r1.header("x-api-key"), Some("sk-test-123"));
     assert_eq!(r1.header("anthropic-version"), Some("2023-06-01"));
-    assert_eq!(r1.header("anthropic-beta"), Some("server-side-fallback-2026-07-01"));
+    assert_eq!(r1.header("anthropic-beta"), Some("thinking-binding-controls-2026-08-01,server-side-fallback-2026-07-01"));
     assert_eq!(r1.header("user-agent"), Some("CraftAnything-dev"));
     let b = &r1.body;
     assert_eq!(b["model"], "claude-opus-5-5");
@@ -948,6 +1530,53 @@ fn anthropic_refusal_and_http_errors() {
         ev.iter().any(|e| matches!(e, AgentEvent::Error { message, remediation: Some(r), .. } if message.contains("invalid x-api-key") && r.contains("key"))),
         "{ev:?}"
     );
+}
+
+/// A service, or a proxy in front of it, can repeat the key or words from the request in its
+/// error: in a JSON error's message, type or code, in a plain-text body, or in a stream's error
+/// event. None of it reaches the failure log, in the error, the service's code or the advice. The
+/// marker is written like an error code (lower-case letters and an underscore), so only a list of
+/// known codes keeps it out; a known code is still kept (R5.5).
+#[test]
+fn a_failure_log_leaves_out_what_the_service_repeats_of_the_key_and_the_request() {
+    let key = "sk-test-reflected-key";
+    let marker = "quokka_umbrella";
+    let reflected = format!("key {key} may not ask about the {marker}");
+    let stream_error = |kind: &str| {
+        sse(&[
+            json!({"type":"message_start","message":{"model":"claude-opus-5-5","usage":{"input_tokens":5}}}),
+            json!({"type":"error","error":{"type":kind,"message":reflected}}),
+        ])
+    };
+    let (url, _seen) = mock(vec![
+        (401, "application/json", json!({"type":"error","error":{"type":marker,"message":reflected}}).to_string()),
+        (400, "application/json", json!({"error":{"code":marker,"message":reflected}}).to_string()),
+        (400, "text/plain", format!("Rejected by the proxy: {reflected}")),
+        (200, "text/event-stream", stream_error(marker)),
+        (200, "text/event-stream", stream_error("invalid_request_error")),
+    ]);
+    let (h, _d) = hub();
+    add(&h, "Claude", BackendKind::Anthropic, &url, Some(key));
+    let mut c = h.start(Some("Claude"), false).unwrap();
+    let unknown = "The service's error code: not a known one";
+    let expected: [&[&str]; 5] = [
+        &["Error: NoPermission", "HTTP status: 401", unknown, "Diagnosis: The API key was rejected"],
+        &["Error: BadInput", "HTTP status: 400", unknown],
+        &["Error: BadInput", "HTTP status: 400"],
+        &["Error: ProgramFailed", unknown, "Diagnosis: Try again"],
+        &["Error: ProgramFailed", "The service's error code: invalid_request_error"],
+    ];
+    for (n, parts) in expected.iter().enumerate() {
+        let ev = run(&mut c, &format!("a question about the {marker}, take {n}"));
+        let log = ev.iter().find_map(|e| if let AgentEvent::Error { log, .. } = e { log.clone() } else { None });
+        let text = std::fs::read_to_string(log.unwrap_or_else(|| panic!("no log for take {n}: {ev:?}"))).unwrap();
+        for hidden in [key, marker, "may not ask"] {
+            assert!(!text.contains(hidden), "take {n}, {hidden}: {text}");
+        }
+        for part in *parts {
+            assert!(text.contains(part), "take {n}, {part}: {text}");
+        }
+    }
 }
 
 #[test]
@@ -1279,6 +1908,87 @@ fn a_qwen_markup_call_to_a_missing_tool_is_answered_and_the_build_goes_on() {
 }
 
 #[test]
+fn a_picture_reaches_each_api_the_way_it_expects() {
+    use crate::model::{Block, Effort, Msg, Speaker, Stop, TurnRequest};
+    let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
+    let data = "iVBORw0KGgoAAAANSUhEUg==";
+    let message = |picture: Block| Msg {
+        role: Speaker::User,
+        blocks: vec![Block::Text { text: "Here's how it looks now. ".into() }, picture, Block::Text { text: "Close the gap.".into() }],
+    };
+    let shown = message(Block::image("now.png", png).unwrap());
+    let resumed = message(Block::Image { media_type: "image/png".into(), name: "now.png".into(), data: String::new() });
+    let note = Block::image_note("now.png");
+
+    // OpenAI-style servers (llama.cpp, LM Studio, Ollama, OpenRouter): the content becomes parts.
+    for react in [false, true] {
+        let reply = chat_sse(&[json!({"choices":[{"delta":{"content":"Done."},"finish_reason":"stop"}]})]);
+        let (url, seen) = mock(vec![(200, "text/event-stream", reply.clone()), (200, "text/event-stream", reply)]);
+        let mut model = openai::OpenAi::compatible("Local", &url, None, "scripted");
+        model.react = react;
+        for messages in [std::slice::from_ref(&shown), std::slice::from_ref(&resumed)] {
+            let request = TurnRequest { system: "S", messages, tools: &[], effort: Effort::Low, max_tokens: 100 };
+            model.turn(&request, &mut |_| {}, &Stop::default()).unwrap();
+        }
+        let seen = seen.lock().unwrap();
+        let sent = |i: usize| seen[i].body["messages"].as_array().unwrap().last().unwrap().clone();
+        assert_eq!(
+            sent(0),
+            json!({"role": "user", "content": [
+                {"type": "text", "text": "Here's how it looks now. "},
+                {"type": "image_url", "image_url": {"url": format!("data:image/png;base64,{data}")}},
+                {"type": "text", "text": "Close the gap."},
+            ]}),
+            "react={react}"
+        );
+        // Once its bytes are gone, the note goes in its place, and the content is a string again.
+        assert_eq!(sent(1), json!({"role": "user", "content": format!("Here's how it looks now. {note}Close the gap.")}), "react={react}");
+    }
+
+    // Anthropic: an image block with a base64 source.
+    let reply = sse(&[
+        json!({"type":"message_start","message":{"model":"claude-opus-5-5","usage":{"input_tokens":10,"output_tokens":1}}}),
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Done."}}),
+        json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}),
+        json!({"type":"message_stop"}),
+    ]);
+    let (url, seen) = mock(vec![(200, "text/event-stream", reply.clone()), (200, "text/event-stream", reply)]);
+    let mut model = anthropic::Anthropic::new(Some(&url), "sk-test-123".into(), "claude-opus-5-5");
+    for messages in [std::slice::from_ref(&shown), std::slice::from_ref(&resumed)] {
+        let request = TurnRequest { system: "S", messages, tools: &[], effort: Effort::Low, max_tokens: 100 };
+        model.turn(&request, &mut |_| {}, &Stop::default()).unwrap();
+    }
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[0].body["messages"][0]["content"][1], json!({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": data}}));
+    assert_eq!(seen[1].body["messages"][0]["content"][1], json!({"type": "text", "text": note}));
+}
+
+#[test]
+fn a_message_without_a_picture_is_sent_as_before() {
+    use crate::model::{Block, Msg, Speaker};
+    // Every request that has no picture keeps its plain-string content.
+    let user = Msg { role: Speaker::User, blocks: vec![Block::Text { text: "Hi".into() }] };
+    assert_eq!(openai::messages_json(&user, false), [json!({"role": "user", "content": "Hi"})]);
+    let results = Msg {
+        role: Speaker::User,
+        blocks: vec![Block::ToolResult { tool_use_id: "c1".into(), content: "ok".into(), is_error: false }, Block::Text { text: "Next.".into() }],
+    };
+    assert_eq!(
+        openai::messages_json(&results, false),
+        [json!({"role": "tool", "tool_call_id": "c1", "content": "ok"}), json!({"role": "user", "content": "Next."})]
+    );
+    // A picture after tool results goes in the person's message that follows them.
+    let mut with_picture = results.clone();
+    with_picture.blocks.push(Block::image("now.png", b"\x89PNG\r\n\x1a\n").unwrap());
+    let sent = openai::messages_json(&with_picture, false);
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[0]["role"], "tool");
+    assert_eq!(sent[1]["content"][0], json!({"type": "text", "text": "Next."}));
+    assert_eq!(sent[1]["content"][1]["type"], "image_url");
+}
+
+#[test]
 fn json_text_recovery_preserves_non_actions_and_stop_reasons() {
     use crate::model::{Effort, Msg, Stop, StopReason, ToolDef, TurnRequest};
     let tools = [ToolDef { name: "look".into(), description: "Look at a file".into(), schema: json!({"type":"object"}) }];
@@ -1388,6 +2098,92 @@ fn hub_config_keys_and_test_backend() {
         assert_eq!(e.code, ErrorCode::BadSettings);
     }
     assert!(h.compare("Local", "Local", true).is_err());
+}
+
+/// #1358: a key saved for an API backend can be replaced or forgotten without removing the
+/// backend or its settings, so a rotated key isn't hidden behind an older one.
+#[test]
+fn a_saved_api_key_can_be_replaced_or_forgotten() {
+    let (h, _d) = hub();
+    add(&h, "OpenAI", BackendKind::Openai, "https://api.openai.com/v1", Some("sk-old"));
+    assert_eq!(h.stored_backend_keys().get("OpenAI"), Some(&true));
+    assert!(h.saved_backend_key("OpenAI").unwrap());
+    h.set_backend_key("OpenAI", " sk-new ").unwrap();
+    assert_eq!(h.keys.get("OpenAI").as_deref(), Some("sk-new"));
+    assert_eq!(h.key_for(&h.entry("OpenAI").unwrap()).unwrap(), "sk-new", "the replacement is the key a request uses");
+    h.remove_backend_key("OpenAI").unwrap();
+    assert_eq!(h.stored_backend_keys().get("OpenAI"), Some(&false));
+    assert!(!h.saved_backend_key("OpenAI").unwrap());
+    assert!(h.backends().iter().any(|b| b.name == "OpenAI"), "the backend stays");
+    assert!(h.set_backend_key("OpenAI", "   ").is_err(), "an empty key is refused");
+    assert!(h.set_backend_key("No such backend", "sk-new").is_err());
+    assert!(h.remove_backend_key("No such backend").is_err());
+    add(&h, "Agent", BackendKind::AgentCli, "", None);
+    assert!(!h.stored_backend_keys().contains_key("Agent"), "an agent app has no saved key here");
+    assert!(h.saved_backend_key("Agent").is_err());
+    assert!(h.set_backend_key("Agent", "sk-new").is_err(), "a coding agent keeps its own sign-in");
+    assert!(h.remove_backend_key("Agent").is_err());
+}
+
+/// A key save and another key or backend change wait for each other: a save can't write the key
+/// after a remove has deleted the backend and its key.
+#[test]
+fn a_key_save_waits_for_another_backend_change() {
+    let (h, _d) = hub();
+    add(&h, "OpenAI", BackendKind::Openai, "https://api.openai.com/v1", None);
+    let h = Arc::new(h);
+    let edit = h.backend_edits.lock().unwrap();
+    let (started, started_rx) = std::sync::mpsc::channel();
+    let worker = {
+        let h = h.clone();
+        std::thread::spawn(move || {
+            started.send(()).unwrap();
+            h.set_backend_key("OpenAI", "sk-new")
+        })
+    };
+    started_rx.recv().unwrap();
+    // While another change holds the lock, the save can't reach the keychain.
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert!(!worker.is_finished(), "the save waits for the other backend change");
+    drop(edit);
+    worker.join().unwrap().unwrap();
+    assert_eq!(h.keys.get("OpenAI").as_deref(), Some("sk-new"));
+}
+
+/// A catalogue that names its API as text keeps its chat models and drops the others; an id with
+/// a control character is dropped rather than shown.
+#[test]
+fn a_model_list_with_a_text_api_keeps_chat_models() {
+    let models = json!({"data":[
+        {"id":"openai/gpt-4o-mini","api":"chat"},
+        {"id":"openai/text-embedding-3-small","api":"embedding"},
+        {"id":"bad\u{1b}[31m","api":"chat"},
+        {"id":"gpt-5.4","api":{"chat-completions":{}}},
+        {"id":"other","api":{"responses":{}}},
+    ]})
+    .to_string();
+    let (url, _) = mock(vec![(200, "application/json", models)]);
+    let list = openai::OpenAi::compatible("Router", &url, None, "").list_models(Duration::from_secs(5)).unwrap();
+    assert_eq!(list, vec!["openai/gpt-4o-mini", "gpt-5.4"]);
+}
+
+/// An entry that says nothing about its API (no "api", or null) is listed; an unknown API text or
+/// shape is not. Whitespace-only ids are dropped, and an id repeated with padding is listed once.
+#[test]
+fn a_model_list_handles_missing_api_and_padded_ids() {
+    let models = json!({"data":[
+        {"id":"openai/gpt-4o-mini"},
+        {"id":"anthropic/claude-sonnet-4-5","api":null},
+        {"id":"made/up","api":"responses"},
+        {"id":"odd/shape","api":42},
+        {"id":"   ","api":"chat"},
+        {"id":null,"api":"chat"},
+        {"id":" openai/gpt-4o-mini ","api":"chat"},
+    ]})
+    .to_string();
+    let (url, _) = mock(vec![(200, "application/json", models)]);
+    let list = openai::OpenAi::compatible("Router", &url, None, "").list_models(Duration::from_secs(5)).unwrap();
+    assert_eq!(list, vec!["openai/gpt-4o-mini", "anthropic/claude-sonnet-4-5"]);
 }
 
 /// #369: when OpenRouter has no provider that supports tools for a model (404 once only those are

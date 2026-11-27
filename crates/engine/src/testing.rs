@@ -18,11 +18,13 @@ pub fn temp_dir() -> PathBuf {
 /// It is in Deep mode, so tools may look inside the sample targets tests open; a test of Clean room
 /// turns `deep_mode` off. It finds no engine this computer has on PATH or in the usual install
 /// folders (`engines.only_configured`), so a test behaves the same whether Ghidra or adb is
-/// installed; a test that needs an engine points the settings or the store at one.
+/// installed; a test that needs an engine points the settings or the store at one. It reads no
+/// Cargo environment (`CARGO_TARGET_DIR`, Cargo's home config) either.
 pub fn session() -> Session {
     let mut s = Session::isolated(&temp_dir());
     s.settings.deep_mode = true;
     s.settings.engines.only_configured = true;
+    s.cargo_env = Some(crate::outputs::CargoEnv::default());
     s
 }
 
@@ -31,5 +33,14 @@ pub fn session() -> Session {
 pub fn live_session() -> Session {
     let mut s = session();
     s.settings.engines.only_configured = false;
+    live_browser(&mut s);
     s
+}
+
+/// `CRAFT_ANYTHING_TEST_CHROMIUM`, when set, is the browser live tests use (one the usual search
+/// doesn't find, or can't start in a test shell).
+pub fn live_browser(s: &mut Session) {
+    if let Some(exe) = std::env::var_os("CRAFT_ANYTHING_TEST_CHROMIUM") {
+        s.settings.engines.tools.chromium = Some(PathBuf::from(exe));
+    }
 }

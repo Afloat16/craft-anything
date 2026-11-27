@@ -14,7 +14,7 @@ pub fn specs() -> Vec<ToolSpec> {
     vec![spec(
         "formats_bytecode_show",
         "Compiled Python file",
-        "Read a CPython compiled file (.pyc): the Python version from its magic number, how it ties to its source (modification time and size, or a source hash), and, for Python 3.8 to 3.14, its compiled code: each module, class and function with its name, dotted name, source file, first line, argument counts, the names it uses and the text among its constants, paged with offset/limit, parents before children. Other versions report the header and say why. python_version reads a file of bare marshalled code, such as a script taken out of a PyInstaller program. Built-in; nothing is executed and bytecode isn't decoded.",
+        "Read a CPython compiled file (.pyc): the Python version from its magic number, how it ties to its source (modification time and size, or a source hash), and, for Python 3.8 to 3.15, its compiled code: each module, class and function with its name, dotted name, source file, first line, argument counts, the names it uses and the text among its constants, paged with offset/limit, parents before children. Other versions report the header and say why. python_version reads a file of bare marshalled code, such as a script taken out of a PyInstaller program. Built-in; nothing is executed and bytecode isn't decoded.",
         "See what a compiled Python file holds: which Python made it, and its functions and text.",
         Toolset::Formats,
         Effects::EVIDENCE | Effects::CARRIES_TARGET_CONTENT,
@@ -64,6 +64,7 @@ fn formats_bytecode_show(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput,
 
     let mut lims =
         vec![Limitation::new("bytecode_not_decoded", "Bytecode isn't decoded: this shows what functions exist and what they name, not what they do.")];
+    lims.extend(file.header.warnings.iter().map(|warning| Limitation::new("parse_warning", warning.clone())));
     if let Some(why) = &file.code_missing {
         lims.push(Limitation::new("header_only", why.clone()));
     }
@@ -138,6 +139,26 @@ mod tests {
         let second = call(&e, "formats_bytecode_show", json!({"path": p, "offset": 1, "limit": 1}));
         assert_eq!(second["result"]["code_objects"].as_array().unwrap().len(), 1);
         assert_eq!(second["result"]["code_objects"][0]["name"], "helper");
+    }
+
+    #[test]
+    fn undefined_header_flags_warn_without_hiding_code() {
+        let e = Engine::new(crate::testing::session());
+        let p = temp_file("app.pyc", &kit::pyc(3531, 0x80000003, [0xab; 8], &sample()));
+        let v = call(&e, "formats_bytecode_show", json!({"path": p}));
+        let warning = "undefined Python bytecode header flags: 0x80000000";
+        assert_eq!(v["result"]["header"]["flags"], 0x80000003u32);
+        assert_eq!(v["result"]["header"]["invalidation"], "checked_hash");
+        assert_eq!(v["result"]["header"]["source_hash"], "abababababababab");
+        assert_eq!(v["result"]["header"]["warnings"], json!([warning]));
+        assert!(v["limitations"].as_array().unwrap().iter().any(|lim| lim["code"] == "parse_warning" && lim["message"] == warning));
+        assert_eq!(v["result"]["code_available"], true);
+        assert_eq!(v["result"]["total_code_objects"], 2);
+        assert_eq!(v["result"]["code_objects"][0]["names"], json!(["Thing"]));
+        assert_eq!(v["result"]["code_objects"][0]["strings"], json!(["module doc"]));
+        assert_eq!(v["result"]["code_objects"][1]["qualname"], "Thing.helper");
+        assert_eq!(v["result"]["code_objects"][1]["names"], json!(["os"]));
+        assert_eq!(v["result"]["code_objects"][1]["strings"], json!(["inner text"]));
     }
 
     #[test]

@@ -17,16 +17,26 @@ pub struct ProjectClock {
     pub saved: ProjectUsage,
     /// A run is working: since when its time isn't in `saved` yet.
     pub since: Option<Instant>,
+    /// usage.json is there but couldn't be read: `saved` is empty and what was used isn't known.
+    pub unreadable: bool,
 }
 
 impl ProjectClock {
     pub fn load(root: &Path) -> ProjectClock {
-        ProjectClock { saved: ProjectUsage::load(root), since: None }
+        let mut clock = ProjectClock::default();
+        clock.read(root);
+        clock
+    }
+
+    fn read(&mut self, root: &Path) {
+        let read = ProjectUsage::read(root);
+        self.unreadable = read.is_unreadable();
+        self.saved = read.known().unwrap_or_default();
     }
 
     /// The run saved its usage (an agent turn ended, or the run did): read it again.
     pub fn saved_again(&mut self, root: &Path, still_working: bool) {
-        self.saved = ProjectUsage::load(root);
+        self.read(root);
         self.since = still_working.then(Instant::now);
     }
 
@@ -37,6 +47,40 @@ impl ProjectClock {
     /// Building time so far, the run going now included.
     pub fn elapsed(&self) -> Duration {
         Duration::from_millis(self.saved.work_ms) + self.since.map_or(Duration::ZERO, |s| s.elapsed())
+    }
+
+    /// Whether there's anything to show: time, use, or a record that couldn't be read.
+    pub fn shown(&self) -> bool {
+        self.unreadable || self.working() || !self.elapsed().is_zero()
+    }
+
+    /// "12m 05s", or "Unknown" when the record couldn't be read.
+    pub fn time_words(&self) -> String {
+        if self.unreadable { tr("Unknown") } else { duration_words(self.elapsed()) }
+    }
+
+    /// The cost row, if there's one to show. An unreadable record is an unknown cost, never $0.
+    pub fn cost(&self) -> Option<CostStat> {
+        if self.unreadable {
+            return Some(CostStat { label: "AI cost", value: tr("Unknown"), note: None });
+        }
+        self.saved.priced.then(|| cost_stat(&self.saved))
+    }
+
+    /// The token count, if there's one to show. An unreadable record is an unknown count, never 0.
+    pub fn tokens(&self) -> Option<String> {
+        if self.unreadable {
+            return Some(tr("Unknown"));
+        }
+        (self.saved.tokens() > 0 || self.saved.tokens_incomplete).then(|| token_total(&self.saved, false))
+    }
+
+    /// The tooltip for these rows (`counts` as in [`explain`]).
+    pub fn explain(&self, counts: &str) -> String {
+        if self.unreadable {
+            return tr("This project's usage record couldn't be read, so what its builds spent isn't known.");
+        }
+        explain(&self.saved, counts)
     }
 }
 
@@ -96,6 +140,59 @@ pub fn tokens_words(n: u64) -> String {
     trf("{n} tokens", &[("n", &tokens_short(n))])
 }
 
+/// Use a lower bound for a partial count, and say when the count is entirely unknown.
+fn reported_tokens(n: u64, incomplete: bool, units: bool) -> String {
+    if n == 0 && incomplete {
+        return tr("Unknown");
+    }
+    // A partial count is a lower bound: truncate before the millions formatter rounds.
+    let count = match (incomplete, n) {
+        (true, 1_000_000..) => format!("{}.{}M+", n / 1_000_000, n / 100_000 % 10),
+        (true, _) => format!("{}+", tokens_short(n)),
+        (false, _) => tokens_short(n),
+    };
+    if units { trf("{n} tokens", &[("n", &count)]) } else { count }
+}
+
+pub fn token_total(u: &ProjectUsage, units: bool) -> String {
+    reported_tokens(u.tokens(), u.tokens_incomplete, units)
+}
+
+/// What one run's turns used, for the line beside Try again. Its cost is shown only when every
+/// turn reported its own: a resumed agent's turn may not have one (`claude_cost`), and a total
+/// missing some turns would read as the whole run's.
+#[derive(Debug, Clone, Default)]
+pub struct RunTally {
+    used: ProjectUsage,
+    turns: u32,
+    unpriced: bool,
+}
+
+impl RunTally {
+    pub fn add_turn(&mut self, input: u64, output: u64, tokens_unknown: bool, cost_usd: Option<f64>, estimate: bool) {
+        self.turns += 1;
+        self.used.tokens_incomplete |= tokens_unknown;
+        self.unpriced |= !cost_usd.is_some_and(|c| c.is_finite() && c >= 0.0);
+        self.used.add_turn(input, output, cost_usd, estimate);
+    }
+
+    /// "This run used 12k tokens, about $0.40 (estimate).", or nothing before its first turn ends.
+    pub fn words(&self) -> Option<String> {
+        if self.turns == 0 {
+            return None;
+        }
+        if self.used.tokens() == 0 && self.used.tokens_incomplete {
+            return Some(tr("This run's builder didn't report how many tokens it used."));
+        }
+        let tokens = token_total(&self.used, true);
+        Some(if self.unpriced {
+            trf("This run used {tokens}. Its cost isn't known: not every turn reported its own.", &[("tokens", &tokens)])
+        } else {
+            trf("This run used {tokens}, {cost}.", &[("tokens", &tokens), ("cost", &cost_short(&self.used))])
+        })
+    }
+}
+
 /// "45s", "12m 05s", "1h 04m".
 pub fn duration_words(d: Duration) -> String {
     let s = d.as_secs();
@@ -109,7 +206,9 @@ pub fn duration_words(d: Duration) -> String {
 /// The tooltip for usage: what each number is, and what it counts (`counts`, e.g. "Every build
 /// of this project." or "Since Craft Anything opened.").
 pub fn explain(u: &ProjectUsage, counts: &str) -> String {
-    let mut lines = vec![trf("{in} in, {out} out.", &[("in", &tokens_words(u.input_tokens)), ("out", &tokens_words(u.output_tokens))])];
+    let input = reported_tokens(u.input_tokens, u.tokens_incomplete, true);
+    let output = reported_tokens(u.output_tokens, u.tokens_incomplete, true);
+    let mut lines = vec![trf("{in} in, {out} out.", &[("in", &input), ("out", &output)])];
     if u.priced && u.estimated_usd() >= NOT_MONEY {
         lines.push(tr(ESTIMATE_NOTE));
         if u.api_billed_usd >= NOT_MONEY {
@@ -134,6 +233,33 @@ mod tests {
         assert!(c.working() && c.elapsed() >= Duration::from_secs(725));
         c.saved_again(dir.path(), false);
         assert_eq!(c.elapsed(), Duration::from_secs(725));
+    }
+
+    /// An unreadable usage.json shows as unknown, never as $0 or 0 tokens.
+    #[test]
+    fn an_unreadable_usage_record_is_unknown_not_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ProjectClock::load(dir.path());
+        assert!(!c.unreadable && !c.shown() && c.cost().is_none() && c.tokens().is_none(), "no file: nothing to show");
+
+        std::fs::write(dir.path().join(craft_anything_engine::workspace::USAGE_FILE), b"{ not json").unwrap();
+        let mut c = ProjectClock::load(dir.path());
+        assert!(c.unreadable && c.shown());
+        let cost = c.cost().unwrap();
+        assert_eq!((cost.label, cost.value.as_str()), ("AI cost", "Unknown"));
+        assert_eq!(c.tokens().as_deref(), Some("Unknown"));
+        assert_eq!(c.time_words(), "Unknown");
+        assert!(c.explain("x").contains("couldn't be read"));
+        for shown in [cost.value, c.tokens().unwrap(), c.time_words(), c.explain("x")] {
+            assert!(!shown.contains('$') && !shown.contains('0'), "no amount stands in for it: {shown}");
+        }
+
+        // Fixed: read again, it's known.
+        ProjectUsage::update(dir.path(), |_| {}).unwrap_err();
+        std::fs::write(dir.path().join(craft_anything_engine::workspace::USAGE_FILE), br#"{"version":1,"cost_usd":1.5,"priced":true}"#).unwrap();
+        c.saved_again(dir.path(), false);
+        assert!(!c.unreadable);
+        assert_eq!(c.cost().unwrap().value, "about $1.50");
     }
 
     #[test]
@@ -167,7 +293,57 @@ mod tests {
             r#"{"version":1,"work_ms":5,"input_tokens":1,"output_tokens":1,"cost_usd":3.12,"priced":true}"#,
         )
         .unwrap();
-        assert_eq!(cost_stat(&ProjectUsage::load(dir.path())).label, "AI cost (estimate)");
+        assert_eq!(cost_stat(&ProjectUsage::read(dir.path()).known().unwrap()).label, "AI cost (estimate)");
+    }
+
+    #[test]
+    fn an_unreported_turn_is_visible_and_reported_counts_are_lower_bounds() {
+        let dir = tempfile::tempdir().unwrap();
+        ProjectUsage::update(dir.path(), |u| u.tokens_incomplete = true).unwrap();
+        let mut usage = ProjectUsage::read(dir.path()).known().unwrap();
+        assert!(usage.used_anything());
+        assert_eq!(token_total(&usage, true), "Unknown");
+        assert!(explain(&usage, "x").starts_with("Unknown in, Unknown out."));
+        usage.add_turn(17, 0, None, false);
+        assert_eq!(token_total(&usage, true), "17+ tokens");
+        assert_eq!(token_total(&usage, false), "17+");
+        assert_eq!(reported_tokens(999, true, false), "999+");
+        assert_eq!(reported_tokens(12_999, true, false), "12k+");
+        assert_eq!(reported_tokens(1_000_000, true, false), "1.0M+");
+        assert_eq!(reported_tokens(1_980_000, true, false), "1.9M+");
+        assert!(explain(&usage, "x").starts_with("17+ tokens in, Unknown out."));
+    }
+
+    #[test]
+    fn a_runs_cost_is_shown_only_when_every_turn_reported_its_own() {
+        assert!(RunTally::default().words().is_none(), "no turn ended: nothing to say");
+
+        let mut priced = RunTally::default();
+        priced.add_turn(9_000, 3_000, false, Some(0.25), false);
+        priced.add_turn(9_000, 3_000, false, Some(0.25), false);
+        let words = priced.words().unwrap();
+        assert!(words.contains("24k tokens") && words.contains("$0.50"), "{words}");
+
+        // An agent's figure is called an estimate, as on the project screen.
+        let mut estimate = RunTally::default();
+        estimate.add_turn(10, 10, false, Some(1.0), true);
+        assert!(estimate.words().unwrap().contains("(estimate)"));
+
+        for unpriced in [None, Some(f64::NAN), Some(-1.0)] {
+            let mut tally = priced.clone();
+            tally.add_turn(9_000, 3_000, false, unpriced, false);
+            let words = tally.words().unwrap();
+            assert!(words.contains("36k tokens") && words.contains("isn't known") && !words.contains('$'), "{unpriced:?}: {words}");
+        }
+
+        let mut partial = priced.clone();
+        partial.add_turn(0, 0, true, None, false);
+        assert!(partial.words().unwrap().contains("24k+ tokens"), "an unreported turn makes the count a lower bound");
+
+        let mut unknown = RunTally::default();
+        unknown.add_turn(0, 0, true, None, false);
+        let words = unknown.words().unwrap();
+        assert!(words.contains("didn't report") && !words.contains('0'), "{words}");
     }
 
     #[test]

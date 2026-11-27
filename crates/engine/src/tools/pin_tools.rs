@@ -183,17 +183,20 @@ pub(crate) fn runs(ctx: &mut Ctx<'_>) -> Arc<Runs> {
 /// Start what `app` holds through the run list, logging to `log`, and describe what happened. A
 /// program that quit straight away with an error is an error carrying its last output.
 pub(crate) fn start(ctx: &mut Ctx<'_>, app: &Path, log: &Path, another: bool, label: &str) -> Result<Value, ToolError> {
-    let Some((program, args)) = crate::outputs::launch(app, godot(ctx).as_deref()) else {
+    let Some((program, args)) = crate::outputs::launch_now(app, godot(ctx).as_deref()) else {
         return Err(ToolError::new(ErrorCode::NotFound, "There's nothing to start: no built program here.")
             .with_remediation("Finish a build first (rebuild), or open the folder to look."));
     };
     start_program(ctx, app, log, another, label, (program, args))
 }
 
+/// Start a program from `app` through the run list, logging to `log`. The program is made absolute
+/// first because the child runs with `app` as its working directory.
 fn start_program(ctx: &mut Ctx<'_>, app: &Path, log: &Path, another: bool, label: &str, (program, args): (PathBuf, Vec<String>)) -> Result<Value, ToolError> {
     if let Some(dir) = log.parent() {
         std::fs::create_dir_all(dir).map_err(|e| ToolError::io(dir.display(), e))?;
     }
+    let program = crate::outputs::absolute_program(&program);
     let launch = Launch::new(&program).args(&args).cwd(app).hide_console().log_to(log).label(label).remediation("Open the folder and start it by hand.");
     let (launched, quit) = match runs(ctx).open(app, launch, another)? {
         Opened::AlreadyRunning(l) => return Ok(json!({"already_running": true, "pid": l.pid(), "started": program.display().to_string()})),
@@ -220,11 +223,11 @@ fn start_program(ctx: &mut Ctx<'_>, app: &Path, log: &Path, another: bool, label
 
 fn project_pin_create(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolError> {
     let p: CreateParams = parse_params(params)?;
-    let ws = open_project(&p.project)?;
+    let ws = open_project(&p.project).map_err(|e| e.with_details(json!({"project": &p.project, "estimate": p.estimate})))?;
     let godot = godot(ctx);
     if p.estimate {
-        let size = pins::estimate(&ws, godot.as_deref())?;
-        return Ok(ToolOutput::Value(json!({"estimate": size})));
+        let size = pins::estimate(&ws, godot.as_deref()).map_err(|e| e.with_details(json!({"project": &ws.root, "estimate": true})))?;
+        return Ok(ToolOutput::Value(json!({"project": &ws.root, "estimate": size})));
     }
     let cancel = ctx.cancel.clone();
     let mut last = std::time::Instant::now();
@@ -236,7 +239,7 @@ fn project_pin_create(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, To
         }
         !cancel.is_cancelled()
     };
-    let pin = pins::create(&ws, p.mode, p.name.as_deref(), godot.as_deref(), &mut progress)?;
+    let pin = pins::create(&ws, p.mode, p.name.as_deref(), godot.as_deref(), &mut progress).map_err(|e| e.with_details(json!({"project": &ws.root})))?;
     Ok(ToolOutput::Value(json!({"pin": pin, "folder": pin.dir(&ws).display().to_string()})))
 }
 
@@ -270,7 +273,7 @@ fn project_pin_open(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, Tool
     let p: OpenParams = parse_params(params)?;
     let ws = open_project(&p.project)?;
     let pin = pins::get(&ws, p.pin)?;
-    let launch = pin.launch(&ws, godot(ctx).as_deref())?;
+    let launch = pin.launch(&ws, godot(ctx).as_deref(), &ctx.session.cargo())?;
     let mut out = start_program(ctx, &pin.app_dir(&ws), &pin.log_path(&ws), p.another, &pin.name, launch)?;
     if let Some(o) = out.as_object_mut() {
         o.insert("pin".into(), json!(pin.id));
@@ -352,6 +355,46 @@ mod tests {
         }
     }
 
+    /// A project opened by a relative folder starts its built program from an absolute path, not
+    /// from the program path applied to the workspace's working folder twice.
+    #[cfg(unix)]
+    #[test]
+    fn a_relative_project_plays_its_built_program() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let cwd = std::env::current_dir().unwrap();
+        let d = tempfile::tempdir_in(&cwd).unwrap();
+        let relative = d.path().strip_prefix(&cwd).unwrap();
+        let ws = Workspace::create(relative, "Game", "a game", TargetRef::None).unwrap();
+        let app = ws.app_dir();
+        std::fs::create_dir_all(app.join("target/debug")).unwrap();
+        std::fs::write(app.join("Cargo.toml"), "[package]\nname = \"game\"\n").unwrap();
+        let program = app.join("target/debug/game");
+        std::fs::write(&program, "#!/bin/sh\nprintf 'played\\n'\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let e = Engine::new(crate::testing::session());
+        let result =
+            e.call("project_play", json!({"project": ws.root}), CallOptions::new(Caller::Cli).with_consent(Consent::Granted)).unwrap().to_json()["result"]
+                .clone();
+        assert_eq!(result["already_running"], false);
+        assert_eq!(result["closed_at_once"]["code"], 0, "{result}");
+        assert!(std::path::Path::new(result["started"].as_str().unwrap()).is_absolute(), "{result}");
+
+        let made = e
+            .call("project_pin_create", json!({"project": ws.root}), CallOptions::new(Caller::Cli).with_consent(Consent::Granted))
+            .unwrap()
+            .to_json()["result"]
+            .clone();
+        let opened = e
+            .call("project_pin_open", json!({"project": ws.root, "pin": made["pin"]["id"]}), CallOptions::new(Caller::Cli).with_consent(Consent::Granted))
+            .unwrap()
+            .to_json()["result"]
+            .clone();
+        assert_eq!(opened["closed_at_once"]["code"], 0, "{opened}");
+        assert!(std::path::Path::new(opened["started"].as_str().unwrap()).is_absolute(), "{opened}");
+    }
+
     #[test]
     fn pin_list_rename_and_remove_from_the_cli() {
         let d = tempfile::tempdir().unwrap();
@@ -372,6 +415,7 @@ mod tests {
         let call = |id: &str, p: Value| e.call(id, p, CallOptions::new(Caller::Cli).with_consent(Consent::Granted)).map(|o| o.to_json()["result"].clone());
 
         let est = call("project_pin_create", json!({"project": ws.root, "estimate": true})).unwrap();
+        assert_eq!(est["project"].as_str(), ws.root.to_str(), "an estimate names the project it was for");
         assert!(est["estimate"]["bytes"].as_u64().unwrap() > 0);
         assert!(pins::list(&ws).is_empty(), "an estimate pins nothing");
         let made = call("project_pin_create", json!({"project": ws.root})).unwrap();
@@ -391,5 +435,31 @@ mod tests {
         assert_eq!(list["count"], 1);
         assert_eq!(list["copied_bytes"], light["pin"]["bytes"]);
         assert_eq!(call("project_pin_open", json!({"project": ws.root, "pin": 1})).unwrap_err().code, ErrorCode::NotFound);
+    }
+
+    #[test]
+    fn an_estimate_error_names_the_project_it_was_for() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "Empty", "nothing built", TargetRef::None).unwrap();
+        let e = Engine::new(crate::testing::session());
+        let err = e
+            .call("project_pin_create", json!({"project": &ws.root, "estimate": true}), CallOptions::new(Caller::Cli).with_consent(Consent::Granted))
+            .unwrap_err();
+        let details = err.details.as_ref().expect("an estimate error names its project");
+        assert_eq!(details["project"].as_str(), ws.root.to_str());
+        assert_eq!(details["estimate"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn an_open_project_error_on_an_estimate_names_the_project() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path().join("missing");
+        let e = Engine::new(crate::testing::session());
+        let err = e
+            .call("project_pin_create", json!({"project": &root, "estimate": true}), CallOptions::new(Caller::Cli).with_consent(Consent::Granted))
+            .unwrap_err();
+        let details = err.details.as_ref().expect("an estimate open error names its project");
+        assert_eq!(details["project"].as_str(), root.to_str());
+        assert_eq!(details["estimate"].as_bool(), Some(true));
     }
 }

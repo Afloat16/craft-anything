@@ -4,11 +4,11 @@
 //! Every rewrite is a text edit on exact syntax-tree spans, and the edited text must parse again
 //! or the edit set is dropped. Rewrites at the `standard` level:
 //! - `!0` → `true`, `!1` → `false`;
-//! - `void 0` → `undefined` (only when nothing in the file declares a binding named `undefined`);
+//! - `void 0` → `undefined` (only without a binding named `undefined` or a dynamic `with` scope);
 //! - `a(), b(), c();` statement sequences → separate statements (only in statement lists, and only
 //!   when no later part would change meaning at the start of a statement);
 //! - webpack module parameters `(e, t, n)` → `(module, exports, __webpack_require__)`, using scope
-//!   analysis so every reference is renamed and nothing is captured.
+//!   analysis so every reference is renamed and nothing is captured; skipped for possible direct eval.
 
 use crate::lex::{TokKind, tokenize};
 use crate::model::BundleModule;
@@ -64,6 +64,7 @@ struct RewriteVisitor<'s> {
     edits: Vec<Edit>,
     voids: Vec<Edit>,
     binds_undefined: bool,
+    has_with: bool,
 }
 
 fn starts_statement_safely(text: &str) -> bool {
@@ -85,6 +86,12 @@ impl<'a> Visit<'a> for RewriteVisitor<'_> {
         }
     }
 
+    /// A with object can supply undefined even inside a closure created in its body.
+    fn visit_with_statement(&mut self, it: &WithStatement<'a>) {
+        self.has_with = true;
+        walk::walk_with_statement(self, it);
+    }
+
     fn visit_binding_identifier(&mut self, it: &BindingIdentifier<'a>) {
         if it.name == "undefined" {
             self.binds_undefined = true;
@@ -96,6 +103,7 @@ impl<'a> Visit<'a> for RewriteVisitor<'_> {
             if let Statement::ExpressionStatement(es) = st
                 && let Expression::SequenceExpression(seq) = &es.expression
                 && seq.expressions.len() >= 2
+                && !matches!(seq.expressions.first(), Some(Expression::StringLiteral(_)))
                 && seq.expressions.iter().skip(1).all(|e| starts_statement_safely(slice(self.src, e.span().start, e.span().end)))
             {
                 for pair in seq.expressions.windows(2) {
@@ -124,10 +132,10 @@ fn rewrite_and_print(src: &str, st: SourceType, level: RewriteLevel) -> Result<(
     }
     let mut edits_applied = 0usize;
     if level == RewriteLevel::Standard {
-        let mut v = RewriteVisitor { src, edits: Vec::new(), voids: Vec::new(), binds_undefined: false };
+        let mut v = RewriteVisitor { src, edits: Vec::new(), voids: Vec::new(), binds_undefined: false, has_with: false };
         v.visit_program(&ret.program);
         let mut edits = v.edits;
-        if !v.binds_undefined {
+        if !v.binds_undefined && !v.has_with {
             edits.extend(v.voids);
         }
         let n = edits.len();
@@ -170,6 +178,14 @@ fn rename_params(params: &[String], body: &str, targets: &[&str]) -> Option<(Str
         return None;
     }
     let sem = SemanticBuilder::new().with_build_nodes(true).build(&ret.program).semantic;
+    // Direct eval can read or create bindings by name, including from a nested function.
+    // Treat a call spelled `eval(...)` conservatively even when the name is locally bound.
+    if sem.nodes().iter().any(|node| {
+        matches!(node.kind(), AstKind::CallExpression(call)
+            if !call.optional && matches!(call.callee.get_inner_expression(), Expression::Identifier(id) if id.name == "eval"))
+    }) {
+        return None;
+    }
     let scoping = sem.scoping();
     let Some(Statement::ExpressionStatement(es)) = ret.program.body.first() else { return None };
     let Expression::FunctionExpression(f) = es.expression.get_inner_expression() else { return None };
@@ -235,17 +251,28 @@ pub struct RecoveredModule {
     pub note: Option<String>,
 }
 
-/// A safe relative path for a module id: no `..`, no absolute roots, no odd characters.
+/// Whether `path`'s final segment already ends with a known script, stylesheet, component, or data
+/// extension (case-insensitively, with a non-empty stem).
+fn has_known_module_ext(path: &str) -> bool {
+    let leaf = path.rsplit('/').next().unwrap_or(path);
+    leaf.rsplit_once('.').is_some_and(|(stem, ext)| {
+        !stem.is_empty() && ["js", "mjs", "cjs", "ts", "tsx", "jsx", "json", "css", "vue", "svelte"].iter().any(|known| ext.eq_ignore_ascii_case(known))
+    })
+}
+
+/// A safe relative path for a module id: no `..`, no absolute roots, no leading or trailing segment
+/// dots, no odd characters, and case-insensitive known-extension preservation.
 pub fn safe_module_path(id: &str, fallback_ext: &str) -> String {
-    let trimmed = id.trim_start_matches("webpack://").trim_start_matches("webpack:").trim_start_matches("file://");
+    let trimmed = id.strip_prefix("webpack://").or_else(|| id.strip_prefix("webpack:")).or_else(|| id.strip_prefix("file://")).unwrap_or(id);
     let mut parts = Vec::new();
     for p in trimmed.split(['/', '\\']) {
         let p = p.trim();
-        if p.is_empty() || p == "." || p == ".." || p.ends_with(':') {
+        let is_drive = matches!(p.as_bytes(), [c, b':'] if c.is_ascii_alphabetic());
+        if p.is_empty() || p == "." || p == ".." || is_drive {
             continue;
         }
         let clean: String = p.chars().map(|c| if c.is_alphanumeric() || matches!(c, '.' | '-' | '_' | '@' | '+') { c } else { '_' }).take(120).collect();
-        let clean = clean.trim_start_matches('.').to_string();
+        let clean = clean.trim_matches('.').to_string();
         if !clean.is_empty() {
             parts.push(clean);
         }
@@ -257,18 +284,62 @@ pub fn safe_module_path(id: &str, fallback_ext: &str) -> String {
         parts.push("module".into());
     }
     let mut path = parts.join("/");
-    let has_ext = [".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".json", ".css", ".vue", ".svelte"].iter().any(|e| path.ends_with(e));
-    if !has_ext {
+    if !has_known_module_ext(&path) {
         path.push_str(fallback_ext);
     }
     path
 }
 
+/// Decompose a precomposed Hangul syllable (`U+AC00..=U+D7A3`) into canonical Jamo (`L`, `V`, optional `T`).
+fn decompose_hangul(c: char) -> [Option<char>; 3] {
+    let u = u32::from(c);
+    if !(0xAC00..=0xD7A3).contains(&u) {
+        return [Some(c), None, None];
+    }
+    let s = u - 0xAC00;
+    let l = char::from_u32(0x1100 + s / 588);
+    let v = char::from_u32(0x1161 + (s % 588) / 28);
+    let t = match s % 28 {
+        0 => None,
+        rem => char::from_u32(0x11A7 + rem),
+    };
+    [l, v, t]
+}
+
+/// Build a case-folded deduplication key for relative output paths across case-insensitive
+/// filesystems (Windows NTFS and macOS APFS).
+///
+/// Decomposes Hangul syllables (`가` U+AC00 → `가` U+1100 U+1161) and chains `char::to_lowercase`
+/// into `char::to_uppercase` so Greek final and medial sigma (`ς`/`σ` → `Σ`), singleton
+/// decompositions (`K` U+212A → `K`, `Å` U+212B → `Å`, `Ω` U+2126 → `Ω`), Turkish `İ`/`ı`, and
+/// APFS multi-character case foldings (`ß`/`ẞ` → `SS`, `ﬁ` → `FI`) map to one key while callers
+/// preserve the first file's original spelling on disk.
+pub fn module_path_key(path: &str) -> String {
+    path.chars().flat_map(decompose_hangul).flatten().flat_map(char::to_lowercase).flat_map(char::to_uppercase).collect()
+}
+
+/// Return [`module_path_key`] for every strict parent directory prefix of a `/`-separated
+/// relative file path so callers can prevent file/directory collisions in either input order.
+pub fn ancestor_dir_keys(path: &str) -> Vec<String> {
+    let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty() && *s != ".").collect();
+    let mut out = Vec::new();
+    let mut prefix = String::new();
+    for seg in segs.iter().take(segs.len().saturating_sub(1)) {
+        if !prefix.is_empty() {
+            prefix.push('/');
+        }
+        prefix.push_str(seg);
+        out.push(module_path_key(&prefix));
+    }
+    out
+}
+
 /// Cut the modules found in `src` into files, pretty-printing each.
 pub fn recover_modules(src: &str, modules: &[BundleModule], level: RewriteLevel, limits: &Limits) -> Vec<RecoveredModule> {
     let mut out = Vec::new();
-    let mut names = std::collections::HashSet::new();
-    for m in modules {
+    let initial_paths: Vec<String> = modules.iter().map(|m| safe_module_path(&m.id, ".js")).collect();
+    let mut names: std::collections::HashSet<String> = initial_paths.iter().flat_map(|p| ancestor_dir_keys(p)).collect();
+    for (module_index, (m, mut file_name)) in modules.iter().zip(initial_paths).enumerate() {
         let original = slice(src, m.start, m.end);
         let mut renamed = Vec::new();
         let mut note = None;
@@ -296,11 +367,18 @@ pub fn recover_modules(src: &str, modules: &[BundleModule], level: RewriteLevel,
                 (body, 0, false)
             }
         };
-        let mut file_name = safe_module_path(&m.id, ".js");
-        if !names.insert(file_name.clone()) {
-            let stem = file_name.trim_end_matches(".js").to_string();
-            file_name = format!("{stem}.{}.js", m.sha256.get(..8).unwrap_or("dup"));
-            names.insert(file_name.clone());
+        if !names.insert(module_path_key(&file_name)) {
+            let (stem, ext) = match file_name.rsplit_once('.') {
+                Some((stem, ext)) if !stem.is_empty() && !stem.ends_with('/') && !ext.is_empty() => (stem.to_string(), format!(".{ext}")),
+                _ => (file_name.clone(), ".js".to_string()),
+            };
+            let hash = m.sha256.get(..8).unwrap_or("dup");
+            file_name = format!("{stem}.{hash}{ext}");
+            let mut occurrence = module_index;
+            while !names.insert(module_path_key(&file_name)) {
+                file_name = format!("{stem}.{hash}.{occurrence}{ext}");
+                occurrence += 1;
+            }
         }
         let header = format!("// Recovered from a {} bundle: module {:?} (bytes {}..{} of the original file).\n", m.format, m.id, m.start, m.end);
         let header = if renamed.is_empty() {
@@ -380,5 +458,71 @@ mod tests {
         assert_eq!(safe_module_path("..", ".js"), "module.js");
         assert_eq!(safe_module_path("12", ".js"), "12.js");
         assert_eq!(safe_module_path(".hidden", ".js"), "hidden.js");
+        assert!(!has_known_module_ext(".JS"));
+        assert!(!has_known_module_ext("src/.TS"));
+        assert!(has_known_module_ext("src/a.TS"));
+    }
+}
+
+#[cfg(test)]
+mod sequence_directives_regression {
+    use super::*;
+
+    #[test]
+    fn splitting_does_not_introduce_use_strict() {
+        for source in [r#"function f(){ "hello", "use strict"; return this; }"#, r#""hello", "use strict"; globalThis.answer = this;"#] {
+            let (out, _) = pretty_print("a.cjs", source, RewriteLevel::Standard, &Limits::default()).unwrap();
+            assert!(out.contains(','), "{out}");
+        }
+    }
+
+    #[test]
+    fn ordinary_sequences_still_split() {
+        let (out, count) = pretty_print("a.cjs", "a(), b();", RewriteLevel::Standard, &Limits::default()).unwrap();
+        assert_eq!(count, 1);
+        assert!(!out.contains(','), "{out}");
+    }
+}
+
+#[cfg(test)]
+mod module_collisions_regression {
+    use super::*;
+
+    /// Repeated webpack registrations retain every recovered module under a distinct path.
+    #[test]
+    fn repeated_webpack_chunk_modules_have_distinct_paths() {
+        let chunk = r#"(self.webpackChunknotes=self.webpackChunknotes||[]).push([[179],{512:function(e){e.exports=1}}]);"#;
+        let source = chunk.repeat(3);
+        let analysis = crate::analyze("bundle.js", &source, &crate::Limits::default());
+        assert_eq!(analysis.bundle.modules.len(), 3);
+        let recovered = super::recover_modules(&source, &analysis.bundle.modules, super::RewriteLevel::None, &crate::Limits::default());
+        let names: std::collections::HashSet<_> = recovered.iter().map(|m| &m.file_name).collect();
+        assert_eq!(names.len(), 3);
+    }
+
+    /// Hash collisions and module ids matching generated names never share an output path.
+    #[test]
+    fn repeated_hashes_have_distinct_output_paths() {
+        let source = "globalThis.answer = 1;";
+        let module = BundleModule {
+            id: "same.js".into(),
+            format: "webpack".into(),
+            chunk_ids: vec![],
+            start: 0,
+            end: source.len() as u32,
+            body: Some((0, source.len() as u32)),
+            line: 1,
+            params: vec![],
+            deps: vec![],
+            sha256: "0123456789abcdef".into(),
+            fingerprint: String::new(),
+        };
+        let mut modules = vec![module.clone(); 4];
+        modules[3].id = "same.01234567.js".into();
+        let recovered = recover_modules(source, &modules, RewriteLevel::None, &Limits::default());
+        let names: std::collections::HashSet<_> = recovered.iter().map(|m| &m.file_name).collect();
+        assert_eq!(names.len(), recovered.len());
+        assert_eq!(recovered[0].file_name, "same.js");
+        assert_eq!(recovered[1].file_name, "same.01234567.js");
     }
 }

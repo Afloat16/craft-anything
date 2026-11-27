@@ -2,7 +2,10 @@
 //! through source maps, inspecting HAR network captures, and recovering readable sources from
 //! minified bundles.
 
-use super::artifact_tools::{WalkOptions, abs_path, create_absent_dir, env, read_capped, rel_to, resolve_evidence_input, walk_dir, write_new_file};
+use super::artifact_tools::{
+    WALK_CUT_NOTE, WalkOptions, abs_path, create_absent_dir, env, nothing_found_error, read_capped, rel_to, resolve_evidence_input, unlisted_limitation,
+    unlisted_note, unlisted_under, walk_dir, write_new_file,
+};
 use crate::tool::{Ctx, Effects, Requires, ToolOutput, ToolSpec, Toolset, parse_params, schema_of};
 use craft_anything_analysis::web_har::{HarOptions, inspect_har};
 use craft_anything_analysis::web_scripts::{
@@ -55,7 +58,7 @@ pub fn specs() -> Vec<ToolSpec> {
         ToolSpec {
             id: "js_sources_restore",
             title: "Recover readable sources",
-            summary: "Turn minified bundles back into readable files in a new folder: split webpack/esbuild/browserify module tables into one file per module, pretty-print everything, apply safe unminify rewrites (!0→true, void 0→undefined, statement sequences, webpack module parameter names via scope analysis) and write original files embedded in source maps. manifest.json records every input digest, module byte range and output file.",
+            summary: "Turn minified bundles back into readable files in a new folder: split webpack/esbuild/browserify module tables into one file per module, pretty-print everything, apply safe unminify rewrites (!0→true, void 0→undefined, statement sequences, webpack module parameter names via scope analysis) and write original files embedded in source maps. manifest.json records every input digest, module byte range and output file, and says when its path or entry budget left originals out.",
             beginner: "Make squashed JavaScript readable again and split a bundle back into its original pieces.",
             toolset: Toolset::Javascript,
             effects: Effects::MUTATES_SESSION.union(Effects::WRITES_FILESYSTEM),
@@ -407,13 +410,25 @@ fn default_recover_limit() -> usize {
 
 type Scripts = Vec<(String, PathBuf)>;
 
-fn collect_scripts(ctx: &Ctx<'_>, roots: &[String], max_files: usize) -> Result<(Scripts, Vec<String>), ToolError> {
+/// The scripts under `roots`, notes about listings cut short, and the folders that couldn't be
+/// listed in full as (path from its root's name, reason).
+#[allow(clippy::type_complexity)]
+fn collect_scripts(ctx: &Ctx<'_>, roots: &[String], max_files: usize) -> Result<(Scripts, Vec<String>, Vec<(String, String)>), ToolError> {
     let mut out = Vec::new();
     let mut notes = Vec::new();
+    let mut unlisted = Vec::new();
+    // Two inputs can share a folder name (`/first/dist`, `/second/dist`): what is said about one of
+    // them then names which input it is, so the person can tell where to look.
+    let base_of = |path: &Path| path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "input".into());
+    let mut named = std::collections::HashMap::<String, usize>::new();
     for r in roots {
+        *named.entry(base_of(Path::new(r))).or_default() += 1;
+    }
+    for (index, r) in roots.iter().enumerate() {
         let path = abs_path(r, "path")?;
         let meta = std::fs::metadata(&path).map_err(|e| ToolError::io(path.display(), e))?;
-        let base = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "input".into());
+        let base = base_of(&path);
+        let label = if named.get(&base).copied().unwrap_or(0) > 1 { format!("{base} (input {})", index + 1) } else { base.clone() };
         if meta.is_dir() {
             let skip = |rel: &str| rel.ends_with("node_modules");
             let w = walk_dir(
@@ -422,8 +437,9 @@ fn collect_scripts(ctx: &Ctx<'_>, roots: &[String], max_files: usize) -> Result<
                 &ctx.cancel,
             )?;
             if w.truncated {
-                notes.push(format!("{base}: the folder listing was cut short by the file-count or depth limit"));
+                notes.push(format!("{label}: {WALK_CUT_NOTE}"));
             }
+            unlisted.extend(unlisted_under(&label, w.unlisted));
             for f in w.files.into_iter().filter(|f| craft_anything_analysis::js_app::is_script(&f.rel)) {
                 out.push((format!("{base}/{}", f.rel), f.abs));
             }
@@ -435,9 +451,15 @@ fn collect_scripts(ctx: &Ctx<'_>, roots: &[String], max_files: usize) -> Result<
             break;
         }
     }
-    Ok((out, notes))
+    // The manifest keeps the notes: say there which folders, and why.
+    notes.extend(unlisted_note(&unlisted));
+    Ok((out, notes, unlisted))
 }
 
+/// Recover pretty-printed files, bundle modules and embedded source-map originals into a new
+/// folder. The recovery manifest keeps at most the source-map inventory's expanded-path budget;
+/// when that budget is reached, the remaining originals are left out and the result says the
+/// recovery is partial.
 fn js_sources_restore(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolError> {
     let p: RecoverParams = parse_params(params)?;
     if p.additional_paths.len() > 16 {
@@ -445,9 +467,10 @@ fn js_sources_restore(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, To
     }
     let mut roots = vec![p.path.clone()];
     roots.extend(p.additional_paths.iter().cloned());
-    let (inputs, mut notes) = collect_scripts(ctx, &roots, p.max_files.max(1))?;
+    let (inputs, mut notes, unlisted) = collect_scripts(ctx, &roots, p.max_files.max(1))?;
     if inputs.is_empty() {
-        return Err(ToolError::invalid("no JavaScript files found in the inputs"));
+        // Nothing is created yet: the output folder comes after this.
+        return Err(nothing_found_error("no JavaScript files found in the inputs".into(), &unlisted));
     }
     let out = create_absent_dir(&p.output_directory)?;
     let level = match p.rewrite_level {
@@ -458,6 +481,10 @@ fn js_sources_restore(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, To
     let mut outputs: Vec<Value> = Vec::new();
     let mut provenance: Vec<Value> = Vec::new();
     let (mut modules_total, mut originals_total, mut printed) = (0usize, 0usize, 0usize);
+    // The source-map parser bounds the inventory it builds; the recovery manifest must not undo
+    // that by repeating every expanded root in its retained outputs.
+    let mut source_budget = craft_anything_formats::sourcemap::InventoryLimits::default();
+    let mut originals_truncated = false;
     for (n, (rel, abs)) in inputs.iter().enumerate() {
         ctx.cancel.check()?;
         ctx.report(Some(n as f32 / inputs.len() as f32), format!("Recovering {rel}"));
@@ -471,7 +498,7 @@ fn js_sources_restore(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, To
         let text = String::from_utf8_lossy(&bytes).into_owned();
         let in_sha = sha256_hex(&bytes);
         let stem = safe_module_path(rel, ".js");
-        let mut record = json!({"input": rel, "sha256": in_sha, "bytes": bytes.len()});
+        let mut record = json!({"input": rel, "input_index": n, "sha256": in_sha, "bytes": bytes.len()});
         // Whole-file pretty print.
         match pretty_print(rel, &text, level, &limits) {
             Ok((pretty, rewrites)) => {
@@ -518,11 +545,23 @@ fn js_sources_restore(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, To
                         continue;
                     }
                     let target = format!("sources/{}/{}", stem.trim_end_matches(".js"), safe_module_path(&src, ""));
-                    let comps: Vec<String> = target.split('/').filter(|c| !c.is_empty()).map(String::from).collect();
+                    let retained = src.len().saturating_add(target.len());
+                    if source_budget.max_sources == 0 || retained > source_budget.max_bytes {
+                        originals_truncated = true;
+                        break;
+                    }
+                    source_budget.max_sources -= 1;
+                    source_budget.max_bytes -= retained;
+                    let mut comps: Vec<String> = target.split('/').filter(|c| !c.is_empty()).map(String::from).collect();
+                    if recovery_path_conflicts(&out, &comps) {
+                        // Keep ordinary paths; give each colliding source occurrence its own directory.
+                        let name = comps.last().cloned().unwrap_or_else(|| "module".into());
+                        comps = vec!["sources-collisions".into(), n.to_string(), i.to_string(), name];
+                    }
                     match write_new_file(&out, &comps, content.as_bytes()) {
                         Ok(w) => {
                             originals_total += 1;
-                            outputs.push(json!({"path": rel_to(&out, &w), "kind": "original-source", "from": rel, "source_map_source": src}));
+                            outputs.push(json!({"path": rel_to(&out, &w), "kind": "original-source", "from": rel, "input_index": n, "source_map_source": src, "source_map_index": i}));
                         }
                         Err(e) => notes.push(format!("{rel} original {src}: {e}")),
                     }
@@ -531,27 +570,57 @@ fn js_sources_restore(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, To
         }
         provenance.push(record);
     }
-    let manifest = json!({"format": "craft-anything-recovery", "version": 1, "rewrite_level": format!("{level:?}").to_lowercase(), "inputs": provenance, "outputs": outputs, "notes": notes});
+    if originals_truncated {
+        notes.push("source-map originals were left out: the recovery manifest's path or entry budget was reached".into());
+    }
+    let manifest = json!({"format": "craft-anything-recovery", "version": 1, "originals_truncated": originals_truncated, "rewrite_level": format!("{level:?}").to_lowercase(), "inputs": provenance, "outputs": outputs, "notes": notes});
     let mb = serde_json::to_vec_pretty(&manifest).map_err(|e| ToolError::internal(e.to_string()))?;
     write_new_file(&out, &["manifest.json".to_string()], &mb).map_err(|e| ToolError::new(ErrorCode::FileError, e))?;
     let limit = p.limit.clamp(1, 10_000);
     let page: Vec<&Value> = outputs.iter().skip(p.offset).take(limit).collect();
+    let partial = if originals_truncated { " Some originals were left out when the recovery manifest's path or entry budget was reached." } else { "" };
     let summary = format!(
-        "Recovered {} input(s) into {}: {printed} pretty-printed, {modules_total} bundle module file(s), {originals_total} original source(s) from maps.",
+        "Recovered {} input(s) into {}: {printed} pretty-printed, {modules_total} bundle module file(s), {originals_total} original source(s) from maps.{partial}",
         inputs.len(),
         out.display()
     );
-    let ev = EvidenceBuilder::new("js_sources_restore", Subject { kind: "javascript".into(), sha256: None, name: Some(p.path.clone()) }, env(ctx))
+    let mut coverage = Coverage::page(page.len() as u64, outputs.len() as u64, p.offset as u64);
+    if originals_truncated || !unlisted.is_empty() {
+        coverage.status = CoverageStatus::Partial;
+    }
+    let mut b = EvidenceBuilder::new("js_sources_restore", Subject { kind: "javascript".into(), sha256: None, name: Some(p.path.clone()) }, env(ctx))
         .params(json!({"path": p.path, "additional_paths": p.additional_paths, "output_directory": out, "extraction_mode": format!("{:?}", p.extraction_mode).to_lowercase(), "rewrite_level": format!("{level:?}").to_lowercase()}))
-        .result(json!({"output_directory": out, "manifest": out.join("manifest.json"), "inputs": provenance, "outputs": page, "outputs_total": outputs.len(), "notes": notes}))
+        .result(json!({"output_directory": out, "manifest": out.join("manifest.json"), "inputs": provenance, "outputs": page, "outputs_total": outputs.len(), "originals_truncated": originals_truncated, "notes": notes}))
         .summary(summary)
         .confidence(Confidence::Derived)
         .limitation(Limitation::new("rewrites_conservative", "Only rewrites that provably keep meaning are applied; local variable names stay minified."))
-        .limitation(Limitation::new("scope_hoisted", "Rollup/Vite production chunks merge modules into one scope; they are pretty-printed but not split."))
-        .coverage(Coverage::page(page.len() as u64, outputs.len() as u64, p.offset as u64))
-        .location(Location::new("path", out.display().to_string()))
-        .build()?;
+        .limitation(Limitation::new("scope_hoisted", "Rollup/Vite production chunks merge modules into one scope; they are pretty-printed but not split."));
+    if originals_truncated {
+        b = b.limitation(Limitation::new(
+            "source_map_recovery_truncated",
+            "Some original sources were left out after the recovery manifest's path-byte or entry limit was reached.",
+        ));
+    }
+    // Scripts in a folder that couldn't be listed were never recovered.
+    if let Some(gap) = unlisted_limitation(&unlisted) {
+        b = b.limitation(gap);
+    }
+    let ev = b.coverage(coverage).location(Location::new("path", out.display().to_string())).build()?;
     Ok(ToolOutput::evidence(ev))
+}
+
+// Check aliases and file/directory prefixes on this filesystem. The writer still checks
+// parents and creates the chosen file exclusively.
+fn recovery_path_conflicts(root: &Path, components: &[String]) -> bool {
+    let mut path = root.to_path_buf();
+    for (index, component) in components.iter().enumerate() {
+        path.push(component);
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else { return false };
+        if index == components.len().saturating_sub(1) || !metadata.is_dir() {
+            return true;
+        }
+    }
+    false
 }
 
 fn find_map(script: &Path, url: Option<&str>) -> Option<craft_anything_formats::sourcemap::SourceMap> {
@@ -619,7 +688,7 @@ mod tests {
         let e = Engine::new(crate::testing::session());
         let out_capped = dir.path().join("capped");
         let r = call(&e, "js_sources_restore", json!({"path": dist, "output_directory": out_capped, "max_files": 2})).unwrap();
-        let expected = json!(["dist: the folder listing was cut short by the file-count or depth limit"]);
+        let expected = json!(["dist: the folder listing was cut short by a file, entry, path-length or depth limit, or by entries that couldn't be read"]);
         assert_eq!(r["result"]["notes"], expected);
         let manifest: Value = serde_json::from_slice(&std::fs::read(out_capped.join("manifest.json")).unwrap()).unwrap();
         assert_eq!(manifest["notes"], expected);
@@ -627,6 +696,82 @@ mod tests {
         let out_full = dir.path().join("full");
         let r_full = call(&e, "js_sources_restore", json!({"path": dist, "output_directory": out_full, "max_files": 3})).unwrap();
         assert_eq!(r_full["result"]["notes"], json!([]));
+    }
+
+    /// A folder of scripts that couldn't be listed was "cut short" in the notes, with neither its
+    /// name nor the reason, in a recovery whose coverage said nothing was left out.
+    #[test]
+    fn recover_names_a_folder_it_couldnt_list() {
+        use super::super::artifact_tools::walk_testing::{assert_names_unlisted, close, unlisted_message};
+        let dir = tempfile::tempdir().unwrap();
+        let dist = dir.path().join("dist");
+        std::fs::create_dir_all(dist.join("closed")).unwrap();
+        std::fs::write(dist.join("app.js"), "console.log(1);\n").unwrap();
+        std::fs::write(dist.join("closed/more.js"), "console.log(2);\n").unwrap();
+        let e = Engine::new(crate::testing::session());
+        let whole = call(&e, "js_sources_restore", json!({"path": dist, "output_directory": dir.path().join("whole")})).unwrap();
+        assert_eq!((whole["result"]["notes"].clone(), whole["result"]["inputs"].as_array().unwrap().len(), unlisted_message(&whole)), (json!([]), 2, None));
+
+        let Some(closed) = close(&dist.join("closed")) else { return };
+        let out = dir.path().join("cut");
+        let cut = call(&e, "js_sources_restore", json!({"path": dist, "output_directory": out}));
+        drop(closed);
+        let cut = cut.unwrap();
+        assert_eq!(cut["result"]["inputs"].as_array().unwrap().len(), 1, "{cut}");
+        assert_names_unlisted(&cut, "dist/closed");
+        // The notes, which the manifest keeps, say it too: first that the listing was cut, then where and why.
+        let notes: Vec<String> = cut["result"]["notes"].as_array().unwrap().iter().map(|n| n.as_str().unwrap().to_string()).collect();
+        assert_eq!(notes.len(), 2, "{notes:?}");
+        assert!(notes[0].starts_with("dist: the folder listing was cut short"), "{notes:?}");
+        assert_eq!(Some(&notes[1]), unlisted_message(&cut).as_ref());
+        let manifest: Value = serde_json::from_slice(&std::fs::read(out.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(manifest["notes"], cut["result"]["notes"]);
+    }
+
+    /// "No JavaScript files found" when the only scripts are in a folder that can't be listed sent
+    /// the person looking for files that are there: the error names the folder, and nothing is made.
+    #[test]
+    fn recover_with_nothing_found_names_the_folders_it_couldnt_list() {
+        use super::super::artifact_tools::walk_testing::close;
+        let dir = tempfile::tempdir().unwrap();
+        let dist = dir.path().join("dist");
+        std::fs::create_dir_all(dist.join("closed")).unwrap();
+        std::fs::write(dist.join("closed/app.js"), "console.log(1);\n").unwrap();
+        let e = Engine::new(crate::testing::session());
+        let out = dir.path().join("out");
+        let Some(closed) = close(&dist.join("closed")) else { return };
+        let refused = call(&e, "js_sources_restore", json!({"path": dist, "output_directory": out}));
+        drop(closed);
+        let err = refused.unwrap_err();
+        assert!(err.message.starts_with("no JavaScript files found") && err.message.contains("dist/closed (") && err.message.contains("os error"), "{err:?}");
+        assert!(err.remediation.is_some() && !out.exists(), "{err:?}");
+    }
+
+    /// Two inputs with the same folder name (`first/dist`, `second/dist`) were both "dist" in the
+    /// notes, so a folder that couldn't be listed didn't say which input it was in.
+    #[test]
+    fn recover_names_which_of_two_same_named_inputs_a_folder_is_in() {
+        use super::super::artifact_tools::walk_testing::close;
+        let dir = tempfile::tempdir().unwrap();
+        let (first, second) = (dir.path().join("first").join("dist"), dir.path().join("second").join("dist"));
+        for d in [&first, &second] {
+            std::fs::create_dir_all(d.join("closed")).unwrap();
+            std::fs::write(d.join("app.js"), "console.log(1);\n").unwrap();
+        }
+        let e = Engine::new(crate::testing::session());
+        let Some(closed) = close(&second.join("closed")) else { return };
+        let cut = call(&e, "js_sources_restore", json!({"path": first, "additional_paths": [second], "output_directory": dir.path().join("out")}));
+        drop(closed);
+        let notes = cut.unwrap()["result"]["notes"].to_string();
+        assert!(notes.contains("dist (input 2)/closed (") && !notes.contains("dist (input 1)/closed"), "{notes}");
+        // A name only one input has is kept as it was.
+        let lone = dir.path().join("lone");
+        std::fs::create_dir_all(lone.join("closed")).unwrap();
+        std::fs::write(lone.join("app.js"), "console.log(1);\n").unwrap();
+        let Some(closed) = close(&lone.join("closed")) else { return };
+        let cut = call(&e, "js_sources_restore", json!({"path": lone, "output_directory": dir.path().join("out2")}));
+        drop(closed);
+        assert!(cut.unwrap()["result"]["notes"].to_string().contains("lone/closed ("));
     }
 
     #[test]
@@ -663,6 +808,128 @@ mod tests {
                 .iter()
                 .any(|output| { output["kind"] == "original-source" && output["source_map_source"] == "src/original.js" })
         );
+    }
+
+    /// A long shared source root must not let the recovery manifest retain more expanded path
+    /// text than the source-map inventory budget. A 64 KiB root and 1,200 tiny sources are only
+    /// about 75 KiB of JSON, but would otherwise retain about 78 MiB of paths.
+    #[test]
+    fn recover_stops_retaining_originals_at_the_path_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("app.js");
+        std::fs::write(&input, "export const compiled = 1;\n//# sourceMappingURL=app.js.map\n").unwrap();
+        let sources: Vec<String> = (0..1_200).map(|i| format!("{i}.js")).collect();
+        let contents = vec![String::new(); sources.len()];
+        let map = json!({
+            "version": 3,
+            "sourceRoot": "r".repeat(64 * 1024),
+            "sources": sources,
+            "sourcesContent": contents,
+            "names": [],
+            "mappings": ""
+        });
+        std::fs::write(input.with_extension("js.map"), serde_json::to_vec(&map).unwrap()).unwrap();
+        let out = dir.path().join("recovered");
+        let e = Engine::new(crate::testing::session());
+        let result = call(&e, "js_sources_restore", json!({"path": input, "output_directory": out})).unwrap();
+        let manifest: Value = serde_json::from_slice(&std::fs::read(out.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(result["result"]["originals_truncated"], true);
+        assert_eq!(manifest["originals_truncated"], true);
+        let originals: Vec<_> = manifest["outputs"].as_array().unwrap().iter().filter(|o| o["kind"] == "original-source").collect();
+        assert!(!originals.is_empty(), "the budget keeps the originals that fit");
+        assert!(originals.len() < 1_200, "not all originals fit the path budget: {}", originals.len());
+        let retained: usize = originals.iter().map(|o| o["source_map_source"].as_str().unwrap().len().saturating_add(o["path"].as_str().unwrap().len())).sum();
+        assert!(retained <= 64 * 1024 * 1024, "retained path bytes are bounded: {retained}");
+        assert!(result["summary"].as_str().unwrap().contains("path or entry budget"), "{}", result["summary"]);
+        assert!(result["limitations"].as_array().unwrap().iter().any(|l| l["code"] == "source_map_recovery_truncated"));
+        assert_eq!(result["coverage"]["status"], "partial");
+        assert_eq!(manifest["notes"], json!(["source-map originals were left out: the recovery manifest's path or entry budget was reached"]));
+    }
+
+    fn write_recovery_map(input: &std::path::Path, sources: &[&str], contents: &[String]) {
+        std::fs::write(input, "export const compiled = 1;\n").unwrap();
+        let map = json!({
+            "version": 3,
+            "sourceRoot": "src",
+            "sources": sources,
+            "sourcesContent": contents,
+            "names": [],
+            "mappings": ""
+        });
+        std::fs::write(input.with_extension("js.map"), serde_json::to_vec(&map).unwrap()).unwrap();
+    }
+
+    fn check_recovered_source_paths(sources: &[&str], paths: &[&str]) {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("app.js");
+        let contents: Vec<String> = (0..sources.len()).map(|i| format!("export const source{i} = {i};\n")).collect();
+        write_recovery_map(&input, sources, &contents);
+        let out = dir.path().join("recovered");
+        let e = Engine::new(crate::testing::session());
+        let result = call(&e, "js_sources_restore", json!({"path": input, "output_directory": out})).unwrap();
+        let manifest: Value = serde_json::from_slice(&std::fs::read(out.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(manifest["outputs"], result["result"]["outputs"]);
+        let originals: Vec<_> = manifest["outputs"].as_array().unwrap().iter().filter(|o| o["kind"] == "original-source").collect();
+        assert_eq!(originals.len(), sources.len(), "{manifest}");
+        assert_eq!(manifest["inputs"][0]["input_index"], 0);
+        assert_eq!(paths.len(), sources.len());
+        for (i, original) in originals.iter().enumerate() {
+            assert_eq!(original["path"], paths[i]);
+            assert_eq!(original["source_map_source"], format!("src/{}", sources[i]));
+            assert_eq!(original["source_map_index"], i);
+            assert_eq!(original["input_index"], 0);
+            assert_eq!(std::fs::read_to_string(out.join(paths[i])).unwrap(), contents[i]);
+        }
+        assert_eq!(manifest["notes"], json!([]));
+    }
+
+    #[test]
+    fn recover_preserves_normalized_and_duplicate_source_paths() {
+        check_recovered_source_paths(
+            &["/main.js", "main.js", "main.js"],
+            &["sources/app/src/main.js", "sources-collisions/0/1/main.js", "sources-collisions/0/2/main.js"],
+        );
+    }
+
+    #[test]
+    fn recover_preserves_source_file_before_its_child() {
+        check_recovered_source_paths(&["module", "module/child.js"], &["sources/app/src/module", "sources-collisions/0/1/child.js"]);
+    }
+
+    #[test]
+    fn recover_preserves_source_child_before_its_parent_file() {
+        check_recovered_source_paths(&["module/child.js", "module"], &["sources/app/src/module/child.js", "sources-collisions/0/1/module"]);
+    }
+
+    #[test]
+    fn recover_preserves_sources_from_same_named_inputs() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut inputs = Vec::new();
+        let contents = ["export const first = 1;\n".to_string(), "export const second = 2;\n".to_string()];
+        for (i, content) in contents.iter().enumerate() {
+            let parent = dir.path().join(i.to_string());
+            std::fs::create_dir(&parent).unwrap();
+            let input = parent.join("app.js");
+            write_recovery_map(&input, &["main.js"], std::slice::from_ref(content));
+            inputs.push(input);
+        }
+        let out = dir.path().join("recovered");
+        let e = Engine::new(crate::testing::session());
+        let result = call(&e, "js_sources_restore", json!({"path": inputs[0], "additional_paths": [inputs[1]], "output_directory": out})).unwrap();
+        let manifest: Value = serde_json::from_slice(&std::fs::read(out.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(manifest["outputs"], result["result"]["outputs"]);
+        let originals: Vec<_> = manifest["outputs"].as_array().unwrap().iter().filter(|o| o["kind"] == "original-source").collect();
+        assert_eq!(originals.len(), 2, "{manifest}");
+        for (i, path) in ["sources/app/src/main.js", "sources-collisions/1/0/main.js"].iter().enumerate() {
+            assert_eq!(manifest["inputs"][i]["input_index"], i);
+            assert_eq!(originals[i]["path"], *path);
+            assert_eq!(originals[i]["from"], "app.js");
+            assert_eq!(originals[i]["source_map_source"], "src/main.js");
+            assert_eq!(originals[i]["source_map_index"], 0);
+            assert_eq!(originals[i]["input_index"], i);
+            assert_eq!(std::fs::read_to_string(out.join(path)).unwrap(), contents[i]);
+        }
+        assert_eq!(manifest["notes"], json!([]));
     }
 
     #[test]

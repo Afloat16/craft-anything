@@ -19,9 +19,12 @@ fn split_bom(text: &str) -> (&'static str, &str) {
     }
 }
 
-/// Parse to JSON-like data (first document; an empty file is an empty mapping).
+/// Parse one YAML document to JSON-like data. An empty file is an empty mapping.
 pub fn parse(text: &str) -> Result<Value, String> {
     let docs = YamlLoader::load_from_str(split_bom(text).1).map_err(|e| e.to_string())?;
+    if docs.len() > 1 {
+        return Err("the config must contain only one YAML document".into());
+    }
     match docs.into_iter().next() {
         None | Some(Yaml::Null) => Ok(Value::Object(Map::new())),
         Some(y @ Yaml::Hash(_)) => Ok(to_json(&y, 0)),
@@ -66,12 +69,23 @@ fn is_blank_or_comment(line: &str) -> bool {
     t.is_empty() || t.starts_with('#')
 }
 
-/// `key:` with optional comment, possibly quoted. Returns the rest after the colon.
-fn key_line<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+/// `key:` with optional horizontal whitespace before `:`, possibly quoted. Returns the rest after `:`.
+/// Unquoted keys require horizontal whitespace or end-of-line after `:` so plain keys containing
+/// embedded colons (`craft-anything:dev:`) are not mistaken for `craft-anything:`.
+fn key_line<'a>(line: &'a str, name: &str) -> Option<&'a str> {
     let t = line.trim_start();
-    for k in [key.to_string(), format!("\"{key}\""), format!("'{key}'")] {
-        if let Some(rest) = t.strip_prefix(&k)
-            && let Some(rest) = rest.strip_prefix(':')
+    if let Some(rest) = t.strip_prefix(name)
+        && let Some(rest) = rest.trim_start_matches([' ', '\t']).strip_prefix(':')
+        && (rest.is_empty() || rest.starts_with([' ', '\t']))
+    {
+        return Some(rest);
+    }
+    let dq = scalar(&Value::String(name.to_string()));
+    let sq = format!("'{}'", name.replace('\'', "''"));
+    for quoted in [dq, sq] {
+        if let Some(rest) = t.strip_prefix(&quoted)
+            && let Some(rest) = rest.trim_start_matches([' ', '\t']).strip_prefix(':')
+            && (rest.is_empty() || rest.starts_with([' ', '\t']))
         {
             return Some(rest);
         }
@@ -138,14 +152,102 @@ struct Block {
     end: usize,
 }
 
-/// A value after `table:` that holds nothing: `{}`, or a null as the parser reads one (`null` or
-/// `~`), with an optional comment after it.
+/// A value after `table:` that holds nothing: `{}` (with optional horizontal whitespace inside
+/// the braces), or a YAML 1.2 null (`null`, `Null`, `NULL`, `~`), with an optional comment.
 fn empty_inline(rest: &str) -> bool {
     let t = rest.trim();
-    if let Some(after) = t.strip_prefix("{}") {
+    if let Some(inner) = t.strip_prefix('{')
+        && let Some(after) = inner.trim_start_matches([' ', '\t']).strip_prefix('}')
+    {
         return only_comment(after);
     }
-    ["null", "~"].iter().any(|null| t.strip_prefix(null).is_some_and(|after| after.is_empty() || (after.starts_with([' ', '\t']) && only_comment(after))))
+    ["null", "Null", "NULL", "~"]
+        .iter()
+        .any(|null| t.strip_prefix(null).is_some_and(|after| after.is_empty() || (after.starts_with([' ', '\t']) && only_comment(after))))
+}
+
+/// Rest of a mapping entry line after the key's `:` separator, if this line starts a key: value pair.
+fn mapping_value_rest(line: &str) -> Option<&str> {
+    let t = line.trim_start();
+    if t.is_empty() || t.starts_with('#') || t.starts_with("- ") || t == "-" {
+        return None;
+    }
+    let after_key = if let Some(mut s) = t.strip_prefix('"') {
+        let mut escaped = false;
+        loop {
+            let ch = s.chars().next()?;
+            s = &s[ch.len_utf8()..];
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                break;
+            }
+        }
+        s.trim_start_matches([' ', '\t'])
+    } else if let Some(mut s) = t.strip_prefix('\'') {
+        loop {
+            let ch = s.chars().next()?;
+            s = &s[ch.len_utf8()..];
+            if ch == '\'' {
+                if s.starts_with('\'') {
+                    s = &s[1..];
+                } else {
+                    break;
+                }
+            }
+        }
+        s.trim_start_matches([' ', '\t'])
+    } else {
+        // Plain key: find the first `:` followed by horizontal whitespace or end-of-line.
+        let bytes = t.as_bytes();
+        let pos = bytes.iter().enumerate().find_map(
+            |(idx, &b)| {
+                if b == b':' && matches!(bytes.get(idx + 1), None | Some(b' ' | b'\t')) { Some(idx) } else { None }
+            },
+        )?;
+        return t.get(pos + 1..);
+    };
+    after_key.strip_prefix(':').filter(|rest| rest.is_empty() || rest.starts_with([' ', '\t']))
+}
+
+/// True when `lines[..end]` parses as a complete YAML document on its own (retaining earlier
+/// `&anchor` and `%TAG` context while rejecting unclosed flow collections or quotes).
+fn prefix_parses(lines: &[&str], end: usize) -> bool {
+    let prefix = lines.get(..end).map(|s| s.join("\n")).unwrap_or_default();
+    YamlLoader::load_from_str(&prefix).is_ok()
+}
+
+/// True when the value after `:` does not finish on `line_idx` (even with earlier document
+/// anchors in scope).
+fn unclosed_inline_value(lines: &[&str], line_idx: usize, rest: &str) -> bool {
+    let v = rest.trim_start_matches([' ', '\t']);
+    !only_comment(v) && YamlLoader::load_from_str(v).is_err() && !prefix_parses(lines, line_idx + 1)
+}
+
+/// True when the remainder after `key:` carries no value on this line (at most YAML node
+/// properties like `&anchor` / `!tag` and a `#` comment), so the entry's value starts on the
+/// next non-blank line.
+fn can_open_next_line_flow(rest: &str) -> bool {
+    for tok in rest.split([' ', '\t']).filter(|s| !s.is_empty()) {
+        if tok.starts_with('#') {
+            break;
+        }
+        if !tok.starts_with(['&', '!']) {
+            return false;
+        }
+    }
+    true
+}
+
+/// True when the next non-blank, non-comment line in `from..end` opens a flow collection.
+fn next_nonblank_starts_flow(lines: &[&str], from: usize, end: usize) -> bool {
+    lines.get(from..end).unwrap_or(&[]).iter().find(|l| !is_blank_or_comment(l)).is_some_and(|l| l.trim_start().starts_with(['{', '[']))
+}
+
+fn flow_refusal(table: &str) -> String {
+    format!("a `{table}` entry spans multiple lines with inline flow syntax (`{{...}}`/`[...]`); edit this file by hand")
 }
 
 /// The top-level `table:` block, if the file has one. An inline value is refused unless it holds
@@ -180,9 +282,13 @@ fn find_table(lines: &[&str], table: &str) -> Result<Option<Block>, String> {
     Ok(None)
 }
 
-/// Child block `[start, end)` named `name` inside the table block, with its indent.
-fn find_child(lines: &[&str], block: &Block, name: &str) -> Option<(usize, usize)> {
+/// Child block `[start, end)` named `name` inside the table block, or an error when a child
+/// entry spans multiple lines with inline flow syntax (`{...}` / `[...]`) whose bounds cannot be
+/// inferred safely by indentation alone.
+fn find_child(lines: &[&str], block: &Block, table: &str, name: &str) -> Result<Option<(usize, usize)>, String> {
+    const FLOW_PUNCT: [char; 5] = ['{', '}', '[', ']', ','];
     let mut child_indent = None;
+    let mut found = None;
     let mut i = block.header + 1;
     while i < block.end {
         let l = lines.get(i).copied().unwrap_or_default();
@@ -192,22 +298,37 @@ fn find_child(lines: &[&str], block: &Block, name: &str) -> Option<(usize, usize
         }
         let ind = indent_of(l);
         let ci = *child_indent.get_or_insert(ind);
-        if ind == ci && key_line(l, name).is_some() {
-            let mut end = i + 1;
-            for (j, l2) in lines.iter().enumerate().take(block.end).skip(i + 1) {
-                if is_blank_or_comment(l2) {
-                    continue;
-                }
-                if indent_of(l2) <= ci {
-                    break;
-                }
-                end = j + 1;
+        if ind <= ci && l.trim_start().starts_with(FLOW_PUNCT) {
+            return Err(flow_refusal(table));
+        }
+        if ind == ci {
+            let may_open_flow = mapping_value_rest(l).is_none_or(can_open_next_line_flow);
+            if !prefix_parses(lines, i) || (may_open_flow && next_nonblank_starts_flow(lines, i + 1, block.end)) {
+                return Err(flow_refusal(table));
             }
-            return Some((i, end));
+            if mapping_value_rest(l).is_some_and(|rest| unclosed_inline_value(lines, i, rest)) {
+                return Err(flow_refusal(table));
+            }
+            if found.is_none() && key_line(l, name).is_some() {
+                let mut end = i + 1;
+                for (j, l2) in lines.iter().enumerate().take(block.end).skip(i + 1) {
+                    if is_blank_or_comment(l2) {
+                        continue;
+                    }
+                    if indent_of(l2) <= ci {
+                        if l2.trim_start().starts_with(FLOW_PUNCT) {
+                            return Err(flow_refusal(table));
+                        }
+                        break;
+                    }
+                    end = j + 1;
+                }
+                found = Some((i, end));
+            }
         }
         i += 1;
     }
-    None
+    Ok(found)
 }
 
 fn child_indent(lines: &[&str], block: &Block) -> usize {
@@ -262,13 +383,18 @@ pub fn set(text: &str, table: &str, name: &str, value: &Value) -> Result<String,
     let found = find_table(&lines, table)?;
     match found {
         None => {
-            out.push((format!("{table}:"), eol));
-            out.extend(new_lines(render_entry(name, value, 2)));
+            let at = lines
+                .iter()
+                .position(|line| line.strip_prefix("...").is_some_and(|rest| rest.is_empty() || rest.starts_with([' ', '\t'])))
+                .unwrap_or(out.len());
+            let mut added = vec![(format!("{table}:"), eol)];
+            added.extend(new_lines(render_entry(name, value, 2)));
+            out.splice(at..at, added);
         }
         Some(block) => {
             let indent = child_indent(&lines, &block);
             let rendered = new_lines(render_entry(name, value, indent));
-            let child = find_child(&lines, &block, name);
+            let child = find_child(&lines, &block, table, name)?;
             if block.end == block.header + 1
                 && let Some(h) = out.get_mut(block.header)
                 && let Some(rest) = key_line(&h.0, table).filter(|r| empty_inline(r))
@@ -293,17 +419,47 @@ pub fn set(text: &str, table: &str, name: &str, value: &Value) -> Result<String,
     Ok(new)
 }
 
-/// Remove `table.name`. Returns `None` when it was not there.
-pub fn remove(text: &str, table: &str, name: &str) -> Option<String> {
+/// Remove `table.name`. Returns `Ok(None)` when it was not there, or `Err` when the file or
+/// table cannot be edited safely (such as multi-document YAML or inline flow entries).
+pub fn try_remove(text: &str, table: &str, name: &str) -> Result<Option<String>, String> {
+    parse(text)?;
     let (bom, text) = split_bom(text);
     let (mut out, _) = split(text);
     let lines: Vec<&str> = out.iter().map(|(t, _)| t.as_str()).collect();
-    let block = find_table(&lines, table).ok()??;
-    let (s, e) = find_child(&lines, &block, name)?;
+    let Some(block) = find_table(&lines, table)? else {
+        return Ok(None);
+    };
+    let Some((s, e)) = find_child(&lines, &block, table, name)? else {
+        return Ok(None);
+    };
     out.drain(s..e);
     let new = format!("{bom}{}", join(&out));
-    parse(&new).ok()?;
-    Some(new)
+    parse(&new).map_err(|e| format!("the edited file would not parse: {e}"))?;
+    Ok(Some(new))
+}
+
+/// Remove `table.name`. Returns `None` when it was not there or could not be removed safely.
+pub fn remove(text: &str, table: &str, name: &str) -> Option<String> {
+    try_remove(text, table, name).ok().flatten()
+}
+
+#[cfg(test)]
+mod stream_regressions {
+    use super::*;
+    use serde_json::json;
+
+    /// Editing and removal reject a stream whose extra documents would be ignored by the reader.
+    #[test]
+    fn multiple_yaml_documents_are_refused_before_editing() {
+        for text in
+            ["model: first\n---\nmodel: second\n", "---\nmodel: first\n---\n", "mcp_servers:\n  craft-anything:\n    command: old\n---\nmodel: second\n"]
+        {
+            assert!(parse(text).is_err());
+            assert!(set(text, "mcp_servers", "craft-anything", &json!({"command":"c"})).is_err());
+            assert!(remove(text, "mcp_servers", "craft-anything").is_none());
+        }
+        assert_eq!(parse("---\nmodel: first\n...\n").unwrap()["model"], "first");
+    }
 }
 
 #[cfg(test)]
@@ -384,5 +540,26 @@ mod tests {
         let new = set(mixed, "mcp_servers", "craft-anything", &entry).unwrap();
         assert!(new.starts_with("# top\r\nmodel: big\nmcp_servers:\r\n  other:\n    command: x\r\n  craft-anything:"), "{new:?}");
         assert_eq!(remove(&new, "mcp_servers", "craft-anything").unwrap(), mixed);
+    }
+}
+
+#[cfg(test)]
+mod document_end_regressions {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn missing_table_is_inserted_before_document_end() {
+        let value = json!({"command": "craft-anything-cli", "args": ["mcp"]});
+        for text in ["model: x\n...\n", "---\nmodel: x\r\n... # end\r\n# tail\r\n"] {
+            let output = set(text, "mcp_servers", "craft-anything", &value).unwrap();
+            assert_eq!(parse(&output).unwrap()["mcp_servers"]["craft-anything"], value);
+            assert_eq!(set(&output, "mcp_servers", "craft-anything", &value).unwrap(), output);
+            let removed = remove(&output, "mcp_servers", "craft-anything").unwrap();
+            assert!(removed.ends_with(text.split_once("...").map(|(_, tail)| format!("...{tail}")).as_deref().unwrap()));
+            assert_eq!(parse(&removed).unwrap()["model"], "x");
+        }
+        let output = set("...suffix: keep\n", "mcp_servers", "craft-anything", &value).unwrap();
+        assert_eq!(parse(&output).unwrap()["...suffix"], "keep");
     }
 }
