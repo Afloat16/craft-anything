@@ -1,0 +1,73 @@
+name: Validate requested language integration with current main
+on:
+  push:
+    branches: [validation/20261127-craft2224-main-44ff46e]
+permissions:
+  contents: read
+concurrency:
+  group: craft2224-current-main-validation
+  cancel-in-progress: true
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+      CARGO_NET_RETRY: '10'
+      RUST_BACKTRACE: '1'
+      RUSTUP_TOOLCHAIN: '1.100.0'
+      CANDIDATE_TREE: 'f7d1048ebf4f4b10092e8acef284e90f04c7bc39'
+      CANDIDATE_SHA: '44ff46e5ce3b8386faccbe7ac7952ce6b4158e58'
+    steps:
+      - name: Check out immutable source candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: '44ff46e5ce3b8386faccbe7ac7952ce6b4158e58'
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify immutable source identity
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$CANDIDATE_TREE"
+      - name: Repository CI build environment
+        id: environment
+        uses: storytold/craft-common-actions/actions/gate-setup@315eb1972c857c839c3abb3d9288bfd40d21b7da
+        with:
+          craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+          require-craft-fonts: 'true'
+          packages: >-
+            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev
+          toolchain: '1.100.0'
+          cache-job: build
+          cache-save: 'false'
+          writes: 'false'
+      - name: Report compiler version
+        run: rustc --version --verbose
+      - name: Required policy and formatting gates
+        run: |
+          set -euo pipefail
+          cargo xtask fmt --check
+          cargo xtask layers
+          cargo xtask locks
+          cargo xtask secrets
+      - name: Build real CLI used by AI integration tests
+        run: cargo build --locked -p craft-anything-cli
+      - name: Complete Engine AI UI and Platform targets
+        id: positive_suites
+        run: cargo test --no-fail-fast --locked -p craft-anything-engine -p craft-anything-ai -p craft-anything-ui-egui -p craft-anything-platform
+      - name: Clippy all changed crates and tests
+        run: cargo clippy --locked -p craft-anything-engine -p craft-anything-ai -p craft-anything-ui-egui -p craft-anything-platform --all-targets -- -D warnings
+      - name: Confirm unchanged tested source
+        if: always()
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          git diff --cached --exit-code
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$CANDIDATE_TREE"
+          printf 'VALIDATED_SOURCE=%s\nVALIDATED_TREE=%s\n' "$CANDIDATE_SHA" "$CANDIDATE_TREE"
