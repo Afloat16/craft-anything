@@ -769,15 +769,24 @@ fn keep_damaged(root: &Path, bytes: &[u8]) -> Result<PathBuf, ToolError> {
     if let Some(backup) = backups::matching_copy(root, bytes)? {
         return Ok(backup);
     }
+    let mut unverifiable = None;
     for backup in damaged_backups(root) {
         match std::fs::symlink_metadata(&backup) {
             Ok(_) => continue,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(ToolError::io(backup.display(), error)),
         }
-        if backups::publish(root, &backup, bytes)? {
-            return Ok(backup);
+        match backups::publish(root, &backup, bytes) {
+            Ok(true) => return Ok(backup),
+            Ok(false) => {}
+            Err(error) if backups::is_unverifiable_staging(&error) => {
+                unverifiable.get_or_insert(error);
+            }
+            Err(error) => return Err(error),
         }
+    }
+    if let Some(error) = unverifiable {
+        return Err(error);
     }
     Err(ToolError::new(
         ErrorCode::FileError,

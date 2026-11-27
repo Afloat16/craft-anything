@@ -151,6 +151,7 @@ pub(super) struct FeedLog {
     pending_explanation: Option<Vec<FeedItem>>,
     pending_stream: Option<Vec<FeedItem>>,
     stream: Option<usize>,
+    tool_calls: std::collections::BTreeMap<String, ToolOrigin>,
     recovery_notices: Vec<FeedItem>,
     failure_explained: bool,
     save_error: Option<FeedItem>,
@@ -171,8 +172,56 @@ enum FeedChange {
     Item(FeedItem),
     Ask { request: Request, introduced: bool },
     Checklist(Option<Vec<PlanStep>>),
-    ToolStarted(String),
-    ToolFinished { tool: String, ok: bool },
+    ToolStarted { call_id: String, tool: String },
+    ToolFinished { call_id: String, origin: Option<ToolOrigin>, ok: bool },
+}
+
+/// Saved Work rows intentionally contain display names rather than provider call IDs. Keep
+/// the call's original row and slot in this writer, and require its prefix to survive a rebase.
+/// An appended same-name tool is never evidence that it belongs to this call.
+#[derive(Debug, Clone, PartialEq)]
+struct ToolOrigin {
+    prefix: Vec<FeedItem>,
+    slot: usize,
+}
+
+impl ToolOrigin {
+    fn started(feed: &[FeedItem]) -> Option<Self> {
+        let FeedItem::Work { tools, .. } = feed.last()? else { return None };
+        Some(Self { prefix: feed.to_vec(), slot: tools.len().checked_sub(1)? })
+    }
+
+    fn retained(&self, feed: &[FeedItem]) -> Option<usize> {
+        let row = self.prefix.len().checked_sub(1)?;
+        if feed.len() <= row
+            || !self.prefix[..row].iter().zip(feed).all(|(before, after)| match (before, after) {
+                (FeedItem::Ask { request: a, .. }, FeedItem::Ask { request: b, .. }) => a == b,
+                (FeedItem::Agent { text: a, .. }, FeedItem::Agent { text: b, .. }) => a == b,
+                (FeedItem::Work { tools: a, notes: an }, FeedItem::Work { tools: b, notes: bn }) => {
+                    an == bn && a.iter().map(|(name, _)| name).eq(b.iter().map(|(name, _)| name))
+                }
+                _ => before == after,
+            })
+        {
+            return None;
+        }
+        let (FeedItem::Work { tools: before, notes }, FeedItem::Work { tools: after, notes: current }) = (&self.prefix[row], &feed[row]) else {
+            return None;
+        };
+        (after.len() >= before.len()
+            && current.starts_with(notes)
+            && before.iter().zip(after).all(|((a, _), (b, _))| a == b)
+            && after.get(self.slot).is_some_and(|(_, result)| result.is_none()))
+        .then_some(row)
+    }
+
+    fn finish(&self, feed: &mut [FeedItem], ok: bool) {
+        if let Some(row) = self.retained(feed)
+            && let FeedItem::Work { tools, .. } = &mut feed[row]
+        {
+            tools[self.slot].1 = Some(ok);
+        }
+    }
 }
 
 impl FeedChange {
@@ -183,15 +232,17 @@ impl FeedChange {
                 apply_checklist(feed, steps.as_deref());
                 *explained &= matches!(feed.last(), Some(FeedItem::Error { .. }));
             }
-            Self::ToolStarted(tool) => {
+            Self::ToolStarted { tool, .. } => {
                 if let Some(FeedItem::Agent { streaming, .. }) = feed.last_mut() {
                     *streaming = false;
                 }
                 apply_tool_start(feed, tool);
                 *explained = false;
             }
-            Self::ToolFinished { tool, ok } => {
-                apply_tool_finish(feed, tool, *ok);
+            Self::ToolFinished { origin, ok, .. } => {
+                if let Some(origin) = origin {
+                    origin.finish(feed, *ok);
+                }
                 *explained &= matches!(feed.last(), Some(FeedItem::Error { .. }));
             }
             Self::Item(item) => {
@@ -281,6 +332,7 @@ fn keeps_stream(change: &FeedChange, feed: &[FeedItem]) -> bool {
 struct Replayed {
     explanation: Option<bool>,
     stream: Option<usize>,
+    tool_calls: std::collections::BTreeMap<String, ToolOrigin>,
 }
 
 #[derive(Debug)]
@@ -290,15 +342,33 @@ struct SaveOutcome {
     result: Result<(), ToolError>,
 }
 
-fn replay_changes(feed: &mut Vec<FeedItem>, pending: &[FeedChange], mut explained: bool, origin: Option<&[FeedItem]>) -> (bool, Option<usize>) {
+fn replay_changes(
+    feed: &mut Vec<FeedItem>,
+    pending: &[FeedChange],
+    mut explained: bool,
+    origin: Option<&[FeedItem]>,
+) -> (bool, Option<usize>, std::collections::BTreeMap<String, ToolOrigin>) {
     let mut stream = origin.and_then(|origin| retained_stream(feed, origin));
+    let mut tool_calls = std::collections::BTreeMap::new();
     if let Some(FeedItem::Agent { streaming, .. }) = stream.and_then(|index| feed.get_mut(index)) {
         *streaming = true;
     }
     for change in pending {
-        change.apply_with_stream(feed, &mut explained, &mut stream);
+        // A pending start is appended to the repaired feed, so its later completion must use
+        // that new position. Starts saved before this batch retain their original prefix.
+        if let FeedChange::ToolFinished { call_id, origin, ok } = change {
+            let origin = tool_calls.get(call_id).cloned().or_else(|| origin.clone());
+            FeedChange::ToolFinished { call_id: call_id.clone(), origin, ok: *ok }.apply_with_stream(feed, &mut explained, &mut stream);
+        } else {
+            change.apply_with_stream(feed, &mut explained, &mut stream);
+            if let FeedChange::ToolStarted { call_id, .. } = change
+                && let Some(origin) = ToolOrigin::started(feed)
+            {
+                tool_calls.insert(call_id.clone(), origin);
+            }
+        }
     }
-    (explained, stream)
+    (explained, stream, tool_calls)
 }
 
 /// A known explanation may survive edits before its saved context. An additional equal
@@ -328,6 +398,7 @@ impl FeedLog {
             pending_explanation: None,
             pending_stream: None,
             stream: None,
+            tool_calls: Default::default(),
             recovery_notices: recovery_notices(&ws.root),
             failure_explained: false,
             save_error: None,
@@ -381,11 +452,18 @@ impl FeedLog {
                 RunEvent::Agent(AgentEvent::ToolStarted { tool, input, .. }) if tool == "TodoWrite" || tool == "build_checklist" => {
                     FeedChange::Checklist(plan_from(input))
                 }
-                RunEvent::Agent(AgentEvent::ToolStarted { tool, .. }) => FeedChange::ToolStarted(tool.clone()),
-                RunEvent::Agent(AgentEvent::ToolFinished { tool, ok, .. }) => FeedChange::ToolFinished { tool: tool.clone(), ok: *ok },
+                RunEvent::Agent(AgentEvent::ToolStarted { call_id, tool, .. }) => FeedChange::ToolStarted { call_id: call_id.clone(), tool: tool.clone() },
+                RunEvent::Agent(AgentEvent::ToolFinished { call_id, ok, .. }) => {
+                    FeedChange::ToolFinished { call_id: call_id.clone(), origin: self.tool_calls.remove(call_id), ok: *ok }
+                }
                 _ => FeedChange::Event(e.clone()),
             };
             change.apply_with_stream(&mut self.feed, &mut self.failure_explained, &mut self.stream);
+            if let FeedChange::ToolStarted { call_id, .. } = &change
+                && let Some(origin) = ToolOrigin::started(&self.feed)
+            {
+                self.tool_calls.insert(call_id.clone(), origin);
+            }
             self.pending.push(change);
         } else {
             apply_run_event(&mut self.feed, e, &mut self.failure_explained);
@@ -589,6 +667,12 @@ impl FeedLog {
                     self.failure_explained = explained;
                 }
                 self.stream = replayed.stream;
+                for (call_id, origin) in replayed.tool_calls {
+                    if let Some(owned) = self.tool_calls.get_mut(&call_id) {
+                        *owned = origin;
+                    }
+                }
+                self.tool_calls.retain(|_, origin| origin.retained(&self.feed).is_some());
             }
             // A rename followed by a failed directory sync has already written these events.
             // Retrying durability must not replay them again over another client's update.
@@ -650,7 +734,7 @@ fn save_with_recovery_using(
     // the owner's existing explanation; a new external error or archive notice cannot supply it.
     let keep_explanation = pending.is_empty() && retains_explanation(&repaired, feed);
     let initial_explanation = context.explanation.is_some_and(|origin| retains_explanation(&repaired, origin));
-    let (explained, stream) = replay_changes(&mut repaired, pending, initial_explanation, context.stream);
+    let (explained, stream, tool_calls) = replay_changes(&mut repaired, pending, initial_explanation, context.stream);
     if let Some((request, shown)) = answer {
         record_pending_answer(&mut repaired, request, shown);
     }
@@ -663,7 +747,7 @@ fn save_with_recovery_using(
     let visible = result.is_ok() || repaired.save_needs_sync();
     let replayed = if visible {
         *feed = repaired;
-        Some(Replayed { explanation: (!keep_explanation).then_some(explained && matches!(feed.last(), Some(FeedItem::Error { .. }))), stream })
+        Some(Replayed { explanation: (!keep_explanation).then_some(explained && matches!(feed.last(), Some(FeedItem::Error { .. }))), stream, tool_calls })
     } else {
         None
     };
@@ -782,6 +866,106 @@ fn merge_saved_answers(root: &Path, feed: &mut LoadedFeed) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn started_tool(call_id: &str) -> RunEvent {
+        RunEvent::Agent(AgentEvent::ToolStarted { call_id: call_id.into(), tool: "build_check".into(), input: json!({}) })
+    }
+
+    fn finished_tool(call_id: &str, ok: bool) -> RunEvent {
+        RunEvent::Agent(AgentEvent::ToolFinished { call_id: call_id.into(), tool: "build_check".into(), ok, summary: String::new(), evidence_id: None })
+    }
+
+    fn tool_results(feed: &[FeedItem]) -> Vec<Option<bool>> {
+        feed.iter()
+            .flat_map(|item| match item {
+                FeedItem::Work { tools, .. } => tools.as_slice(),
+                _ => &[],
+            })
+            .map(|(_, result)| *result)
+            .collect()
+    }
+
+    #[test]
+    fn a_saved_tool_completion_keeps_its_call_when_another_writer_appends_the_same_tool() {
+        for new_row in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(directory.path(), "Project", "A game", TargetRef::None).unwrap();
+            let mut log = FeedLog::open(&ws);
+            log.record(&started_tool("owned"));
+            log.save(true);
+            let mut external = load(&ws);
+            if new_row {
+                external.push(FeedItem::Step { step: Step::Build, text: "Another writer".into() });
+            }
+            apply_tool_start(&mut external, "build_check");
+            save(&ws.root, &mut external).unwrap();
+
+            record_before_next_save(&mut log, finished_tool("owned", true));
+            log.save(true);
+
+            assert!(log.pending.is_empty());
+            assert_eq!(tool_results(&load(&ws)), [Some(true), None]);
+        }
+    }
+
+    #[test]
+    fn pending_tool_calls_keep_their_new_positions_after_replay_and_a_later_save() {
+        for finish_before_replay in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(directory.path(), "Project", "A game", TargetRef::None).unwrap();
+            let mut log = FeedLog::open(&ws);
+            record_before_next_save(&mut log, started_tool("owned"));
+            let mut external = load(&ws);
+            apply_tool_start(&mut external, "build_check");
+            save(&ws.root, &mut external).unwrap();
+            if finish_before_replay {
+                record_before_next_save(&mut log, finished_tool("owned", true));
+            }
+            log.save(true);
+            if !finish_before_replay {
+                record_before_next_save(&mut log, finished_tool("owned", true));
+                log.save(true);
+            }
+
+            assert!(log.pending.is_empty());
+            assert_eq!(tool_results(&load(&ws)), [None, Some(true)]);
+        }
+    }
+
+    #[test]
+    fn a_tool_completion_does_not_claim_a_replacement_row_with_the_same_name() {
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Project", "A game", TargetRef::None).unwrap();
+        let mut log = FeedLog::open(&ws);
+        log.record(&started_tool("owned"));
+        log.save(true);
+        let mut external = load(&ws);
+        external.insert(0, FeedItem::User(UserItem::Text("A replacement conversation".into())));
+        save(&ws.root, &mut external).unwrap();
+        let before = external.to_vec();
+
+        record_before_next_save(&mut log, finished_tool("owned", true));
+        log.save(true);
+
+        assert_eq!(load(&ws).to_vec(), before);
+        assert_eq!(tool_results(&load(&ws)), [None]);
+    }
+
+    #[test]
+    fn same_name_calls_finishing_out_of_order_keep_their_individual_results() {
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Project", "A game", TargetRef::None).unwrap();
+        let mut log = FeedLog::open(&ws);
+        log.record(&started_tool("first"));
+        log.save(true);
+        record_before_next_save(&mut log, started_tool("second"));
+        record_before_next_save(&mut log, finished_tool("first", true));
+        record_before_next_save(&mut log, finished_tool("second", false));
+        log.save(true);
+
+        assert_eq!(tool_results(&load(&ws)), [Some(true), Some(false)]);
+        assert!(log.tool_calls.is_empty());
+    }
 
     #[test]
     fn pending_tools_keep_only_the_fields_needed_to_replay_the_conversation() {
