@@ -630,7 +630,9 @@ impl CraftApp {
                 }
             }
             if refused {
-                self.send_after_checks.remove(root);
+                if self.send_after_checks.get(root).is_some_and(|owner| project.is_same_project(owner)) {
+                    self.send_after_checks.remove(root);
+                }
             } else if !self.pending_attach_checks.contains_key(root)
                 && self.workspace.as_ref().is_some_and(|w| &w.root == root)
                 && self.workspace_identity.as_ref().is_some_and(|current| project.is_same_project(current))
@@ -2877,7 +2879,11 @@ mod tests {
         assert_eq!(app.state.project_input, "", "B sends without waiting for A's check");
         let pic = d.path().join("shot.png");
         std::fs::write(&pic, b"\x89PNG\r\n\x1a\n").unwrap();
-        app.pictures_checked(vec![pic], None, PictureTarget::Attach(Some(ra.clone()), Some(craft_anything_engine::feed::ProjectIdentity::from_workspace(&a).unwrap())));
+        app.pictures_checked(
+            vec![pic],
+            None,
+            PictureTarget::Attach(Some(ra.clone()), Some(craft_anything_engine::feed::ProjectIdentity::from_workspace(&a).unwrap())),
+        );
         assert!(app.send_after_checks.contains_key(&ra), "A's Send is kept");
         assert!(app.state.project_attachments.is_empty(), "B's box is untouched");
 

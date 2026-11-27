@@ -12,7 +12,7 @@ jobs:
       - name: Check out immutable source candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: '8dbb731fcf4f4f4346d7c86d4d8c14083b5b77bc'
+          ref: '222415c91a738b929c84779fb2126d211c0c5335'
           persist-credentials: false
           fetch-depth: 1
       - name: Install the repository compiler formatter
@@ -21,8 +21,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "8dbb731fcf4f4f4346d7c86d4d8c14083b5b77bc"
-          rustfmt +1.100.0 --edition 2024 --config-path rustfmt.toml --config skip_children=true crates/ai/src/rebuild/feed.rs crates/ai/src/rebuild/runs.rs crates/engine/src/workspace.rs crates/engine/src/feed.rs crates/ui-egui/src/project.rs crates/ui-egui/src/lib.rs
+          test "$(git rev-parse HEAD)" = "222415c91a738b929c84779fb2126d211c0c5335"
+          rustfmt +1.100.0 --edition 2024 --config-path rustfmt.toml --config skip_children=true crates/ai/src/rebuild/feed.rs crates/ai/src/rebuild/runs.rs crates/engine/src/workspace.rs crates/engine/src/feed.rs crates/ui-egui/src/project.rs crates/ui-egui/src/lib.rs crates/engine/src/feed/backups.rs
           git diff --check
           python - <<'PY'
           import base64, subprocess

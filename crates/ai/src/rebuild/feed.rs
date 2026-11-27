@@ -876,10 +876,13 @@ mod tests {
     }
 
     fn tool_results(feed: &[FeedItem]) -> Vec<Option<bool>> {
-        feed.iter().flat_map(|item| match item {
-            FeedItem::Work { tools, .. } => tools.as_slice(),
-            _ => &[],
-        }).map(|(_, result)| *result).collect()
+        feed.iter()
+            .flat_map(|item| match item {
+                FeedItem::Work { tools, .. } => tools.as_slice(),
+                _ => &[],
+            })
+            .map(|(_, result)| *result)
+            .collect()
     }
 
     #[test]

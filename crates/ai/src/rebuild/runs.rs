@@ -185,11 +185,7 @@ impl RunSet {
         })
     }
 
-    fn poll_using<T>(
-        &mut self,
-        hub: &AiHub,
-        collect: impl FnMut(PathBuf, RunEvent, Option<&RebuildRun>, Option<&feed::ProjectIdentity>, bool) -> T,
-    ) -> Vec<T> {
+    fn poll_using<T>(&mut self, hub: &AiHub, collect: impl FnMut(PathBuf, RunEvent, Option<&RebuildRun>, Option<&feed::ProjectIdentity>, bool) -> T) -> Vec<T> {
         self.poll_using_open(hub, Workspace::open, collect)
     }
 
