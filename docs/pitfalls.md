@@ -1447,3 +1447,9 @@ therefore keeps that accepted id and queue entry, and reports an explicit persis
 to the desktop and automation instead of restoring the draft for a duplicate send. Failures
 before publication still reject the send. This warning does not promise crash durability;
 recovery of an existing note still requires every persistence step to succeed.
+
+**A scroll area's minimum height pushed a fixed row offscreen.** egui's `ScrollArea` keeps a
+64-point minimum even when its parent has less, so at 760 x 520 and 200% zoom the project feed's
+reserved 40 points became 64 and the row under the prompt box fell below the window. Where a
+fixed part must fit, set `min_scrolled_height(0.0)` and `max_height` on the scrolling part, and
+test the smallest window at the highest zoom.

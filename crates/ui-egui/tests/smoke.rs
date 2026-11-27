@@ -831,7 +831,7 @@ fn the_builders_questions_can_come_to_the_person_for_one_project() {
 fn the_approvals_link_is_clear_of_send() {
     use craft_anything_engine::workspace::{TargetRef, Workspace};
     // The smallest window the app allows, a normal one, and that at the highest zoom (640 points
-    // wide, so the switches take two rows). The smallest at 200% leaves the row below the window.
+    // wide, so the switches take two rows). The smallest at 200% has its own test below.
     for (size, zoom) in [((760.0, 520.0), 1.0), ((1280.0, 820.0), 1.0), ((1280.0, 820.0), 2.0)] {
         let d = tempfile::tempdir().unwrap();
         let ws = Workspace::create(d.path(), "Notes", "A notes app", TargetRef::None).unwrap();
@@ -849,6 +849,11 @@ fn the_approvals_link_is_clear_of_send() {
         // Not under Send or near it: a clear gap between them across the row.
         let gap = (send.left() - approvals.right()).max(approvals.left() - send.right());
         assert!(gap >= 48.0, "Approvals is {gap} pt from Send, {case}");
+        // The whole composer fits its own viewport, so its bottom row isn't clipped.
+        let clip = h.ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::new("project-composer-clip"))).expect("the composer viewport was recorded");
+        let content = h.ctx.data(|d| d.get_temp::<f32>(egui::Id::new("project-composer-content"))).expect("the composer content height was recorded");
+        assert!(content <= clip.height() + 0.5, "composer content {content} is clipped by {clip:?}, {case}");
+        assert!(clip.contains_rect(approvals), "Approvals {approvals:?} is outside the composer viewport {clip:?}, {case}");
         // The prompt box and the row under it hold still over several frames.
         for _ in 0..6 {
             h.run_steps(1);
@@ -863,6 +868,44 @@ fn the_approvals_link_is_clear_of_send() {
         } else {
             h.get_by_label("Approvals").click();
         }
+        h.run_steps(2);
+        assert!(egui::Popup::is_id_open(&h.ctx, egui::Id::new("project-approvals")), "the menu opened, {case}");
+    }
+}
+
+/// The smallest window at the highest zoom is 380 x 260 points. The row under the project's prompt
+/// box used to be drawn below it, out of reach, and a longer prompt pushed it further down.
+#[test]
+fn the_project_row_under_the_prompt_box_stays_reachable_at_200_percent() {
+    use craft_anything_engine::workspace::{TargetRef, Workspace};
+    for lines in [1, 8] {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(d.path(), "Notes", "A notes app", TargetRef::None).unwrap();
+        let mut h = harness_sized(egui::vec2(760.0, 520.0), move || {
+            let mut a = demo::app(demo::engine(Mode::Beginner, true));
+            a.workspace = Some(ws);
+            a.state.screen = Screen::Project;
+            a.state.project_input = "a line of text\n".repeat(lines);
+            a
+        });
+        h.ctx.set_zoom_factor(2.0);
+        h.run_steps(6);
+        let viewport = h.ctx.content_rect();
+        let case = format!("{lines} line(s) at 760 x 520 and 200%");
+        let feed = h.ctx.data(|d| d.get_temp::<f32>(egui::Id::new("project-feed-height"))).expect("the feed viewport was recorded");
+        let clip = h.ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::new("project-composer-clip"))).expect("the composer viewport was recorded");
+        assert!(feed >= 60.0, "the feed viewport is only {feed} points tall, {case}");
+        for label in ["Send (Enter)", "Approvals", "Change it", "Just ask"] {
+            let rect = h.get_by_label(label).rect();
+            if !clip.contains_rect(rect) {
+                h.get_by_label(label).scroll_to_me();
+                h.run_steps(3);
+            }
+            let rect = h.get_by_label(label).rect();
+            assert!(clip.contains_rect(rect), "{label} at {rect:?} is outside the composer {clip:?}, {case}");
+            assert!(viewport.contains_rect(rect), "{label} at {rect:?} is outside {viewport:?}, {case}");
+        }
+        h.get_by_label("Approvals").click();
         h.run_steps(2);
         assert!(egui::Popup::is_id_open(&h.ctx, egui::Id::new("project-approvals")), "the menu opened, {case}");
     }
