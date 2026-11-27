@@ -15,7 +15,9 @@ use std::path::{Path, PathBuf};
 mod backups;
 mod recovery;
 mod transaction;
-pub(crate) use backups::{owned_backups, owned_backups_with_cancel, owns_open_backup_with_cancel, remove_owned_backups};
+pub(crate) use backups::{
+    classify_open_backup_alias_with_cancel, owned_backups, owned_backups_with_cancel, owns_open_backup_with_cancel, remove_owned_backups,
+};
 pub(crate) use recovery::sync_directory;
 pub use recovery::{RECOVERY_ARCHIVE_DIR, RecoverySnapshot, RecoveryWrite, recovery_notices, write_recovery_snapshot, write_recovery_snapshot_report};
 #[cfg(test)]
@@ -267,7 +269,34 @@ impl DisplaySource {
     }
 }
 
+/// The project owning a conversation or run, independent of the path currently naming it.
+#[derive(Debug, Clone)]
+pub struct ProjectIdentity(std::sync::Arc<transaction::ProjectIdentity>);
+
+impl ProjectIdentity {
+    /// Capture a workspace only after confirming its manifest still names the current project.
+    pub fn from_workspace(ws: &Workspace) -> Result<Self, ToolError> {
+        let project = transaction::ProjectIdentity::from_workspace(ws)?;
+        project.check(&ws.root)?;
+        Ok(Self(std::sync::Arc::new(project)))
+    }
+
+    pub fn is_same_project(&self, other: &Self) -> bool {
+        self.0.same(&other.0)
+    }
+
+    /// Check directory, creation time and generation without reading the conversation.
+    pub fn check_current(&self, root: &Path) -> Result<(), ToolError> {
+        self.0.check(root)
+    }
+}
+
 impl LoadedFeed {
+    /// Share only the original project identity, not this conversation's items.
+    pub fn project_identity(&self) -> Option<ProjectIdentity> {
+        self.project.as_ref().ok().cloned().map(ProjectIdentity)
+    }
+
     /// Prepare an owned lock callback for an inbox transaction. It retains only the project
     /// identity, not this conversation's items, and runs after the request reservation. This
     /// lets the caller validate its loaded project before staging any delivery record.

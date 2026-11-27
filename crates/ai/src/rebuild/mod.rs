@@ -514,6 +514,11 @@ impl RebuildRun {
         feed.display_items(&self.inbox)
     }
 
+    /// Keep snapshots bound to the project the run opened, even if its path is reused.
+    pub(super) fn project_identity(&self) -> Option<feed::ProjectIdentity> {
+        self.feed.lock().unwrap_or_else(PoisonError::into_inner).project_identity()
+    }
+
     /// Read the current display without consuming queued workflow events. A final save notice
     /// remains separate from whether the build succeeded, paused, or failed.
     pub fn display_feed(&self) -> Vec<feed::FeedItem> {
@@ -728,6 +733,20 @@ impl Worker {
     /// Recorded and sent under one lock, so [`RebuildRun::feed_now`] sees each event once.
     fn emit(&self, e: RunEvent) {
         emit_event(&self.feed, &self.tx, &self.wake, e);
+    }
+
+    /// Reconcile a manifest's complete check round before any individual event can flush its feed.
+    fn emit_checks(&self, checks: &[CheckResult]) {
+        if checks.is_empty() {
+            return;
+        }
+        let mut feed = self.feed.lock().unwrap_or_else(PoisonError::into_inner);
+        feed.record_checks(checks);
+        for check in checks {
+            let _ = self.tx.send(RunEvent::Checked(check.clone()));
+        }
+        drop(feed);
+        self.wake.call();
     }
 
     fn step(&self, ws: &mut Workspace, step: Step, status: Status, text: &str) -> Result<(), ToolError> {
@@ -1164,9 +1183,7 @@ impl Worker {
             // Kept for the next prompt when every check worked; saved after craft.json has the round.
             progress.checked = self.kept_checks.lock().unwrap_or_else(PoisonError::into_inner).saved_for(round);
             progress.save(&ws.root)?;
-            for c in &checks {
-                self.emit(RunEvent::Checked(c.clone()));
-            }
+            self.emit_checks(&checks);
             if let Some((p, more)) = self.added(ws, deep, sees_pictures) {
                 asked.extend(more);
                 progress.reset();
