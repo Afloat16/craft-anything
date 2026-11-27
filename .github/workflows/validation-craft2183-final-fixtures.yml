@@ -1,0 +1,127 @@
+name: Validate final native fixture adjustment
+on:
+  push:
+    branches: [validation/20261127-craft2183-final-fixtures]
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+      CARGO_NET_RETRY: '10'
+      RUST_BACKTRACE: '1'
+      RUSTUP_TOOLCHAIN: '1.100.0'
+      CANDIDATE_TREE: '8cf33ad3c5e0214d799f4f1069a96dc685ba11ab'
+      CANDIDATE_SHA: '880624cb5be7d7506690660dd9707a447b4d7aa7'
+    steps:
+      - name: Check out immutable final source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: '880624cb5be7d7506690660dd9707a447b4d7aa7'
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify immutable final identity
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$CANDIDATE_TREE"
+      - name: Repository CI build environment
+        uses: storytold/craft-common-actions/actions/gate-setup@315eb1972c857c839c3abb3d9288bfd40d21b7da
+        with:
+          craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+          require-craft-fonts: 'true'
+          packages: >-
+            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev
+          toolchain: '1.100.0'
+          cache-job: build
+          cache-save: 'false'
+          writes: 'false'
+      - name: Report compiler version
+        run: rustc --version --verbose
+      - name: Final tree policy and formatting gates
+        run: |
+          set -euo pipefail
+          cargo xtask fmt --check
+          cargo xtask layers
+          cargo xtask locks
+          cargo xtask secrets
+      - name: Complete changed deep-stop integration target
+        run: cargo test --locked -p craft-anything-engine --test deep_stop_for
+      - name: Clippy changed integration target and Engine targets
+        run: cargo clippy --locked -p craft-anything-engine --all-targets -- -D warnings
+      - name: Confirm unchanged tested source
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$CANDIDATE_TREE"
+          git diff --exit-code
+          git diff --cached --exit-code
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 100
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+      CARGO_NET_RETRY: '10'
+      RUST_BACKTRACE: '1'
+      RUSTUP_TOOLCHAIN: '1.97.0'
+      CANDIDATE_TREE: '8cf33ad3c5e0214d799f4f1069a96dc685ba11ab'
+      CANDIDATE_SHA: '880624cb5be7d7506690660dd9707a447b4d7aa7'
+    steps:
+      - name: Check out immutable final source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: '880624cb5be7d7506690660dd9707a447b4d7aa7'
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify immutable final identity
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$CANDIDATE_TREE"
+      - name: Repository CI build environment
+        uses: storytold/craft-common-actions/actions/gate-setup@315eb1972c857c839c3abb3d9288bfd40d21b7da
+        with:
+          craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+          require-craft-fonts: 'true'
+          toolchain: '1.97.0'
+          cache-job: build
+          cache-save: 'false'
+          writes: 'false'
+      - name: Report compiler version
+        run: rustc --version --verbose
+      - name: Native exact deep-stop failure regression first
+        run: |
+          python - <<'PY'
+          import re, subprocess
+          name = "stopping_it_for_its_project_ends_it_and_keeps_the_project"
+          command = ["cargo", "test", "--locked", "-p", "craft-anything-engine", "--test", "deep_stop_for", name, "--", "--exact", "--nocapture"]
+          result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+          print(result.stdout, end="", flush=True)
+          assert result.returncode == 0, "the final native deep-stop fixture did not pass"
+          assert re.search(r"test " + re.escape(name) + r" \.\.\. ok", result.stdout), "the intended exact regression did not execute"
+          assert "test result: ok. 1 passed; 0 failed; 0 ignored" in result.stdout, "the regression was filtered or ignored"
+          print("NATIVE_DEEP_STOP_FINAL_SOURCE_PASSED", flush=True)
+          PY
+      - name: Complete final Engine and Platform targets
+        run: cargo test --no-fail-fast --locked -p craft-anything-engine -p craft-anything-platform
+      - name: Clippy final native Engine and Platform targets
+        run: cargo clippy --locked -p craft-anything-engine -p craft-anything-platform --all-targets -- -D warnings
+      - name: Confirm unchanged tested source
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$CANDIDATE_TREE"
+          git diff --exit-code
+          git diff --cached --exit-code
