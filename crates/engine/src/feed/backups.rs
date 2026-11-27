@@ -497,7 +497,7 @@ fn publish_with_link(
         match link(&staged, backup) {
             Ok(()) => published = true,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(false),
-            Err(error) if can_copy_without_hard_link(&error) => return publish_preserved_copy(root, backup, bytes, &receipt, after_publish),
+            Err(error) if can_copy_without_hard_link(&error) => return publish_preserved_copy(root, backup, bytes, &receipt, None, after_publish),
             Err(error) => return Err(ToolError::io(backup.display(), error)),
         }
         super::recovery::sync_directory(root)?;
@@ -604,6 +604,7 @@ fn publish_preserved_copy(
     backup: &Path,
     bytes: &[u8],
     receipt: &Receipt,
+    source: Option<(&Path, &std::fs::File)>,
     after_publish: impl FnOnce() -> Result<(), ToolError>,
 ) -> Result<bool, ToolError> {
     let mut options = std::fs::OpenOptions::new();
@@ -621,8 +622,24 @@ fn publish_preserved_copy(
     let identity = same_file::Handle::from_file(file).map_err(|error| ToolError::io(backup.display(), error))?;
     let mut complete = false;
     let result = (|| {
-        let mut file = identity.as_file();
-        file.write_all(bytes).and_then(|()| file.sync_all()).map_err(|error| ToolError::io(backup.display(), error))?;
+        #[cfg(windows)]
+        let copied = if let Some((path, file)) = source {
+            let metadata = file.metadata().map_err(|error| ToolError::io(path.display(), error))?;
+            crate::workspace::copy_windows_into_reserved(path, backup, file, &metadata, identity.as_file())?;
+            true
+        } else {
+            false
+        };
+        #[cfg(not(windows))]
+        let copied = {
+            let _ = source;
+            false
+        };
+        if !copied {
+            let mut file = identity.as_file();
+            file.write_all(bytes).map_err(|error| ToolError::io(backup.display(), error))?;
+        }
+        identity.as_file().sync_all().map_err(|error| ToolError::io(backup.display(), error))?;
         complete = true;
         super::recovery::sync_directory(root)?;
         after_publish()?;
@@ -728,7 +745,7 @@ fn resume_staged(
                 if bytes.len() as u64 != expected.length || sha256_hex(&bytes) != expected.sha256 {
                     return Err(record_conflict(&staged));
                 }
-                return publish_preserved_copy(root, backup, &bytes, expected, after_publish);
+                return publish_preserved_copy(root, backup, &bytes, expected, Some((&staged, raw_identity.as_file())), after_publish);
             }
             Err(error) => return Err(ToolError::io(backup.display(), error)),
         }
@@ -1318,6 +1335,45 @@ mod tests {
         assert_eq!(std::fs::read(PathBuf::from(copied_name)).unwrap(), b"Keep my named-stream notes");
         ws.delete().unwrap();
         assert_eq!(std::fs::read(&stream).unwrap(), b"Keep my named-stream notes");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_resumed_copy_keeps_named_streams_when_hard_links_are_unsupported() {
+        use crate::workspace::{ExistingFiles, TargetRef, Workspace};
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("original");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("index.html"), "Keep my app").unwrap();
+        let ws = Workspace::create_at(&root, "Project", "Keep my conversation", TargetRef::None, Some(ExistingFiles::Edit)).unwrap();
+        let backup = root.join("feed.json.broken");
+        let bytes = b"complete damaged original";
+        let (staged, _) = stage_interrupted_copy(&root, &backup, bytes);
+        let mut stream = staged.into_os_string();
+        stream.push(":personal-note");
+        let notes = b"Keep the interrupted file's named-stream notes";
+        std::fs::write(PathBuf::from(stream), notes).unwrap();
+
+        assert!(
+            publish_with_link(&root, &backup, bytes, |_| Ok(()), || Ok(()), &mut |_, _| Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "No hard links on this volume"
+            )),)
+            .unwrap()
+        );
+
+        assert_eq!(std::fs::read(&backup).unwrap(), bytes);
+        let mut stream = backup.into_os_string();
+        stream.push(":personal-note");
+        let stream = PathBuf::from(stream);
+        assert_eq!(std::fs::read(&stream).unwrap(), notes);
+        assert!(owned_backups(&root).unwrap().is_empty());
+        let copied = ws.duplicate("Copy").unwrap();
+        let mut copied_stream = copied.app_dir().join("feed.json.broken").into_os_string();
+        copied_stream.push(":personal-note");
+        assert_eq!(std::fs::read(PathBuf::from(copied_stream)).unwrap(), notes);
+        ws.delete().unwrap();
+        assert_eq!(std::fs::read(stream).unwrap(), notes);
     }
 
     #[test]
