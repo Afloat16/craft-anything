@@ -26,6 +26,15 @@ callbacks and ordinary filesystem operations.
 |---|---|---|---|---|---|
 | `crates/engine/src/tools/byte_search.rs`: cancellation and scan-boundary tests | In-memory byte-search inputs | Afloat16 | Original zero-filled arrays, `0xaa` markers, and literal exact/wildcard patterns | MIT OR Apache-2.0 | Generated in the committed Rust tests with `vec!` and slice fills; no external data or target execution. |
 
+## Ghidra cancellation regression fixtures
+
+The new caller-wait cancellation controls in `crates/engine/src/tools/deep.rs` and
+`crates/engines/src/ghidra/tests.rs` are original test work by Afloat16, under
+MIT OR Apache-2.0. They reuse this repository's generated ELF inputs and synthetic
+loopback NDJSON replies, adding channel-controlled waits. The process-ownership
+fixture only lists the current test binary's tests. No Ghidra installation or
+third-party program files or test data are required.
+
 ## Fonts (`assets/fonts/`)
 
 All fonts are under the SIL Open Font License 1.1. The fonts are embedded unmodified; the

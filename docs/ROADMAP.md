@@ -370,8 +370,9 @@ only when it's green and a maintainer has fully reviewed it, code as well as wor
       time limit, through `platform::retry::when_interrupted`); the Cutter command tool, whose
       commands can change the session, calls once and says the call was interrupted
       — claimed: tanish2k09, branch bugfix/r5.2-interrupted-loopback-call
-- [ ] `mcp_client.rs`'s `post` reports an interrupted call (EINTR) as "Couldn't reach the plugin"
+- [x] `mcp_client.rs`'s `post` reports an interrupted call (EINTR) as "Couldn't reach the plugin"
       (`EngineMissing`); a JSON-RPC POST isn't safe to send again, so say it was interrupted instead
+      — claimed: Afloat16, branch bugfix/r5.2-mcp-interrupted-post
 - [x] Every PR that adds UI strings appends them to the end of all 14 catalogs, so any two such
       PRs conflict once one merges (#1465): one folder per language (`i18n/<code>/core.tsv`),
       each PR adding its own file there, joined in name order by `build.rs`
@@ -741,6 +742,13 @@ Owner: open · Status: todo
 - [x] Bound accumulated data across all lines of one server-sent event, so short lines cannot
       grow a streamed API response without limit
       — claimed: Afloat16, branch bugfix/r5.5-bounded-sse-events-20261103
+- [x] An API POST interrupted by a signal (EINTR) was reported as "Couldn't reach {AI}"
+      (`EngineMissing`), blaming the server or connection; it now says the call was interrupted and
+      is not retried, since a sent request may already be billed. A GET cut short the same way is
+      simply asked again, since repeating it is safe
+      — claimed: AlexJoaquimPereira, branch bugfix/r5.5-interrupted-ai-call
+- [ ] The same interrupted-call reading remains in `install.rs`'s download: say interrupted there
+      too (the MCP client is covered by #2354 and #2206; fal's paid POST and download by #2426)
 - [x] Show the provider's own reason: #369 bought $10 of credit and got only "OpenRouter answered
       400: Provider returned error". Find the reason in the response body and show it — PR #542
 - [x] A Claude build failed with 400 "Invalid `signature` in `thinking` block" once the conversation
@@ -763,6 +771,19 @@ Owner: open · Status: todo
 - [x] A saved fal.ai key reaches an API-key build's asset tools; every call said "No fal.ai key"
       (#923). Outside a project the tools now say that instead. Not checked with a real fal.ai key
       or API build
+- [x] fal.ai's paid generation POST reported a timeout, an interrupted call, a connection reset or
+      TLS failure, a disconnect before the answer or an unreadable answer as unreachable or garbled
+      and invited a retry, although the generation may already be running and billed. Only a
+      failure before anything was sent (refused or failed connection, host not found, connect or
+      resolve timeout) still says "Couldn't reach"; every later failure says it may be billed,
+      points at the dashboard, and isn't retried. A generated file that can't be downloaded after
+      that also says it was paid for, gives its address, and isn't retried. A 3D model rate-limited
+      after its picture was made says the picture is saved and paid for, and gives its `app/` path
+      as `image` so a retry doesn't pay for another picture
+      — claimed: AlexJoaquimPereira, branch bugfix/r5.5-fal-generation-timeout
+- [ ] A paid generation that may have been billed isn't counted against the project's asset budget,
+      because cost is recorded only when the file is saved: charge the estimate when the POST may
+      have been billed, so the budget matches what fal charged
 - [x] Each build has an engine of its own: sharing the app's session, whose `attach` points
       at whichever project started last, sent a build's files and asset spending to the wrong project
       (`build.parallel` is 2 by default). It takes on settings and project permissions from the
@@ -1116,6 +1137,19 @@ Owner: open · Status: in progress
 - [ ] More pins once their hashes are checked against the publisher: Chromium (no published
       checksums found yet), Rizin for Linux (the tar.xz unpacks to ~800 MB, so it needs streaming
       extraction) and macOS (a .pkg)
+- [x] Use the memory set for Ghidra (`engines.ghidra.memory_gb`, Settings → Engines) below 4 GB too:
+      a set amount was raised to the automatic amount's floor of 4 GB, so a 1-3 GB setting always
+      started Ghidra with `-Xmx4G` (#2425). A set amount is now kept within 1-31 GB
+      (`ghidra::SET_HEAP_GB`); the 4-31 GB range is for the automatic amount only. Both starts (the
+      analysis and the bridge) take it from one place; tested with a stand-in launcher that records
+      `GHIDRA_HEADLESS_MAXMEM`, not run with a real Ghidra
+      (claimed: ilijachrchev, branch bugfix/2425-ghidra-memory)
+- [ ] Ghidra before 12.1 ignores the memory setting: its `support/analyzeHeadless` fixes `MAXMEM=2G`
+      and reads no variable (checked in Ghidra's published 11.0, 11.4, 11.4.2, 12.0 and 12.0.4
+      launchers; 12.1 and 12.1.4 read `GHIDRA_HEADLESS_MAXMEM`). Say so when an older Ghidra is in
+      use, or start it another way that takes a heap
+- [ ] Live check of #2425 with a real Ghidra 12.1.4 or 12.2: `memory_gb = 1` gives `-Xmx1G` for the
+      analysis and the bridge
 
 ### R1.6 Headless first
 Owner: maintainers · Status: in progress
@@ -2253,8 +2287,11 @@ Gaps found while using the app for real projects.
       keeps its live feed when it is already building, and keeps a queued request with its options;
       a start that fails keeps the Make draft
       — claimed: AlexJoaquimPereira, branch bugfix/r2.9-attached-builder-feed
-- [ ] A queued run's request lives in its `RunOptions` and the in-memory queue; an app exit before
-      it starts loses it. Let the run side keep it (a queue record or a left note) across a restart
+- [x] A queued run's request is kept in `inbox/queued-request.json` before the queue accepts it.
+      Its words, shown message and picture paths survive a pause, app exit or failed start; the
+      next manual Continue or Try again restores them with the current builder and mode. The
+      waiting project offers Continue after reopening; unreadable or newer records stay unchanged
+      — claimed: Afloat16, branch bugfix/r2.9-persist-queued-request
 - [x] A config.toml that is there but can't be read (another program holds it, no permission, not
       UTF-8) loaded as defaults like a missing one, and the next save replaced it; one that couldn't
       be parsed was renamed aside with the rename's result ignored. Only "not found" is plain
@@ -2425,6 +2462,20 @@ Gaps found while using the app for real projects.
       terminal found npm (#2178): programs are looked up in a PATH whose `%VAR%` entries are
       expanded (`which::expand_vars`), and in Node.js's own install folder after it
       — claimed: justinjohn0306, branch bugfix/2178-npm-on-windows-path
+- [x] The Approvals link under a project's prompt box sat right under Send, so a click a little
+      low opened Approvals instead of sending (#2435). It now starts the row under the box, at the
+      end away from Send, in both the one-row and the two-row layout. A UI test checks the gap at
+      the smallest window, a normal one and 200% zoom, that the row holds still, and that a click
+      or Enter opens the menu
+      - claimed: ilijachrchev, branch bugfix/2435-approvals-link-gap
+- [ ] At the smallest window (760 x 520) and 200% zoom the project screen is 260 points tall, and
+      the row under the prompt box (Approvals, Change it / Just ask) is drawn below the window's
+      bottom edge, out of reach (found while fixing #2435; it was so before that change too)
+- [x] Esc while typing in a project's prompt box stays on the project and keeps the draft; it went
+      to the new-project screen, because egui lets go of a field's focus on Esc before the app
+      looked at it (#2434). Esc with nothing focused still goes home, and still closes the palette,
+      a dialog or Settings first
+      Claimed: ilijachrchev, branch bugfix/2434-esc-in-prompt
 
 ### R2.10 Pinned builds
 Owner: maintainers · Status: in progress
@@ -2625,8 +2676,9 @@ Owner: open · Status: in progress
       — claimed: Plastic-time, branch bugfix/r3.11-pseudo-memory-write-overlap
 - [x] Preserve argument loads across implicit and multi-register writes, and limit fixed-width Win64 slot invalidation to overlapping offsets (#2124 follow-up).
       — claimed: Plastic-time, branch bugfix/r3.11-pseudo-write-footprints
-- [ ] `native_source_folder_write` uses the built-in decompiler only: use Ghidra in Deep mode when
+- [x] `native_source_folder_write` uses the built-in decompiler only: use Ghidra in Deep mode when
       it's there
+      — claimed: Afloat16, branch feature/r3.11-deep-source-folder
 - [x] Keep source registers alive when an AArch64 arithmetic result is discarded into the zero register.
       — claimed: Afloat16, branch bugfix/r3.11-a64-discarded-results-20261111
 - [x] Lift AArch64 `cmn` (`adds xzr/wzr, …`) branch conditions as `(a + b) <op> 0` and omit
@@ -3887,11 +3939,15 @@ Owner: open · Status: in progress
       decode. Other rendering (no `(extension in …)` prefix, unsupported manglings reported invalid) is unchanged.
       — claimed: Chr0mium24, branch bugfix/r3.12-swift-demangle-generic-spec
 
+- [x] `fD` on a non-class Swift type now reads `deinit` instead of `__deallocating_deinit`: non-class contexts (structs, enums, protocols and their extensions) use `deinit`, while classes keep `__deallocating_deinit`. Example: `_$s13HomeDataModel8StreamedVfD` -> `HomeDataModel.Streamed.deinit`.
+      — claimed: Chr0mium24, branch bugfix/r3.12-swift-demangle-struct-deinit
 
 - [x] Take target file signatures from the shared craft-sniff table. The app still breaks ties
       that need its own parsers (managed PE, Java class versus a universal Mach-O, APK by name
       or manifest, ASAR, text). Fat Mach-O files that start 0xCAFEBABF are now recognized.
       — claimed: FredApps, branch refactor/target-kind-craft-sniff
+- [x] Decode Swift `MS`/`WS`/`…TS` protocol self-conformance symbols: `_$ss5ErrorMS` reads `protocol self-conformance descriptor for Swift.Error`, `_$ss5ErrorWS` reads `protocol self-conformance witness table for Swift.Error`, and `_$ss5ErrorP5_codeSivgTS` reads `protocol self-conformance witness for Swift.Error._code.getter : Swift.Int`.
+      — claimed: Chr0mium24, branch bugfix/r3.12-swift-demangle-self-conformance
 - [x] Swift protocol requirements base descriptors decode. A symbol ending `TL` is the protocol
       requirements base descriptor of the protocol before it, which the demangler reported as an
       unsupported thunk; `_$s7SwiftUI10ShapeStyleTL` is
