@@ -1,0 +1,57 @@
+name: Validate feed recovery integration
+on:
+  push:
+    branches: [validation/20261127-craft2183-integration]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+      CARGO_NET_RETRY: '10'
+      RUST_BACKTRACE: '1'
+      CANDIDATE_TREE: '7ea30cfdd330aecae21ed15326edc5fcf335aec7'
+      CANDIDATE_SHA: '028563259190d6ab3c8f912da7785b3c525da611'
+    steps:
+      - name: Check out the immutable source candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: '028563259190d6ab3c8f912da7785b3c525da611'
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Verify source identity
+        run: test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+      - name: Repository CI build environment
+        uses: storytold/craft-common-actions/actions/gate-setup@315eb1972c857c839c3abb3d9288bfd40d21b7da
+        with:
+          craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+          require-craft-fonts: 'true'
+          packages: >-
+            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev
+          toolchain: stable
+          cache-save: 'false'
+          writes: 'false'
+      - name: Required source policy and formatting gates
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse 'HEAD^{tree}')" = "$CANDIDATE_TREE"
+          cargo xtask fmt --check
+          cargo xtask layers
+          cargo xtask locks
+          cargo xtask secrets
+      - name: Build real CLI helper for AI tests
+        run: cargo build --locked -p craft-anything-cli
+      - name: Complete integrated Engine AI and UI targets
+        run: cargo test --no-fail-fast --locked -p craft-anything-engine -p craft-anything-ai -p craft-anything-ui-egui
+      - name: Clippy integrated crates and tests
+        run: cargo clippy --locked -p craft-anything-engine -p craft-anything-ai -p craft-anything-ui-egui --all-targets -- -D warnings
+      - name: Confirm unchanged tested source
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          git diff --cached --exit-code
+          test "$(git rev-parse 'HEAD^{tree}')" = "$CANDIDATE_TREE"
+          printf 'VALIDATED_SOURCE=%s\nVALIDATED_TREE=%s\n' "$CANDIDATE_SHA" "$CANDIDATE_TREE"
