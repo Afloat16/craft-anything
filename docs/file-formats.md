@@ -147,8 +147,11 @@ it through destination manifest publication. In-place backup discovery also stay
 so application recovery cannot change ownership during the copy. After actual write-access denial,
 an existing regular, empty coordination file can instead be opened read-only and held with a shared
 lock that excludes feed writers. It checks both the original inbox directory identity and held lock
-identity again before publication. This guard cannot be supplied to a feed-writing API. An existing
-inbox with no usable lock, a lock timeout or unsupported locking does not fall back to an uncoordinated copy.
+identity again before publication. This guard cannot be supplied to a feed-writing API. After actual
+write-access denial, a legacy source with an existing inbox directory but no coordination file can
+use an uncoordinated copy. It checks the original inbox directory identity and the absent lock both
+before copying and before destination publication. An existing invalid or unusable lock file, a
+lock timeout, unsupported locking or contention does not permit this fallback.
 A readable legacy source with no
 inbox can be copied without creating one when the attempted lock creation is denied, including a
 read-only filesystem; owner write bits do not establish the current caller's access. Other I/O errors
