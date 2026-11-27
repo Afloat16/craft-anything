@@ -1,0 +1,209 @@
+name: Diagnose native Windows directory fixtures
+on:
+  push:
+    branches: [validation/20261127-craft2183-native-triage]
+permissions:
+  contents: read
+jobs:
+  handle-probe:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    env:
+      RUSTUP_TOOLCHAIN: '1.97.0'
+    steps:
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: '1.97.0'
+      - name: Verify held directory relocation without dropping any guard
+        run: |
+          set -euo pipefail
+          rustc --version
+          cat > "$RUNNER_TEMP/directory-probe.rs" <<'RS'
+          #![forbid(unsafe_code)]
+          
+          #[cfg(windows)]
+          mod tests {
+              use std::fs::{File, OpenOptions};
+              use std::os::windows::fs::OpenOptionsExt;
+              use std::path::{Path, PathBuf};
+              use std::sync::atomic::{AtomicUsize, Ordering};
+          
+              static NEXT: AtomicUsize = AtomicUsize::new(0);
+              struct Temp(PathBuf);
+              impl Temp {
+                  fn new() -> Self {
+                      let path = std::env::temp_dir().join(format!("craft-held-directory-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::SeqCst)));
+                      std::fs::create_dir(&path).unwrap();
+                      Self(path)
+                  }
+              }
+              impl Drop for Temp {
+                  fn drop(&mut self) {
+                      let _ = std::fs::remove_dir_all(&self.0);
+                  }
+              }
+              fn directory(path: &Path) -> File {
+                  OpenOptions::new().read(true).share_mode(7).custom_flags(0x02000000).open(path).unwrap()
+              }
+          
+              #[test]
+              fn relocating_held_descendants_preserves_all_handles_and_allows_the_root_move() {
+                  let temp = Temp::new();
+                  let root = temp.0.join("project");
+                  let inbox = root.join("inbox");
+                  let cleanup = root.join("cleanup");
+                  std::fs::create_dir_all(&inbox).unwrap();
+                  std::fs::create_dir(&cleanup).unwrap();
+                  std::fs::write(root.join("manifest"), b"original project").unwrap();
+                  let lock_path = inbox.join("feed.lock");
+                  let lock = OpenOptions::new().read(true).write(true).create_new(true).open(&lock_path).unwrap();
+                  lock.lock().unwrap();
+                  let root_handle = directory(&root);
+                  let inbox_handle = directory(&inbox);
+                  let cleanup_handle = directory(&cleanup);
+                  let displaced = temp.0.join("displaced");
+                  assert!(std::fs::rename(&root, &displaced).is_err());
+          
+                  let held_lock = temp.0.join("held.lock");
+                  let held_inbox = temp.0.join("held-inbox");
+                  let held_cleanup = temp.0.join("held-cleanup");
+                  std::fs::rename(&lock_path, &held_lock).unwrap();
+                  std::fs::rename(&inbox, &held_inbox).unwrap();
+                  std::fs::rename(&cleanup, &held_cleanup).unwrap();
+                  std::fs::rename(&root, &displaced).unwrap();
+                  std::fs::rename(&held_inbox, displaced.join("inbox")).unwrap();
+                  std::fs::rename(&held_cleanup, displaced.join("cleanup")).unwrap();
+                  std::fs::rename(&held_lock, displaced.join("inbox/feed.lock")).unwrap();
+          
+                  assert!(root_handle.metadata().unwrap().is_dir());
+                  assert!(inbox_handle.metadata().unwrap().is_dir());
+                  assert!(cleanup_handle.metadata().unwrap().is_dir());
+                  assert_eq!(lock.metadata().unwrap().len(), 0);
+                  assert_eq!(std::fs::read(displaced.join("manifest")).unwrap(), b"original project");
+                  std::fs::create_dir(&root).unwrap();
+                  std::fs::write(root.join("manifest"), b"replacement project").unwrap();
+                  assert_eq!(std::fs::read(root.join("manifest")).unwrap(), b"replacement project");
+                  drop((root_handle, inbox_handle, cleanup_handle, lock));
+              }
+          
+              #[test]
+              fn moving_a_shared_locked_file_out_preserves_the_lock_through_a_new_inbox_alias() {
+                  let temp = Temp::new();
+                  let inbox = temp.0.join("inbox");
+                  std::fs::create_dir(&inbox).unwrap();
+                  let lock_path = inbox.join("feed.lock");
+                  let lock = OpenOptions::new().read(true).write(true).create_new(true).open(&lock_path).unwrap();
+                  lock.lock_shared().unwrap();
+                  let inbox_handle = directory(&inbox);
+                  let retained = temp.0.join("retained-inbox");
+                  assert!(std::fs::rename(&inbox, &retained).is_err());
+                  let held_lock = temp.0.join("held.lock");
+                  std::fs::rename(&lock_path, &held_lock).unwrap();
+                  std::fs::rename(&inbox, &retained).unwrap();
+                  std::fs::create_dir(&inbox).unwrap();
+                  std::fs::hard_link(&held_lock, &lock_path).unwrap();
+                  let alias = OpenOptions::new().read(true).write(true).open(&lock_path).unwrap();
+                  assert!(alias.try_lock().is_err());
+                  assert_eq!(alias.metadata().unwrap().len(), 0);
+                  assert!(inbox_handle.metadata().unwrap().is_dir());
+                  drop((alias, inbox_handle, lock));
+              }
+          }
+          RS
+          rustc --test "$RUNNER_TEMP/directory-probe.rs" -o "$RUNNER_TEMP/directory-probe.exe"
+          "$RUNNER_TEMP/directory-probe.exe" --nocapture
+  exact-parent:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      RUSTUP_TOOLCHAIN: '1.97.0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+      CARGO_NET_RETRY: '10'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: '67d91ffff5990687ca5a2419f43b8c87712b7920'
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify exact original feature head
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '67d91ffff5990687ca5a2419f43b8c87712b7920'
+          test "$(git rev-parse 'HEAD^{tree}')" = '26115b24a2dde929acccbe52b09cc7abbd8fbb8e'
+      - name: Same native build environment
+        uses: storytold/craft-common-actions/actions/gate-setup@315eb1972c857c839c3abb3d9288bfd40d21b7da
+        with:
+          toolchain: '1.97.0'
+          craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+          require-craft-fonts: 'true'
+          cache-job: build
+          cache-save: 'false'
+          writes: 'false'
+      - name: Reproduce only the seven observed failures on the exact parent
+        run: |
+          python - <<'PY'
+          import re,subprocess
+          cases=[
+            [
+              "feed::transaction::tests::guards_recheck_the_project_after_locking",
+              "lib",
+              "PermissionDenied"
+            ],
+            [
+              "feed::transaction::tests::read_only_copy_guards_recheck_the_inbox_and_coordination_inode",
+              "lib",
+              "PermissionDenied"
+            ],
+            [
+              "workspace::tests::a_replaced_copy_destination_is_preserved_when_cleanup_is_refused",
+              "lib",
+              "PermissionDenied"
+            ],
+            [
+              "workspace::tests::copy_tree_preserves_personal_bytes_when_the_destination_root_is_replaced",
+              "lib",
+              "PermissionDenied"
+            ],
+            [
+              "workspace::tests::creation_reservation_preserves_replaced_picked_folder_entries_on_publication_failure",
+              "lib",
+              "PermissionDenied"
+            ],
+            [
+              "workspace::tests::publication_identity_changes_and_write_failures_are_not_cleanup_warnings",
+              "lib",
+              "PermissionDenied"
+            ],
+            [
+              "stopping_it_for_its_project_ends_it_and_keeps_the_project",
+              "deep_stop_for",
+              "the analysis never began waiting"
+            ]
+          ]
+          for name,target,message in cases:
+              print("EXACT_PARENT_CASE="+name,flush=True)
+              command=["cargo","test","--locked","-p","craft-anything-engine"]
+              command += ["--lib"] if target=="lib" else ["--test",target]
+              command += [name,"--","--exact","--nocapture"]
+              result=subprocess.run(command,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=1800)
+              print(result.stdout[-5000:],end="",flush=True)
+              assert result.returncode==101, (name,result.returncode)
+              assert "running 1 test" in result.stdout
+              assert re.search(r"test "+re.escape(name)+r" \.\.\. FAILED",result.stdout)
+              assert "test result: FAILED. 0 passed; 1 failed;" in result.stdout
+              assert message in result.stdout
+              print("EXACT_PARENT_FAILURE_REPRODUCED="+name,flush=True)
+          print("EXACT_PARENT_FAILURES_REPRODUCED=7; these are diagnostic failures, not passing tests",flush=True)
+          PY
+      - name: Verify unchanged parent source
+        if: always()
+        run: |
+          git diff --exit-code
+          git diff --cached --exit-code
