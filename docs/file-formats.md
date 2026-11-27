@@ -107,13 +107,15 @@ their reply and check-only state before note cleanup, so a final cleanup sync fa
 make a message-free retry repeat a completed builder turn.
 
 The queued request keeps the person's words, attachment paths and original request time, not a
-builder choice, mode, run budget or queue position. The next manual start restores it when no
-new message was supplied. Version 3 requires the original `asked` time, including its subsecond
-precision. Versions 1 and 2 lacked it and conservatively use the Unix epoch, so restarting cannot
+builder choice, mode, run budget or queue position. The next manual Continue restores it; a new
+message is refused while that saved request remains, so it cannot silently replace unread words.
+The app keeps the refused message in its prompt box. Version 3 requires the original `asked` time,
+including its subsecond precision. Versions 1 and 2 lacked it and conservatively use the Unix epoch, so restarting cannot
 make an old request clear a later timestamped Ghidra stop. A new explicit message keeps its own
 request time. The file is capped at 16 MiB; malformed, oversized, unreadable and newer records are
 never treated as an absent request or overwritten. Reading does not consume it. Starting a
-worker removes the matching saved record; a failed start or a pause leaves it for retry. This
+worker removes the matching saved record; a failed queued start or a pause leaves it stopped and
+available through Continue after reopening, even when the saved feed predates the failure. This
 backup does not provide exactly-once delivery across a crash after the worker has started.
 
 A queued handoff keeps each complete request part through the same version-3 carried-note

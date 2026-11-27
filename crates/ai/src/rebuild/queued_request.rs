@@ -109,13 +109,15 @@ pub(super) fn validate(ws: &Workspace) -> Result<(), ToolError> {
     load(ws).map(|_| ())
 }
 
-/// Restore before deciding whether the run needs Study or a queued build slot. A new explicit
-/// message takes precedence, but an unreadable older request is never silently discarded.
+/// Restore before deciding whether the run needs Study or a queued build slot. The saved
+/// request must be continued before a new message can replace it.
 pub(super) fn restore(ws: &Workspace, opts: &mut RunOptions) -> Result<Option<QueuedRequest>, ToolError> {
     let saved = load(ws)?;
-    if opts.message.is_none()
-        && let Some(saved) = &saved
-    {
+    if let Some(saved) = &saved {
+        if opts.message.as_ref().is_some_and(|message| !message.trim().is_empty()) {
+            return Err(ToolError::new(ErrorCode::BadInput, "A queued request is still waiting to start.")
+                .with_remediation("Continue the saved request before sending a new message."));
+        }
         opts.message = Some(saved.message.clone());
         opts.asked = saved.asked;
         opts.shown.clone_from(&saved.shown);
@@ -286,6 +288,8 @@ mod tests {
             assert_eq!(restored.message.as_deref(), Some("Old request"));
             assert_eq!(std::fs::read_to_string(&path).unwrap(), bytes, "migration on read does not consume or rewrite the backup");
 
+            let saved = restore(&ws, &mut RunOptions::default()).unwrap();
+            finished(&ws, saved.as_ref());
             let mut fresh = RunOptions { asked: after_stop, ..request("A genuinely new request") };
             restore(&ws, &mut fresh).unwrap();
             deep::resume_for(&root, fresh.asked).unwrap();
@@ -296,16 +300,21 @@ mod tests {
     }
 
     #[test]
-    fn an_explicit_new_request_wins_but_failed_starts_leave_the_backup() {
+    fn an_explicit_new_request_cannot_discard_the_waiting_request() {
         let (_dir, ws) = project();
         save(&ws, &request("Earlier request")).unwrap();
         let before = std::fs::read(ws.root.join(FILE)).unwrap();
         let mut opts = request("New request");
-        let saved = restore(&ws, &mut opts).unwrap();
+        assert!(restore(&ws, &mut opts).is_err());
         assert_eq!(opts.message.as_deref(), Some("New request"));
-        assert_eq!(std::fs::read(ws.root.join(FILE)).unwrap(), before, "reading is not consumption");
+        assert_eq!(std::fs::read(ws.root.join(FILE)).unwrap(), before, "refusing a new message keeps the earlier request");
+        let mut retry = RunOptions::default();
+        let saved = restore(&ws, &mut retry).unwrap();
+        assert_eq!(retry.message.as_deref(), Some("Earlier request"));
         finished(&ws, saved.as_ref());
-        assert!(!ws.root.join(FILE).exists(), "a successful explicit replacement retires the old request");
+        assert!(!ws.root.join(FILE).exists(), "only starting the saved request consumes it");
+        restore(&ws, &mut opts).unwrap();
+        assert_eq!(opts.message.as_deref(), Some("New request"));
     }
 
     #[test]

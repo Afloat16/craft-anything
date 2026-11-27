@@ -2386,6 +2386,62 @@ mod tests {
     }
 
     #[test]
+    fn reopening_a_failed_queued_start_keeps_its_request_ahead_of_a_new_draft() {
+        use craft_anything_platform::sync::Mutex;
+        use std::sync::Arc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = Workspace::create(dir.path(), "Blocker", "Another app", TargetRef::None).unwrap();
+        let queued = Workspace::create(dir.path(), "Queued", "A notes app", TargetRef::None).unwrap();
+        let previous = vec![FeedItem::User(UserItem::Text("An earlier conversation".into()))];
+        craft_anything_engine::feed::save(&queued.root, &previous).unwrap();
+        let saved_feed = std::fs::read(queued.root.join("feed.json")).unwrap();
+        let picture = queued.root.join("pictures/reference.png");
+        let failing = rebuild::StandIns::new().failing("Queued");
+        let mut app = app_with_stand_in_builds(&failing);
+        app.runs.start(&app.hub, blocker.clone(), RunOptions::default()).unwrap();
+        app.open_workspace(queued.clone());
+        app.deliver(queued.root.clone(), "Keep this queued request".into(), Vec::new(), Ok(vec![picture.clone()]));
+        let backup = queued.root.join("inbox/queued-request.json");
+        let saved = std::fs::read(&backup).unwrap();
+        let request: serde_json::Value = serde_json::from_slice(&saved).unwrap();
+        failing.finish(&blocker.root);
+        app.poll_run();
+        assert!(app.state.feed.iter().any(|item| matches!(item, FeedItem::Error { .. })));
+        assert_eq!(std::fs::read(queued.root.join("feed.json")).unwrap(), saved_feed, "the saved feed predates the deferred failure");
+        drop(app);
+
+        let stand_ins = rebuild::StandIns::new();
+        let mut app = app_with_stand_in_builds(&stand_ins);
+        let mut start = stand_ins.starter();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let requests = seen.clone();
+        app.runs = rebuild::RunSet::new(1).with_starter(Box::new(move |hub, ws, opts| {
+            requests.lock().unwrap().push((opts.message.clone(), opts.shown.clone(), opts.shown_pictures.clone()));
+            start(hub, ws, opts)
+        }));
+        app.open_workspace(Workspace::open(&queued.root).unwrap());
+        assert!(can_continue(&app, app.workspace.as_ref().unwrap()), "the reopened UI must offer Continue for the saved request");
+        let new_attachment = dir.path().join("new-draft.png");
+        app.deliver(queued.root.clone(), "A newer draft".into(), vec![new_attachment.clone()], Ok(Vec::new()));
+        assert!(!app.running(), "sending a new draft must not replace the saved request");
+        assert_eq!(app.state.project_input, "A newer draft");
+        assert_eq!(app.state.project_attachments, [new_attachment]);
+        assert_eq!(std::fs::read(&backup).unwrap(), saved);
+
+        app.continue_build();
+        assert!(app.running());
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].0.as_deref(), request["message"].as_str());
+        assert_eq!(seen[0].1.as_deref(), request["shown"].as_str());
+        assert_eq!(seen[0].2, [picture]);
+        assert!(!backup.exists());
+        assert_eq!(app.state.project_input, "A newer draft", "Continue leaves the later unsent draft available");
+        app.runs.stop_all();
+    }
+
+    #[test]
     fn a_followup_refused_by_note_recovery_keeps_its_draft_and_attachment_sources() {
         use craft_anything_ai::{AiConfig, BackendConfig, BackendEntry, BackendKind};
 
