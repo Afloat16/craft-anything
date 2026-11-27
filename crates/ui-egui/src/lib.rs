@@ -531,10 +531,12 @@ pub struct CraftApp {
     pub pending_paste: Option<project::PendingPaste>,
     /// Picture-size checks still running for each project's prompt box, and for Make. Send and
     /// Make Start wait only for their own destination.
-    pending_attach_checks: std::collections::BTreeMap<PathBuf, usize>,
+    pending_attach_checks: std::collections::BTreeMap<PathBuf, (craft_anything_engine::feed::ProjectIdentity, usize)>,
     pending_make_checks: usize,
     /// Projects whose Send is waiting for their own picture checks to finish.
-    send_after_checks: std::collections::BTreeSet<PathBuf>,
+    send_after_checks: std::collections::BTreeMap<PathBuf, craft_anything_engine::feed::ProjectIdentity>,
+    /// Identities retained with prompt text and pictures while another project is selected.
+    unsent_projects: std::collections::BTreeMap<PathBuf, craft_anything_engine::feed::ProjectIdentity>,
     /// The Make draft Start was pressed for, while its picture checks finish.
     start_after_pictures: Option<state::MakeDraft>,
     /// Each project's building time and AI use, every build together (read from its usage.json).
@@ -697,6 +699,7 @@ impl CraftApp {
             pending_attach_checks: Default::default(),
             pending_make_checks: 0,
             send_after_checks: Default::default(),
+            unsent_projects: Default::default(),
             start_after_pictures: None,
             usage: Default::default(),
             session_usage: Default::default(),
@@ -2124,7 +2127,7 @@ impl CraftApp {
         // (`RunOptions::wake`), so only a slow check covers them.
         if self.conversation.as_ref().is_some_and(|c| c.is_busy()) || self.jobs.busy() {
             ctx.request_repaint_after(Duration::from_millis(100));
-        } else if self.runs.any_busy() {
+        } else if self.runs.any_busy() || self.runs.has_pending_events() {
             ctx.request_repaint_after(Duration::from_secs(1));
         }
         // Dropped pictures go to the prompt box on Make or a project; anything else opens.

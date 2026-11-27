@@ -102,9 +102,9 @@ fn copy_tree(from: &Path, to: &Path, skip: &dyn Fn(&Path) -> bool, depth: usize,
         if skip(&path) || kind.is_symlink() {
             continue;
         }
-        if kind.is_dir() && backups.is_some() {
-            // Check directories actually entering an in-place app copy, including nested
-            // or newly arrived entries. A possible retained inbox is an error, not a skip.
+        if kind.is_dir() {
+            // Every copied tree can contain a retained inbox, including reference and
+            // capture folders. An ambiguous cleanup directory is an error, not a skip.
             check_cleanup_name(&path)?;
         }
         let dest = to.join(entry.file_name());
@@ -2146,7 +2146,7 @@ impl Workspace {
 
     pub fn open(root: &Path) -> Result<Workspace, ToolError> {
         let path = root.join(MANIFEST);
-        let bytes = std::fs::read(&path).map_err(|e| ToolError::io(path.display(), e))?;
+        let bytes = read_file_capped(&path, u64::MAX)?;
         let manifest = read_manifest(&bytes)
             .map_err(|e| if e.code == ErrorCode::NotSupported { e } else { ToolError::invalid(format!("{} is unreadable: {}", path.display(), e.message)) })?;
         Ok(Workspace { root: root.to_path_buf(), manifest, creation_warning: None })
@@ -5306,6 +5306,54 @@ mod tests {
                 assert_eq!(std::fs::read(&personal).unwrap(), b"Keep all these personal bytes");
             }
         }
+    }
+
+    #[test]
+    fn reference_and_capture_copies_refuse_nested_cleanup_directories() {
+        for folder in ["reference", "capture"] {
+            let directory = tempfile::tempdir().unwrap();
+            let ws = Workspace::create(directory.path(), "Original", "A website", TargetRef::None).unwrap();
+            let retained = ws.root.join(folder).join("nested/.craft-copy-cleanup-0123456789abcdef");
+            std::fs::create_dir_all(&retained).unwrap();
+            std::fs::write(retained.join("question.json"), b"Keep this retained question").unwrap();
+
+            let error = ws.duplicate("Copy").unwrap_err();
+
+            assert!(error.for_people().contains(&retained.display().to_string()));
+            assert_eq!(std::fs::read(retained.join("question.json")).unwrap(), b"Keep this retained question");
+            assert!(!directory.path().join("copy").join(MANIFEST).exists());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn opening_a_project_refuses_a_named_pipe_manifest_without_waiting() {
+        use std::os::unix::fs::FileTypeExt as _;
+        use std::time::Duration;
+        const FIXTURE: &str = "CRAFT_TEST_OPEN_MANIFEST_FIFO_ROOT";
+        if let Some(root) = std::env::var_os(FIXTURE) {
+            let root = Path::new(&root);
+            let path = root.join(MANIFEST);
+            let original = root.join("original-craft.json");
+            std::fs::rename(&path, &original).unwrap();
+            let before = std::fs::read(&original).unwrap();
+            craft_anything_platform::Process::new("mkfifo").args([path.as_os_str()]).timeout(Duration::from_secs(2)).run_checked().unwrap();
+
+            assert_eq!(Workspace::open(root).unwrap_err().code, ErrorCode::BadInput);
+            assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_fifo());
+            assert_eq!(std::fs::read(&original).unwrap(), before);
+            return;
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(directory.path(), "Project", "A website", TargetRef::None).unwrap();
+        craft_anything_platform::Process::new(std::env::current_exe().unwrap())
+            .args(["--exact", "workspace::tests::opening_a_project_refuses_a_named_pipe_manifest_without_waiting", "--test-threads=1"])
+            .env(FIXTURE, &ws.root)
+            .timeout(Duration::from_secs(5))
+            .stdout_cap(64 * 1024)
+            .stderr_cap(64 * 1024)
+            .run_checked()
+            .expect("opening a project must not block on a pipe replacing craft.json");
     }
 
     #[test]

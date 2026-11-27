@@ -241,26 +241,37 @@ impl CraftApp {
         let detached = identity.as_ref().is_some_and(|identity| self.runs.detach_other_project(&root, identity));
         let same_path = self.workspace.as_ref().is_some_and(|w| w.root == ws.root);
         let same = !detached && same_path && self.workspace_identity.as_ref().zip(identity.as_ref()).is_some_and(|(old, current)| old.is_same_project(current));
-        let replaced =
-            same_path && (detached || self.workspace_identity.as_ref().zip(identity.as_ref()).is_some_and(|(old, current)| !old.is_same_project(current)));
+        let replaced = detached
+            || (same_path && self.workspace_identity.as_ref().zip(identity.as_ref()).is_some_and(|(old, current)| !old.is_same_project(current)))
+            || self.unsent_projects.get(&root).zip(identity.as_ref()).is_some_and(|(old, current)| !old.is_same_project(current));
         if !same {
             // What was typed here stays with this project; the next one's comes back.
             let typed = (std::mem::take(&mut self.state.project_input), std::mem::take(&mut self.state.project_attachments));
             if let Some(old) = &self.workspace
-                && !replaced
+                && !(same_path && replaced)
                 && (!typed.0.trim().is_empty() || !typed.1.is_empty())
             {
                 self.state.unsent.insert(old.root.clone(), typed);
+                if let Some(project) = &self.workspace_identity {
+                    self.unsent_projects.insert(old.root.clone(), project.clone());
+                }
             }
             if replaced {
                 self.state.unsent.remove(&root);
+                self.unsent_projects.remove(&root);
+                self.send_after_checks.remove(&root);
+                self.pending_attach_checks.remove(&root);
                 self.last_run.remove(&root);
                 self.usage.remove(&root);
                 self.asking.remove(&root);
                 self.pausing.remove(&root);
                 self.drafts.retain(|_, draft| draft.root != root);
             }
-            (self.state.project_input, self.state.project_attachments) = self.state.unsent.remove(&ws.root).unwrap_or_default();
+            // An unreadable identity leaves the saved draft in place until it can be checked.
+            let restore = self.unsent_projects.get(&root).is_none_or(|old| identity.as_ref().is_some_and(|current| old.is_same_project(current)));
+            if restore {
+                (self.state.project_input, self.state.project_attachments) = self.state.unsent.remove(&root).unwrap_or_default();
+            }
             // Events so far go to the project they belong to before the screen changes.
             self.poll_run();
             self.preview = None;
@@ -283,7 +294,11 @@ impl CraftApp {
         self.refresh_side_panel();
         self.state.screen = Screen::Project;
         // A Send pressed before its picture checks finished, on a project they left: send now.
-        if !self.pending_attach_checks.contains_key(&root) && self.send_after_checks.remove(&root) {
+        if !self.pending_attach_checks.contains_key(&root)
+            && let Some(owner) = self.send_after_checks.remove(&root)
+            && self.workspace_identity.as_ref().is_some_and(|current| owner.is_same_project(current))
+            && owner.check_current(&root).is_ok()
+        {
             self.send_message();
         }
     }
@@ -498,8 +513,14 @@ impl CraftApp {
     /// Read picture sizes off the UI thread, then apply the result on it.
     fn check_pictures(&mut self, files: Vec<PathBuf>, target: PictureTarget) {
         match &target {
-            PictureTarget::Attach(Some(root)) => *self.pending_attach_checks.entry(root.clone()).or_default() += 1,
-            PictureTarget::Attach(None) => {}
+            PictureTarget::Attach(Some(root), Some(project)) => {
+                let pending = self.pending_attach_checks.entry(root.clone()).or_insert_with(|| (project.clone(), 0));
+                if !pending.0.is_same_project(project) {
+                    *pending = (project.clone(), 0);
+                }
+                pending.1 += 1;
+            }
+            PictureTarget::Attach(_, _) => {}
             PictureTarget::Make => self.pending_make_checks += 1,
             PictureTarget::Project(_) => {}
         }
@@ -521,7 +542,8 @@ impl CraftApp {
 
     /// Keep checked pictures with a project the person switched away from, so their saved Send
     /// can use them when they come back.
-    fn keep_attachments(&mut self, root: &Path, files: Vec<PathBuf>) {
+    fn keep_attachments(&mut self, root: &Path, project: &craft_anything_engine::feed::ProjectIdentity, files: Vec<PathBuf>) {
+        self.unsent_projects.insert(root.to_path_buf(), project.clone());
         let saved = self.state.unsent.entry(root.to_path_buf()).or_default();
         for f in files {
             if !saved.1.contains(&f) {
@@ -548,18 +570,27 @@ impl CraftApp {
     /// The worker checked the pictures: refuse them, attach them, keep them for Make, or copy
     /// them into the project that is still open.
     pub(crate) fn pictures_checked(&mut self, files: Vec<PathBuf>, refused: Option<String>, target: PictureTarget) {
+        if let PictureTarget::Attach(Some(root), project) = &target
+            && project.as_ref().is_none_or(|owner| owner.check_current(root).is_err())
+        {
+            self.picture_check_finished(&target, true);
+            return;
+        }
         if let Some(name) = refused {
             self.show_picture_refused(&name);
             self.picture_check_finished(&target, true);
             return;
         }
         match &target {
-            PictureTarget::Attach(root) => {
-                let showing = root.as_ref().is_none_or(|r| self.workspace.as_ref().is_some_and(|w| &w.root == r));
+            PictureTarget::Attach(root, project) => {
+                let showing = root.as_ref().is_none_or(|r| {
+                    self.workspace.as_ref().is_some_and(|w| &w.root == r)
+                        && project.as_ref().zip(self.workspace_identity.as_ref()).is_some_and(|(owner, current)| owner.is_same_project(current))
+                });
                 if showing {
                     self.attach_checked(files);
-                } else if let Some(root) = root {
-                    self.keep_attachments(root, files);
+                } else if let Some((root, project)) = root.as_ref().zip(project.as_ref()) {
+                    self.keep_attachments(root, project, files);
                 }
             }
             PictureTarget::Make => {
@@ -588,18 +619,25 @@ impl CraftApp {
     /// One worker check finished: clear its wait, then send or start if that was the last check for
     /// the destination the person is waiting on.
     fn picture_check_finished(&mut self, target: &PictureTarget, refused: bool) {
-        if let PictureTarget::Attach(Some(root)) = target {
-            if let Some(left) = self.pending_attach_checks.get_mut(root) {
+        if let PictureTarget::Attach(Some(root), Some(project)) = target {
+            if self.pending_attach_checks.get(root).is_some_and(|(owner, _)| !owner.is_same_project(project)) {
+                return;
+            }
+            if let Some((_, left)) = self.pending_attach_checks.get_mut(root) {
                 *left = left.saturating_sub(1);
                 if *left == 0 {
                     self.pending_attach_checks.remove(root);
                 }
             }
             if refused {
-                self.send_after_checks.remove(root);
+                if self.send_after_checks.get(root).is_some_and(|owner| project.is_same_project(owner)) {
+                    self.send_after_checks.remove(root);
+                }
             } else if !self.pending_attach_checks.contains_key(root)
-                && self.send_after_checks.contains(root)
                 && self.workspace.as_ref().is_some_and(|w| &w.root == root)
+                && self.workspace_identity.as_ref().is_some_and(|current| project.is_same_project(current))
+                && self.send_after_checks.get(root).is_some_and(|owner| project.is_same_project(owner))
+                && project.check_current(root).is_ok()
             {
                 self.send_after_checks.remove(root);
                 self.send_message();
@@ -2178,6 +2216,7 @@ fn questions_controls(app: &mut CraftApp, ui: &mut Ui, now: craft_anything_engin
 pub struct PendingPaste {
     pub job: u64,
     pub root: PathBuf,
+    pub project: Option<craft_anything_engine::feed::ProjectIdentity>,
     pub send: bool,
     /// The pasted picture was actually attached (false when it was refused, e.g. over 20 MB).
     pub attached: bool,
@@ -2185,8 +2224,8 @@ pub struct PendingPaste {
 
 /// Where pictures that passed the worker check go.
 pub enum PictureTarget {
-    /// `Some(root)`: only attach while that project is still open.
-    Attach(Option<PathBuf>),
+    /// Retain the original project identity while the size check runs.
+    Attach(Option<PathBuf>, Option<craft_anything_engine::feed::ProjectIdentity>),
     Make,
     Project(PathBuf),
 }
@@ -2212,7 +2251,7 @@ impl CraftApp {
     pub fn attach(&mut self, files: Vec<PathBuf>) {
         if !files.is_empty() {
             let root = self.workspace.as_ref().map(|w| w.root.clone());
-            self.check_pictures(files, PictureTarget::Attach(root));
+            self.check_pictures(files, PictureTarget::Attach(root, self.workspace_identity.clone()));
         }
     }
 
@@ -2264,7 +2303,7 @@ impl CraftApp {
             });
             // A message sent before the picture is in waits for it (`send_message`).
             if let Some(root) = root {
-                self.pending_paste = Some(PendingPaste { job, root, send: false, attached: false });
+                self.pending_paste = Some(PendingPaste { job, root, project: self.workspace_identity.clone(), send: false, attached: false });
             }
         }
     }
@@ -2279,7 +2318,14 @@ impl CraftApp {
     /// typed stays in the box to send again.
     pub(crate) fn paste_done(&mut self, job: u64, ok: bool) {
         let Some(p) = self.pending_paste.take_if(|p| p.job == job) else { return };
-        if p.send && ok && p.attached && self.state.screen == Screen::Project && self.workspace.as_ref().is_some_and(|w| w.root == p.root) {
+        if p.send
+            && ok
+            && p.attached
+            && self.state.screen == Screen::Project
+            && self.workspace.as_ref().is_some_and(|w| w.root == p.root)
+            && p.project.as_ref().zip(self.workspace_identity.as_ref()).is_some_and(|(owner, current)| owner.is_same_project(current))
+            && p.project.as_ref().is_some_and(|owner| owner.check_current(&p.root).is_ok())
+        {
             self.send_message();
         }
     }
@@ -2287,7 +2333,14 @@ impl CraftApp {
     /// Pasted pictures were read: attached to the project they were pasted in while its screen is
     /// still showing, or added to Make's pictures while Make is still showing.
     pub(crate) fn pasted(&mut self, project: Option<PathBuf>, files: Vec<PathBuf>, refused: Option<String>) {
-        let showing = |root: &PathBuf| self.state.screen == Screen::Project && self.workspace.as_ref().is_some_and(|w| &w.root == root);
+        let showing = |root: &PathBuf| {
+            self.state.screen == Screen::Project
+                && self.workspace.as_ref().is_some_and(|w| &w.root == root)
+                && self.pending_paste.as_ref().filter(|pending| &pending.root == root).is_some_and(|pending| {
+                    pending.project.as_ref().zip(self.workspace_identity.as_ref()).is_some_and(|(owner, current)| owner.is_same_project(current))
+                        && pending.project.as_ref().is_some_and(|owner| owner.check_current(root).is_ok())
+                })
+        };
         match project {
             Some(root) if showing(&root) => {
                 let attached = match refused {
@@ -2324,8 +2377,12 @@ impl CraftApp {
             return self.toast(tr("This project is waiting its turn. Send your message once it starts."), true);
         }
         // Attached pictures are still being checked: send this project's text once they finish.
-        if self.pending_attach_checks.get(&ws.root).is_some_and(|left| *left > 0) {
-            self.send_after_checks.insert(ws.root.clone());
+        if let Some((owner, left)) = self.pending_attach_checks.get(&ws.root)
+            && *left > 0
+        {
+            if self.workspace_identity.as_ref().is_some_and(|current| owner.is_same_project(current)) && owner.check_current(&ws.root).is_ok() {
+                self.send_after_checks.insert(ws.root.clone(), owner.clone());
+            }
             return;
         }
         // A picture still being pasted goes with the message: it's sent once the picture is in.
@@ -2731,7 +2788,7 @@ mod tests {
             let _ = wait.recv_timeout(std::time::Duration::from_secs(10));
             Ok(Done::Pasted { project, files, refused: None })
         });
-        app.pending_paste = Some(PendingPaste { job, root, send: false, attached: false });
+        app.pending_paste = Some(PendingPaste { job, root, project: app.workspace_identity.clone(), send: false, attached: false });
         // While it's read, it's the one paste: another Ctrl+V waits (`paste_pictures` checks this).
         assert!(app.pasting().is_some_and(|p| p.job == job));
         app.state.project_input = "Like this".into();
@@ -2811,10 +2868,10 @@ mod tests {
         let mut app = crate::demo::app(crate::demo::engine(craft_anything_engine::Mode::Beginner, true));
         app.open_workspace(a.clone());
         app.state.screen = Screen::Project;
-        app.pending_attach_checks.insert(ra.clone(), 1);
+        app.pending_attach_checks.insert(ra.clone(), (app.workspace_identity.clone().unwrap(), 1));
         app.state.project_input = "For A".into();
         app.send_message();
-        assert!(app.send_after_checks.contains(&ra));
+        assert!(app.send_after_checks.contains_key(&ra));
 
         app.open_workspace(b.clone());
         app.state.project_input = "For B".into();
@@ -2822,8 +2879,12 @@ mod tests {
         assert_eq!(app.state.project_input, "", "B sends without waiting for A's check");
         let pic = d.path().join("shot.png");
         std::fs::write(&pic, b"\x89PNG\r\n\x1a\n").unwrap();
-        app.pictures_checked(vec![pic], None, PictureTarget::Attach(Some(ra.clone())));
-        assert!(app.send_after_checks.contains(&ra), "A's Send is kept");
+        app.pictures_checked(
+            vec![pic],
+            None,
+            PictureTarget::Attach(Some(ra.clone()), Some(craft_anything_engine::feed::ProjectIdentity::from_workspace(&a).unwrap())),
+        );
+        assert!(app.send_after_checks.contains_key(&ra), "A's Send is kept");
         assert!(app.state.project_attachments.is_empty(), "B's box is untouched");
 
         app.open_workspace(a);
@@ -2841,6 +2902,53 @@ mod tests {
         );
     }
 
+    /// A retained draft and its waiting Send belong to the original project identity.
+    #[test]
+    fn returning_to_a_replaced_project_does_not_restore_or_send_its_old_draft() {
+        for replace_directory in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let a = Workspace::create(directory.path(), "Alpha", "Original", TargetRef::None).unwrap();
+            let b = Workspace::create(directory.path(), "Beta", "Other", TargetRef::None).unwrap();
+            let mut app = crate::demo::app(crate::demo::engine(craft_anything_engine::Mode::Beginner, true));
+            app.open_workspace(a.clone());
+            let owner = app.workspace_identity.clone().unwrap();
+            app.pending_attach_checks.insert(a.root.clone(), (owner.clone(), 1));
+            app.state.project_input = "Only for the original Alpha".into();
+            app.state.project_attachments.push(directory.path().join("original.png"));
+            app.send_message();
+            assert!(app.send_after_checks.contains_key(&a.root));
+            app.open_workspace(b.clone());
+            app.state.project_input = "Keep Beta's draft".into();
+            let manifest = a.root.join("craft.json");
+            let bytes = std::fs::read(&manifest).unwrap();
+            if replace_directory {
+                std::fs::rename(&a.root, directory.path().join("retired")).unwrap();
+                Workspace::create(directory.path(), "Alpha", "Replacement", TargetRef::None).unwrap();
+                std::fs::write(&manifest, &bytes).unwrap();
+            } else {
+                let mut document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                document["generation"] = serde_json::json!("ffffffffffffffffffffffffffffffff");
+                std::fs::write(&manifest, serde_json::to_vec(&document).unwrap()).unwrap();
+            }
+
+            app.open_workspace(Workspace::open(&a.root).unwrap());
+
+            assert!(app.state.project_input.is_empty());
+            assert!(app.state.project_attachments.is_empty());
+            assert!(!app.send_after_checks.contains_key(&a.root));
+            assert!(!app.state.feed.iter().any(|item| matches!(item, FeedItem::User(user) if user.text().contains("Only for the original Alpha"))));
+            // An old worker finishing after new checks started cannot attach to the replacement
+            // or consume its wait counter.
+            let replacement = app.workspace_identity.clone().unwrap();
+            app.pending_attach_checks.insert(a.root.clone(), (replacement, 1));
+            app.pictures_checked(vec![directory.path().join("late.png")], None, PictureTarget::Attach(Some(a.root.clone()), Some(owner)));
+            assert!(app.state.project_attachments.is_empty());
+            assert_eq!(app.pending_attach_checks.get(&a.root).unwrap().1, 1);
+            app.open_workspace(b);
+            assert_eq!(app.state.project_input, "Keep Beta's draft");
+        }
+    }
+
     /// A refused picture clears Send's wait and leaves the message in the box.
     #[test]
     fn a_refused_picture_clears_the_waiting_send() {
@@ -2850,12 +2958,12 @@ mod tests {
         let mut app = crate::demo::app(crate::demo::engine(craft_anything_engine::Mode::Beginner, true));
         app.open_workspace(ws);
         app.state.screen = Screen::Project;
-        app.pending_attach_checks.insert(root.clone(), 1);
+        app.pending_attach_checks.insert(root.clone(), (app.workspace_identity.clone().unwrap(), 1));
         app.state.project_input = "Like this".into();
         app.send_message();
-        assert!(app.send_after_checks.contains(&root));
-        app.pictures_checked(Vec::new(), Some("big.png".into()), PictureTarget::Attach(Some(root.clone())));
-        assert!(!app.send_after_checks.contains(&root));
+        assert!(app.send_after_checks.contains_key(&root));
+        app.pictures_checked(Vec::new(), Some("big.png".into()), PictureTarget::Attach(Some(root.clone()), app.workspace_identity.clone()));
+        assert!(!app.send_after_checks.contains_key(&root));
         assert_eq!(app.state.project_input, "Like this");
         assert!(app.state.project_attachments.is_empty());
     }
@@ -2951,7 +3059,7 @@ mod tests {
             let _ = wait.recv_timeout(std::time::Duration::from_secs(10));
             Ok(Done::Pasted { project, files, refused: Some("big.png".into()) })
         });
-        app.pending_paste = Some(PendingPaste { job, root, send: false, attached: false });
+        app.pending_paste = Some(PendingPaste { job, root, project: app.workspace_identity.clone(), send: false, attached: false });
         app.state.project_input = "Like this".into();
         app.send_message();
         assert_eq!(app.state.project_input, "Like this", "it waits for the picture");
